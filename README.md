@@ -14,8 +14,8 @@ kod bölümleri Python + Jupyter engine + `freeze`.
 Kitaba atıf verecekseniz sürümü ve erişim tarihini belirtin — bu yaşayan bir
 kitap. Hazır künyeler (BibTeX + APA), lisans ayrımı ve baskı bilgisi:
 
-- İngilizce: <https://bbardakk.github.io/metu-applied-nlp/en/cite.html>
-- Türkçe: <https://bbardakk.github.io/metu-applied-nlp/tr/cite.html>
+- İngilizce: <https://bbardakk.github.io/uygulamali-dogal-dil-isleme/en/cite.html>
+- Türkçe: <https://bbardakk.github.io/uygulamali-dogal-dil-isleme/tr/cite.html>
 
 Depo kökündeki `CITATION.cff`, GitHub'ın **Cite this repository** düğmesini
 besler ve Zenodo sürüm meta verisinin kaynağıdır.
@@ -111,15 +111,15 @@ değişikliklerini commit etmen yeterli.
 
 ## 5) Yayınlama
 
-Kurulum tamamlandı — repo [bbardakk/metu-applied-nlp](https://github.com/bbardakk/metu-applied-nlp),
+Kurulum tamamlandı — repo [bbardakk/uygulamali-dogal-dil-isleme](https://github.com/bbardakk/uygulamali-dogal-dil-isleme),
 Pages kaynağı **GitHub Actions**. `main`'e her push iki dili render edip
 yayınlar:
 
 | URL | İçerik |
 |---|---|
-| <https://bbardakk.github.io/metu-applied-nlp/> | köke gelen `/en/`'e yönlenir |
-| <https://bbardakk.github.io/metu-applied-nlp/en/> | İngilizce sürüm |
-| <https://bbardakk.github.io/metu-applied-nlp/tr/> | Türkçe sürüm |
+| <https://bbardakk.github.io/uygulamali-dogal-dil-isleme/> | köke gelen `/en/`'e yönlenir |
+| <https://bbardakk.github.io/uygulamali-dogal-dil-isleme/en/> | İngilizce sürüm |
+| <https://bbardakk.github.io/uygulamali-dogal-dil-isleme/tr/> | Türkçe sürüm |
 
 İki workflow var:
 
