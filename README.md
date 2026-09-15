@@ -9,6 +9,19 @@ Türkçe (`tr/`), aynı pipeline'dan yayınlanıyor.
 GitHub Pages. İnteraktifler Observable JS (tarayıcıda çalışır, sunucu yok);
 kod bölümleri Python + Jupyter engine + `freeze`.
 
+## Yardımcı repolar
+
+Aynı klasör düzenini izleyen iki repo; bir bölümün notebook'u ve sunumu, bölüm
+dosyasıyla aynı adı taşır (`en/chapters/01-why-nlp-now`):
+
+| repo | içerik | yayın |
+|:--|:--|:--|
+| [uygulamali-dogal-dil-isleme-notebooks](https://github.com/bbardakk/uygulamali-dogal-dil-isleme-notebooks) | bölüm başına Jupyter notebook'lar | — |
+| [uygulamali-dogal-dil-isleme-slides](https://github.com/bbardakk/uygulamali-dogal-dil-isleme-slides) | bölüm başına ders sunumları (EN + TR) | <https://bbardakk.github.io/uygulamali-dogal-dil-isleme-slides/> |
+
+Kitap `bbardakk/metu-applied-nlp` adresinden taşındı; eski adresler yeni sitedeki
+aynı sayfaya yönlenir.
+
 ## Atıf
 
 Kitaba atıf verecekseniz sürümü ve erişim tarihini belirtin — bu yaşayan bir
