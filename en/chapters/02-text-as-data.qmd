@@ -186,7 +186,7 @@ model — and a catastrophe if the signal you need is in the word *not*.
 
 ::: {#gloss-byte-pair-encoding-bpe .column-margin .term-gloss}
 **byte-pair encoding (BPE)** — a way of learning the token list from the
-text itself: start from single characters, and keep gluing together
+text itself: start from single characters (or bytes), and keep gluing together
 whichever pair occurs most often. [↩](#term-byte-pair-encoding-bpe){.term-back}
 :::
 
@@ -197,7 +197,8 @@ become very long and each unit means almost nothing. [Byte-pair encoding]{.hl}
 [@sennrich2016neural].
 
 The algorithm is surprisingly simple. Start with characters. Count every
-adjacent pair. Merge the most frequent pair into a new symbol. Repeat.
+adjacent pair. Merge the most frequent pair into a new symbol. Repeat. Those
+four steps are the whole of BPE.
 
 ```python
 from collections import Counter
@@ -280,17 +281,9 @@ model knows well. This is the entire reason subwords won: **an unseen *word*
 never needs an `<UNK>` token**. In the worst case it falls back to shorter
 pieces, as `slow` partly does. It degrades; it does not fail.
 
-One caveat, because it is the difference between a toy and a production
-tokenizer. Our merge table was learned over *characters*, and the alphabet it
-saw was only `low`, `lower`, `newest`, `widest`. So an unseen **character**
-still breaks it: `apply_merges("çay", merges)` returns `('ç', 'a', 'y',
-'</w>')`, and not one of those symbols is in the vocabulary. Real tokenizers
-close that hole by starting from the 256 possible **bytes** of UTF-8 rather
-than from characters [@radford2019language]. A byte-level tokenizer can
-represent every possible string by construction — emoji, Chinese, and the `ş`
-in `görüşebileceklerimiz`. Every OpenAI encoding measured later in this chapter
-is byte-level, which is *why* a Turkish word costs more tokens instead of
-becoming `<UNK>`.
+It degrades, that is, as long as every *character* of the new word is in the
+alphabet the merges were learned over. That condition is where real tokenizers
+differ from this toy, and @sec-text-as-data-bytes takes it up after the figure.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -455,6 +448,110 @@ html`<div style="font-size:0.9rem;">
 </div>`
 ```
 :::
+
+### Characters or bytes: what BPE starts from {#sec-text-as-data-bytes}
+
+The loop above — count adjacent pairs, merge the most frequent, repeat — *is*
+BPE. The name is older than NLP. It comes from a 1994 data-compression
+algorithm that kept replacing the most frequent pair of adjacent **bytes** in a
+file with a single byte value the file did not use [@gage1994new]. Sennrich and
+colleagues kept the loop and changed its purpose: the merges build a vocabulary
+instead of shrinking a file, and the merge list is kept so it can be replayed
+on new text [@sennrich2016neural].
+
+That leaves one decision the loop does not make for you: **what the starting
+symbols are**. It is a separate choice from the algorithm. BPE, WordPiece and
+Unigram (@sec-text-as-data-algorithms) decide *how* units are learned;
+characters or bytes decide *what they are built from*.
+
+**Starting from characters.** This is what the toy above did, and it has a
+hole. The merge table can only combine symbols it has seen, and the alphabet
+this one saw came from four English words. So an unseen **character** still
+breaks it: `apply_merges("çay", merges)` returns `('ç', 'a', 'y', '</w>')`, and
+`ç`, `a` and `y` are not in the vocabulary. A real character-level tokenizer
+needs every character it may ever meet in its starting alphabet, and Unicode
+defines well over a hundred thousand of them. The rare ones become `<UNK>`.
+
+**Starting from bytes.** Computers do not store characters; they store bytes.
+UTF-8, the standard encoding for text on the web, writes each character as one
+to four bytes. ASCII letters take one byte; the Turkish letters `ç`, `ş`, `ğ`,
+`ı`, `ö`, `ü` and `İ` take two; most Chinese characters take three and emoji
+four:
+
+```python
+for ch in ["a", "ç", "ş", "İ", "世", "😀"]:
+    b = ch.encode("utf-8")
+    print(f"{ch}  U+{ord(ch):04X}  {len(b)} byte(s): {' '.join(f'{x:02X}' for x in b)}")
+```
+
+```text
+a  U+0061  1 byte(s): 61
+ç  U+00E7  2 byte(s): C3 A7
+ş  U+015F  2 byte(s): C5 9F
+İ  U+0130  2 byte(s): C4 B0
+世  U+4E16  3 byte(s): E4 B8 96
+😀  U+1F600  4 byte(s): F0 9F 98 80
+```
+
+A byte has only 256 possible values, so an alphabet of 256 bytes is closed:
+every string in every language is a sequence of them. Byte-level BPE runs
+exactly the same merge loop over byte sequences instead of characters
+[@radford2019language]. Frequent byte pairs merge back into whole characters
+first — the two bytes of `ç` become one token early if the training text holds
+enough Turkish — and then into subwords, as before.
+
+Here is a byte-level tokenizer, OpenAI's `cl100k_base`, showing the bytes behind
+each token:
+
+```python
+import tiktoken
+
+enc = tiktoken.get_encoding("cl100k_base")
+for text in ["çay", "şişe", "ŞİŞE", "😀"]:
+    pieces = [enc.decode_single_token_bytes(t) for t in enc.encode(text)]
+    print(f"{text:<5} {len(pieces)} tokens  {pieces}")
+```
+
+```text
+çay   2 tokens  [b'\xc3\xa7', b'ay']
+şişe  3 tokens  [b'\xc5\x9fi', b'\xc5\x9f', b'e']
+ŞİŞE  6 tokens  [b'\xc5', b'\x9e', b'\xc4\xb0', b'\xc5', b'\x9e', b'E']
+😀     2 tokens  [b'\xf0\x9f\x98', b'\x80']
+```
+
+Read three things in that output. `ç` is a single token, because its two bytes
+were frequent enough to merge. `ŞİŞE` costs twice as many tokens as `şişe`:
+capital `Ş` was rare in training, its two bytes never merged, and each of those
+tokens holds *half a character* — `b'\xc5'` is not valid text on its own. The
+emoji is split the same way. Nothing ever becomes `<UNK>`; rare characters just
+become expensive.
+
+| | Character-level BPE | Byte-level BPE |
+|:--|:--|:--|
+| Starting alphabet | every character in the training text — thousands for multilingual data | the 256 byte values, always |
+| A character never seen in training | [`<UNK>`, unless a byte fallback is added]{.con} | [cannot happen: it is spelled out in bytes]{.pro} |
+| What one token holds | [whole characters]{.pro} | [bytes — sometimes only part of a character]{.con} |
+| Cost of a rare character | [one symbol]{.pro} | [up to four tokens, one per byte]{.con} |
+| Scripts covered | whatever the training text contained | every script, by construction |
+
+: Characters or bytes as the starting alphabet {tbl-colwidths="[26,37,37]"}
+
+There is a middle road, **byte fallback**: keep a character-level vocabulary and
+spell out in bytes only the characters it lacks. The SentencePiece library
+offers it as an option.
+
+**Which one is used today.** For the large generative models most people call
+through an API, byte-level BPE is the default. GPT-2 introduced it with a
+50,257-token vocabulary [@radford2019language]. OpenAI's `cl100k_base` and
+`o200k_base`, measured in the next section, are byte-level. Llama 3 moved to a
+128K-token vocabulary that combines 100K tokens from OpenAI's `tiktoken` with 28K
+added for non-English languages [@grattafiori2024llama3]. Encoder models of the
+BERT family still ship WordPiece over characters [@devlin2019bert], and the
+table in @sec-text-as-data-algorithms shows which algorithm ships where. The
+practical rule does not depend on any of this: use the tokenizer the model was
+trained with, and count tokens with it. That byte-level design is also *why* a
+Turkish word costs more tokens instead of becoming `<UNK>` — the next section
+measures how many more.
 
 ### Who pays for Turkish {#sec-text-as-data-turkish}
 

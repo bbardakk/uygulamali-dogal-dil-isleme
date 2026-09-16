@@ -194,7 +194,7 @@ görünmezdir. [↩](#term-vocabulary){.term-back}
 
 ::: {#gloss-byte-pair-encoding .column-margin .term-gloss}
 **byte-pair encoding (BPE)** — token listesini metnin kendisinden öğrenmenin
-bir yolu: tek karakterlerden başlayın ve en sık yan yana gelen çiftleri
+bir yolu: tek karakterlerden (ya da baytlardan) başlayın ve en sık yan yana gelen çiftleri
 birleştirmeye devam edin. [↩](#term-byte-pair-encoding){.term-back}
 :::
 
@@ -208,7 +208,8 @@ ikisinin arasında bir orta yol bulur: birimlerini veriden *öğrenir*
 [@sennrich2016neural].
 
 Algoritma şaşırtıcı ölçüde basit. Karakterlerle başla. Komşu her çifti say.
-En sık çifti yeni bir sembole birleştir. Tekrarla.
+En sık çifti yeni bir sembole birleştir. Tekrarla. Bu dört adım BPE'nin
+kendisidir.
 
 ```python
 from collections import Counter
@@ -260,7 +261,8 @@ merge  9: 'low' + '</w>' -> 'low</w>'  (seen 5 times)
 merge 10: 'w' + 'i' -> 'wi'  (seen 3 times)
 ```
 
-Kimse dilbilgisi vermeden neler olduğuna bakın. Algoritmanın ilk iki
+Algoritmaya kimse dilbilgisi öğretmedi. Yine de neler olduğuna bakın.
+Algoritmanın ilk iki
 birleştirmesi `est`'i — İngilizcenin üstünlük ekini — kuruyor, üçüncüsü de ona
 kelime sınırını ekliyor; çünkü üstünlük biçimleri sık geçiyor. Ardından `low` ve `new`'i gövde olarak buldu.
 [Kimse ona İngilizcede ek diye bir şey olduğunu söylemedi.]{.hl} Saydı.
@@ -291,17 +293,9 @@ bölündü. Alt kelimelerin kazanmasının bütün sebebi budur: **görülmemiş
 *kelime* asla bir `<UNK>` token'ına ihtiyaç duymaz**. En kötü durumda daha kısa
 parçalara düşer, `slow`'da kısmen olduğu gibi. Kalitesi düşer; çuvallamaz.
 
-Bir çekince, çünkü oyuncak bir tokenizer ile üretim tokenizer'ı arasındaki fark
-tam olarak bu. Birleştirme tablomuz *karakterler* üzerinde öğrenildi ve gördüğü
-alfabe yalnızca `low`, `lower`, `newest`, `widest` kelimelerinden geliyordu.
-Dolayısıyla görülmemiş bir **karakter** onu hâlâ kırıyor:
-`apply_merges("çay", merges)` çağrısı `('ç', 'a', 'y', '</w>')` döndürüyor ve bu
-sembollerin hiçbiri sözlükte yok. Gerçek tokenizer'lar bu deliği, karakterler
-yerine UTF-8'in 256 olası **baytından** başlayarak kapatıyor
-[@radford2019language]. Byte düzeyinde bir tokenizer kuruluş gereği her olası
-diziyi temsil edebilir — emoji, Çince ve `görüşebileceklerimiz`deki `ş` dâhil.
-Bu bölümde sonradan ölçülen bütün OpenAI kodlamaları byte düzeyinde; Türkçe bir
-kelimenin `<UNK>` olmak yerine *daha fazla* token'a mal olmasının nedeni de bu.
+Yani kalitesi düşer — yeter ki yeni kelimenin her *karakteri*, birleştirmelerin
+öğrenildiği alfabede bulunsun. Gerçek tokenizer'ların bu oyuncaktan ayrıldığı
+yer tam bu koşul; şeklin ardından @sec-metin-veri-baytlar onu ele alıyor.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -465,6 +459,113 @@ html`<div style="font-size:0.9rem;">
 </div>`
 ```
 :::
+
+### Karakter mi bayt mı: BPE neyle başlar {#sec-metin-veri-baytlar}
+
+Yukarıdaki döngü — yan yana çiftleri say, en sık olanı birleştir, tekrarla —
+BPE'nin *kendisidir*. Adı NLP'den eskidir. 1994'te yayımlanmış bir veri
+sıkıştırma algoritmasından gelir. O algoritma, bir dosyada yan yana en sık geçen
+iki **baytı**, dosyada hiç kullanılmayan tek bir bayt değeriyle değiştirmeyi
+tekrarlıyordu [@gage1994new]. Sennrich ve arkadaşları döngüyü korudu, amacını
+değiştirdi: birleştirmeler bir dosyayı küçültmek yerine bir sözlük kuruyor ve
+birleştirme listesi, yeni metne tekrar uygulanabilsin diye saklanıyor
+[@sennrich2016neural].
+
+Geriye döngünün sizin yerinize vermediği bir karar kalıyor: **başlangıç
+sembolleri ne olacak?** Bu, algoritma seçiminden ayrı bir karardır. BPE,
+WordPiece ve Unigram (@sec-metin-veri-algoritmalar) birimlerin *nasıl*
+öğrenileceğine karar verir; karakter ya da bayt ise birimlerin *neyden*
+kurulacağına.
+
+**Karakterlerden başlamak.** Yukarıdaki oyuncak örnek bunu yaptı ve bir açığı
+var. Birleştirme tablosu yalnızca gördüğü sembolleri birleştirebilir; bu
+tablonun gördüğü alfabe de dört İngilizce kelimeden geliyordu. Dolayısıyla
+görülmemiş bir **karakter** onu hâlâ kırıyor: `apply_merges("çay", merges)`
+çağrısı `('ç', 'a', 'y', '</w>')` döndürüyor ve `ç`, `a`, `y` sözlükte yok.
+Gerçek bir karakter düzeyi tokenizer'ın karşılaşabileceği her karakteri
+başlangıç alfabesinde bulundurması gerekir; Unicode ise yüz binin çok üstünde
+karakter tanımlar. Nadir olanlar `<UNK>` olur.
+
+**Baytlardan başlamak.** Bilgisayarlar karakter değil bayt saklar. Web'deki
+metnin standart kodlaması olan UTF-8, her karakteri bir ile dört bayt arasında
+yazar. ASCII harfleri bir bayt tutar; Türkçedeki `ç`, `ş`, `ğ`, `ı`, `ö`, `ü` ve
+`İ` harfleri iki; Çince karakterlerin çoğu üç, emoji dört bayt tutar:
+
+```python
+for ch in ["a", "ç", "ş", "İ", "世", "😀"]:
+    b = ch.encode("utf-8")
+    print(f"{ch}  U+{ord(ch):04X}  {len(b)} byte(s): {' '.join(f'{x:02X}' for x in b)}")
+```
+
+```text
+a  U+0061  1 byte(s): 61
+ç  U+00E7  2 byte(s): C3 A7
+ş  U+015F  2 byte(s): C5 9F
+İ  U+0130  2 byte(s): C4 B0
+世  U+4E16  3 byte(s): E4 B8 96
+😀  U+1F600  4 byte(s): F0 9F 98 80
+```
+
+Bir baytın yalnızca 256 olası değeri vardır; dolayısıyla 256 baytlık bir alfabe
+kapalıdır: her dildeki her metin bunların bir dizisidir. Byte düzeyinde BPE,
+aynı birleştirme döngüsünü karakterler yerine bayt dizileri üzerinde çalıştırır
+[@radford2019language]. Sık geçen bayt çiftleri önce yeniden bütün karakterlere
+birleşir — eğitim metninde yeterince Türkçe varsa `ç`'nin iki baytı erkenden tek
+token olur — sonra da eskisi gibi alt kelimelere.
+
+Aşağıda byte düzeyinde bir tokenizer, OpenAI'ın `cl100k_base` kodlaması, her
+token'ın arkasındaki baytları gösteriyor:
+
+```python
+import tiktoken
+
+enc = tiktoken.get_encoding("cl100k_base")
+for text in ["çay", "şişe", "ŞİŞE", "😀"]:
+    pieces = [enc.decode_single_token_bytes(t) for t in enc.encode(text)]
+    print(f"{text:<5} {len(pieces)} tokens  {pieces}")
+```
+
+```text
+çay   2 tokens  [b'\xc3\xa7', b'ay']
+şişe  3 tokens  [b'\xc5\x9fi', b'\xc5\x9f', b'e']
+ŞİŞE  6 tokens  [b'\xc5', b'\x9e', b'\xc4\xb0', b'\xc5', b'\x9e', b'E']
+😀     2 tokens  [b'\xf0\x9f\x98', b'\x80']
+```
+
+Bu çıktıda okunacak üç şey var. `ç` tek bir token, çünkü iki baytı birleşecek
+kadar sık geçmiş. `ŞİŞE`, `şişe`nin iki katı token'a mal oluyor: büyük `Ş`
+eğitimde nadirdi, iki baytı hiç birleşmedi ve bu token'ların her biri *yarım bir
+karakter* tutuyor — `b'\xc5'` tek başına geçerli bir metin değil. Emoji de aynı
+biçimde bölünüyor. Hiçbir şey `<UNK>` olmuyor; nadir karakterler yalnızca
+pahalılaşıyor.
+
+| | Karakter düzeyinde BPE | Byte düzeyinde BPE |
+|:--|:--|:--|
+| Başlangıç alfabesi | eğitim metnindeki her karakter — çok dilli veride binlerce | her zaman 256 bayt değeri |
+| Eğitimde hiç görülmemiş bir karakter | [bayta geri düşüş eklenmediyse `<UNK>`]{.con} | [olamaz: baytlarıyla yazılır]{.pro} |
+| Bir token neyi tutar | [bütün karakterleri]{.pro} | [baytları — bazen bir karakterin yalnızca bir parçasını]{.con} |
+| Nadir bir karakterin maliyeti | [tek sembol]{.pro} | [bayt başına bir token, dörde kadar]{.con} |
+| Kapsanan yazı sistemleri | eğitim metni neyi içeriyorsa | yapısı gereği her yazı sistemi |
+
+: Başlangıç alfabesi olarak karakter ya da bayt {tbl-colwidths="[26,37,37]"}
+
+Bir orta yol da var: **bayta geri düşüş** (byte fallback). Sözlüğü karakter
+düzeyinde tutarsınız ve yalnızca sözlükte olmayan karakterleri baytlarıyla
+yazarsınız. SentencePiece kütüphanesi bunu bir seçenek olarak sunar.
+
+**Bugün hangisi kullanılıyor.** Çoğu kişinin bir API üzerinden çağırdığı büyük
+üretici modellerde varsayılan byte düzeyinde BPE'dir. GPT-2 bunu 50.257
+token'lık bir sözlükle tanıttı [@radford2019language]. OpenAI'ın bir sonraki
+alt bölümde ölçülen `cl100k_base` ve `o200k_base` kodlamaları byte düzeyindedir.
+Llama 3, OpenAI'ın `tiktoken`'ından alınan 100 bin token'ı İngilizce dışındaki
+diller için eklenen 28 bin token'la birleştiren 128 bin token'lık bir sözlüğe
+geçti [@grattafiori2024llama3]. BERT ailesinden encoder modelleri hâlâ
+karakterler üzerinde WordPiece kullanıyor [@devlin2019bert]; hangi algoritmanın
+nerede kullanıldığını @sec-metin-veri-algoritmalar'daki tablo gösteriyor.
+Pratik kural bunların hiçbirine bağlı değil: modelin eğitildiği tokenizer'ı
+kullanın ve token'ları onunla sayın. Türkçe bir kelimenin `<UNK>` olmak yerine
+*daha fazla* token'a mal olmasının nedeni de bu byte düzeyindeki tasarım; bir
+sonraki alt bölüm ne kadar fazla olduğunu ölçüyor.
 
 ### Türkçe için faturayı kim ödüyor {#sec-metin-veri-turkce}
 
