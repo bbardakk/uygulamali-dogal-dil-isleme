@@ -742,15 +742,119 @@ bytes), has no out-of-vocabulary problem once the character set is closed —
 which bytes guarantee and a hand-picked alphabet does not — and needs no
 training. So why does everyone use subwords?
 
-**Because sequence length is the binding constraint.** The attention term grows
-with the *square* of sequence length while everything else in the layer grows
-linearly (@sec-transformers), so lengthening the sequence 5× costs somewhere
-between 5× and 25× depending on where you sit relative to the model width — and
-the quadratic term is the one that eventually wins. Subwords are a compression scheme:
-they buy shorter sequences by spending vocabulary. The tokenizer is the
-knob that trades vocabulary size against sequence length, and BPE sets that
-knob using the statistics of the data rather than a human's guess.
+Cut the Turkish text of Article 1 from above three ways, and count:
+
+```python
+import tiktoken
+
+enc = tiktoken.get_encoding("cl100k_base")
+units = {
+    "characters": list(tr),
+    "subword tokens": [enc.decode([t]) for t in enc.encode(tr)],
+    "words": tr.split(),
+}
+for name, seq in units.items():
+    n = len(seq)
+    print(f"{name:<15} {n:>3} units  {n * n:>6,} pairs  first six: {seq[:6]}")
+```
+
+```text
+characters      160 units  25,600 pairs  first six: ['B', 'ü', 't', 'ü', 'n', ' ']
+subword tokens   60 units   3,600 pairs  first six: ['B', 'üt', 'ün', ' insan', 'lar', ' h']
+words            21 units     441 pairs  first six: ['Bütün', 'insanlar', 'hür,', 'haysiyet', 've', 'haklar']
+```
+
+**The first reason is sequence length.** Attention compares every position
+with every other position (@sec-transformers), so a sequence of $n$ units costs
+$n^2$ comparisons — the `pairs` column. 160 characters make 25,600 pairs; the
+same text as 60 subword tokens makes 3,600. The sequence got 2.7× shorter and
+the comparisons 7.1× fewer. The rest of a transformer layer grows only
+linearly, so lengthening a sequence 5× costs somewhere between 5× and 25×
+depending on where you sit relative to the model width — and the quadratic
+term is the one that eventually wins.
+
+**The second is what one unit carries.** Read the first six units of each row.
+`ü` and `t` say nothing about the sentence; a model fed characters has to spend
+its first layers rebuilding pieces like `insan` ("human") before it can use
+them. The subword row hands it ` insan` and `lar` directly.
+
+**Words are shorter still, but they fail another way.** 21 units and 441 pairs
+look ideal, until you notice that `hür,` with its comma is a different entry
+from `hür`, and that every new combination of suffixes is a new word. The next
+example shows what that does to a word the vocabulary has not seen.
+
+Subwords are a compression scheme: they buy shorter sequences by spending
+vocabulary. The tokenizer is the knob that trades vocabulary size against
+sequence length, and BPE sets that knob using the statistics of the data rather
+than a human's guess.
 :::
+
+### Characters, subwords, whole words: one example {#sec-text-as-data-granularities}
+
+The table below compares the three choices on paper. First, watch all three on
+one small example, so that every row of the table is something you have seen
+happen.
+
+The corpus is sixty Turkish words: twelve stems, each with the same four
+suffixes, spelled with vowel harmony (`-ler`/`-lar`, `-de`/`-da`). The two test
+words, `evlerden` ("from the houses") and `okullardan` ("from the schools"),
+appear nowhere in it, although every piece of them does. Each tokenizer learns
+from the corpus and then splits the two new words. The BPE line reuses
+`pair_counts`, `merge` and `apply_merges` from @sec-text-as-data-bpe:
+
+```python
+stems = {"ev": "e", "el": "e", "göl": "e", "köy": "e", "gün": "e", "yüz": "e",
+         "okul": "a", "yol": "a", "kol": "a", "yıl": "a", "kız": "a", "masa": "a"}
+corpus = {}
+for stem, v in stems.items():          # v: the vowel the suffixes take
+    for suffix, n in [("", 4), (f"l{v}r", 2), (f"d{v}", 4),
+                      (f"d{v}n", 4), (f"l{v}rd{v}", 4)]:
+        corpus[stem + suffix] = n      # ev, evler, evde, evden, evlerde, ...
+test = ["evlerden", "okullardan"]      # neither word is in the corpus
+
+chars = sorted({c for word in corpus for c in word})
+words = {tuple(w) + ("</w>",): n for w, n in corpus.items()}
+merges = []
+while len(chars) + 1 + len(merges) < 60:   # stop at a 60-symbol vocabulary
+    best, _ = pair_counts(words).most_common(1)[0]
+    merges.append(best)
+    words = merge(words, best)
+
+tokenizers = {
+    "whole words": (len(corpus), lambda w: [w if w in corpus else "<UNK>"]),
+    "characters": (len(chars), lambda w: list(w)),
+    "subwords (BPE)": (len(chars) + 1 + len(merges),
+                       lambda w: list(apply_merges(w, merges))),
+}
+for name, (size, split) in tokenizers.items():
+    pieces = [p for w in test for p in split(w)]
+    print(f"{name:<15} vocabulary {size:>2}   {len(pieces):>2} units: {' '.join(pieces)}")
+```
+
+```text
+whole words     vocabulary 60    2 units: <UNK> <UNK>
+characters      vocabulary 18   18 units: e v l e r d e n o k u l l a r d a n
+subwords (BPE)  vocabulary 60    6 units: ev ler den</w> okul lar dan</w>
+```
+
+Now read that output against the rows of the table below:
+
+- **Vocabulary size.** Whole words already need 60 entries for twelve stems and
+  four suffixes, and real Turkish stems take far more than four suffix
+  combinations. Characters need 18. BPE was capped at 60: the 18 letters, the
+  end-of-word marker `</w>`, and 41 learned merges.
+- **Out-of-vocabulary words.** The whole-word tokenizer turns both test words
+  into `<UNK>`, so the model receives nothing. The other two never produce
+  `<UNK>`, because every letter of the new words is in their alphabet.
+- **Sequence length.** The same two words are 18 units as characters, 6 as
+  subwords and 2 as whole words.
+- **Meaning per unit.** `e`, `v` and `l` mean nothing on their own. `ev`
+  ("house"), `ler` (plural) and `den` ("from") are exactly the meaningful parts
+  of the word; `</w>` only marks where the word ends.
+- **Morphologically rich languages.** BPE found the stem and both suffixes of
+  words it had never seen, by counting alone.
+- **Needs training.** Only the BPE line ran a learning loop. The other two just
+  listed what they saw.
 
 The three choices, side by side. Every tokenizer you will ever meet sits
 somewhere on this line, and the whole design problem is that the two ends
@@ -786,9 +890,227 @@ how you predict its splits.
 : Three subword algorithms, and what each one is actually maximising
 {tbl-colwidths="[16,40,24,20]"}
 
-Two consequences worth carrying. First, WordPiece's ratio penalises pairs whose
-parts are already common on their own, so it keeps more morpheme-like units
-than raw frequency does. Second, Unigram LM is the only one that assigns a
+#### One corpus, three algorithms
+
+The table says what each algorithm maximises. Here is what that means on the
+sixty-word corpus from @sec-text-as-data-granularities, with the same two
+unseen words and the same budget of 60 vocabulary entries. The code is a
+minimal version of each: WordPiece with the scoring rule in the table, and a
+simplified Unigram LM that re-estimates its piece probabilities from the single
+best split of each word instead of running full EM.
+
+::: {.callout-note collapse="true"}
+## The code: minimal WordPiece and Unigram LM
+
+```python
+import math
+
+def train_wordpiece(corpus, size):
+    words = {tuple([w[0]] + ["##" + c for c in w[1:]]): n for w, n in corpus.items()}
+    vocab = {s for symbols in words for s in symbols}
+    first = None
+    while len(vocab) < size:
+        pairs, single = Counter(), Counter()
+        for symbols, n in words.items():
+            for s in symbols:
+                single[s] += n
+            for a, b in zip(symbols, symbols[1:]):
+                pairs[(a, b)] += n
+        score = {p: c / (single[p[0]] * single[p[1]]) for p, c in pairs.items()}
+        best = max(score, key=lambda p: (score[p], p))
+        first = first or (pairs, score)
+        glued = best[0] + best[1].removeprefix("##")
+        new = {}
+        for symbols, n in words.items():
+            out, i = [], 0
+            while i < len(symbols):
+                if symbols[i:i + 2] == best:
+                    out.append(glued)
+                    i += 2
+                else:
+                    out.append(symbols[i])
+                    i += 1
+            new[tuple(out)] = n
+        words, vocab = new, vocab | {glued}
+    return vocab, first
+
+def wordpiece_split(word, vocab):          # greedy: longest known piece first
+    pieces, start = [], 0
+    while start < len(word):
+        for end in range(len(word), start, -1):
+            piece = word[start:end] if start == 0 else "##" + word[start:end]
+            if piece in vocab:
+                break
+        else:
+            return ["[UNK]"]
+        pieces.append(piece)
+        start = end
+    return pieces
+
+def best_split(word, logp):                # Viterbi: the most probable split
+    best = [(0.0, [])] + [(-math.inf, None)] * len(word)
+    for end in range(1, len(word) + 1):
+        for start in range(end):
+            piece = word[start:end]
+            if piece in logp and best[start][1] is not None:
+                score = best[start][0] + logp[piece]
+                if score > best[end][0]:
+                    best[end] = (score, best[start][1] + [piece])
+    return best[-1]
+
+def train_unigram(corpus, size):
+    counts = Counter()                     # start big: every substring
+    for w, n in corpus.items():
+        for i in range(len(w)):
+            for j in range(i + 1, len(w) + 1):
+                counts[w[i:j]] += n
+    start_size = len(counts)
+    logprobs = lambda c: {p: math.log(k / sum(c.values())) for p, k in c.items()}
+    loss = lambda lp: -sum(n * best_split(w, lp)[0] for w, n in corpus.items())
+    while len(counts) > size:
+        lp = logprobs(counts)
+        base = loss(lp)
+        cost = {p: loss({q: v for q, v in lp.items() if q != p}) - base
+                for p in counts if len(p) > 1}     # single letters always stay
+        k = max(1, min(len(counts) - size, len(cost) // 5))
+        for p in sorted(cost, key=lambda p: (cost[p], p))[:k]:
+            del counts[p]                  # prune the pieces that cost least
+        lp = logprobs(counts)              # re-estimate from the best splits
+        counts = Counter({p: 0.001 for p in counts})
+        for w, n in corpus.items():
+            for piece in best_split(w, lp)[1]:
+                counts[piece] += n
+    return logprobs(counts), start_size
+```
+:::
+
+```python
+wp_vocab, (pairs, score) = train_wordpiece(corpus, 60)
+uni_logp, start_size = train_unigram(corpus, 60)
+
+print("first step, the same starting pairs:")
+print("  highest count (BPE):      ",
+      [(a + b.removeprefix("##"), c) for (a, b), c in pairs.most_common(3)])
+print("  highest score (WordPiece):",
+      [(a + b.removeprefix("##"), round(s, 3))
+       for (a, b), s in sorted(score.items(), key=lambda x: -x[1])[:3]])
+print(f"  Unigram LM starts from {start_size} substrings and prunes to {len(uni_logp)}")
+print()
+for w in test:
+    print(f"{w:<11} BPE       : {' | '.join(apply_merges(w, merges))}")
+    print(f"{'':<11} WordPiece : {' | '.join(wordpiece_split(w, wp_vocab))}")
+    print(f"{'':<11} Unigram LM: {' | '.join(best_split(w, uni_logp)[1])}")
+```
+
+```text
+first step, the same starting pairs:
+  highest count (BPE):       [('##de', 72), ('##da', 72), ('##rd', 48)]
+  highest score (WordPiece): [('ok', 0.056), ('##ku', 0.056), ('ev', 0.028)]
+  Unigram LM starts from 322 substrings and prunes to 60
+
+evlerden    BPE       : ev | ler | den</w>
+            WordPiece : ev | ##l | ##e | ##r | ##d | ##e | ##n
+            Unigram LM: evlerde | n
+okullardan  BPE       : okul | lar | dan</w>
+            WordPiece : okullar | ##d | ##a | ##n
+            Unigram LM: okullarda | n
+```
+
+**BPE** merges the most *frequent* pair. `d` + `e` occurs 72 times in the
+corpus, so BPE's vocabulary fills with pieces that many words share — `de`,
+`ler`, `den`, `lar`, `dan` — and the unseen words split exactly at their
+suffixes.
+
+**WordPiece** starts from the same pairs but divides each count by how often
+its two parts occur at all, $\frac{c(ab)}{c(a)\,c(b)}$. `o` + `k` wins with
+0.056 instead of `d` + `e`, not because it is frequent but because the two
+symbols never occur apart: a word-initial `o` followed by `##k` appears only in
+`okul`. The rule rewards letters that stick together, so WordPiece spends its
+budget growing stems from the left — `ok`, `oku`, `okul`, `okull`, `okullar` —
+and never builds a suffix piece such as `##den`. The `##` marks a piece that
+continues a word. To split a new word, WordPiece does not replay merges: it
+takes the longest piece it knows from the left, then the longest piece after
+that. For `okullardan` that is `okullar`, and after it only letters are left.
+
+**Unigram LM** works in the other direction. It starts from every substring of
+the corpus — 322 candidates — and keeps deleting the pieces it can lose most
+cheaply, those whose removal lowers the probability of the corpus least, until
+60 remain. On a corpus this small, keeping frequent whole forms such as
+`evlerde` is the cheapest way to make the corpus probable, so `evlerden`
+becomes `evlerde` + `n`. It is also the only one of the three that gives every
+split a probability and picks the most probable one:
+
+```python
+def every_split(word, logp, prefix=()):
+    if not word:
+        yield sum(logp[p] for p in prefix), list(prefix)
+    for end in range(1, len(word) + 1):
+        if word[:end] in logp:
+            yield from every_split(word[end:], logp, prefix + (word[:end],))
+
+splits = sorted(every_split("evlerden", uni_logp), reverse=True)
+print(f"{len(splits)} ways to split 'evlerden' with this vocabulary:")
+for logp, pieces in splits:
+    print(f"  p = {math.exp(logp):.1e}   {' | '.join(pieces)}")
+```
+
+```text
+4 ways to split 'evlerden' with this vocabulary:
+  p = 2.1e-03   evlerde | n
+  p = 1.2e-14   evler | d | e | n
+  p = 1.3e-22   ev | l | e | r | d | e | n
+  p = 1.1e-31   e | v | l | e | r | d | e | n
+```
+
+The probability of a split is the product of its pieces' probabilities, so
+every extra piece multiplies in another number below one. That is why the
+two-piece split beats the eight-letter one by 28 orders of magnitude, and why
+Unigram LM can also *sample* a less probable split during training — the
+subword regularisation described below.
+
+::: {.callout-note collapse="true"}
+## Checking the minimal Unigram LM against SentencePiece
+
+The minimal version above is not the library. Here is `sentencepiece` 0.2.2,
+trained on the same corpus with the same 60-piece budget:
+
+```python
+import sentencepiece as spm
+
+lines = [w for w, n in corpus.items() for _ in range(n)]
+with open("corpus.txt", "w", encoding="utf-8") as f:
+    f.write("\n".join(lines) + "\n")
+
+spm.SentencePieceTrainer.train(
+    input="corpus.txt", model_prefix="uni", model_type="unigram", vocab_size=60,
+    character_coverage=1.0, hard_vocab_limit=False, minloglevel=2,
+    bos_id=-1, eos_id=-1, pad_id=-1)
+uni = spm.SentencePieceProcessor(model_file="uni.model")
+for w in test:
+    print(f"{w:<11} {' | '.join(uni.encode(w, out_type=str))}")
+```
+
+```text
+evlerden    ▁evlerde | n
+okullardan  ▁okul | l | a | r | d | a | n
+```
+
+`evlerden` gets the same split, `evlerde` + `n`; the library adds `▁` where a
+word starts. `okullardan` does not: the library kept `okul` but not
+`okullarda`, and spells the rest out letter by letter. The rule is the same; the
+details of pruning and estimation are not.
+:::
+
+A sixty-word corpus exaggerates all of this. The rules are the real ones, but
+with so little text a handful of counts decides every merge, and a 60-entry
+vocabulary can hold whole words. Libraries also implement WordPiece training in
+different ways; the ratio in the table is a common reconstruction of its rule.
+For how the three compare on real corpora of millions of words, trust the
+published measurement at the end of this section rather than this toy.
+
+Two consequences worth carrying. First, WordPiece's ratio penalises pairs
+whose parts are already common on their own — above, that is why it built stems
+before suffixes. Second, Unigram LM is the only one that assigns a
 *probability* to each segmentation rather than one deterministic answer, which
 is what makes subword regularisation possible: sample a different segmentation
 each epoch and the model stops overfitting to one arbitrary split

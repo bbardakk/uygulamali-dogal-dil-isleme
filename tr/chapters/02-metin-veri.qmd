@@ -764,18 +764,124 @@ gelir.
 
 Karakter sözlüğü minik (İngilizce için ~100 sembol, baytla çalışırsanız 256),
 karakter kümesi kapalı olduğunda — ki bunu bayt garanti eder, elle seçilmiş bir
-alfabe etmez — sözlük dışı sorunu yaşamaz ve eğitim gerektirmez. Peki neden herkes alt kelime kullanıyor?
+alfabe etmez — sözlük dışı sorunu yaşamaz ve eğitim gerektirmez. Peki neden
+herkes alt kelime kullanıyor?
 
-**Çünkü asıl kısıt dizi uzunluğudur.** Attention mekanizmasının maliyeti dizi
-uzunluğunun *karesiyle*, katmandaki her şey ise doğrusal büyür
-(@sec-transformerlar), dolayısıyla 5 kat uzun
-bir dizi, model genişliğine göre nerede durduğunuza bağlı olarak 5 ile 25 kat
-arasında pahalıya mal olur — ve eninde sonunda kazanan terim kareseldir. Alt
-kelimeler bir sıkıştırma şemasıdır:
-sözlük harcayıp kısa dizi satın alırlar. Tokenizer, sözlük büyüklüğü ile
-dizi uzunluğu arasındaki takası ayarlayan düğmedir ve BPE bu düğmeyi bir
-insanın tahminine göre değil verinin istatistiğine göre ayarlar.
+Yukarıdaki 1. Maddenin Türkçe metnini üç biçimde kesin ve sayın:
+
+```python
+import tiktoken
+
+enc = tiktoken.get_encoding("cl100k_base")
+units = {
+    "characters": list(tr),
+    "subword tokens": [enc.decode([t]) for t in enc.encode(tr)],
+    "words": tr.split(),
+}
+for name, seq in units.items():
+    n = len(seq)
+    print(f"{name:<15} {n:>3} units  {n * n:>6,} pairs  first six: {seq[:6]}")
+```
+
+```text
+characters      160 units  25,600 pairs  first six: ['B', 'ü', 't', 'ü', 'n', ' ']
+subword tokens   60 units   3,600 pairs  first six: ['B', 'üt', 'ün', ' insan', 'lar', ' h']
+words            21 units     441 pairs  first six: ['Bütün', 'insanlar', 'hür,', 'haysiyet', 've', 'haklar']
+```
+
+**İlk sebep dizi uzunluğu.** Attention her konumu diğer her konumla
+karşılaştırır (@sec-transformerlar); dolayısıyla $n$ birimlik bir dizi $n^2$
+karşılaştırmaya mal olur — çıktıdaki `pairs` sütunu. 160 karakter 25.600 çift
+eder; aynı metin 60 alt kelime token'ı olarak 3.600 çift eder. Dizi 2,7 kat
+kısaldı, karşılaştırmalar 7,1 kat azaldı. Transformer katmanının geri kalanı
+yalnızca doğrusal büyür; dolayısıyla bir diziyi 5 kat uzatmak, model
+genişliğine göre nerede durduğunuza bağlı olarak 5 ile 25 kat arasında pahalıya
+mal olur — ve eninde sonunda kazanan terim kareseldir.
+
+**İkinci sebep, bir birimin ne taşıdığı.** Her satırın ilk altı birimini okuyun.
+`ü` ve `t` cümle hakkında hiçbir şey söylemez; karakterle beslenen bir model,
+`insan` gibi parçaları kullanabilmek için ilk katmanlarını önce onları yeniden
+kurmaya harcar. Alt kelime satırı ise ` insan` ve `lar` parçalarını doğrudan
+verir.
+
+**Kelimeler daha da kısa, ama başka türlü çuvallar.** 21 birim ve 441 çift
+ideal görünür. Ta ki virgülüyle birlikte `hür,` girdisinin `hür`'den ayrı
+olduğunu ve her yeni ek birleşiminin yeni bir kelime sayıldığını fark edene
+kadar. Bir sonraki örnek, bunun sözlüğün görmediği bir kelimeye ne yaptığını
+gösteriyor.
+
+Alt kelimeler bir sıkıştırma şemasıdır: sözlük harcayıp kısa dizi satın alırlar.
+Tokenizer, sözlük büyüklüğü ile dizi uzunluğu arasındaki takası ayarlayan
+düğmedir ve BPE bu düğmeyi bir insanın tahminine göre değil verinin
+istatistiğine göre ayarlar.
 :::
+
+### Karakter, alt kelime, bütün kelime: tek bir örnek {#sec-metin-veri-birimler}
+
+Aşağıdaki tablo üç seçeneği kâğıt üzerinde karşılaştırıyor. Önce üçünü de küçük
+bir örnekte izleyin; böylece tablonun her satırı, gözünüzle gördüğünüz bir şeye
+karşılık gelsin.
+
+Derlem altmış Türkçe kelimeden oluşuyor: on iki kök, her biri aynı dört ekle ve
+ünlü uyumuna göre yazılmış (`-ler`/`-lar`, `-de`/`-da`). İki test kelimesi,
+`evlerden` ve `okullardan`, derlemde hiç geçmiyor; ama her parçaları geçiyor.
+Her tokenizer derlemden öğreniyor, sonra bu iki yeni kelimeyi bölüyor. BPE
+satırı @sec-metin-veri-bpe'deki `pair_counts`, `merge` ve `apply_merges`
+fonksiyonlarını yeniden kullanıyor:
+
+```python
+stems = {"ev": "e", "el": "e", "göl": "e", "köy": "e", "gün": "e", "yüz": "e",
+         "okul": "a", "yol": "a", "kol": "a", "yıl": "a", "kız": "a", "masa": "a"}
+corpus = {}
+for stem, v in stems.items():          # v: eklerin alacağı ünlü
+    for suffix, n in [("", 4), (f"l{v}r", 2), (f"d{v}", 4),
+                      (f"d{v}n", 4), (f"l{v}rd{v}", 4)]:
+        corpus[stem + suffix] = n      # ev, evler, evde, evden, evlerde, ...
+test = ["evlerden", "okullardan"]      # iki kelime de derlemde yok
+
+chars = sorted({c for word in corpus for c in word})
+words = {tuple(w) + ("</w>",): n for w, n in corpus.items()}
+merges = []
+while len(chars) + 1 + len(merges) < 60:   # sözlük 60 sembole ulaşınca dur
+    best, _ = pair_counts(words).most_common(1)[0]
+    merges.append(best)
+    words = merge(words, best)
+
+tokenizers = {
+    "whole words": (len(corpus), lambda w: [w if w in corpus else "<UNK>"]),
+    "characters": (len(chars), lambda w: list(w)),
+    "subwords (BPE)": (len(chars) + 1 + len(merges),
+                       lambda w: list(apply_merges(w, merges))),
+}
+for name, (size, split) in tokenizers.items():
+    pieces = [p for w in test for p in split(w)]
+    print(f"{name:<15} vocabulary {size:>2}   {len(pieces):>2} units: {' '.join(pieces)}")
+```
+
+```text
+whole words     vocabulary 60    2 units: <UNK> <UNK>
+characters      vocabulary 18   18 units: e v l e r d e n o k u l l a r d a n
+subwords (BPE)  vocabulary 60    6 units: ev ler den</w> okul lar dan</w>
+```
+
+Şimdi bu çıktıyı aşağıdaki tablonun satırlarıyla karşılaştırın:
+
+- **Sözlük büyüklüğü.** Bütün kelimeler, on iki kök ve dört ek için bile 60
+  girdi istiyor; gerçek Türkçe kökler dörtten çok daha fazla ek birleşimi alır.
+  Karakterlere 18 sembol yetiyor. BPE'nin sözlüğü 60'la sınırlandı: 18 harf,
+  kelime sonu işareti `</w>` ve öğrenilen 41 birleştirme.
+- **Sözlük dışı kelimeler.** Bütün kelime tokenizer'ı iki test kelimesini de
+  `<UNK>` yapıyor; model hiçbir şey almıyor. Diğer ikisi hiç `<UNK>` üretmiyor,
+  çünkü yeni kelimelerin her harfi alfabelerinde var.
+- **Dizi uzunluğu.** Aynı iki kelime karakter olarak 18, alt kelime olarak 6,
+  bütün kelime olarak 2 birim.
+- **Birim başına anlam.** `e`, `v` ve `l` tek başlarına hiçbir şey ifade
+  etmiyor. `ev`, `ler` (çoğul eki) ve `den` (ayrılma hâli eki) ise kelimenin tam
+  olarak anlamlı parçaları; `</w>` yalnızca kelimenin bittiği yeri işaretliyor.
+- **Biçimbilimsel açıdan zengin diller.** BPE, hiç görmediği kelimelerin kökünü
+  ve iki ekini yalnızca sayarak buldu.
+- **Eğitim gerektirir mi.** Yalnızca BPE satırı bir öğrenme döngüsü çalıştırdı.
+  Diğer ikisi gördüklerini listeledi, o kadar.
 
 Üç seçenek yan yana. Karşılaşacağınız her tokenizer bu eksenin bir yerinde
 durur ve bütün tasarım problemi şudur: iki uç, birbirinin tam tersi yönde
@@ -812,9 +918,227 @@ bölünmelerini öngörmenin yoludur.
 : Üç alt kelime algoritması ve her birinin gerçekte neyi büyüttüğü
 {tbl-colwidths="[16,40,24,20]"}
 
-Taşımaya değer iki sonuç. Birincisi, WordPiece'in oranı parçaları tek başlarına
-zaten sık olan çiftleri cezalandırıyor, dolayısıyla ham sıklığa göre daha çok
-biçimbirim benzeri birim koruyor. İkincisi, tek bir belirlenimci cevap yerine
+#### Aynı derlem, üç algoritma
+
+Tablo, her algoritmanın neyi büyüttüğünü söylüyor. @sec-metin-veri-birimler'deki
+altmış kelimelik derlemde, aynı iki görülmemiş kelimeyle ve aynı 60 girdilik
+sözlük bütçesiyle bunun ne anlama geldiğine bakalım. Kod, her birinin en küçük
+sürümü: tablodaki puanlama kuralıyla WordPiece ve parça olasılıklarını tam EM
+yerine her kelimenin tek en iyi bölünmesinden yeniden kestiren, sadeleştirilmiş
+bir Unigram LM.
+
+::: {.callout-note collapse="true"}
+## Kod: en küçük WordPiece ve Unigram LM
+
+```python
+import math
+
+def train_wordpiece(corpus, size):
+    words = {tuple([w[0]] + ["##" + c for c in w[1:]]): n for w, n in corpus.items()}
+    vocab = {s for symbols in words for s in symbols}
+    first = None
+    while len(vocab) < size:
+        pairs, single = Counter(), Counter()
+        for symbols, n in words.items():
+            for s in symbols:
+                single[s] += n
+            for a, b in zip(symbols, symbols[1:]):
+                pairs[(a, b)] += n
+        score = {p: c / (single[p[0]] * single[p[1]]) for p, c in pairs.items()}
+        best = max(score, key=lambda p: (score[p], p))
+        first = first or (pairs, score)
+        glued = best[0] + best[1].removeprefix("##")
+        new = {}
+        for symbols, n in words.items():
+            out, i = [], 0
+            while i < len(symbols):
+                if symbols[i:i + 2] == best:
+                    out.append(glued)
+                    i += 2
+                else:
+                    out.append(symbols[i])
+                    i += 1
+            new[tuple(out)] = n
+        words, vocab = new, vocab | {glued}
+    return vocab, first
+
+def wordpiece_split(word, vocab):          # açgözlü: önce bilinen en uzun parça
+    pieces, start = [], 0
+    while start < len(word):
+        for end in range(len(word), start, -1):
+            piece = word[start:end] if start == 0 else "##" + word[start:end]
+            if piece in vocab:
+                break
+        else:
+            return ["[UNK]"]
+        pieces.append(piece)
+        start = end
+    return pieces
+
+def best_split(word, logp):                # Viterbi: en olası bölünme
+    best = [(0.0, [])] + [(-math.inf, None)] * len(word)
+    for end in range(1, len(word) + 1):
+        for start in range(end):
+            piece = word[start:end]
+            if piece in logp and best[start][1] is not None:
+                score = best[start][0] + logp[piece]
+                if score > best[end][0]:
+                    best[end] = (score, best[start][1] + [piece])
+    return best[-1]
+
+def train_unigram(corpus, size):
+    counts = Counter()                     # büyük başla: her alt dizge
+    for w, n in corpus.items():
+        for i in range(len(w)):
+            for j in range(i + 1, len(w) + 1):
+                counts[w[i:j]] += n
+    start_size = len(counts)
+    logprobs = lambda c: {p: math.log(k / sum(c.values())) for p, k in c.items()}
+    loss = lambda lp: -sum(n * best_split(w, lp)[0] for w, n in corpus.items())
+    while len(counts) > size:
+        lp = logprobs(counts)
+        base = loss(lp)
+        cost = {p: loss({q: v for q, v in lp.items() if q != p}) - base
+                for p in counts if len(p) > 1}     # tek harfler her zaman kalır
+        k = max(1, min(len(counts) - size, len(cost) // 5))
+        for p in sorted(cost, key=lambda p: (cost[p], p))[:k]:
+            del counts[p]                  # en ucuza mal olan parçaları buda
+        lp = logprobs(counts)              # en iyi bölünmelerden yeniden kestir
+        counts = Counter({p: 0.001 for p in counts})
+        for w, n in corpus.items():
+            for piece in best_split(w, lp)[1]:
+                counts[piece] += n
+    return logprobs(counts), start_size
+```
+:::
+
+```python
+wp_vocab, (pairs, score) = train_wordpiece(corpus, 60)
+uni_logp, start_size = train_unigram(corpus, 60)
+
+print("first step, the same starting pairs:")
+print("  highest count (BPE):      ",
+      [(a + b.removeprefix("##"), c) for (a, b), c in pairs.most_common(3)])
+print("  highest score (WordPiece):",
+      [(a + b.removeprefix("##"), round(s, 3))
+       for (a, b), s in sorted(score.items(), key=lambda x: -x[1])[:3]])
+print(f"  Unigram LM starts from {start_size} substrings and prunes to {len(uni_logp)}")
+print()
+for w in test:
+    print(f"{w:<11} BPE       : {' | '.join(apply_merges(w, merges))}")
+    print(f"{'':<11} WordPiece : {' | '.join(wordpiece_split(w, wp_vocab))}")
+    print(f"{'':<11} Unigram LM: {' | '.join(best_split(w, uni_logp)[1])}")
+```
+
+```text
+first step, the same starting pairs:
+  highest count (BPE):       [('##de', 72), ('##da', 72), ('##rd', 48)]
+  highest score (WordPiece): [('ok', 0.056), ('##ku', 0.056), ('ev', 0.028)]
+  Unigram LM starts from 322 substrings and prunes to 60
+
+evlerden    BPE       : ev | ler | den</w>
+            WordPiece : ev | ##l | ##e | ##r | ##d | ##e | ##n
+            Unigram LM: evlerde | n
+okullardan  BPE       : okul | lar | dan</w>
+            WordPiece : okullar | ##d | ##a | ##n
+            Unigram LM: okullarda | n
+```
+
+**BPE** en *sık* çifti birleştirir. `d` + `e` derlemde 72 kez geçiyor; BPE'nin
+sözlüğü de bu yüzden birçok kelimenin paylaştığı parçalarla doluyor — `de`,
+`ler`, `den`, `lar`, `dan` — ve görülmemiş kelimeler tam eklerinden bölünüyor.
+
+**WordPiece** aynı çiftlerle başlar, ama her sayımı iki parçanın toplamda kaç
+kez geçtiğine böler: $\frac{c(ab)}{c(a)\,c(b)}$. `d` + `e` yerine 0,056 ile
+`o` + `k` kazanıyor. Sık olduğu için değil, iki sembol hiç ayrı geçmediği için:
+kelime başındaki `o` ve onu izleyen `##k` yalnızca `okul`'da var. Bu kural
+birbirine yapışık duran harfleri ödüllendiriyor; WordPiece de bütçesini kökleri
+soldan büyütmeye harcıyor — `ok`, `oku`, `okul`, `okull`, `okullar` — ve
+`##den` gibi bir ek parçası hiç kurmuyor. `##`, bir kelimenin devamı olan
+parçayı işaretler. WordPiece yeni bir kelimeyi bölerken birleştirmeleri tekrar
+oynatmaz: soldan bildiği en uzun parçayı, ardından ondan sonraki en uzun
+parçayı alır. `okullardan` için bu parça `okullar`; ondan sonra geriye yalnızca
+harfler kalıyor.
+
+**Unigram LM** ters yönde çalışır. Derlemin bütün alt dizgelerinden — 322 aday —
+başlar ve 60 parça kalana kadar en ucuza gözden çıkarabileceği parçaları, yani
+kaldırılınca derlemin olasılığını en az düşürenleri silmeye devam eder. Bu kadar
+küçük bir derlemde `evlerde` gibi sık geçen bütün biçimleri tutmak, derlemi
+olası kılmanın en ucuz yolu; bu yüzden `evlerden`, `evlerde` + `n` oluyor. Üçü
+arasında her bölünmeye bir olasılık veren ve en olası olanı seçen de yalnızca
+o:
+
+```python
+def every_split(word, logp, prefix=()):
+    if not word:
+        yield sum(logp[p] for p in prefix), list(prefix)
+    for end in range(1, len(word) + 1):
+        if word[:end] in logp:
+            yield from every_split(word[end:], logp, prefix + (word[:end],))
+
+splits = sorted(every_split("evlerden", uni_logp), reverse=True)
+print(f"{len(splits)} ways to split 'evlerden' with this vocabulary:")
+for logp, pieces in splits:
+    print(f"  p = {math.exp(logp):.1e}   {' | '.join(pieces)}")
+```
+
+```text
+4 ways to split 'evlerden' with this vocabulary:
+  p = 2.1e-03   evlerde | n
+  p = 1.2e-14   evler | d | e | n
+  p = 1.3e-22   ev | l | e | r | d | e | n
+  p = 1.1e-31   e | v | l | e | r | d | e | n
+```
+
+Bir bölünmenin olasılığı, parçalarının olasılıklarının çarpımıdır; her fazladan
+parça, birden küçük bir sayıyı daha çarpıma katar. İki parçalı bölünmenin sekiz
+harflik bölünmeyi 28 büyüklük mertebesiyle geçmesinin nedeni bu. Unigram LM'in
+eğitim sırasında daha az olası bir bölünmeyi *örnekleyebilmesinin*, yani
+aşağıda anlatılan alt kelime düzenlileştirmesinin nedeni de bu.
+
+::: {.callout-note collapse="true"}
+## En küçük Unigram LM'i SentencePiece ile karşılaştırmak
+
+Yukarıdaki en küçük sürüm kütüphanenin kendisi değil. Aynı derlemde, aynı 60
+parçalık bütçeyle eğitilmiş `sentencepiece` 0.2.2:
+
+```python
+import sentencepiece as spm
+
+lines = [w for w, n in corpus.items() for _ in range(n)]
+with open("corpus.txt", "w", encoding="utf-8") as f:
+    f.write("\n".join(lines) + "\n")
+
+spm.SentencePieceTrainer.train(
+    input="corpus.txt", model_prefix="uni", model_type="unigram", vocab_size=60,
+    character_coverage=1.0, hard_vocab_limit=False, minloglevel=2,
+    bos_id=-1, eos_id=-1, pad_id=-1)
+uni = spm.SentencePieceProcessor(model_file="uni.model")
+for w in test:
+    print(f"{w:<11} {' | '.join(uni.encode(w, out_type=str))}")
+```
+
+```text
+evlerden    ▁evlerde | n
+okullardan  ▁okul | l | a | r | d | a | n
+```
+
+`evlerden` aynı biçimde bölünüyor: `evlerde` + `n`; kütüphane kelime başına `▁`
+ekliyor. `okullardan` ise öyle bölünmüyor: kütüphane `okul`'u tutmuş ama
+`okullarda`'yı tutmamış ve geri kalanı harf harf yazıyor. Kural aynı; budama ve
+kestirim ayrıntıları farklı.
+:::
+
+Altmış kelimelik bir derlem bütün bunları abartır. Kurallar gerçek kurallar, ama
+bu kadar az metinde her birleştirmeye birkaç sayım karar veriyor ve 60 girdilik
+bir sözlük bütün kelimeleri tutabiliyor. Kütüphaneler WordPiece eğitimini de
+farklı biçimlerde uyguluyor; tablodaki oran bu kuralın yaygın bir yeniden
+kurgusu. Üçünün milyonlarca kelimelik gerçek derlemlerde nasıl karşılaştırıldığı
+için bu oyuncağa değil, bu alt bölümün sonundaki yayımlanmış ölçüme güvenin.
+
+Taşımaya değer iki sonuç. Birincisi, WordPiece'in oranı parçaları tek
+başlarına zaten sık olan çiftleri cezalandırıyor — yukarıda ekleri değil kökleri
+önce kurmasının nedeni bu. İkincisi, tek bir belirlenimci cevap yerine
 her bölünmeye bir *olasılık* atayan tek algoritma Unigram LM; alt kelime
 düzenlileştirmesini mümkün kılan da bu: her epoch'ta farklı bir bölünme
 örnekleyin, model tek bir keyfî bölünmeye aşırı uyum sağlamayı bıraksın
