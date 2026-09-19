@@ -16,7 +16,7 @@ attention gezginleri ve konum kodlaması gösterimleri tamamen etkileşimlidir.
 - konum bilgisinin modele neden açıkça verilmesi gerektiğini açıklamak; absolute, learned, RoPE ve ALiBi'yi karşılaştırmak;
 - attention maskesinin neden BERT ile GPT arasındaki fark olduğunu açıklamak;
 - bir modelin parametre sayısını ve KV cache boyutunu şeklinden kestirmek, hangisinin sizi sınırladığını söylemek;
-- uzun bağlamları karşılanabilir kılan teknikleri saymak — KV cache, GQA/MQA, FlashAttention;
+- uzun bağlamların maliyetini karşılanabilir kılan teknikleri saymak — KV cache, GQA/MQA, FlashAttention;
 - bir mixture-of-experts modelinin toplam parametrelerini aktif olanlardan ayırmak ve donanım faturanızı hangisinin belirlediğini söylemek;
 - scaling laws'ın (ölçekleme yasaları) neyi öngördüğünü ve bu öngörünün nerede bittiğini ifade etmek.
 
@@ -26,15 +26,15 @@ attention gezginleri ve konum kodlaması gösterimleri tamamen etkileşimlidir.
 tekrarlayan (recurrent) modellerimizde bir darboğaz vardı: modelin cümle
 hakkında bildiği her şey, adım adım, sabit boyutlu bir durumdan sıkıştırılarak
 geçmek zorundaydı. Bu mecazi değil, birebir böyleydi — bir
-sequence-to-sequence çevirmen, hedef dilde tek bir kelime bile üretmeden önce
+sequence-to-sequence çeviri modeli, hedef dilde tek bir kelime bile üretmeden önce
 tüm kaynak cümleyi tek bir vektöre kodluyordu [@sutskever2014sequence]. Uzun
 menzilli ilişkiler — bir zamir ile işaret ettiği isim, bir fiil ile uzaktaki
 öznesi — sürekli kayboluyordu ve cümle uzadıkça çeviri kötüleşiyordu.
 
-Attention tam da bunu yamamak için icat edildi. @bahdanau2015neural,
-decoder'ın encoder'ın *bütün* durumlarına geri bakmasına ve her çıktı adımında
-hangilerinin önemli olduğunu öğrenmesine izin verdi; uzunluğa bağlı çöküş de
-ortadan kalktı. Tarihe dikkat edin: yıl 2015 ve altta hâlâ tekrarlayan bir ağ
+Attention tam da bu sorunu yamamak için icat edildi. @bahdanau2015neural,
+decoder'ın, encoder'ın *bütün* durumlarına geri bakmasına ve her çıktı
+adımında hangilerinin önemli olduğunu öğrenmesine izin verdi; cümle uzadıkça
+görülen sert kötüleşme de ortadan kalktı. Tarihe dikkat edin: yıl 2015 ve altta hâlâ tekrarlayan bir ağ
 var.
 
 Transformer'ın iki yıl sonraki katkısı [@vaswani2017attention], işi asıl
@@ -45,20 +45,20 @@ Hayatınızda bir kez ağırlıklı ortalama hesapladıysanız, çekirdek sezgi 
 sizde demektir. Attention, token vektörlerinin bir ağırlıklı ortalamasıdır;
 farkı, *ağırlıkların kendisinin veriden kestirilmesidir*.
 
-Her token'ın vektörü üç ayrı yöne izdüşürülür: bir **query** (sorgu — "ben ne
+Her token'ın vektörü üç ayrı izdüşümden geçirilir: bir **query** (sorgu — "ben ne
 arıyorum?"), bir **key** (anahtar — "ben ne içeriyorum?") ve bir **value**
 (değer — "seçilirsem ne aktarırım?"). $i$ token'ı ile $j$ token'ı arasındaki
-skor, $q_i \cdot k_j$ iç çarpımıdır; ölçeklenir ve bir softmax'tan geçirilir ki
-her satır bir olasılık dağılımına dönüşsün:
+skor, $q_i \cdot k_j$ iç çarpımıdır. Bu skor ölçeklenir ve her satırın bir
+olasılık dağılımına dönüşmesi için bir softmax'tan geçirilir:
 
 $$
 \operatorname{Attention}(Q, K, V) = \operatorname{softmax}\!\left(\frac{QK^{\top}}{\sqrt{d_k}}\right) V
 $$
 
 Softmax'tan çıkan o satır, ağırlıklı ortalamadaki ağırlıklar kümesinin ta
-kendisidir. İstatistikçi diline çevirisi: model, her token için tüm cümle
-üzerinde küçük ve veriye bağlı bir regresyon çalıştırır ve *şu anda hangi
-token'ların bilgi taşıdığına* karar verir.
+kendisidir. İstatistikçinin diliyle söylersek: model, her token için tüm
+cümle üzerinde küçük ve veriye bağlı bir regresyon çalıştırır ve *şu anda
+hangi diğer token'ların bilgi taşıdığına* karar verir.
 
 ### Modelin bütününün şekli
 
@@ -166,13 +166,14 @@ kitapta bir modelin uzaktaki iki kelimeyi "bağlaması" hakkında söylenen her
 
 Yukarıdaki denkleme yöneltilebilecek haklı bir itiraz var. Attention'ın
 bilmesi gereken şey hangi token'ların ilişkili olduğuysa, $Q$, $K$ ve $V$'yi
-kurmaya niye zahmet edelim? Token vektörlerini doğrudan $x_i \cdot x_j$ diye
-karşılaştırıp üç matris çarpımından kurtulmak varken?
+kurmaya niye zahmet edelim? Token vektörlerini doğrudan $x_i \cdot x_j$ iç
+çarpımıyla karşılaştırıp üç matris çarpımından kurtulmak varken?
 
-Bu itirazı ciddiye almaya değer, çünkü tasarımı apaçık hale getiren şey, onu
-gerçekten denemektir. Aşağıdaki çözümlü örnekteki dört boyutlu embedding'leri
-kullanalım — `kedi` = `[0.9, 0.1, 0.0, 0.5]`, `sütü` = `[0.1, 0.9, 0.0, 0.5]`,
-`içti` = `[0.0, 0.1, 0.9, 0.5]`. Ham iç çarpımlar şöyle çıkar:
+Bu itirazı ciddiye almaya değer, çünkü bu alternatifi gerçekten denediğinizde
+tasarımın mantığı apaçık ortaya çıkar. Aşağıdaki çözümlü örnekteki dört
+boyutlu embedding'leri kullanalım — `kedi` = `[0.9, 0.1, 0.0, 0.5]`,
+`sütü` = `[0.1, 0.9, 0.0, 0.5]`, `içti` = `[0.0, 0.1, 0.9, 0.5]`. Ham iç
+çarpımlar şöyle çıkar:
 
 $$
 XX^{\top} = \begin{array}{r|rrr}
@@ -183,16 +184,17 @@ XX^{\top} = \begin{array}{r|rrr}
 \end{array}
 $$
 
-Bu örnekte iki sınırlama görünür hâle gelir ve her biri tek başına onu batırmaya yeter.
+Bu örnekte iki sınırlama ortaya çıkıyor ve her biri, bu yaklaşımı tek başına geçersiz kılmaya yeter.
 
 **Benzerlik simetriktir.** Zorunlu olarak $x_i \cdot x_j = x_j \cdot x_i$'dir.
 Yani "fiil nesnesini arıyor" ile "nesne fiilini arıyor" *aynı skoru* almaya
-mahkûmdur. Bunun neyi zorunlu kıldığı konusunda kesin olalım: attention
-*ağırlıkları* yine de farklı olabilir, çünkü softmax her satırı kendi
+mahkûmdur. Bunun neyi zorunlu kılıp neyi kılmadığı konusunda kesin olalım:
+attention *ağırlıkları* yine de farklı olabilir, çünkü softmax her satırı kendi
 paydasıyla normalleştirir; genel olarak $\alpha_{ij} \neq \alpha_{ji}$'dir.
 Kaybolan şey skor tablosunun kendisi üzerindeki denetimdir: hiçbir head,
-fiil-nesnesini-arıyor ilişkisine nesne-fiilini-arıyordan *daha yüksek bir skor*
-veremez, çünkü ikisi aynı girdidir. Satır normalizasyonu ağırlıkları yine de
+fiil-nesnesini-arıyor ilişkisine nesne-fiilini-arıyor ilişkisinden *daha
+yüksek bir skor* veremez, çünkü ikisi tablodaki aynı girdidir. Satır
+normalizasyonu ağırlıkları yine de
 ayırır — $d_k = 1$ ve $Q = K = [1, 2]^{\top}$ ile köşegen dışı iki ağırlık
 0,731 ve 0,119 çıkar — yani yönlü attention ortadan kalkmaz. Ortadan kalkan
 şey onu *seçme* özgürlüğü: head yalnızca simetrik bir tabloyu satır satır
@@ -204,23 +206,23 @@ izdüşümlerden geçer.
 skoru $x \cdot x$, yani uzunluğunun karesidir ve burada bu değer her satırdaki
 en büyük girdidir. Matrisi bir softmax'tan geçirin: `içti`, **en büyük**
 ağırlığı olan 0,4235'i kendisine verir, `kedi`ye ise yalnızca 0,2825 ayırır.
-Fiil hiçbir şeye uzanmaz. Katman, pahalı bir hesapla *her token'ı kendi haline
-bırakmanın* yaklaşık bir kopyasını üretir.
+Fiil hiçbir şeye uzanmaz. Katman pahalı bir hesap yapar, ama sonuç *her
+token'ı kendi haline bırakmaktan* pek farklı değildir.
 
 ::: {.column-margin}
 Kesin konuşmak gerekirse $x_i \cdot x_i \ge x_i \cdot x_j$ ilişkisi,
 $\|x_j\| \le \|x_i\|$ olduğunda Cauchy–Schwarz gereği *garantidir*. Tersi
-geçerli değil: $x_i = (1,0)$ ve $x_j = (0,2)$ ile komşu daha uzundur ama köşegen
+geçerli değil: $x_i = (1;\ 0)$ ve $x_j = (0;\ 2)$ ile komşu daha uzundur ama köşegen
 yine 1'e 0 kazanır — yani daha uzun bir komşu sizi geçebilir, geçmek zorunda
 değildir. Üç
 oyuncak vektörümüzün hepsinde $\|x\|^2 = 1{,}07$, dolayısıyla burada köşegen
 açık ara kazanıyor. Genel iddia daha zayıf ama yine de zarar verici:
 izdüşümsüz bir skor, iki token ilişkili olsun olmasın, kendine benzerliği
-kuruluş gereği şişirir.
+yapısı gereği şişirir.
 :::
 
-Şimdi aynı cümleyi izdüşümler yerine konmuş haliyle görelim; birazdan
-kuracağınız head tam olarak budur. İki sütun da softmax satırıdır ve her biri
+Şimdi aynı cümleye izdüşümleri geri ekleyelim; birazdan kuracağınız head de
+tam olarak bu. İki sütun da softmax satırıdır ve her biri
 kendi genişliğinin kareköküyle ölçeklenmiştir — solda $\sqrt{4}$, sağda
 $\sqrt{2}$ — böylece karşılaştırılabilirler:
 
@@ -248,13 +250,13 @@ Tasarımın kendisi bu iş bölümüdür. [$Q$ ile $K$ birlikte bilginin **nerey
 aktığına karar verir; **neyin** aktığına ise tek başına $V$ karar
 verir]{.hl}. Bunları ayrı tutmak, bir token'ın bir şeyi ilan edip başka bir
 şeyi teslim etmesine izin verir — ve birbirine hiç benzemeyen iki token'ın yine
-de güçlü bir bağla bağlanmasını sağlar; bir fiil ile öznesinin ihtiyacı olan
+de güçlü biçimde bağlanabilmesini sağlar; bir fiil ile öznesinin ihtiyacı olan
 şey tam da budur.
 
 #### İki matris mi, bir matris mi? {.unnumbered}
 
-Bu argümanın neyi kanıtladığı konusunda dikkatli olun. Skoru açık açık yazın,
-izdüşümler birbirinin içinde erisin:
+Bu argümanın neyi kanıtladığı konusunda dikkatli olun. Skoru açıkça
+yazdığınızda iki izdüşüm tek bir çarpımda birleşir:
 
 $$
 q_i \cdot k_j \;=\; (x_i W^Q)(x_j W^K)^{\top} \;=\; x_i\,\underbrace{W^Q
@@ -271,7 +273,7 @@ da istediğiniz anda iki matris zorunlu hale gelir]{.hl}. Üç somut gerekçe:
   $W^Q, W^K$ çifti $2 \times 4096 \times 128 = 1{.}048{.}576$ sayıya mal
   olurken, tam bir $M$ $4096^2 = 16{.}777{.}216$ sayı tutar — **16 kat fazla**.
   Oran, katmanın tamamı için de aynıdır, çünkü her head'e bir $M$ gerekirdi:
-  $32$ head, çarpanlara ayrılmış halde $2d^2 = 33,5$M, ayrılmamış halde
+  $32$ head, çarpanlara ayrılmış halde $2d^2 = 33{,}5$M, ayrılmamış halde
   $32d^2 = 537$M eder. Çarpanlara ayırma kasıtlı bir düşük rank kısıtıdır: $M$,
   rankı $\le d_k$ olmaya zorlanır ve bu bir kayıp değil, bir özelliktir.
 - **Aritmetik.** $Q$ ve $K$ üzerinden skorlama $O(n^2 d_k)$ tutar. $M$
@@ -280,17 +282,17 @@ da istediğiniz anda iki matris zorunlu hale gelir]{.hl}. Üç somut gerekçe:
 - **Cache genişliği.** Tasarımı asıl belirleyen gerekçe budur. $M$ ile de
   cache'leyebilirsiniz — $x_i^{\top} M x_j = (M^{\top} x_i) \cdot x_j$ olduğu
   için doğrudan $x_j$'yi saklarsınız — ama sakladığınız şey tam $d$
-  genişliğinde takılı kalır. Çarpanlara ayırma, key'leri kendilerine ait $d_k$
+  genişliğinde kalmak zorundadır. Çarpanlara ayırma, key'leri kendilerine ait $d_k$
   genişliğinde bir uzaya taşır ve oraya yerleştikleri anda *o uzayı
   küçültebilirsiniz*: tek bir key head'ini birçok query head'i arasında
-  paylaştırmak, cache'i katman başına token başına $4096$ sayıdan $1024$'e
-  indirir. Bu numaranın adı GQA'dır, konusunu @sec-attention-maliyeti ele alır
-  ve ayrı bir $W^K$ olmadan ifade edilmesi bile mümkün değildir.
+  paylaştırmak, cache'i her katmanda token başına $4096$ sayıdan $1024$'e
+  indirir. Bu numaranın adı GQA'dır; @sec-attention-maliyeti bu konuyu ele
+  alır. Ayrı bir $W^K$ olmadan bu numarayı ifade etmek bile mümkün değildir.
 
 Aynı belirlenemezlik value yolunda da geçerlidir: bir head'in çıktısı residual
 akışa $x W^V W^O_{\text{head}}$ olarak girer; bu da yalnızca birlikte görünen
-iki matrisin bir başka çarpımıdır. Çarpanlara ayırma, rank ve maliyet üzerine
-alınmış mühendislik kararıdır ve aynı gerekçelerle iki kez alınmıştır.
+iki matrisin bir başka çarpımıdır. Çarpanlara ayırma, rank ve maliyetle
+ilgili bir mühendislik kararıdır; bu karar aynı gerekçelerle iki kez alınmıştır.
 
 Ortaya çıkan mekanizma, zaten bildiğiniz bir şeyin *yumuşak* bir sürümüdür:
 
@@ -382,24 +384,24 @@ Ortaya çıkan mekanizma, zaten bildiğiniz bir şeyin *yumuşak* bir sürümüd
 
 ::: {.fig-cap}
 Attention, türevlenebilir bir dictionary'dir. Sağdaki ağırlıklar,
-Kurulan head'ten (@sec-attention-ornek) `içti` için çıkan gerçek
+kuracağımız head'in (@sec-attention-ornek) `içti` için ürettiği gerçek
 ağırlıklardır.
 :::
 ::::
 
-Son cümle kendi paragrafını hak ediyor, çünkü softmax'ın neden orada
-durduğunu — neden daha basit bir normalizasyon olmadığını — açıklıyor. Sert
+Bu son nokta ayrıca üzerinde durmayı hak ediyor, çünkü daha basit bir
+normalizasyon yerine neden softmax kullanıldığını açıklıyor. Sert
 bir arama, yani en iyi eşleşen tek anahtarı almak, bir basamak fonksiyonudur;
 basamak fonksiyonlarının gradyanı ise neredeyse her yerde sıfırdır, dolayısıyla
-yukarı akıştaki hiçbir şey öğrenemezdi. [Softmax, bu şeyi eğitebilmenin
-bedelidir]{.hl}: "en iyi eşleşmeyi seç" davranışını ruhen korur, ama her skora
+yukarı akıştaki hiçbir şey öğrenemezdi. [Softmax, modeli eğitebilmenin
+bedelidir]{.hl}: "en iyi eşleşmeyi seç" davranışını özünde korur, ama her skora
 göre kullanılabilir bir türev bırakır.
 
 ### Keşif: bir head neye bakıyor?
 
 Farklı attention head'leri farklı ve çoğu zaman yorumlanabilir alışkanlıklar
 öğrenir. Aşağıdaki widget, tek bir cümle için öğretici amaçla hazırlanmış şematik bir attention matrisi gösteriyor. Her **satır** bakan token'dır; her **sütun** bakılan
-token'dır; koyu renk daha çok ağırlık demektir. Head'leri değiştirin ve
+token'dır; koyu renk daha çok ağırlık demektir. Head'ler arasında geçiş yapın ve
 örüntünün nasıl değiştiğini izleyin — özellikle `it` satırını.
 
 ::: {.anlp-widget}
@@ -477,7 +479,7 @@ Plot.plot({
 ```
 
 ::: {.callout-tip appearance="simple" icon="false"}
-Zamir head'indeki belirsizlik gerçektir ve klasik *Winograd* kurulumudur. Şu
+Zamir head'indeki belirsizlik gerçektir ve klasik *Winograd* kurgusudur. Şu
 iki cümle arasında yalnızca tek bir kelime değişir, ama `it`'in gönderimi bir
 isimden diğerine kayar:
 
@@ -487,16 +489,17 @@ isimden diğerine kayar:
   **robottur**.
 
 Bunlardan ilki bir meyil, kesinlik değil — robot da hazır olabilir; yukarıdaki
-head'in 0,46/0,34 bölmesinin, karar vermek yerine meyletmesinin sebebi de bu.
-Şemanın kanonik hâli bu payı ortadan kaldırır: *the trophy does not fit in the
-suitcase because it is too big* (kupa) ile *too small* (valiz)
-[@levesque2012winograd]. Her iki durumda da nokta aynı: sözdiziminde çifti
+head'in kesin karar vermek yerine ağırlığı 0,46/0,34 şeklinde bölmesi de bu
+yüzden. Şemanın kanonik hâli bu belirsizlik payını ortadan kaldırır: *the
+trophy does not fit in the suitcase because it is too big* (kupa) ile *too
+small* (valiz)
+[@levesque2012winograd]. Her iki durumda da mesele aynı: sözdiziminde çifti
 ayıran hiçbir şey yok, dilbilgisi birebir aynı. Zamiri çözmek dünya bilgisi
-gerektirir ve büyük ölçekli ön eğitimin satın aldığı şey tam olarak budur.
+gerektirir ve büyük ölçekli ön eğitimin kazandırdığı şey de tam olarak budur.
 :::
 :::
 
-**Neye bakacağız.** Önce attention; ilan edilmek yerine türetilerek, sonra bir kez, kurşun kalemle kontrol edilebilecek kadar küçük sayılar üzerinde elle çalıştırılarak. Sonra içinde durduğu blok ve tek bir head'in neden hiçbir zaman yetmediği. Sonra denklemin dışarıda bıraktığı ve her gerçek modelin eklemek zorunda olduğu üç şey: konum, hangi token'ın hangisini görebileceğine dair bir seçim ve onu çalıştırmayı karşılayıp karşılayamayacağınıza karar veren aritmetik.
+**Neye bakacağız.** Önce attention; ilan edilmek yerine türetilerek, sonra bir kez, kurşun kalemle kontrol edilebilecek kadar küçük sayılar üzerinde elle çalıştırılarak. Sonra içinde durduğu blok ve tek bir head'in neden hiçbir zaman yetmediği. Sonra denklemin dışarıda bıraktığı ve her gerçek modelin eklemek zorunda olduğu üç şey: konum, hangi token'ın hangisini görebileceğine dair bir seçim ve modeli çalıştırmanın maliyetini kaldırıp kaldıramayacağınızı belirleyen aritmetik.
 
 ## Tek katman, üç token, bütün sayılar {#sec-attention-ornek}
 
@@ -532,8 +535,8 @@ her zaman bir cevabı olsun:
 
 Dördüncü boyut üç token'da da aynı. Başına ne geldiğini izleyin: hiç
 değişmediği için bir token'ın kendisini ayırt eden herhangi bir şeyi *ilan
-etmesine* yardım edemez ve aşağıdaki bütün karşılaştırmalardan düşer. Gözünüzü
-ondan ayırmayın — bölümün sonunda geri dönüp "sabit bir öznitelik hiçbir işe
+etmesine* yardım edemez ve aşağıdaki bütün karşılaştırmalarda sadeleşip gider.
+Gözünüzü ondan ayırmayın — bu örneğin sonunda geri dönüp "sabit bir öznitelik hiçbir işe
 yaramaz" iddiasının gerçekten doğru olup olmadığını soracağız.
 
 ### 1. adım — her token'ı üç yöne izdüşür
@@ -546,8 +549,8 @@ $$
 Q = XW^Q, \qquad K = XW^K, \qquad V = XW^V
 $$
 
-Üç matris üç farklı soruyu kodlar. $W^Q$ *ne arıyorum*'u, $W^K$ *neyi ilan
-ediyorum*'u ve $W^V$ *seçilirsem ne teslim ederim*'i kurar:
+Üç matris üç farklı soruyu kodlar. $W^Q$ *ne arıyorum*, $W^K$ *neyi ilan
+ediyorum*, $W^V$ ise *seçilirsem ne teslim ederim* sorusunun cevabını kurar:
 
 $$
 W^Q=\begin{bmatrix}2&0\\0&2\\2&2\\0&0\end{bmatrix}\;
@@ -556,7 +559,7 @@ W^V=\begin{bmatrix}1&0\\0&1\\0&0\\0{,}2&0{,}2\end{bmatrix}
 $$
 
 $W^Q$'yu satır satır okuyun. *Eylem* satırı `[2, 2]`; yani fiil benzeri her şey,
-hem bir özne **hem de** bir nesne arayan bir query yayımlar. $W^K$'da ise
+hem bir özne **hem de** bir nesne arayan bir query üretir. $W^K$'da ise
 *eylem* satırı `[0, 0]`: fiil bunların hiçbirini ilan etmez, dolayısıyla hiçbir
 şey ona bakmak istemeyecektir. Çarpımları yapınca:
 
@@ -566,7 +569,7 @@ hem bir özne **hem de** bir nesne arayan bir query yayımlar. $W^K$'da ise
 | `sütü` | `[0.20, 1.80]` | `[0.15, 1.35]` | `[0.20, 1.00]` |
 | `içti` | `[1.80, 2.00]` | `[0.00, 0.15]` | `[0.10, 0.20]` |
 
-İki satırda durup düşünmeye değer. Her iki koordinatta da *aynı anda* büyük
+İki satırda durup düşünmeye değer. *Her iki* koordinatta da büyük
 olan tek query `içti`ye ait — aynı anda iki şeyin peşinde. Bir de `içti`nin
 value'su `[0.10, 0.20]`, yani neredeyse hiç: fiilin kendine ait ne özne
 içeriği var ne de nesne içeriği. Bunu aklınızda tutun; işin can alıcı noktası
@@ -611,8 +614,9 @@ $$
 \end{array}
 $$
 
-Bu adım titiz bir muhasebe ayrıntısı gibi görünür, ama değildir. Rastgele iki
-$d_k$ boyutlu vektörün iç çarpımının standart sapması $\sqrt{d_k}$ gibi büyür;
+Bu adım kılı kırk yaran bir hesap ayrıntısı gibi görünür, ama değildir.
+Rastgele iki $d_k$ boyutlu vektörün iç çarpımının standart sapması
+$\sqrt{d_k}$ ile orantılı büyür;
 yani bölme olmadan head'ler genişledikçe skorlar sistematik olarak büyür — ve
 softmax *mutlak* büyüklüğe tepki verir. 20.000 rastgele çift üzerinde ölçtük:
 
@@ -625,12 +629,12 @@ softmax *mutlak* büyüklüğe tepki verir. 20.000 rastgele çift üzerinde öl�
 
 Ortadaki iki sütun yaklaşık %1 hassasiyetle uyuşuyor — $d_k = 8$'de %1,10,
 daha geniş head'lerde %0,6'nın altında. Kalan fark, 20.000
-çiftlik bir kestirimin örnekleme gürültüsü, sistematik bir açık değil. Bütün
-mesele de bu: ham skorların ölçülen yayılımı gerçekten $\sqrt{d_k}$ gibi
-büyüyor, dolayısıyla $\sqrt{d_k}$'ya bölmek onu gerçekten bir sabite
-düzleştiriyor; son sütun bunu 256 katlık bir genişlik aralığında doğruluyor.
-Sonucu, bir token 64 token'la yarıştığında görüyoruz — aşağıda *kazanan*
-key'in aldığı ortalama ağırlık var:
+çiftlik bir kestirimin örnekleme gürültüsü, sistematik bir sapma değil. Bütün
+mesele de bu: ham skorların ölçülen yayılımı gerçekten $\sqrt{d_k}$ ile orantılı
+büyüyor, dolayısıyla $\sqrt{d_k}$'ya bölmek onu gerçekten sabit bir değere
+indiriyor; son sütun bunu 256 katlık bir genişlik aralığında doğruluyor.
+Bunun sonucu, bir token 64 başka token'la yarıştığında ortaya çıkıyor —
+aşağıda *kazanan* key'in aldığı ortalama ağırlık var:
 
 | $d_k$ | $1/\sqrt{d_k}$ ile | onsuz |
 |--:|--:|--:|
@@ -645,7 +649,7 @@ veriyor — üstelik daha hiçbir şey öğrenmemişken. Bu, doyuma ulaşmış b
 softmax'tır ve doymuş bir softmax'ın gradyanı neredeyse yoktur; yani head'e
 nereye bakması gerektiği artık *öğretilemez*. Ölçekleme varken yarışma, head
 ne kadar geniş olursa olsun aşağı yukarı aynı sıcaklıkta kalır. Ölçeklenmiş
-sütun kıpırdamıyor bile: 0,104 · 0,105 · 0,108 · 0,107.
+sütun neredeyse hiç kıpırdamıyor: 0,104 · 0,105 · 0,108 · 0,107.
 :::
 
 ### 4. adım — softmax skorları ağırlığa çevirir
@@ -676,11 +680,12 @@ A = \operatorname{softmax}\!\left(\frac{QK^{\top}}{\sqrt{d_k}}\right)
 \end{array}
 $$
 
-Her satırın toplamı 1,000. İki içerik kelimesi attention'ının yaklaşık
-%70'ini kendisine harcıyor; bir isim için makul olan da bu — çünkü ihtiyaç
-duyduğu bilginin kendisi zaten o. Fiil ise başka bir şey yapıyor: %42 / %50
-olarak öznesi ile nesnesi arasında bölüşüyor ve kendisine yalnızca %7,6
-ayırıyor. Daha tek bir işlem yapmadan önce yaptığımız kestirim tuttu.
+Her satırın toplamı 1,000. İki içerik kelimesinin her biri,
+attention'ının yaklaşık %70'ini kendisine harcıyor; bir isim için makul olan
+da bu — çünkü ihtiyaç duyduğu bilginin kendisi zaten o. Fiil ise başka bir şey
+yapıyor: attention'ını %42 / %50 oranında öznesi ile nesnesi arasında
+bölüştürüyor ve kendisine yalnızca %7,6 ayırıyor. Daha hiçbir hesap yapmadan
+ortaya koyduğumuz tahmin tuttu.
 
 ### 5. adım — ağırlıklı ortalama
 
@@ -699,19 +704,19 @@ $$
 
 Son satıra bakın, çünkü bütün mekanizmanın var olma sebebi o. `içti` elinde
 `[0.10, 0.20]` ile geldi — neredeyse hiç özne içeriği, neredeyse hiç nesne
-içeriği yok. Elinde `[0.5308, 0.6009]` ile ayrılıyor. [Fiil, o kelimelerin
-hangileri olduğunu kimse söylemeden her iki argümanını da toplamış
+içeriği yok. Elinde `[0.5308, 0.6009]` ile ayrılıyor. [Fiil, argümanlarının
+hangi kelimeler olduğunu kimse ona söylemeden ikisini de toplamış
 oldu]{.hl}; sadece sordu ve key'leri eşleşen iki token cevap verdi. Bir
 sonraki katman 3. konuma baktığında gördüğü şey bu yeni vektördür.
 
-İki isim daha az hareket etti ve beklediğiniz yönde: `kedi`, `[1.00, 0.20]`
-konumundan `[0.74, 0.34]` konumuna geçti; kendi kimliğinin çoğunu korurken
+İki isim daha az hareket etti, üstelik beklediğiniz yönde: `kedi`,
+`[1.00, 0.20]` değerinden `[0.74, 0.34]` değerine geçti; kendi kimliğinin çoğunu korurken
 artık ilişkilendirildiği nesneden biraz aldı.
 
 ::: {.callout-tip appearance="simple" icon="false"}
 Yukarıdaki her adım ya bir matris çarpımı ya da bir softmax. Konumlar üzerinde
-bir döngü yok, tekrarlama yok ve sırayla olması gereken hiçbir şey yok — bunun
-tekrarlayan modellerin (@sec-dil-modelleri) yerini almasının sebebi
+bir döngü yok, tekrarlama yok ve sırayla olması gereken hiçbir şey yok — attention'ın
+tekrarlayan modellerin (@sec-dil-modelleri) yerini almasının sebebi de
 tam olarak budur. Dokuz skorun hepsi aynı anda hesaplanabilir; hem de aynı anda
 çok sayıda şey hesaplamakta çok iyi olan bir donanım üzerinde.
 :::
@@ -894,8 +899,8 @@ Denemeniz gereken iki şey var. **Nedensel maskeyi** açın ve matrisin sağ üs
 köşesinin sıfıra gidişini izleyin — `kedi` artık yalnızca kendisini görebilir;
 bir modelin metni soldan sağa üretebilmesini sağlayan kısıt da budur
 (@sec-model-aileleri). **√dₖ'ya böl** anahtarını kapatın ve bütün ağırlıkların
-uç değerlere kayışını izleyin; $d_k=2$'de etki hafiftir, zaten sorunun geniş
-head'ler kurulana kadar fark edilmemesinin sebebi tam olarak budur.
+uç değerlere kayışını izleyin; $d_k=2$'de etki hafiftir; sorunun geniş
+head'ler kurulana kadar fark edilmemesinin sebebi de tam olarak budur.
 :::
 :::
 
@@ -974,7 +979,7 @@ hakkında tek bir fikri var — *bana bir özne ve bir nesne bul* — ve bu fikr
 anlamlı olsun olmasın her token'a uyguluyor. Yalnızca bunu yapabilen bir model
 çok dar bir alet olurdu.
 
-Çözüm utandıracak kadar basit: aynı girdi üzerinde, her biri kendi $W^Q$,
+Çözüm şaşırtıcı derecede basit: aynı girdi üzerinde, her biri kendi $W^Q$,
 $W^K$, $W^V$'sine sahip birkaç head'i yan yana çalıştırın ve uzmanlaşmalarına
 izin verin.
 
@@ -1023,8 +1028,9 @@ kelimeden iki farklı ilişki okuyorlar.
 yayımlanan çözümlemeler, tanınabilir işleri olan head'ler buluyor — bir önceki
 token'a, eşleşen paranteze, bir öbeğin sözdizimsel başına bakanlar
 [@clark2019bert] — ama head'lerin çoğu tek cümlelik hiçbir tarife sığmıyor,
-birçoğu gereksiz tekrar ve büyük bir kısmı çok az kayıpla budanabiliyor
-[@michel2019sixteen]. "2. head fiili buluyor" ifadesini, eğitilmiş head'lerin
+birçoğu birbirini gereksiz yere tekrarlıyor ve büyük bir kısmı çok az
+kayıpla budanabiliyor [@michel2019sixteen]. "2. head fiili buluyor"
+ifadesini, eğitilmiş head'lerin
 ne yaptığına dair bir iddia olarak değil, *bu* elle kurulmuş örneğin tarifi
 olarak alın.
 :::
@@ -1096,9 +1102,9 @@ $$
 ```
 
 ::: {.fig-cap}
-`kedi sütü içti` üzerinde iki head. Gösterilen satırlar, aşağıda hesaplanan,
-her head'in `içti` için gerçek attention ağırlıkları — aynı token, aynı anda
-iki farklı biçimde okunuyor.
+`kedi sütü içti` üzerinde iki head. Gösterilen satırlar, her head'in `içti`
+için aşağıda hesaplanan gerçek attention ağırlıklarıdır — aynı token, aynı
+anda iki farklı biçimde okunuyor.
 :::
 ::::
 
@@ -1136,11 +1142,11 @@ $d_{\text{model}}/h$ genişliğinde $h$ head'in toplam parametre sayısı ve
 aynıdır: $W^Q$, $W^K$, $W^V$ izdüşümleri her iki durumda da $3d^2$, $W^O$ buna
 $d^2$ ekler ve skorlama, $h$ ne olursa olsun
 $h \cdot n^2 \cdot (d/h) = n^2 d$ tutar. Head'lere bölmek, birbirinden bağımsız
-birkaç attention örüntüsünü neredeyse bedavaya satın alır; tasarımın tutmasının
-sebebi de budur.
+birkaç attention örüntüsünü neredeyse hiç ek maliyet olmadan sağlar;
+tasarımın tutmasının sebebi de budur.
 
-Yine de iki maliyet kalemi kıpırdar ve bunlar bu bölümün ilerisinde önem
-kazanacak:
+Yine de iki maliyet kalemi değişir ve bunlar bölümün ilerleyen kısımlarında
+önem kazanacak:
 
 - **Skor tensörü büyür.** Tek head $n^2$ skor saklar; $h$ head $h \cdot n^2$
   saklar. $n = 1024$, $h = 32$ için bu, 1,05M yerine 33,5M girdi demek —
@@ -1151,9 +1157,9 @@ kazanacak:
   head başına 4096 yerine 128 demektir. Sınırın nerede bittiğine dikkat: satır
   satır softmax bu sınırı korumaz. $d_k = 1$ ve $Q = K = [1, 2]^{\top}$ ile
   $QK^{\top}$'ın rankı 1'dir, softmax'tan geçmiş matrisin determinantı ise
-  0,1497, yani rankı 2. Dolayısıyla takas ettiğiniz şey yüksek ranklı tek bir
-  *skor* ilişkisine karşılık düşük ranklı 32 ilişki — genellikle iyi bir takas,
-  ama her hâlükârda bir takas.
+  0,1497, yani rankı 2. Dolayısıyla yaptığınız takas, yüksek ranklı tek bir
+  *skor* ilişkisini düşük ranklı 32 ilişkiyle değiştirmektir — genellikle iyi
+  bir takas, ama her hâlükârda bir takas.
 :::
 
 ### Kazanç, sayılarla
@@ -1171,15 +1177,17 @@ katmanı ona cümlenin geri kalanından öğrendiklerini geri veriyor:
 ["Bağlamsal embedding" dediğimiz şey, aritmetik olarak ifade edilmiş
 haliyle budur.]{.hl} `içti` fiili katmana yalnızca bir eylem olduğunu bilerek
 girdi; *kim* içti ve *ne* içildi bilgisinin sayısal izlerini taşıyarak
-çıkıyor. Durağan vektörlerle (@sec-gommeler) — orada `içti`nin
-sonsuza dek tek bir vektörü vardır — bir transformer arasındaki fark budur;
-transformer'da o vektör her katmanda komşularından yeniden kurulur.
+çıkıyor. Durağan vektörlerle bir transformer arasındaki fark
+budur: durağan vektörlerde (@sec-gommeler) `içti`nin sonsuza dek tek bir
+vektörü vardır; transformer'da ise bu vektör her katmanda komşularından
+yeniden kurulur.
 
-`sabit` sütunu her satırda tam olarak sıfır kazandı — bu, alt satırı o boyuta
-hiçbir şey geri göndermeyen elimizdeki $W^O$'nun bir yan ürünü.
+`sabit` sütunu her satırda tam olarak sıfır kazandı — bu, elimizdeki
+$W^O$'nun bir yan ürünü; bu matrisin alt satırı o boyuta tesadüfen hiçbir şey
+geri göndermiyor.
 
 Şimdi sabit boyuta söz verdiğimiz dönüşü yapalım, çünkü onunla ilgili derli
-toplu hikâye ancak üçte iki oranında doğru. Skoru, sabit $c$'nin katkıda
+toplu hikâyenin yalnızca üçte ikisi doğru. Skoru, sabit $c$'nin katkıda
 bulunduğu parçalara ayıralım; her token'ı $x_i = [z_i, c]$ diye yazıyoruz:
 
 $$
@@ -1194,7 +1202,7 @@ Softmax, bir satırın tamamına aynı sayıyı eklemeye karşı değişmezdir;
 dolayısıyla ikinci ve dördüncü terimler gerçekten yok olur. Üç sonuç çıkıyor
 ve bunlardan yalnızca ilk ikisi tahmin edebileceğiniz türden:
 
-- **Key tarafında işe yaramaz.** Sabit bir şey ilan edemez. $b$ ne olursa
+- **Key tarafında işe yaramaz.** Bir sabit hiçbir şey ilan edemez. $b$ ne olursa
   olsun katkısı bütün $j$'ler için aynıdır ve sadeleşir.
 - **Value tarafında bir sabit terimdir.** Bizim $W^V$'miz ona 0,2 ağırlık
   veriyor, yani her value vektörünün iki bileşenine de sabit bir $+0{,}1$
@@ -1204,12 +1212,12 @@ ve bunlardan yalnızca ilk ikisi tahmin edebileceğiniz türden:
   key'ler üzerinde sabit bir tercihtir — öğrenilmiş küresel bir önsel. Bizim
   örneğimizde yok olmasının tek sebebi, bu $W^Q$'nun o öznitelik için sıfır bir
   satıra sahip olması; o satırı $[0{,}9, -0{,}7]$ yaparsanız attention
-  ağırlıkları **0,1592** kadar oynar.
+  ağırlıkları **0,1592**'ye kadar oynar.
 
 [Sabit bir öznitelik hiçbir soruyu cevaplayamaz, ama bir soru sorabilir.]{.hl}
-Üçüncü terim bir merak konusu değildir: bir modelin *attention sink*
+Üçüncü terim ilginç bir ayrıntıdan ibaret değildir: bir modelin *attention sink*
 kurmasının yolu esasen budur — yani bakacak belirli bir şeyi olmadığında her
-token'ın artan ağırlığını boşalttığı bir konum.
+token'ın arta kalan ağırlığını boşalttığı bir konum.
 
 ### Residual bağlantılar: değiştirmek değil, eklemek
 
@@ -1226,14 +1234,15 @@ ima ettiğinden çok daha fazla iş yapar. Her alt katman, ilerleyen bir vektör
 vektör dizisine sıklıkla **residual akış** denir: her katmanın okuyup yazdığı
 ortak bir çalışma alanı. Katkı sunacak faydalı bir şeyi olmayan bir katman
 sıfıra yakın bir çıktı verip akışı olduğu gibi bırakabilir; yani bir
-transformer'a katman eklemek sıfırdan değil, "zarar verme" noktasından başlar.
+transformer'a katman eklemek sıfırdan değil, "zarar vermeme" noktasından başlar.
 
 ::: {#gloss-residual-connection .column-margin .term-gloss}
 **residual connection** (artık bağlantı) — bir alt katmanın girdisini çıktısına ekleyen kestirme; böylece katman tamamen yeni bir temsil yerine yalnızca bir düzeltme öğrenmek zorunda kalır. [↩](#term-residual-connection){.term-back}
 :::
 
-Gradyana da yardım eder. $x + f(x)$'in $x$'e göre türevi $1 + f'(x)$ verir:
-$f'$ ne kadar küçülürse küçülsün, loss'tan daha önceki her katmana geri giden
+Gradyana da yardım eder. $x + f(x)$'in $x$'e göre türevini alırsak
+$1 + f'(x)$ elde ederiz: $f'$ ne kadar küçülürse küçülsün, loss'tan daha önceki
+her katmana geri giden
 ve türevi tam olarak 1 olan bir yol vardır.
 
 ::: {.column-margin}
@@ -1242,8 +1251,9 @@ tanıtılır. @he2016deep, çözdükleri şeyin bu *olmadığını* açıkça s�
 Ağlarında zaten batch normalisation vardı, yani gradyanların sağlıklı olduğu
 doğrulanmıştı. Adını koydukları sorun **bozulma** idi: 56 katmanlı düz bir ağ,
 *eğitim* hatasında 20 katmanlı olandan daha kötü skor alıyordu. Daha sığ ağı
-taklit etmeyi öğrenemiyordu, çünkü bir katman yığınına identity mapping'i (özdeşlik dönüşümü: girdiyi değiştirmeden çıkışa aktarma) hesaplatmak zordur — residual yol ise o özdeşlik dönüşümünü ona bedavaya verir. Daha
-iyi gradyan akışı gerçek bir yan etkidir, tedavi edilen hastalık değil.
+taklit etmeyi öğrenemiyordu, çünkü bir katman yığınına identity mapping'i (özdeşlik dönüşümü: girdiyi değiştirmeden çıkışa aktarma) hesaplatmak zordur — residual yol ise bu özdeşlik dönüşümünü hazır olarak sunar. Daha
+iyi gradyan akışı gerçek bir yan etkidir, ama yöntemi ortaya çıkaran sorun bu
+değildi.
 :::
 
 ### Layer normalisation ve neden öne alındığı
@@ -1268,8 +1278,8 @@ $$
 
 Bunu bloğun gerçek sırasında uygulayın. Bir pre-norm blokta *feed-forward* alt
 katmanından önceki normalizasyon $x + \operatorname{Attn}(\cdot)$'yi görür; yani
-[alt katmanın çıktısını değil, residual toplamı normalize edin]{.hl}. Önce bir
-önceki bölümdeki toplamayı yapalım:
+[alt katmanın çıktısını değil, residual toplamı normalize edin]{.hl}. İlk olarak bir
+önceki kısımdaki toplamayı yapalım:
 
 ::: {.column-margin}
 Bir basitleştirmeyi açıkça söyleyelim. Gerçek bir pre-norm blok, attention'dan
@@ -1300,19 +1310,20 @@ edin: [normalizasyondan sonra bir öznitelik yalnızca *o token'ın kendi diğer
 kazandı, ama daha da fazla sıvı ve eylem içeriği kazandı; bu yüzden canlı
 değeri negatif çıkıyor. Mutlak büyüklükler gitti; ayakta kalan yalnızca profil.
 
-Diğer örneklerden bu bağımsızlık, neden batch norm değil de layer norm
-kullandığımızı açıklıyor. Batch normalisation istatistikleri batch boyunca
-hesaplar; bu, diziler farklı uzunluklarda olduğunda bozulur, eğitimi batch'in
-bileşimine bağımlı kılar ve çıkarım için, eğitim boyunca güncellenen istatistiklerin saklanmasını gerektirir. Layer norm'un ihtiyacı tek bir token'ın kendi sayılarıdır, başka
-hiçbir şey değil; bu yüzden batch boyu 512'de de 1'de de birebir aynı
-davranır.
+Layer norm'u batch norm'a tercih etmemizin sebebi, onun diğer örneklerden bu
+şekilde bağımsız olmasıdır. Batch normalisation istatistikleri batch boyunca
+hesaplar. Bu yaklaşım diziler farklı uzunlukta olduğunda işlemez, eğitimi
+batch'in bileşimine bağımlı kılar ve çıkarım için eğitim boyunca güncellenen
+istatistiklerin saklanmasını gerektirir. Layer norm'un ihtiyaç duyduğu tek şey
+bir token'ın kendi sayılarıdır; bu yüzden batch boyutu ister 512 ister 1
+olsun, birebir aynı davranır.
 
 **Nereye konduğu önemlidir.** Özgün Transformer, normalizasyonu residual
 toplamadan *sonra* koyuyordu: $\operatorname{LN}(x + f(x))$ — post-norm.
 GPT-2'den beri standart, onu alt katmandan *önce* koymaktır:
 $x + f(\operatorname{LN}(x))$ — pre-norm. Fark şu: pre-norm, residual yolu
 tamamen temiz bırakır; girdi embedding'inden son katmana kadar üzerinde hiçbir
-şey oturmayan, kesintisiz bir birim bağlantı vardır. Post-norm ise akışı her
+işlem bulunmayan, kesintisiz bir birim bağlantı vardır. Post-norm ise akışı her
 blokta yeniden ölçekler, dolayısıyla birim yol artık birim değildir ve derin
 post-norm modeller eğitilebilmek için bir öğrenme oranı ısınmasına ihtiyaç
 duyar [@xiong2020layernorm]. Aşağıdaki her şey pre-norm'dur.
@@ -1323,11 +1334,12 @@ ağırlıklı model — Llama, Mistral, Qwen, Gemma — **RMSNorm** kullanıyor
 
 $$\operatorname{RMSNorm}(x) = \frac{x}{\sqrt{\tfrac{1}{d}\sum_j x_j^2 + \epsilon}} \odot \gamma$$
 
-İki şey gitti: ortalama çıkarma ve $\beta$ kaydırması. İddia — kuramdan değil
-ablasyondan geliyor — yeniden merkezlemenin zaten işe yarayan kısım olmadığı,
-yalnızca yeniden ölçeklemenin olduğu. Yaklaşık %15 daha az aritmetiğe ve yarı
-parametreye mal oluyor; bir Llama yapılandırma dosyasında `layer_norm_eps` değil
-`rms_norm_eps` alanı bulunmasının nedeni de bu. Normalizasyonun *nereye*
+İki şey gitti: ortalama çıkarma ve $\beta$ kaydırması. Kuramla değil
+ablasyon deneyleriyle desteklenen iddia şu: işe yarayan kısım hiçbir zaman
+yeniden merkezleme değildi, yalnızca yeniden ölçeklemeydi. RMSNorm yaklaşık %15
+daha az aritmetik işlem ve yarı sayıda parametre gerektiriyor; bir Llama
+yapılandırma dosyasında `layer_norm_eps` değil `rms_norm_eps` alanı
+bulunmasının nedeni de bu. Normalizasyonun *nereye*
 konduğuna dair yukarıda söylenen her şey aynen geçerli; yalnızca kutunun
 içindeki işlev sadeleşiyor.
 
@@ -1336,7 +1348,7 @@ içindeki işlev sadeleşiyor.
 de* sonra normalize eden **sandwich norm** kullanıyor:
 $x + \operatorname{N}_2(f(\operatorname{N}_1(x)))$. OLMo 2 ise tersine gidip
 girdi norm'unu atıyor ve yalnızca bir çıkış norm'u tutuyor:
-$x + \operatorname{N}(f(x))$. Her ikisi de ölçekte eğitim kararlılığı için
+$x + \operatorname{N}(f(x))$. Her ikisi de büyük ölçekli eğitimde kararlılık için
 benimsendi — ve her ikisinde de normalizasyon hâlâ *daldadır*, yani birim yol
 kesintisiz kalır. Kimsenin vazgeçmediği özellik budur. Belirli bir
 checkpoint'in pre-norm olduğunu varsaymadan önce yapılandırmasına bakın.
@@ -1345,13 +1357,19 @@ checkpoint'in pre-norm olduğunu varsaymadan önce yapılandırmasına bakın.
 ### Feed-forward alt katmanı
 
 Attention, bilgiyi token'lar *arasında* taşır ve yapabildiği şey aşağı yukarı
-bundan ibarettir. Nedenini net söyleyelim. Attention, $x$'in doğrusal bir
-fonksiyonu değildir — bir karesel formun softmax'ı fazlasıyla doğrusal
-değildir. Ama ağırlıklar *verildiğinde* çıktı, value vektörlerinin dışbükey bir bileşimidir: yalnızca kendisine verilen value'ların dışbükey örtüsünün (convex hull) içinde
+bundan ibarettir.
+
+Nedenini net söyleyelim. Sık duyulan *"attention doğrusaldır"* açıklaması yanlıştır. Attention, $x$'in doğrusal bir
+fonksiyonu değildir — bir karesel formun softmax'ı hiç de doğrusal
+değildir.
+
+Asıl sınır başka yerde. Ağırlıklar *verildiğinde* ise çıktı, value vektörlerinin dışbükey bir bileşimidir: yalnızca kendisine verilen value'ların dışbükey örtüsünün (convex hull) içinde
 kalan noktalar üretebilir. Yeniden ağırlıklandırıp harmanlayabilir; girdilerinin
-hiçbirinde bulunmayan yeni bir özniteliği hesaplayamaz. Birilerinin bir
-vektörün *içeriğine* etki eden bir doğrusal olmayanlık sağlaması ve birilerinin
-her token'a az önce aldığını tek başına işleme fırsatı vermesi gerekir.
+hiçbirinde bulunmayan yeni bir özniteliği hesaplayamaz.
+
+Dolayısıyla bir
+yerde, vektörün *içeriğine* etki eden bir doğrusal olmayanlık olmalı; bir yerde
+de her token'a az önce aldığını kendi başına işleme fırsatı verilmeli.
 
 İkinci alt katman işte budur — her konuma ayrı ayrı ve birebir aynı şekilde
 uygulanan iki katmanlı bir MLP:
@@ -1362,7 +1380,7 @@ $$
 \qquad W_2 \in \mathbb{R}^{d_{\text{ff}} \times d}
 $$
 
-$\sigma$ doğrusal olmayan işlev ve hangisi olduğu iki kez değişti.
+$\sigma$ doğrusal olmayan işlevdir; hangi işlevin kullanıldığı iki kez değişti.
 @vaswani2017attention ReLU kullanıyordu: $\max(0, z)$. GPT ve BERT **GELU**'ya
 geçti [@hendrycks2016gelu]: $z\,\Phi(z)$ — bir girdiyi, standart normalin onun
 altında kalma olasılığıyla ağırlıklandıran yumuşak bir ReLU; böylece küçük
@@ -1376,8 +1394,9 @@ $$
 $$
 
 Bir dal *ne kadar* geçireceğine, diğeri *neyi* geçireceğine karar veriyor —
-aşağıdaki tablodaki üçüncü matris buradan geliyor ve $d_{\text{ff}}$ oranları
-4'ten küçükken parametre sayılarının daha büyük olmasının nedeni de bu. İlerideki çözümlü örnek ReLU kullanıyor, çünkü bir tablodan okuyabileceğiniz bir eşiğin
+aşağıdaki tablodaki üçüncü matris buradan geliyor. Tablodaki SwiGLU
+modellerinin $d_{\text{ff}}$ oranları 4'ten küçük olduğu halde parametre
+sayılarının daha büyük olmasının nedeni de bu. İlerideki çözümlü örnek ReLU kullanıyor, çünkü bir tablodan okuyabileceğiniz bir eşiğin
 ateşlendiğini izlemek, yumuşak bir eğriyi izlemekten kolay.
 
 [*Ayrı ayrı ve birebir aynı şekilde* ifadesi bütün yükü taşıyor: `kedi`nin FFN
@@ -1388,8 +1407,8 @@ var — karışma yalnızca bir attention örüntüsünden gelmiş olabilir.
 
 #### Neden $d_{\text{ff}} = 4d$? {.unnumbered}
 
-Kısa cevap: @vaswani2017attention 4'ü seçti, işe yaradı ve on yıllık modeller
-onu korudu. Bir türetme yok. Ama bu şekli anlamlı kılan bir okuma var: FFN, bir
+Kısa cevap: @vaswani2017attention 4'ü seçti, işe yaradı ve sonraki on yılın modelleri
+de onu korudu. Bir türetme yok. Ama bu şekli anlamlı kılan bir okuma var: FFN, bir
 **key–value bellek** gibi davranır [@geva2021transformer]. $W_1$'in $d_{\text{ff}}$ sütununun her biri — aşağıda basılan $W_1^{\top}$'nin satırları — bir örüntü dedektörüdür ve $W_2$'nin
 eşleşen satırı, o dedektör ateşlendiğinde residual akışa yazılan şeydir. Bu
 okumaya göre $d_{\text{ff}}$ basitçe *bu katmanın kaç şey bilebileceğidir* ve
@@ -1401,7 +1420,7 @@ ihtiyacınız var.
 pazarlığa açık olduğu ortaya çıkıyor. Modern modeller tek $W_1$'i **kapılı**
 bir birimle — SwiGLU ile — değiştiriyor; bu birim iki yerine *üç* matris
 kullanıyor, dolayısıyla alt katman $2\,d\,d_{\text{ff}}$ yerine
-$3\,d\,d_{\text{ff}}$ tutuyor. Peki alan bununla ne yaptı?
+$3\,d\,d_{\text{ff}}$ tutuyor. Peki araştırmacılar bununla ne yaptı?
 
 | model | $d$ | $d_{\text{ff}}$ | oran | FFN parametreleri |
 |:--|--:|--:|--:|--:|
@@ -1413,8 +1432,8 @@ $3\,d\,d_{\text{ff}}$ tutuyor. Peki alan bununla ne yaptı?
 
 Llama 2, $\tfrac{8}{3}d \approx 2{,}67d$ seçti; bu, üçüncü matrise rağmen
 parametre sayısını $8d^2$'de tutan genişliğin ta kendisi. Llama 3 ve Mistral
-ise bu disiplini bırakıp doğrudan %31 daha fazla harcadı. [Yani ne 4 bir
-yasadır ne de $8d^2$.]{.hl} Ayakta kalan şey *şekildir* — $d$'yi epeyce aşacak
+ise bu disiplini bırakıp düpedüz %31 daha fazla parametre harcadı. [Yani ne 4 bir
+yasadır ne de $8d^2$.]{.hl} Değişmeden kalan iki şey var: *şekil* — $d$'yi epeyce aşacak
 kadar genişlet, bir doğrusal olmayanlık uygula, geri daralt — ve bir modelin
 parametrelerinin çoğunun bu alt katmana gittiği gerçeği. Herhangi bir sabiti,
 birinin türettiği bir sonuç değil, birinin ayarladığı bir hiperparametre olarak
@@ -1423,7 +1442,8 @@ görün.
 #### Ateşlemeyi izlemek {.unnumbered}
 
 $d_{\text{ff}} = 8$ alalım ($d=4$ olan gerçek bir model 16 kullanırdı; bu,
-sayfaya sığsın diye küçültüldü) ve $W_1$'in sütunlarını elle kuralım ki her nöron tanınabilir bir dedektör olsun; sabit terim de onun ateşleme eşiği olsun.
+sayfaya sığsın diye küçültüldü) ve $W_1$'in sütunlarını, her nöron tanınabilir bir dedektör olacak şekilde elle
+belirleyelim; sabit terim de nöronun ateşleme eşiği olsun.
 Dört girdi boyutunu *canlı, sıvı, eylem, sabit* sırasıyla okuyoruz:
 
 $$
@@ -1436,8 +1456,8 @@ b_1=\begin{bmatrix}-0{,}9\\-0{,}9\\-0{,}9\\-0{,}5\\-0{,}5\\-0{,}5\\-0{,}5\\-0{,}
 $$
 
 Her satır bir soru, her sabit terim ise nöronun cevap vermeden önce ne kadar
-ikna olması gerektiğidir. Ona bir önceki bölümün normalize edilmiş vektörlerini
-verelim:
+ikna olması gerektiğidir. Bu katmana bir önceki kısmın normalize edilmiş
+vektörlerini verelim:
 
 | dedektör | $W_1$'deki sütunu ne soruyor | `kedi` | `sütü` | `içti` |
 |:--|:--|--:|--:|--:|
@@ -1453,16 +1473,24 @@ verelim:
 Sütunları okuyun. `kedi`, *canlı + eylem* dedektörünü ateşliyor — attention'dan
 sonra artık sadece canlı bir şey değil, bir fiile bağlı canlı bir şey. `içti`
 ise nesnesini soğurduğu için *sıvı + eylem*'i ateşliyor. ReLU, eşiğin altındaki
-her şeyi sıfırlar; doğrusal bir katmanın bir anahtarlar kümesine dönüşme şekli
-budur. Hangi satırların ilginç işi yaptığına dikkat edin. Tek öznitelikli üç
+her şeyi sıfırlar; doğrusal bir katman bir dizi açma-kapama anahtarına işte
+böyle dönüşür.
+
+Hangi satırların ilginç işi yaptığına dikkat edin. Bu işi satırların hepsi yapmıyor. Tek öznitelikli üç
 dedektör ham embedding'lerde de ateşlenirdi — size attention'ın zaten
-bilmediği hiçbir şey söylemiyorlar. İlginç olanlar bileşik dedektörlerdir,
+bilmediği hiçbir şey söylemiyorlar.
+
+İlginç olanlar bileşik dedektörlerdir,
 özellikle de iki isim için: attention çalışmadan önce `kedi` ile `sütü`nün
 eylem içeriği tam olarak 0,0'dı, yani hiçbir şey "canlı **ve** bir fiile bağlı"
-sorusunu cevaplayamazdı. (`içti`, kuralı doğrulayan istisnadır — kendine ait
+sorusunu cevaplayamazdı. Çünkü sorunun yarısı henüz ortada yoktu.
+
+(`içti` ise kaideyi bozmayan istisnadır — kendine ait
 biraz sıvı içeriğiyle başlamıştı, dolayısıyla *sıvı + eylem* dedektörü zaten
-zayıfça ateşlenirdi; attention onu 0,1'den 0,9176'ya çıkardı.) [FFN, bir alt
-katman önce attention'ın yarattığı öznitelikleri okuyor; iki alt katmanın
+zayıfça ateşlenirdi; attention onu 0,1'den 0,9176'ya çıkardı.)
+
+Katmanın asıl amacı şu: [FFN, attention'ın bir
+alt katman önce yarattığı öznitelikleri okuyor; iki alt katmanın
 dönüşümlü olmasının bütün sebebi de bu.]{.hl}
 
 İki dürüst gözlem. Birincisi, `içti`, *canlı + eylem* dedektörünü 0,066 farkla
@@ -1507,8 +1535,8 @@ için ateşlenmedi, dolayısıyla satırlarında ne olduğunun burada bir önemi
 olmadı. ReLU altında böyle tam sıfırlar istisna değil normal durumdur. Bunu
 genellemeden önce iki çekince: güncel modellerin çoğunun kullandığı GELU ve SiLU, ReLU'nun aksine negatif girdilerin tamamını sıfırlamaz, yani "kapalı" ifadesi "çok az katkı
 veriyor"a dönüşür; ve her iki durumda da yoğun katman bütün satırları yine de
-hesaplar. @sec-moe'nin konusu tam olarak bu ikinci nokta — aritmetiği atlamak,
-yalnızca sonucunda az şey kalması değil.
+hesaplar. @sec-moe'nin konusu tam olarak bu ikinci nokta — aritmetiği tamamen
+atlamak; hesabı yapıp karşılığında az şey almakla yetinmek değil.
 
 ### Bloğun tamamı
 
@@ -1599,7 +1627,7 @@ gerekçesi ya yukarıda ya aşağıda tartışılıyor.
 | $\div\sqrt{d_k}$ | skor yayılımı $\sqrt{d_k}$ gibi büyür ve softmax mutlak büyüklüğe tepki verir | geniş head'ler softmax'ı doyurur ve gradyan ölür |
 | softmax | ağırlıklar pozitif olmalı, toplamı 1 etmeli ve türevlenebilmelidir | sert bir "en iyi eşleşme"nin gradyanı sıfırdır; yukarı akışta hiçbir şey öğrenemez |
 | birden çok head | tek bir ağırlıklı ortalama tam olarak tek bir ilişkiyi izleyebilir | katman, konum başına birkaç değil yalnızca bir ilişki ifade eder |
-| $W^O$ | head çıktıları ayrı alt uzaylarda yaşar ve akışa geri girmelidir | head'lerin bulduklarını birleştirmenin ya da yönlendirmenin yolu kalmaz |
+| $W^O$ | head çıktıları ayrı alt uzaylarda bulunur ve akışa geri girmelidir | head'lerin bulduklarını birleştirmenin ya da yönlendirmenin yolu kalmaz |
 | residual toplama | bir katman hiçbir şey yapmayabilmelidir; bu seçenek olmadan derin yığınlar bozulur | derinlik eklemek önce fayda etmeyi bırakır, sonra doğrudan zarar verir |
 | layer norm (pratikte RMSNorm) | akışın büyüklüğü derinlikle artar; softmax ve ReLU ölçeğe duyarlıdır | aktivasyonlar kayar ve eğitim kararsızlaşır |
 | normalizasyonun *pre*-norm konumu | post-norm akışı yeniden ölçekler, dolayısıyla birim yol birim değildir | derin modeller eğitilebilmek için öğrenme oranı ısınmasına muhtaç olur |
@@ -1609,7 +1637,7 @@ gerekçesi ya yukarıda ya aşağıda tartışılıyor.
 Ortadaki sütunu tek başına okuyun; elinizde bütün mimarinin tasarım gerekçesi
 olur. [Bunların her biri somut bir kusura yamadır, estetik bir tercih
 değil]{.hl} — 2017'den beri çevresindeki neredeyse her şey değişirken bu
-şeklin yerinden kıpırdamamasının sebebi de budur.
+şeklin pek az değişmesinin sebebi de budur.
 
 ### Temsilin değişimini izleyin
 
@@ -1711,14 +1739,14 @@ html`<p style="margin:0.4rem 0 0;font-size:0.85rem;">${blkNow.note}</p>`
 :::
 
 1\. aşama ile 4. aşamayı karşılaştırın. Her token bloktan, boyutu aynı kalan ama normu büyüyen bir vektörle ayrılıyor — normlar 1,03'ten kabaca 2,2–2,7'ye çıkıyor — ve
-daha önemlisi, sahip olmadığı bir içerikle. `kedi` bloğa *canlı* olarak girdi,
-*bir eyleme bağlı canlı* olarak çıkıyor. Bu tek bir blok. On iki tane üst üste
-koyun; her biri, kendinden önceki on birin çıkardığı sonuca koşullanma imkânı
-bulsun.
+daha önemlisi, önceden sahip olmadığı bir içerikle. `kedi` bloğa *canlı* olarak girdi,
+*bir eyleme bağlı canlı* olarak çıkıyor. Bu tek bir blok. On iki tanesini üst üste
+koyun; her biri, kendinden önceki on bir bloğun vardığı sonuçlara
+koşullanabilir.
 
 ### Parametreler gerçekte nerede duruyor
 
-Bloğun şekli sabit olduğu için boyu bir formüldür. $d_{\text{ff}} = 4d$ ile:
+Bloğun şekli sabit olduğu için büyüklüğü bir formülle hesaplanır. $d_{\text{ff}} = 4d$ ile:
 
 | parça | matrisler | parametre |
 |:--|:--|--:|
@@ -1742,17 +1770,17 @@ olduğu bloklar kuruyor.
 
 *Blok* deyin, *model* değil. Oran bir bloğun içinde geçerlidir; modelin
 tamamında embedding'ler onu seyreltir ve ne kadar seyrelteceği boyuta bağlıdır.
-Aşağıdaki GPT-2 small'da 12 blok parametrelerin ancak %68'i, yani
-feed-forward'ın *model* içindeki payı yaklaşık %46. $d = 8192$'de
-embedding'ler bir yuvarlama hatasına dönüşür ve model oranı yeniden üçte ikiye
-yakınsar. Küçük modeller ağırlıkla sözlüktür; büyük modeller ağırlıkla
-feed-forward.
+Aşağıdaki GPT-2 small'da 12 blok, parametrelerin yalnızca %68'ini
+oluşturuyor; dolayısıyla feed-forward'ın *model* içindeki payı yaklaşık %46.
+$d = 8192$'de embedding'ler bir yuvarlama hatasına dönüşür ve model oranı yeniden üçte ikiye
+yakınsar. Küçük modellerin büyük kısmı sözlükten oluşur; büyük modellerinki ise
+feed-forward'dan.
 
 Üstelik üçte iki *alt sınırdır*. Bu, $4d^2$ attention'a karşı $8d^2$
-feed-forward olan GPT-2 şeklini varsayıyor. Bir Llama-3 bloğu SwiGLU
+feed-forward olan GPT-2 şeklini varsayıyor. Bir Llama-3 bloğu ise bu şekilden iki yönde birden ayrılır: SwiGLU
 feed-forward'ına $10{,}5d^2$, attention'ına ise yalnızca $2{,}5d^2$ harcar —
-gruplanmış sorgu dikkati (grouped-query attention) $W^K$ ile $W^V$'yi $d \times d$'den $d \times 1024$'e
-küçültüyor (@sec-servis'in de dayandığı yapı), dolayısıyla o çift $2d^2$ yerine
+grouped-query attention (GQA) $W^K$ ile $W^V$'yi $d \times d$'den $d \times 1024$'e
+küçültüyor (@sec-attention-maliyeti), dolayısıyla o çift $2d^2$ yerine
 $0{,}5d^2$ tutuyor. Feed-forward payı bu yüzden $10{,}5/13 = \mathbf{\%81}$;
 tam genişlikte attention varsayarak bulunan %72 değil. Son birkaç yılın her
 mimari değişikliği ağırlığı bu alt katmanın *içine* ya da attention'ın *dışına*
@@ -1769,9 +1797,9 @@ katman, bağlam 1.024.
 | 12 blok | $12 \times 12 \times 768^2$ | 84.934.656 |
 | **toplam** | | **124.318.464** |
 
-Yayımlanan boyut ~124M ve kural buna **%0,098** yaklaşıyor. Kalan fark
+Yayımlanan boyut ~124M; kuralın sonucu bundan yalnızca **%0,098** sapıyor. Kalan fark
 gizemli değil — kuralın attığı $O(d)$ terimlerinin ta kendisi. Onları geri
-koyun, sayım tamamen kapansın:
+ekleyince sayım tam olarak tutuyor:
 
 | atılan terim | aritmetik | parametre |
 |:--|:--|--:|
@@ -1782,8 +1810,8 @@ koyun, sayım tamamen kapansın:
 
 Yani kural, açıklanamayan bir sapması olan bir yaklaşıklık değil; adı konmuş üç
 terimi silinmiş tam bir sayımdır. Kapasite planlaması için ona güvenin ve
-birileri sizin sayınızla model kartının neden son beş hanede ayrıştığını
-sorduğunda hangi terimleri attığınızı hatırlayın.
+birileri sizin sayınızla model kartındaki sayının neden son beş hanede
+ayrıştığını sorduğunda hangi terimleri attığınızı hatırlayın.
 
 ::: {.column-margin}
 Tablonun neyi içermediğine dikkat edin: sözlüğe geri giden bir çıkış izdüşümü.
@@ -1799,9 +1827,9 @@ dog* çiftini koyar; Türkçede o çift işe yaramaz, çünkü rolü sıra deği
 ekleri taşır — `köpek adamı ısırdı` ile `adam köpeği ısırdı` farklı
 token'lardan oluşur, dolayısıyla sıraya hiç bakmayan bir model bile bunları
 ayırt eder. Türkçede gereken, *aynı* token'ları taşıyan bir çift:
-`kalite iyi fiyat kötü` ile `kalite kötü fiyat iyi`. Bu, ölçülen bir sonuçtu
-(@sec-karsilastirma): ortalaması alınmış embedding'lerin çarptığı duvarın aynısı;
-orada bu çiftin kosinüsü 1,0000 çıkmıştı.
+`kalite iyi fiyat kötü` ile `kalite kötü fiyat iyi`. Sıra körlüğü, ortalaması
+alınmış embedding'lerin karşılaştığı başarısızlığın aynısıdır
+(@sec-karsilastirma): orada bu çiftin kosinüsü 1,0000 çıkmıştı.
 
 ### Önce sorunun gerçek olduğunu kanıtlayalım
 
@@ -1822,23 +1850,24 @@ $1{,}11 \times 10^{-16}$; bu bir fark değil, kayan nokta gürültüsüdür.
 çıktılar da onlarla birlikte karışır, başka hiçbir şey değişmez.]{.hl}
 
 Bu, birinin düzeltmeyi unuttuğu bir hata değil; doğrudan tanımdan geliyor. Her
-token'ın çıktısı bütün token'lar üzerinden bir ağırlıklı toplamdır ve bir
-toplam, şeyleri hangi sırayla eklediğinizi umursamaz. $QK^{\top}$'un,
+token'ın çıktısı bütün token'lar üzerinden bir ağırlıklı toplamdır; bir
+toplamda da terimleri hangi sırayla eklediğinizin önemi yoktur. $QK^{\top}$'un,
 softmax'ın ya da $AV$'nin hiçbir yerinde bir indisi görebilecek bir şey yoktur.
 Çok akıllıca bir ortalama alma düzeni olan bir bag of words, yine de bag of
 words'tür.
 
 ::: {.callout-note appearance="simple" icon="false"}
-**Bu cümlede "maskesiz" kelimesi ciddi bir iş yapıyor.**
+**Bu cümlede "maskesiz" kelimesi kilit rol oynuyor.**
 Nedensel maskeyi (@sec-model-aileleri) ekleyin, simetri kırılsın: 1.
 token tek bir konuma bakabilirken 5. token beş konuma bakabilir, yani *görünür
 token sayısı* zaten bir indisi kodlar. Dolayısıyla yalnızca decoder'dan oluşan
-modeller hiçbir positional encoding olmadan da konumu öğrenebilir — meşhur
-**NoPE** sonucu [@kazemnejad2023impact]; küçük ölçekte bu sonuç, uzun dizilere
-bazı açık şemalardan daha iyi bile extrapolation (gözlenen aralığın dışına genelleme) yapıyor. Pratikte yine de
+modeller hiçbir positional encoding olmadan da konumu öğrenebilir — **NoPE**
+diye anılan sonuç [@kazemnejad2023impact]. Küçük ölçekte bu yaklaşım, daha uzun
+dizilere extrapolation (gözlenen aralığın dışına genelleme) yapmada bazı açık
+şemalardan bile daha iyi sonuç veriyor. Pratikte yine de
 herkes açık bir sinyal ekliyor, çünkü bir sayım, sırayı öğrenmenin zayıf ve
-dolaylı bir yoludur. Ama dürüst ifade şudur: maske konumu sızdırır; yoksa bir
-decoder, encoding olmadan kör değildir.
+dolaylı bir yoludur. Ama dürüst ifade şudur: maske konumu sızdırır. "Decoder
+encoding olmadan kördür" demek doğru olmaz.
 :::
 
 ### Konum sinyali eklemek
@@ -1865,8 +1894,8 @@ encoding'in tamamı üç satıra sığıyor:
 Embedding'lere $0{,}3 \times \text{PE}$ ekleyin ve karıştırma testini tekrar
 edin. [İşe yaramasını sağlayan incelik şu: kelimeler yer değiştirdiğinde konum
 vektörleri onlarla birlikte **hareket etmez**.]{.hl} Konum 0 hâlâ konum 0'dır;
-yani önce birinci sırada olan, şimdi üçüncü sırada olan bir kelime öncekinden
-farklı bir vektör alır:
+yani önceden birinci sırada olup şimdi üçüncü sıraya geçen bir kelime
+öncekinden farklı bir vektör alır:
 
 | token | çıktılar, özgün sıra | çıktılar, karıştırılıp geri düzeltilmiş |
 |:--|:--|:--|
@@ -1882,7 +1911,7 @@ En büyük uyuşmazlık: **0,3289**. Sıra körlüğü ortadan kalktı.
 
 ### Neden özellikle sinüsler
 
-Yuva başına birbirinden farklı herhangi bir vektör de beraberliği bozardı.
+Her yuvaya farklı bir vektör veren herhangi bir şema da bu eşitliği bozardı.
 Sinüslerin seçilme sebebi, ifade edilmesi kolay ve bu literatürde ender
 rastlanacak biçimde birebir doğru olan bir özelliktir. Bu şekilde kurulmuş bir
 [positional encoding](#gloss-positional-encoding){#term-positional-encoding .term-ref} için,
@@ -1891,7 +1920,7 @@ $$
 \text{PE}_{p} \cdot \text{PE}_{p+k} \;=\; \sum_{i} \cos(k\,\omega_i)
 $$
 
-Açı farkı özdeşliği sayesinde $p$ terimleri sadeleşir ve ayakta kalan şey
+Açı farkı özdeşliği sayesinde $p$ terimleri sadeleşir ve geriye kalan şey
 yalnızca $k$'ya — yani *kaydırmaya* — bağlıdır. Yani iki konum arasındaki
 benzerlik, dizide nerede durduklarının değil, birbirlerinden ne kadar uzak
 olduklarının bir fonksiyonudur.
@@ -1914,8 +1943,8 @@ tutunca:
 256 farklı mutlak konum boyunca $10^{-14}$'lük bir standart sapma, özdeşliğin
 kayan noktada birebir tuttuğu anlamına gelir. Ayrıca her konum vektörünün
 uzunluğu, on hane hassasiyetle aynıdır: $\sqrt{d/2} = 5{,}656854$. Bu, konum
-vektörünün bir özelliği; toplamın değil. Onu eklemek embedding'in normunu
-değiştirir, çünkü
+vektörünün bir özelliği; toplamın değil. Konum vektörünü eklemek embedding'in
+normunu değiştirir, çünkü
 $\lVert x + p \rVert^2 = \lVert x \rVert^2 + \lVert p \rVert^2 + 2\,x \cdot p$
 aradaki açıya bağlıdır. Normu olduğu gibi bırakan şema, aşağıdaki RoPE.
 
@@ -1976,21 +2005,21 @@ Düşük boyutlar (üstte) birkaç konumda bir işaret değiştiriyor; yüksek
 boyutlar (altta) pencerenin tamamı boyunca neredeyse hiç değişmiyor. Bütün
 mesele dalga boylarındaki bu yelpaze: hızlı boyutlar "hangi komşu" bilgisini,
 yavaş boyutlar "belgenin kabaca neresi" bilgisini kodluyor. `d_model` değerini
-yukarı çekin ve altta kaç tane daha yavaş boyutun belirdiğine bakın.
+yukarı çekin ve altta daha fazla yavaş boyutun belirdiğini izleyin.
 :::
 :::
 
 ### Öğrenilmiş mutlak konumlar
 
-Sinüsler zarif ama sonradan anlaşıldı ki gereksiz. BERT de GPT-2 de onları
+Sinüsler zarif, ama sonradan gereksiz oldukları anlaşıldı. BERT de GPT-2 de onları
 bir kenara atıp konumla indekslenen sıradan bir embedding tablosu kullandı:
-0. satır 0. yuvanın vektörü ve diğer bütün parametreler gibi gradyan inişiyle
-öğreniliyor [@devlin2019bert; @radford2019language]. Aşağı yukarı aynı işi
+0. satır, 0. yuvanın vektörüdür ve diğer bütün parametreler gibi gradyan
+inişiyle öğrenilir [@devlin2019bert; @radford2019language]. Aşağı yukarı aynı işi
 görüyor; bedelini de yukarıdaki parametre tablosunda gördünüz — GPT-2 small
 buna 786.432 parametre harcıyor.
 
-Asıl bedel başka yerde. [Öğrenilmiş bir tablonun satır sayısı, onu eğitirken
-kullandığınız uzunluktan bir fazla değildir.]{.hl} GPT-2'nin tablosunda 1.024
+Asıl bedel başka yerde. [Öğrenilmiş bir tablonun satır sayısı, tam olarak onu
+eğitirken kullandığınız uzunluk kadardır.]{.hl} GPT-2'nin tablosunda 1.024
 satır var, dolayısıyla 1.025. token'ın hiç vektörü yok — bozuk bir vektörü
 değil, hiç. Bağlam sınırı, çıkarım anında gevşetebileceğiniz bir ayar tercihi
 değil; bir ağırlık matrisinin şekline gömülmüş durumda. Bu model ailesi için
@@ -1999,8 +2028,8 @@ satırlar imal etmekle ilgilidir.
 
 ### RoPE: eklemek yerine döndür
 
-Bugün baskın tercih rotary position embedding (döndürmeli konum gömmesi) ve
-fikri, daha iyi bir tablo değil; temelden farklı bir yaklaşım [@su2024roformer]. RoPE
+Bugün baskın tercih rotary position embedding'dir (döndürmeli konum gömmesi).
+Fikri daha iyi bir tablo değil, temelden farklı bir yaklaşım [@su2024roformer]. RoPE
 embedding'e hiçbir şey eklemez. Query ve key vektörlerini alır — izdüşümden
 sonra, her head'in içinde — ardışık koordinat çiftlerine ayırır ve her çifti
 konumla orantılı bir açı kadar *döndürür*:
@@ -2020,9 +2049,9 @@ Bir vektörü $m\theta$ kadar, bir başkasını $n\theta$ kadar döndürüp sonr
 eklenip izdüşümlerden sağ çıkması umulan bir yan kanal değil, doğrudan skorun
 kendisi.
 
-İddia iddialı olduğu için ölçülmüş hâli şöyle. Sabit ve rastgele bir query ile
-key, $d = 64$, birbirinden çok farklı dört mutlak konumdan ($n = 0, 100, 1000,
-5000$) sabit bir kaydırmayla skorlandı:
+Bu güçlü bir iddia; o yüzden ölçülmüş hâlini verelim. Rastgele seçilip sabit
+tutulan bir query ile bir key ($d = 64$), birbirinden çok farklı dört mutlak
+konumda ($n = 0, 100, 1000, 5000$) sabit bir kaydırmayla skorlandı:
 
 | kaydırma $m-n$ | skor | dört konum arasındaki yayılım |
 |--:|--:|--:|
@@ -2044,20 +2073,22 @@ toplamalı şema için:
 | 10 | 13,74 | 20,55 | 38,85 | 25,1 |
 | 200 | 1,86 | 6,43 | 25,00 | 23,1 |
 
-Dört konumun üçü basılı; yayılım sütunu dördünü birden kapsıyor, ilk iki
-satırın yalnızca görünen sütunların vereceğinden geniş çıkmasının sebebi de bu.
+Tabloda dört konumun yalnızca üçü gösteriliyor; yayılım sütunu ise dördünü
+birden kapsıyor. İlk iki satırda yayılımın, görünen sütunlardan tek başına
+hesaplanacak olandan geniş çıkmasının sebebi de bu.
 
 [$10^{-13}$'lük bir yayılıma karşı 26'lık bir yayılım.]{.hl} Toplamayla, "beş
 token geride" ifadesi 0. konumda başka, 5.000. konumda başka bir şey demek
-oluyor ve modelin bununla baş etmeyi öğrenmesi gerekiyor. Döndürmeyle her yerde
-aynı şeyi ifade ediyor, üstelik bedava. RoPE ayrıca vektör normlarını birebir
+oluyor ve modelin bununla baş etmeyi öğrenmesi gerekiyor. Döndürmeyle ise her
+yerde aynı anlama geliyor, hem de kendiliğinden. RoPE ayrıca vektör normlarını birebir
 korur — döndürme döndürmedir — dolayısıyla toplamanın yapabildiği gibi bir
 query'nin büyüklüğünü bozamaz.
 
 RoPE'nin Llama, Qwen, Mistral, Gemma'da ve 2023'ten beri yayımlanan hemen her
-açık ağırlıklı modelde bulunmasının sebebi bu; bu modellerin bağlam genişletme
-hilelerinin (position interpolation, NTK-aware scaling, YaRN) yeni tablolar
-değil, hep $\theta_i$'nin yeniden parametrelendirilmesi olmasının sebebi de.
+açık ağırlıklı modelde bulunmasının sebebi bu. Bu modeller için kullanılan
+başlıca bağlam genişletme hileleri de (position interpolation, NTK-aware
+scaling, YaRN) bu yüzden yeni tablolar değil, hep $\theta_i$'nin yeniden
+parametrelendirilmesidir.
 
 ### ALiBi: kodlamayı bırak, mesafeyi cezalandır
 
@@ -2072,14 +2103,14 @@ Ceza, $\sqrt{d_k}$ ölçeklemesinden önce değil *sonra* çıkarılır — bu �
 çünkü $m$ eğimlerinin farklı genişlikteki modeller arasında taşınabilir
 olmasını sağlayan şey tam da budur.
 
-Her head geometrik bir programa göre kendi sabit eğimini $m$ alır. Sekiz head
+Her head, geometrik bir diziye göre belirlenen kendi sabit $m$ eğimini alır. Sekiz head
 varken eğimler $\tfrac12, \tfrac14, \tfrac18, \dots, \tfrac{1}{256}$ olur;
 yani $m = 0{,}5$ olan head 2 token sonra bir nat ceza biriktirmiş olur ve
 fiilen yereldir, $m = 1/256$ olan head ise aynı cezayı biriktirmek için 256
 token'a ihtiyaç duyar ve fiilen küreseldir. Farklı head'ler, tasarım gereği,
 farklı mesafe ölçeklerini görür.
 
-$m = 0{,}5$ olan bir head'in altı token boyunca eklediği yanlılık:
+$m = 0{,}5$ olan bir head'in altı token boyunca eklediği bias terimi:
 
 | | 0 | 1 | 2 | 3 | 4 | 5 |
 |:--|--:|--:|--:|--:|--:|--:|
@@ -2091,10 +2122,10 @@ $m = 0{,}5$ olan bir head'in altı token boyunca eklediği yanlılık:
 | **konum 5** | −2,5 | −2,0 | −1,5 | −1,0 | −0,5 | 0,0 |
 
 Bu tek matris aynı anda hem nedensel maske hem de konum sinyalidir ve içinde
-öğrenilmiş tek bir parametre yoktur. $i - j$ üzerinden bir formülle
-tanımlandığı için her mesafe için tanımlıdır; 1.024 uzunlukta eğitilmiş bir
-ALiBi modelinin 2.048 uzunlukta çökmeden çalışabilmesinin sebebi de budur —
-makalenin başlığında reklamı yapılan sonuç.
+öğrenilmiş tek bir parametre yoktur. $i - j$ üzerinden bir formülle verildiği
+için her mesafede tanımlıdır. Bu sayede 1.024 uzunlukta eğitilmiş bir ALiBi
+modeli 2.048 uzunlukta da dağılmadan çalışabilir — makalenin başlığında öne
+çıkarılan sonuç da budur.
 
 ### Aralarında seçim yapmak
 
@@ -2115,22 +2146,22 @@ görülmemiş konumları eğitilmiş aralığa geri sıkıştırır [@chen2023ex
 **NTK-aware scaling** ve **YaRN** [@peng2024yarn] ise $\theta$'yı tekdüze
 değil, frekans frekans yeniden ölçekler. Bir RoPE modeli hakkındaki her "128k'ya
 genişletildi" duyurusu, aslında bunlardan birinin üstüne eğitime devam
-edildiğini duyurur — RoPE'nin bedava bir özelliğini değil.
+edildiğini duyurur — RoPE'nin kendiliğinden gelen bir özelliğini değil.
 :::
 
 [Pratikte önemli olan sütun sonuncusu.]{.hl} Bir sağlayıcı bağlam penceresi
 duyurduğunda, eğitim verisi kadar konum şemasının bir özelliğini de anlatıyor
 demektir — ve bir model belli bir uzunluktan sonra tuhaf biçimde güvenilmez
 olmaya başladığında, ilk bakılacak yer konum şemasıdır. İlan edilen bağlam
-uzunluğu ile *kullanılabilir* bağlam uzunluğu farklı sayılardır; bu farkı
-varsaymak yerine ölçmek gerekir.
+uzunluğu ile *kullanılabilir* bağlam uzunluğu farklı sayılardır; aradaki farkı
+varsaymak yerine ölçeceğiz (@sec-baglam-muhendisligi).
 
 ## Encoder-only, decoder-only, encoder-decoder {#sec-model-aileleri}
 
-Kulağa aşırı basitleştirme gibi gelen ama büyük ölçüde olmayan bir gerçek:
+Kulağa aşırı basitleştirme gibi gelen ama çoğunlukla öyle olmayan bir gerçek:
 [BERT tarzı ile GPT tarzı *self-attention* arasındaki yapısal fark, attention
 matrisinin hangi girdilerinin sıfırdan farklı olmasına izin verildiğidir.]{.hl}
-Yanında iki çekince geliyor ve bu bölümün geri kalanı ikisini de yapıyor: bir
+Bu gerçeğin iki çekincesi var ve bu kısmın geri kalanı ikisini de ele alıyor: bir
 encoder–decoder, cross-attention ile birbirine bağlanmış iki yığındır ve tek bir
 yığın üzerindeki hiçbir maske bunu üretmez; ayrıca BERT ve GPT adları belirli
 embedding, normalizasyon yerleşimi ve eğitim hedefi tercihlerini de taşır.
@@ -2351,43 +2382,44 @@ Bir encoder-decoder'ın fazladan bir mekanizmaya ihtiyacı var. Decoder'ı önce
 ana kadar ürettiği şey üzerinde self-attention çalıştırır, ardından
 **cross-attention** (çapraz dikkat) adı verilen ikinci bir attention alt
 katmanı gelir: burada [query'ler decoder'dan, key ve value'lar encoder'dan
-gelir]{.hl}. Yukarıda adım adım yaptığınız aritmetiğin aynısıdır — tek fark,
+gelir]{.hl}. Bu, yukarıda adım adım yaptığınız aritmetiğin aynısıdır — tek fark,
 $Q$ ile $K, V$'nin iki farklı diziden hesaplanmasıdır. "Çeviriyi yazarken
-kaynak cümleye bak" cümlesi işte böyle ifade edilir.
+kaynak cümleye bak" fikri işte böyle ifade edilir.
 
 ::: {.column-margin}
-Çok kipli (multimodal) modellerin çoğu da bir görüntüyü dil modeline
+Çok modlu (multimodal) modellerin çoğu da bir görüntüyü dil modeline
 cross-attention ile bağlar: görüntü encoder'ı key ve value'ları üretir, dil
-modeli query'leri sağlar.
+modeli query'leri sağlar. Bu konuya ileride döneceğiz (@sec-cok-modlu).
 :::
 
 ### Decoder-only neden kazandı
 
 2019'da makul tahmin, her ailenin kendi nişini koruyacağıydı. Öyle olmadı; bu
-kitapta kullanacağınız her şey neredeyse tamamen decoder-only. Kabaca önem
+kitapta kullanacağınız neredeyse her şey decoder-only. Kabaca önem
 sırasına göre üç sebep.
 
 **Tek bir amaç, bütün veri.** Sonraki token tahmini ne etiket ister, ne bir
 bozma şeması, ne de eşleştirilmiş veri. İnternetteki her belge onun için eğitim
 verisidir ve o belgedeki her konum bir eğitim örneğidir.
 
-**Görevin metne dönüşmesi.** Bir model devam ettirmede yeterince iyi olduğunda;
+**Görevin metne dönüşmesi.** Bir model devam ettirmede yeterince iyi olduğunda,
 sınıflandırma, çeviri ve özetleme ayrı head'ler olarak inşa edilmek yerine
 prompt olarak *yazılabilir* hâle gelir. Genel bir modele kibarca
 sorabiliyorsanız, encoder-decoder'ın mimari uzmanlaşması masrafını çıkarmayı
-bırakır. Prompt mühendisliğinin bütün hikâyesi budur.
+bırakır. @sec-promptlama tam da bu hikâyeyi anlatıyor.
 
-**Ucuz incremental decoding (token'ları sırayla üretme).** Nedensel maskeyle, $i$ token'ının temsili kendinden
-sonraki hiçbir şeye bağlı değildir — dolayısıyla sona bir token eklediğinizde
-önceki bütün hesap hâlâ geçerlidir. KV cache'i mümkün kılan şey budur ve
-üretimin maliyetinin bu kadar olmasının sebebi de KV cache'tir.
+**Ucuz incremental decoding (token'ları sırayla üretme).** Nedensel maskeyle,
+$i$ token'ının temsili kendinden sonraki hiçbir şeye bağlı değildir —
+dolayısıyla sona bir token eklediğinizde önceki bütün hesap hâlâ geçerlidir.
+KV cache'i mümkün kılan şey budur; üretimin neden bu maliyette olduğunu da KV
+cache açıklar.
 
 ::: {.callout-note appearance="simple" icon="false"}
 **Encoder-only modeller demode değil.** Hacimli sınıflandırma ve arama
 işlerinde, 110M parametreli BERT tarzı bir encoder çoğu zaman belge başına
-üretken bir modelden 100× daha ucuz ve en az onun kadar isabetlidir; çünkü
+üretken bir modelden 100× daha ucuz ve onun kadar isabetlidir; çünkü
 token token çözümleme yapmak yerine tek bir ileri geçişte tek bir vektör verir.
-Arama sistemlerinin arkasındaki embedding modelleri encoder'dır. Duygu analizi
+Her arama sisteminin arkasındaki embedding modelleri encoder'dır (@sec-rag). Duygu analizi
 için 7B'lik bir decoder seçmek yaygın ve pahalı bir hatadır —
 @sec-karsilastirma da ucuz temsilin ne sıklıkla kazandığını zaten
 göstermişti.
@@ -2395,9 +2427,9 @@ göstermişti.
 
 ## Verimlilik: FlashAttention, GQA/MQA, KV cache {#sec-attention-maliyeti}
 
-Buraya kadar her şey attention'ın *ne hesapladığıyla* ilgiliydi. Bu bölüm ise
-*neye mal olduğuyla* ilgili — yani bu işi gerçekten çalıştırıp
-çalıştıramayacağınıza karar veren kısımla.
+Buraya kadar her şey attention'ın *ne hesapladığıyla* ilgiliydi. Bu kısım ise
+*neye mal olduğuyla* ilgili; bu işi gerçekten çalıştırıp çalıştıramayacağınızı
+belirleyen de bu taraf.
 
 ### Karesel terim, byte cinsinden
 
@@ -2413,12 +2445,12 @@ gerekir:
 | 100.000 | 10.000.000.000 | 18,63 GiB |
 
 [Tek katmandaki tek bir head için on sekiz gigabyte.]{.hl} Bunu 32 head ve 32
-katmanla çarpın; sayı artık bir bellek sorunu olmaktan çıkıp fanteziye dönüşür.
+katmanla çarpın; sayı artık bir bellek sorunu olmaktan çıkar, hayal olur.
 
 ### Attention gerçekte ne zaman baskın hâle gelir?
 
-Karesel terim her zaman önemli olan terim değildir ve insanlar onu düzenli
-olarak abartır. Katman başına, sabitleri göz ardı edersek:
+Karesel terim her zaman önemli olan terim değildir; insanlar onu çoğu zaman
+gözünde büyütür. Katman başına, sabitleri göz ardı edersek:
 
 $$
 \underbrace{24\,n\,d^2}_{\text{izdüşümler ve FFN}}
@@ -2426,8 +2458,9 @@ $$
 \underbrace{4\,n^2 d}_{\text{skorlar ve ağırlıklandırma}}
 $$
 
-İkisini eşitlerseniz $n = 6d$ çıkar. Bunun altında transformer, zamanının çoğunu
-gayet sıradan ve dizi uzunluğunda doğrusal olan matris çarpımlarına harcar:
+İkisini eşitlerseniz $n = 6d$ çıkar. $n$ bu değerin altındayken transformer,
+zamanının çoğunu gayet sıradan, dizi uzunluğuyla doğrusal büyüyen matris
+çarpımlarına harcar:
 
 | $d_{\text{model}}$ | dizi uzunluğu $n$ | | attention'ın FLOP payı |
 |--:|--:|:--|--:|
@@ -2439,11 +2472,12 @@ gayet sıradan ve dizi uzunluğunda doğrusal olan matris çarpımlarına harcar
 | 4.096 | 100.000 | | %80 |
 
 [Uygulamaların çoğunun gerçekte kullandığı bağlam uzunluklarında attention,
-hesabın *azınlığıdır*.]{.hl} 4.096 genişliğindeki bir model 4.096 token
-işlerken aritmetiğinin %86'sını feed-forward ve izdüşüm matrislerine harcar.
+hesabın *yarısından azını* oluşturur.]{.hl} 4.096 genişliğindeki bir
+model 4.096 token işlerken aritmetiğinin %86'sını feed-forward ve izdüşüm
+matrislerine harcar.
 Karesel terim, uzun bağlamda çarptığınız bir duvardır; her uzunlukta ödediğiniz
-bir vergi değil — ve hangi rejimde olduğunuzu bilmek, attention'ı optimize
-etmenin zamanınıza değip değmeyeceğini söyler.
+bir vergi değil. Hangi rejimde olduğunuzu bilirseniz, attention'ı optimize
+etmenin zamanınıza değip değmeyeceğini de bilirsiniz.
 
 ### FlashAttention: matrisi hiç kurma
 
@@ -2452,26 +2486,28 @@ sınırlayan şey aritmetik değil. Sınırlayan şey, o $n \times n$ matrisi h�
 yonga içi bellekle yavaş yüksek bant genişlikli bellek arasında taşımak. FLOP'lar
 ucuz; gidiş-dönüşler değil [@dao2022flashattention].
 
-Bu yüzden FlashAttention skor matrisini hiç somutlaştırmaz. Diziyi tile'lar (hesabın yürütüldüğü küçük matris blokları) hâlinde dolaşır, güncellenen bir softmax normalleştiricisi tutar — böylece kısmen
-hesaplanmış bir softmax yeni tile'lar geldikçe düzeltilebilir — ve çıktıyı
-doğrudan biriktirir.
+Bu yüzden FlashAttention skor matrisini hiç somutlaştırmaz. Diziyi tile'lar
+(hesabın yürütüldüğü küçük matris blokları) hâlinde dolaşır ve yol boyunca
+güncellenen bir softmax normalleştiricisi tutar. Böylece kısmen hesaplanmış bir
+softmax, yeni tile'lar geldikçe düzeltilebilir. Çıktıyı da doğrudan biriktirir.
 
 ::: {.callout-important appearance="simple" icon="false"}
 **FlashAttention kesin sonuç verir.** Seyrek bir yaklaşıklama, düşük ranklı bir
 çarpanlara ayırma ya da pencereli bir sezgisel yöntem değildir. Naif
-saf uygulamayla (implementation) aynı fonksiyonu hesaplar; yalnızca neyi sakladığı bakımından
-ondan ayrılır. Kesin olmak *bit bit aynı* olmakla aynı şey değildir: çevrim içi
-softmax toplamları yeniden gruplar ve kayan noktalı toplama birleşme özelliği
-taşımaz, dolayısıyla son basamaklar oynayabilir — herhangi iki matris çarpımı
-çekirdeğinin son basamaklarda anlaşamaması gibi. Asla feda edilmeyen şey
-kalitedir; bir makaleden varsayılana yaklaşık on sekiz ayda geçmesinin ve
-hesaplama hâlâ karesel olduğu hâlde attention'daki bellek kullanımının artık
-$n$ ile doğrusal olmasının sebebi budur.
+uygulamayla (implementation) aynı fonksiyonu hesaplar; ondan yalnızca neyi
+sakladığı bakımından ayrılır. Kesin sonuç, *bit bit aynı* sonuç demek değildir:
+çevrim içi softmax toplamları yeniden gruplar ve kayan noktalı toplamanın
+birleşme özelliği yoktur. Bu yüzden son basamaklar oynayabilir; tıpkı herhangi
+iki matris çarpımı çekirdeğinin son basamaklarda farklı sonuç vermesi gibi.
+Asla feda edilmeyen şey ise kalitedir. FlashAttention'ın yaklaşık on sekiz ayda
+bir makaleden varsayılan seçeneğe dönüşmesinin sebebi budur; hesaplama hâlâ
+karesel olduğu hâlde attention'daki bellek kullanımının artık $n$ ile doğrusal
+olmasının sebebi de budur.
 :::
 
 ### KV cache: dağıtıma karar veren sayı
 
-Üretim artımlıdır. 500 token ürettikten sonra model 501.'i üretir — ve maske
+Üretim artımlıdır. Model 500 token ürettikten sonra 501.'yi üretir — ve maske
 nedensel olduğu için ilk 500'ün key ve value'ları değişmemiştir. Onları yeniden
 hesaplamak saf israf olurdu, o yüzden saklanırlar. Bu depo
 [KV cache](#gloss-kv-cache){#term-kv-cache .term-ref}'tir ve üretimi token
@@ -2539,22 +2575,22 @@ başına kareselden token başına doğrusala çevirir.
 ```
 
 ::: {.fig-cap}
-Üretimin ucuz, uzun bağlamın pahalı olmasının sebebi aynı şey: önbellek. Adım
-başına $O(n)$ yeniden hesabı — bütün bir üretim boyunca $O(n^2)$ — eşzamanlı
-her istek için ayrı tutulan $O(n)$ depolamayla takas eder.
+Üretimin ucuz, uzun bağlamın pahalı olmasının sebebi aynı şey: önbellek.
+Önbellek, adım başına $O(n)$ yeniden hesaplamayı — bütün bir üretim boyunca
+$O(n^2)$ — eşzamanlı her istek için ayrı tutulan $O(n)$ depolamayla takas eder.
 :::
 ::::
 
-Bir yandan da GPU'nuzu yiyip bitirir:
+KV cache bir yandan da GPU'nuzu yiyip bitirir:
 
 $$
 \text{byte} = 2 \times L \times h_{\text{kv}} \times d_{\text{head}} \times
 n_{\text{token}} \times \text{değer başına byte}
 $$
 
-Baştaki 2, K ve V içindir. Neyin *olmadığına* dikkat edin: query head sayısı ve
-modelin parametre sayısı. Neyin olduğuna da dikkat edin: token sayısı,
-doğrusal olarak, ve **eşzamanlı istek başına**.
+Baştaki 2, K ve V içindir. Formülde neyin *bulunmadığına* dikkat edin: query
+head sayısı ve modelin parametre sayısı. Neyin bulunduğuna da dikkat edin: token
+sayısı; hem doğrusal olarak hem de **eşzamanlı istek başına**.
 
 | model şekli | katman | KV head | head boyu | bağlam | KV cache |
 |:--|--:|--:|--:|--:|--:|
@@ -2567,14 +2603,14 @@ fp16'daki 7B'lik bir model 14 GB ağırlık demektir. 100.000 token'lık bağlam
 KV cache'i 52 GB — [tek bir sohbet için modelin kendisinin neredeyse dört
 katı.]{.hl} "Uzun bağlam neden bu kadar pahalı?" sorusunun arkasındaki aritmetik
 budur ve servis sistemlerinin bu belleğin nasıl bölümlendiğine ve yeniden
-kullanıldığına bu kadar kafa yormasının sebebi de budur.
+kullanıldığına bu kadar kafa yormasının sebebi de budur (@sec-servis).
 
 Üçüncü satır bilerek *varsayımsal* diye işaretlendi: **indirebileceğiniz hiçbir
 70B sınıfı modelin gerçekten 64 KV head'i yok.** Llama 2 70B, Llama 3, Mistral
-ve onların torunlarının hepsi 8 kullanıyor; sebebini bir sonraki bölüm
-anlatıyor. Aritmetiği $h_{\text{kv}} = 8$ ile tekrarlayın, 85,9 GB **10,7 GB**
-oluyor. Bu tek yerine koyma, bir düğüm gerektiren modelle tek bir karta sığan
-model arasındaki farktır ve bu bölümdeki en sonuç doğuran tek sayıdır.
+ve onlardan türeyen modellerin hepsi 8 kullanıyor; sebebini bir sonraki kısım
+anlatıyor. Hesabı $h_{\text{kv}} = 8$ ile yeniden yapın: 85,9 GB **10,7 GB'a**
+iner. Bu tek değişiklik, bir düğüm gerektiren modelle tek bir karta sığan model
+arasındaki farktır; bu bölümdeki en belirleyici tek sayı da budur.
 
 ::: {.anlp-widget}
 ```{=html}
@@ -2654,8 +2690,8 @@ Formülde doğrudan değiştirebileceğiniz bir yer var. Her query head'in kendi
 sahip olmasını gerektiren hiçbir şey yok — birkaç query head tek bir takımı
 paylaşabilir.
 
-- **Multi-query attention** bunu uca taşır: bütün query head'ler tek bir K/V
-  head'ini paylaşır [@shazeer2019fast].
+- **Multi-query attention** bu fikri en uca taşır: bütün query head'ler tek
+  bir K/V head'ini paylaşır [@shazeer2019fast].
 - **Grouped-query attention** ise kazanan uzlaşma: query head'ler gruplara
   ayrılır, grup başına bir K/V head düşer [@ainslie2023gqa].
 
@@ -2670,30 +2706,33 @@ Yukarıdaki 32 katmanlı, 32 head'li, 100.000 token'lık modelde:
 MQA'nın 32×'i cezbedici ama biraz fazla agresif — kalite bozuluyor ve eğitim
 kararsızlaşıyor. 4 ya da 8 gruplu GQA, tasarrufun büyük kısmını korurken
 kalitenin neredeyse tamamını geri kazanıyor; Llama 2 70B, Llama 3, Mistral ve
-o günden beri çıkan hemen her şeyin onunla gelmesinin sebebi bu. [Verimlilik
-hilesinin doğruluktan neredeyse hiç ödün vermediği ender bir durum; evrensel
-hâle gelmesinin sebebi de tam olarak bu.]{.hl}
+o günden beri çıkan hemen her şeyin onunla gelmesinin sebebi bu. [Bu, bir
+verimlilik hilesinin doğruluktan neredeyse hiç ödün vermediği ender
+durumlardan biri; evrensel hâle gelmesinin sebebi de tam olarak bu.]{.hl}
 
 Son olarak şunu fark edin: bu, ayarladığınız değil, devraldığınız bir karardır.
 Bir MHA kontrol noktasını servis yapılandırmanızda GQA'ya çeviremezsiniz.
-Dönüştürebilirsiniz *ama* — GQA makalesinin kendi tarifi her grubun key ve value
-head'lerini ortalamayla havuzlar, ardından özgün ön eğitim hesabının kabaca
-%5'i kadar **uptraining** (mimari dönüşümden sonra yapılan ek eğitim) yapar [@ainslie2023gqa] — bir ön eğitim koşusunun %5'i
-de nihayetinde bir eğitim koşusudur: küme, bütçe ve bir hafta ister. Pratikteki
-her amaç için "KV cache ne kadar büyük" sorusu, optimizasyon listenize değil,
-model seçim listenize aittir.
+Elbette *dönüştürebilirsiniz*: GQA makalesinin kendi tarifi her gruptaki key ve
+value head'lerinin ortalamasını alarak onları birleştirir, ardından özgün ön
+eğitim hesabının kabaca %5'i kadar **uptraining** (mimari dönüşümden sonra
+yapılan ek eğitim) yapar [@ainslie2023gqa]. Ama bir ön eğitim koşusunun %5'i de
+nihayetinde bir eğitim koşusudur: küme, bütçe ve bir hafta ister. Pratikte
+"KV cache ne kadar büyük?" sorusu, optimizasyon listenize değil, model seçim
+listenize aittir.
 
 ## Mixture of Experts {#sec-moe}
 
 Her transformer bloğunun üçte ikisi feed-forward alt katmanıdır ve her token
-bunun tamamından geçer. [mixture of experts](#gloss-mixture-of-experts){#term-mixture-of-experts .term-ref}
-(uzmanlar karışımı) bunun şart olup olmadığını sorar.
+bunun tamamından geçer. Bir [mixture of experts](#gloss-mixture-of-experts){#term-mixture-of-experts .term-ref}
+(uzmanlar karışımı) ise her token'ın gerçekten hepsinden geçmesi gerekip
+gerekmediğini sorar.
 
-Bir bloktaki tek feed-forward ağını $E$ kopyayla — *uzmanlar* — ve her token
-için uzmanları skorlayıp onu en iyi $k$ tanesine gönderen küçük, öğrenilmiş bir
-**router** (yönlendirici) ile değiştirin; genelde $k = 2$. Yalnızca o $k$ tanesi
-çalışır. Diğer $E - k$ tanesi o token için boş oturur ve aynı cümledeki başka
-bir token farklı bir çift seçebilir.
+Bir bloktaki tek feed-forward ağının yerine onun $E$ kopyasını, yani
+*uzmanları* koyun. Bunlara, her token için uzmanları skorlayıp token'ı en iyi $k$
+tanesine gönderen küçük, öğrenilmiş bir **router** (yönlendirici) ekleyin;
+genelde $k = 2$ seçilir. Yalnızca o $k$ uzman çalışır. Diğer $E - k$ tanesi o
+token için boşta kalır ve aynı cümledeki başka bir token farklı bir çift
+seçebilir.
 
 ::: {#gloss-mixture-of-experts .column-margin .term-gloss}
 **mixture of experts** (uzmanlar karışımı) — tek bir feed-forward ağının yerine çok sayıda ağ koyar ve her token'ı bunlardan birkaçına yönlendirir; böylece toplam parametre sayısı ile token başına hesap artık aynı sayı olmaktan çıkar. [↩](#term-mixture-of-experts){.term-back}
@@ -2785,7 +2824,7 @@ uzman, top-2 yönlendirme alalım:
 | MoE, 8 uzman, top-2 | **36,5B** | **10,7B** |
 
 MoE modeli yoğun modelin 5,7 katı parametre tutuyor ve 1,67 katı aritmetik
-yapıyor. Bellek faturası ilk sayıyı takip ediyor; ikincisi ise token başına
+yapıyor. Bellek faturasını ilk sayı belirliyor; ikincisi ise token başına
 aritmetiğin birinci mertebeden kestirimi, bir gecikme rakamı değil. Fiilen
 beklediğiniz süre, yönlendirmenin uzmanlara ne kadar dengeli dağıldığına, o
 dağılımın getirdiği iletişim maliyetine, batch boyutuna ve bant genişliğine de
@@ -2797,16 +2836,16 @@ parametrenin tamamı bellekte durmalı — router'ın seçimi token başına old
 herhangi bir uzmana herhangi bir anda ihtiyaç duyulabilir. Bir tanıtım
 yazısındaki "düşük aktif parametre sayısı" size hızdan bahseder, ne satın almanız
 gerektiğinden değil. Açık ağırlıklı model duyurularında en çok yanlış okunan tek
-sayı budur ve kendi sunucunuzda barındırmanın maliyetini çıkarırken doğrudan
-işinize dokunur.
+sayı budur ve kendi sunucunuzda barındırmanın maliyetini çıkarırken
+(@sec-servis) işinizi doğrudan etkiler.
 :::
 
-Fikir eski [@shazeer2017outrageously]; yönlendirme token başına tek uzmana
-sadeleştirilip mühendislik ölçekte oturunca pratik hâle geldi
+Fikir eski [@shazeer2017outrageously]. Yönlendirme token başına tek uzmana
+sadeleştirilip mühendislik sorunları büyük ölçekte çözülünce pratik hâle geldi
 [@fedus2022switch]. Pratikte zor olan kısım yönlendirme kuralı değil, **yük
-dengeleme**: router'ın üç uzmana âşık olup geri kalanını aç bırakmasını
-engelleyen hiçbir şey yok; bu da parasını ödediğiniz parametreleri çöpe atar ve
-eğitimi çökertebilir.
+dengeleme**: router'ın üç uzmanı kayırıp geri kalanını aç bırakmasını
+engelleyen hiçbir şey yok. Bu da parasını ödediğiniz parametreleri boşa harcar
+ve eğitimi tamamen bozabilir.
 
 Yönlendiricinin kendisi tek bir matris. $x$ token'ı için
 $s = xW_r \in \mathbb{R}^{E}$ üretiyor, en yüksek $k$ skoru tutuyor, onları
@@ -2819,31 +2858,33 @@ $$
 
 Yük dengeleme için klasik çözüm, dengesiz kullanımı cezalandıran yardımcı bir
 kayıp — ana amacın seve seve düştüğü bir hata moduna karşı açıkça konulmuş bir
-düzeltme. Ama bu, birinciyle kavga eden ikinci bir amaç ve 2025'e gelindiğinde en
+düzeltme. Ama bu, birinciyle çatışan ikinci bir amaç ve 2025'e gelindiğinde en
 büyük açık MoE'ler onu ikinci plana atmıştı: DeepSeek-V3 dengeyi ağırlıklı
-olarak yönlendirme skoruna uzman başına eklenen ve çevrimiçi ayarlanan, kendi
-gradyanı olmayan bir bias ile kuruyor. "Ağırlıklı olarak" burada kilit ifade:
-o mekanizmanın yanında küçük, tamamlayıcı bir dizi düzeyi (sequence-wise)
-dengeleme kaybını koruyor. Yardımcı kaybın var ya da yok olduğunu varsaymak
+olarak uzman başına bir bias ile kuruyor. Bu bias yönlendirme skoruna ekleniyor,
+çevrimiçi ayarlanıyor ve kendine ait bir gradyan taşımıyor. "Ağırlıklı olarak"
+burada kilit ifade, çünkü model bu mekanizmanın yanında küçük, tamamlayıcı bir
+dizi düzeyi (sequence-wise) dengeleme kaybını da koruyor. Yardımcı kaybın var ya da yok olduğunu varsaymak
 yerine, modelin gerçekte hangi mekanizmayı hangi oranda kullandığına bakın.
 
 Yukarıdaki tablodaki %29'luk aktif oran, MoE'nin değil *bu yapılandırmanın* bir
-özelliği. Alanın gittiği yön **daha ince taneli uzmanlara** (fine-grained experts: daha çok sayıda, daha küçük uzman ağ) doğru: top-2 ile 8 büyük
-uzman yerine, top-8 ile 64–256 dar uzman ve her token'ın uğradığı bir ya da iki
-paylaşılan uzman. Aynı toplam, çok daha küçük aktif oran — 36B toplamı olan bir
-modelin 10,7B yerine 3B civarı aktife inmesinin yolu bu; `qwen3.6:35b-a3b`
-@sec-siniflandirma'da tam olarak bunu yapıyor. Bir lansman yazısı okurken
-bakılacak oran aktif/toplam ve yayına alınmış modellerde bu oran %30'dan %3'e kadar
-inmiş durumda.
+özelliği. Alanın gittiği yön **daha ince taneli uzmanlara** (fine-grained
+experts: daha çok sayıda, daha küçük uzman ağ) doğru: top-2 ile 8 büyük uzman
+yerine, top-8 ile 64–256 dar uzman ve her token'ın uğradığı bir ya da iki
+paylaşılan uzman. Aynı toplam, çok daha küçük aktif oran: toplamı 36B olan bir
+modelin aktif parametresi bu sayede 10,7B yerine 3B civarına iner;
+`qwen3.6:35b-a3b` (@sec-siniflandirma) tam olarak bunu yapıyor. Bir lansman
+yazısı okurken bakmanız gereken şey aktif/toplam oranıdır; yayına alınmış
+modellerde bu oran yaklaşık %30 ile %3 arasında değişiyor.
 
 ## Ölçekleme yasaları ve neyi öngördükleri {#sec-olcekleme-yasalari}
 
 Transformer'ların, makine öğrenmesinde başka hemen hiçbir şeyde bulunmayan bir
 özelliği olduğu ortaya çıktı: [büyüttüğünüzde loss'ları önceden
-öngörebileceğiniz bir biçimde düşüyor.]{.hl} Loss; parametre, veri ve hesap
-karşısında bir üs yasası izliyor — log-log eksenlerde, çok sayıda büyüklük
-mertebesi boyunca düz bir çizgi [@kaplan2020scaling]. Tek bir eğitim koşusuna
-dokuz haneli para harcamayı göze alanların sebebi bu öngörülebilirlikti.
+kestirebileceğiniz bir biçimde düşüyor.]{.hl} Loss parametreye, veriye ve
+hesaba göre bir kuvvet yasası izliyor — log-log eksenlerde, çok sayıda büyüklük
+mertebesi boyunca düz bir çizgi [@kaplan2020scaling]. Birilerinin tek bir
+eğitim koşusuna dokuz haneli meblağlar harcamayı göze almasının sebebi bu
+öngörülebilirlikti.
 
 Analizin ilk sürümü, modeli veriden çok daha hızlı büyütmeyi öneriyordu.
 Yanlıştı; üstelik önemli ve anlaşılmaya değer bir biçimde yanlıştı, çünkü hata
@@ -2857,14 +2898,15 @@ parametre başına yaklaşık 20 token [@hoffmann2022chinchilla]:
 | Gopher | 280B | 300B | 1,1 |
 | Chinchilla | 70B | 1,4T | 20 |
 
-Chinchilla, Gopher'ın dörtte biri boyutunda, aynı hesap bütçesini kullandı ve
-onu geniş bir cephede geçti. Bir model kuşağı fena hâlde az eğitilmişti ve kimse
-bunu bilmiyordu; çünkü herkes aynı ölçekleme yasasını okuyordu.
+Chinchilla, Gopher'ın dörtte biri büyüklüğünde; aynı hesap bütçesini kullandı
+ve onu geniş bir yelpazede geride bıraktı. Bir model kuşağı fena hâlde az
+eğitilmişti ve kimse bunu bilmiyordu, çünkü herkes aynı ölçekleme yasasını
+okuyordu.
 
-İki önemli çekince; ikisine de ihtiyacınız olacak.
+Dürüst olmak gerekirse iki çekince var; ikisine de ihtiyacınız olacak.
 
-**Yasalar loss'u öngörür, yeteneği değil.** Loss, ayrılmış metin üzerindeki
-ortalama negatif log-olabilirliktir. Düzgündür ve sizin asıl derdiniz o
+**Yasalar loss'u öngörür, yeteneği değil.** Loss, ayrı tutulmuş (held-out)
+metin üzerindeki ortalama negatif log-olabilirliktir. Düzgündür ve sizin asıl derdiniz o
 değildir. Bir modelin çok adımlı bir talimatı izleyip izleyemeyeceği, kötü bir
 isteği reddedip reddedemeyeceği ya da aritmetiği güvenilir biçimde yapıp
 yapamayacağı, bu eğrilerin öngördüğü bir nicelik değildir — üstelik düzgün bir
@@ -2883,8 +2925,8 @@ de budur. Eğitim pipeline'ının tamamına ileride döneceğiz (@sec-on-egitim)
 
 ## Laboratuvar: attention'ı yazın, sonra profilini çıkarın {#sec-attention-lab}
 
-Bu laboratuvarın amacı karesel terimi okumak değil, hissettirmek. Önce NumPy
-ile çalışın; bir çerçeveye ancak 3. adımda uzanın.
+Bu laboratuvarın amacı, karesel terim hakkında okumak değil, onu hissetmek.
+Önce NumPy ile çalışın; bir çerçeveye ancak 3. adımda başvurun.
 
 1. **Ölçeklenmiş iç çarpım attention'ını** (@sec-attention-ornek)
    denklemden yazın — izdüşümler, skorlar, ölçekleme, isteğe bağlı maske,
@@ -2894,19 +2936,20 @@ ile çalışın; bir çerçeveye ancak 3. adımda uzanın.
    $W^V$ değerlerini kullanın ve `içti` için attention satırının
    `[0.4230, 0.5012, 0.0759]` çıktığını doğrulayın. Çıkmıyorsa hatanız ya
    devrik almada ya da normalleştirdiğiniz eksendedir — başka aday yok.
-3. **Bir referansa karşı doğrulayın.** Farklı şekillerde rastgele girdilerle
-   `torch.nn.functional.scaled_dot_product_attention` ile karşılaştırın ve
+3. **Bir referansla doğrulayın.** Birkaç farklı tensör şeklindeki rastgele
+   girdilerde `torch.nn.functional.scaled_dot_product_attention` ile
+   karşılaştırın ve
    maksimum mutlak farkı raporlayın. fp32'de yaklaşık $10^{-5}$ üstündeki her
    şey yuvarlama değil, gerçek bir uyuşmazlıktır.
-4. **Permütasyona eşdeğişkenliği doğrulayın.** *Maskesiz* olarak token'ları
-   karıştırın, tekrar çalıştırın, çıktıların karışıklığını geri alın ve
+4. **Permütasyona eşdeğişkenliği doğrulayın.** Maske *olmadan* token'ları
+   karıştırın, tekrar çalıştırın, çıktıları eski sırasına dizin ve
    maksimum farkı raporlayın. Bu bölümde olduğu gibi makine epsilonu
    çıkmalı. Sonra bir konum kodlaması ekleyip sayıyı tekrar raporlayın. Son
    olarak bütün testi nedensel maskeyle ve konum kodlaması olmadan tekrarlayın:
    hiçbir konum sinyali eklemediğiniz hâlde eşdeğişkenlik bozulur. Bunun
    sebebini, bu bölümü okumamış birine anlatın.
-5. **Üssü ölçün.** $d = 64$ sabitken ve geri kalan her şey sabitken attention'ı
-   $n = 128, 256, \dots, 4096$ için zamanlayın. Log-log eksenlerde çizip bir
+5. **Üssü ölçün.** $d = 64$ alın, geri kalan her şeyi sabit tutun
+   ve attention'ın süresini $n = 128, 256, \dots, 4096$ için ölçün. Log-log eksenlerde çizip bir
    eğim kestirin. Ölçtüğünüz üssü ve 2 olup olmadığını belirtin — küçük $n$
    değerlerinde 2'nin epey altındaysa, onu hangi sabit maliyetlerin gizlediğini
    açıklayın.
@@ -2915,7 +2958,7 @@ ile çalışın; bir çerçeveye ancak 3. adımda uzanın.
    ettiği $n$ değerini bulun. Raporlayın.
 7. **Nedensel maske ekleyin**, sonra çalıştığını gözle inceleyerek değil,
    davranışsal olarak kanıtlayın: bir dizide çalıştırın, sona bir token ekleyip
-   tekrar çalıştırın ve özgün konumların çıktılarının değişmediğini doğrulayın.
+   tekrar çalıştırın ve önceki konumlardaki çıktıların değişmediğini doğrulayın.
    Bir sonraki adımı meşru kılan şey bu değişmezdir.
 8. **Bir KV cache kurun.** 512 token'ı teker teker üretin; önce her adımda her
    şeyi yeniden hesaplayarak, sonra K ve V'yi önbelleğe alarak. İkisi için de
@@ -2923,8 +2966,8 @@ ile çalışın; bir çerçeveye ancak 3. adımda uzanın.
    Önbelleğin byte cinsinden boyutunu (@sec-attention-maliyeti)
    formülden hesaplayın ve sürecinizin gerçekte ayırdığı bellekle karşılaştırın.
 
-**Teslim edilecek:** kestirdiğiniz üssü içeren log-log grafiği, token başına iki
-gecikme eğrisi ve donanımınızın kaldırabildiği en uzun dizi hakkında kısa bir
+**Teslim edilecek:** kestirdiğiniz üssü içeren log-log grafiği, token başına
+gecikmeyi gösteren iki eğri ve donanımınızın kaldırabildiği en uzun dizi hakkında kısa bir
 not — tükenen kaynağın adını da vererek.
 
 ## Sezgi kontrolleri {#sec-transformerlar-sezgi}
@@ -2935,7 +2978,8 @@ modelin paraya mal olacak biçimde yanlış olduğu altı yer.
 ::: {.callout-note collapse="true"}
 ## 1. Attention karesel olduğuna göre bir transformer'ı çalıştırmanın maliyetine o hâkimdir. Doğru mu?
 
-Genelde yanlış ve buna inanmak sizi yanlış şeyi optimize etmeye yollar.
+Genelde doğru değil; buna inanırsanız da yanlış şeyi optimize etmeye
+koyulursunuz.
 
 Katman başına iki terim şu: izdüşümler ve feed-forward için $24nd^2$, attention
 için $4n^2d$. $n = 6d$'de eşitleniyorlar — yani 4.096 genişliğindeki bir model
@@ -2954,18 +2998,20 @@ hesaplayın; $n < 6d$ ise bakmanız gereken yer feed-forward tarafıdır.
 Çünkü üç farklı soruyu cevaplıyorlar ve onları tek matriste toplamak modelin
 soru sorma yeteneğini elinden alıyor.
 
-$Q$, bir token'ın *ne aradığıdır*; $K$, *ne diye bulunmayı teklif ettiğidir*;
-$V$ ise bulunduğunda gerçekte ne katkı verdiğidir. [$Q$ ile $K$ birlikte
+$Q$, bir token'ın *aradığı* şeydir; $K$, bulunabilmek için *ilan ettiği*
+şeydir; $V$ ise bulunduğunda gerçekte kattığı şeydir. [$Q$ ile $K$ birlikte
 bilginin **nereye** aktığına karar verir; $V$ tek başına **neyin** aktığına
 karar verir.]{.hl} Bunları birbirine bağlarsanız bir token'ın ilanı sorgusuyla
-aynı hâle gelir; skor tablosu simetrikleşir ve asimetrik ilişkiler — *beni
-hangi fiil yönetiyor* — ifade edilemez olur. Ayrıca her token'ı kendine doğru
-yanlandırır, çünkü bir komşu daha uzun değilse $x \cdot x$ satırdaki en büyük
-skordur; bu ikinci etki bir eğilimdir, garanti değil.
+aynı hâle gelir. Böylece skor tablosu simetrik bir Gram matrisi olmak zorunda
+kalır. Satır normalleştirmesi iki yönde yine de farklı ağırlıklar üretebilir;
+ama iki yön de aynı elemanı okuduğu için head bu ağırlıkları *seçme*
+yeteneğini kaybeder. Bu eşitleme ayrıca her token'ı kendine yönelmeye iter,
+çünkü bir komşu daha uzun değilse $x \cdot x$ satırdaki en büyük skordur; bu
+ikinci etki bir eğilimdir, garanti değil.
 
 Çözümlü örnek (@sec-attention-ornek) bunu somut olarak gösteriyor:
-örneği çalıştıran skor, girdilerin izdüşümsüz hiçbir iç çarpımıyla
-üretilemezdi.
+örneğin işlemesini sağlayan skoru, girdilerin izdüşümü alınmamış hiçbir iç
+çarpımı üretemezdi.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -2976,8 +3022,8 @@ demek. 100.000 token'da KV cache'i **52,4 GB** — [tek bir sohbet için modelin
 kendisinin neredeyse dört katı]{.hl} — ve bu rakam *eşzamanlı istek başına*,
 oysa ağırlıklar hepsi arasında paylaşılıyor.
 
-Bir GPU'nun kaç kullanıcıya hizmet verebileceğine genelde parametre sayısının
-değil KV cache'in karar vermesinin ve GQA'nın evrenselleşmesinin sebebi bu: 32
+Bu yüzden bir GPU'nun kaç kullanıcıya hizmet verebileceğini genelde parametre
+sayısı değil, KV cache belirler. GQA'nın evrenselleşmesinin sebebi de bu: 32
 KV head'den 8'e inmek aynı önbelleği 52,4 GB'tan **13,1 GB**'a indiriyor;
 kalitede neredeyse hiç bedel ödemeden 4× tasarruf.
 
@@ -2992,14 +3038,15 @@ Bunlar iki farklı cevabı olan iki farklı soru; mimarinin bütün meselesi de 
 
 36B parametrenin **hepsini** bellekte tutmanız gerekir, çünkü herhangi bir token
 herhangi bir uzmana yönlenebilir. Ama token başına yalnızca en iyi $k$ uzman
-çalışır — yaklaşık 3B aktif — dolayısıyla gecikme küçük sayıyı takip eder.
+çalışır — yaklaşık 3B aktif — dolayısıyla gecikme küçük sayıya göre şekillenir.
 [Toplam parametre donanım faturanızı, aktif parametre gecikmenizi
 belirler.]{.hl}
 
-@sec-siniflandirma tam olarak bunu ölçtü: `qwen3.6:35b-a3b` bir belgeyi
+@sec-siniflandirma-kesisim tam olarak bunu ölçtü: `qwen3.6:35b-a3b` bir belgeyi
 0,353 saniyede sınıflandırıyor; *yoğun* 9,7B'lik bir model için bu süre 0,365
-saniye, yoğun 27,4B için 0,592 saniye — ikisinden de hızlı, üstelik ikisinden de
-yüksek puan alıyor ve bunu diskte 23,9 GB yer kaplayarak yapıyor.
+saniye, yoğun 27,4B için 0,592 saniye. Yani MoE modeli ikisinden de hızlı,
+üstelik ikisinden de yüksek puan alıyor; bunu yaparken diskte 23,9 GB yer
+kaplıyor.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -3012,9 +3059,9 @@ işleyemez — yaşanan şey bir kalite düşüşü değil, bir arama hatasıdı
 Alanın RoPE ve ALiBi'ye geçmesinin somut sebebi budur. RoPE konumu bir *döndürme*
 olarak kodlar, böylece iki token arasındaki skor yalnızca aralarındaki kaydırmaya
 bağlı olur. Ölçüm şöyle (@sec-konum): sabit bir kaydırmadaki aynı query-key
-çifti, 0, 100, 1000 ve 5000 mutlak konumlarında değerlendirildiğinde skorlar
-yalnızca **$2 \times 10^{-13}$** kadar değişiyor — ham skorlardaki 26'lık
-yayılıma karşı. [Konum yalnızca bir kaydırma olarak girdiğinde, ortada eksik
+çiftini 0, 100, 1000 ve 5000 mutlak konumlarında değerlendirdiğimizde skorlar
+yalnızca **$2 \times 10^{-13}$** kadar değişiyor; ham skorlarda ise yayılım
+26'dır. [Konum yalnızca bir kaydırma olarak girdiğinde, ortada eksik
 kalabilecek bir 1.025. satır yoktur.]{.hl}
 
 Bunun neyi *sağlamadığına* dikkat edin: eğitim uzunluğunun çok ötesine
@@ -3028,30 +3075,30 @@ kaldırıp yerine yumuşak bir tanesini koyar.
 Çünkü her alt katmanın okuduğu ve yazdığı tek şey odur ve genişliği hiç
 değişmez.
 
-Attention da feed-forward ağı da residual akışı içeri alır ve geri bir düzeltme
-ekler. [Blokları üst üste dizmenin bu kadar kolay olmasının — 12. blok birebir
-1. blok gibi görünür]{.hl} ve pre-norm'un alt katman çıktısını değil residual
-toplamı normalleştirmesinin sebebi budur.
+Attention da feed-forward ağı da residual akışı okur ve ona bir düzeltme ekler.
+Bu yüzden [blokları üst üste dizmek çok kolaydır — 12. blok birebir 1. blok
+gibi görünür]{.hl}. Pre-norm'un alt katman çıktısını değil, residual toplamı
+normalleştirmesinin sebebi de budur.
 
 Pratikteki sonuç: bir transformer'ın belli bir derinlikte "ne bildiğini"
 incelediğinizde, herhangi bir katmanın çıktısını değil residual akışı
-okuyorsunuz demektir. Ağın ortasındaki bir katmandan vektör çıkaran her teknik
-için de aynısı geçerlidir — orada karşılaştırılan (@sec-siniflandirma) donuk
-encoder embedding'leri dahil.
+okursunuz. Ağın ortasındaki bir katmandan vektör çıkaran her teknik için de
+aynısı geçerlidir — fine-tuning kısmında (@sec-siniflandirma-fine-tuning) karşılaştırma
+için kullanılan donuk encoder embedding'leri dahil.
 :::
 
 ## Mülakat soruları {#sec-transformerlar-mulakat}
 
 Mülakatlarda transformer soruları genellikle bir mimari şemayı ezberden
 sayabilmenizi değil, bir sistem hakkında aritmetik yapabilmenizi ölçer. Aşağıdaki
-cevaplar, yanına sayı iliştirilmiş olanlar.
+cevaplar sayılarla birlikte veriliyor.
 
 ::: {.column-margin}
-"Attention'ı anlat" denirse, softmax formülüyle başlama dürtüsüne direnin. Onun
-*ne işe yaradığıyla* başlayın — her token diğer her token'a bakabilir ve her
-birinin ne kadar önemli olduğunu öğrenebilir — sonra formülü türetin.
-Mülakatçılar anlayıp anlamadığınızı mı yoksa ezberleyip ezberlemediğinizi mi
-dinliyor; sıralama sizi ele verir.
+"Attention'ı anlat" denirse, softmax formülüyle başlama dürtüsüne direnin.
+Attention'ın *ne işe yaradığıyla* başlayın — her token diğer her token'a
+bakabilir ve her birinin ne kadar önemli olduğunu öğrenebilir — sonra formülü
+türetin. Mülakatçılar konuyu kavradığınızı mı yoksa ezberlediğinizi mi anlamaya
+çalışır; anlatma sıranız sizi ele verir.
 :::
 
 1. **Regresyon bilen birine self-attention'ı anlatın.** Öğrenilmiş bir ağırlıklı
@@ -3060,34 +3107,39 @@ dinliyor; sıralama sizi ele verir.
    value'lara uygulanmış hâlidir. Alışılmadık olan tek kısım, ağırlıkların bir
    kez kestirilmek yerine *çıkarım anında veriden hesaplanmasıdır* — aynı
    kelimenin farklı bir cümlede farklı bir vektör almasının sebebi tam olarak
-   budur. Sonra ölçeklemeyi söyleyin: $\sqrt{d_k}$'ye bölünür, çünkü $d_k$
-   boyutlu vektörlerin iç çarpımları $\sqrt{d_k}$ gibi büyür ve ölçeklenmemiş
-   bir softmax doyuma ulaşır.
+   budur. Sonra ölçeklemeden söz edin: skorlar $\sqrt{d_k}$'ye bölünür, çünkü
+   $d_k$ boyutlu vektörlerin iç çarpımları $\sqrt{d_k}$ ile orantılı büyür ve
+   ölçeklenmemiş bir softmax doyuma ulaşır.
 
 2. **Attention'dan sonra neden bir feed-forward ağı var?** Çünkü attention
    token'ları karıştırır ama ağırlıkları verildiğinde bunu *value'lar açısından
-   doğrusal* biçimde yapar — sahip olduğu doğrusal olmayanlık, taşıdığı şeye
-   ne yaptığında değil, ağırlıkların nasıl hesaplandığında yaşar. Her token'ın
-   kendine ait doğrusal olmayan işlemi gördüğü yer feed-forward alt katmanıdır. Feed-forward yarısı
-   token başına derinlik uygular: $W_1$ bir dedektör bankası, $W_2$ ise her
-   dedektör ateşlediğinde yaydığı şeydir. Oranı doğru bilin, çünkü adayların çoğu
+   doğrusal* biçimde yapar — sahip olduğu doğrusal olmayanlık, taşıdığı şeyi
+   işleme biçiminde değil, ağırlıkları hesaplama biçiminde yatar. Her token'ın
+   kendine özgü doğrusal olmayan bir işlemden geçtiği yer feed-forward alt
+   katmanıdır. Feed-forward yarısı token başına derinlik uygular: $W_1$ bir
+   dedektör bankası, $W_2$ ise her dedektörün tetiklendiğinde yaydığı şeydir. Oranı doğru bilin, çünkü adayların çoğu
    tersini söylüyor: bu bölüm boyunca kullanılan standart
    $d_{\text{ff}} = 4d$ bloğunda [bir transformer bloğunun parametrelerinin üçte
    ikisi feed-forward alt katmanıdır]{.hl}, attention değil. Oran bu
    $d_{\text{ff}}$ tercihinden çıkar; başka türlü kurulmuş bir blok için
    aktarmadan önce kontrol edin.
 
-3. **Bir modelin GPU'nuza sığıp sığmadığını nasıl kestirirsiniz?** İki sayı,
-   toplanır. Ağırlıklar: parametre × parametre başına byte (fp16'da 7B = 14 GB).
+3. **Bir modelin GPU'nuza sığıp sığmadığını nasıl kestirirsiniz?** İki sayıyı
+   toplarsınız. Ağırlıklar: parametre × parametre başına byte (fp16'da 7B = 14 GB).
    KV cache: $2 \times \text{katman} \times \text{KV head} \times
    \text{head boyu} \times \text{token} \times \text{byte}$, **eşzamanlı istek
    başına**. Çözümlü örneği verin: 32.768 token'da 7B'lik bir model 14 GB ağırlık
    ve 17,2 GB önbellek ister; yani bağlam şimdiden modelden pahalıya gelmiştir.
-   Cevabın kıdemli sürümü maliyeti hangi yöntemle azaltacağını söyler — GQA, nicemleme ya da daha kısa bağlam — ve önce hangisine başvuracağını belirtir.
+   Kıdemli bir cevap, maliyeti düşürecek yöntemi de adlandırır — GQA,
+   nicemleme ya da daha kısa bağlam — ve önce hangisine başvuracağınızı
+   söyler.
 
-4. **FlashAttention gerçekte neyi değiştirir?** Matematiği değil: aynı fonksiyonu hesaplar, yalnızca kayan nokta toplama sırası değiştiği için son basamaklar oynayabilir. Değiştirdiği şey *belleğe neyin yazıldığıdır*: $n \times n$
-   skor matrisi hiç somutlaştırılmaz, bunun yerine hızlı yonga içi bellekte kalan
-   karolar hâlinde hesaplanır. Bu, attention'ı bellek bant genişliği sınırlı
+4. **FlashAttention gerçekte neyi değiştirir?** Matematiği değil: aynı fonksiyonu
+   hesaplar. Tile'lar hâlinde yapılan toplamlar kayan nokta toplamasının
+   sırasını değiştirdiği için yalnızca son basamaklar oynar. Değiştirdiği şey
+   *belleğe neyin yazıldığıdır*: $n \times n$ skor matrisi hiç
+   somutlaştırılmaz, bunun yerine hızlı yonga içi bellekte kalan tile'lar
+   hâlinde hesaplanır. Bu, attention'ı bellek bant genişliği sınırlı
    olmaktan çıkarıp hesap sınırlı hâle getirir. Motivasyonu veren sayı: 100.000
    token'da **tek katmandaki tek bir head** için tek bir skor matrisi fp16'da
    18,63 GiB. Bunu 32 head ve 32 katmanla çarpın; naif sürüm yavaş değil,
@@ -3098,20 +3150,20 @@ dinliyor; sıralama sizi ele verir.
    olmasına izin verildiğiyle ilgilidir; encoder–decoder ise buna ek olarak iki
    yığını cross-attention ile birbirine bağlar. Encoder-only her şeyi iki yönlü görür ve tam bir
    metnin temsiline ihtiyacınız olduğunda doğru tercihtir — sınıflandırma, arama
-   ve oradaki bütün sonuçlar (@sec-siniflandirma). Decoder-only nedensel olarak
-   maskelenmiştir ve üretim için gereken odur. Encoder-decoder ikisini birden
+   ve sınıflandırma bölümündeki bütün sonuçlar (@sec-siniflandirma).
+   Decoder-only nedensel olarak maskelenmiştir ve üretim için gereken odur. Encoder-decoder ikisini birden
    tutar ve decoder'ın encoder'a bakmasına izin verir; çeviride varlığını
    sürdürmesinin sebebi budur. Pratik sürümü söyleyin: [etiketli sınıflandırmada
    2026'da hâlâ varsayılan encoder'dır]{.hl} ve ölçüm [12. bölümde](../chapters/12-siniflandirma.html).
 
-6. **Transformer'lar RNN'lerin yerini neden aldı?** Daha ifade gücü yüksek
-   oldukları için değil — eğitimde paralelleştirilebildikleri için. Bir RNN
+6. **Transformer'lar RNN'lerin yerini neden aldı?** İfade güçleri daha
+   yüksek olduğu için değil — eğitimde paralelleştirilebildikleri için. Bir RNN
    $t+1$'inci token'dan önce $t$'inci token'ı işlemek zorundadır; transformer
    bütün konumları aynı anda hesaplar, bu da ardışık bir bağımlılığı matris
    çarpımına çevirir ve GPU'yu düzgün kullanmanızı sağlar. Bedeli, karesel terim
    ve sınırsız bağlamın kaybıdır. Şunu net söyleyin: bu, ölçeğin önünü açan bir
-   *mühendislik* zaferiydi ve yetenekleri üreten şey ölçekti —
-   nicel olarak yapılan argüman (@sec-olcekleme-yasalari).
+   *mühendislik* zaferiydi ve yetenekleri üreten şey ölçekti.
+   @sec-olcekleme-yasalari bu argümanı nicel olarak kuruyor.
 
 ## Daha derine inmek için
 
@@ -3122,7 +3174,7 @@ tarayıcınızda canlı bir GPT-2 çalıştıran Georgia Tech'in
 aracı ve Brendan Bycroft'un
 [3D LLM gezintisi](https://bbycroft.net/llm).
 
-İzlemeyi tercih ediyorsanız, üç kaynak bu bölümü herhangi bir metinden iyi anlatıyor: geometri için 3Blue1Brown'ın [Transformers, the tech behind LLMs](https://www.youtube.com/watch?v=wjZofJX0v4M) ve [Attention, step-by-step](https://www.youtube.com/watch?v=eMlx5fFNoYc) videoları; aynı mimarinin satır satır yazıldığı Karpathy'nin [Let's build GPT: from scratch](https://www.youtube.com/watch?v=kCc8FmEb1nY) videosu; ve — o tempo fazla hızlıysa — eğitimi ve çıkarımı da içeren, Umar Jamil'in daha yavaş [Coding a Transformer from scratch in PyTorch](https://www.youtube.com/watch?v=ISNdQcPhsts) videosu. Stanford'un [CS25: Transformers United](https://web.stanford.edu/class/cs25/) dizisi, yazarların kendi makalelerini sunduğu bir seminer serisi.
+İzlemeyi tercih ediyorsanız, üç kaynak bu bölümü herhangi bir metinden iyi anlatıyor: geometri için 3Blue1Brown'ın [Transformers, the tech behind LLMs](https://www.youtube.com/watch?v=wjZofJX0v4M) ve [Attention, step-by-step](https://www.youtube.com/watch?v=eMlx5fFNoYc) videoları; aynı mimarinin satır satır yazıldığı Karpathy'nin [Let's build GPT: from scratch](https://www.youtube.com/watch?v=kCc8FmEb1nY) videosu; ve — o tempo fazla hızlıysa — eğitimi ve çıkarımı da içeren, Umar Jamil'in daha yavaş [Coding a Transformer from scratch in PyTorch](https://www.youtube.com/watch?v=ISNdQcPhsts) videosu. Stanford'un [CS25: Transformers United](https://web.stanford.edu/class/cs25/) ise yazarların kendi makalelerini sunduğu bir seminer dizisi.
 
 Birincil kaynaklar alışılmadık ölçüde okunaklı ve bu bölümden sonra onları
 doğrudan okuyacak donanıma sahipsiniz. @vaswani2017attention ile başlayın —
@@ -3152,14 +3204,14 @@ işliyor.
 1. Attention gezgininde zamir head'i ağırlığını *coffee* ile *robot* arasında
    kabaca 46/34 bölüyor — kahveye meyilli, ama kıl payı. *ready* yerine
    konabilecek, oranı kesin biçimde bir tarafa itmesi gereken **üç** tek
-   kelimelik ikame yazın ve her biri için okumayı zorlayan, dilbilgisiyle değil
-   dünyayla ilgili olguyu belirtin. Sonra bunun, bir dil modelinin yetkinliğinin
+   kelimelik ikame yazın ve her biri için o yorumu dayatan, dilbilgisine değil
+   dünyaya dair olguyu belirtin. Sonra bunun, bir dil modelinin yetkinliğinin
    ne kadarının tek başına attention deseninden gelebileceğine dair ne ima
    ettiğini söyleyin.
-2. Attention tek başına sıra körüdür. Oradan (@sec-karsilastirma),
-   ortalamayla kosinüsü 1,0000 çıkan kelime sırası çiftini alın ve bir
-   transformer bloğunun tam olarak hangi bileşeninin bu iki cümleyi farklı
-   temsil edilebilir kıldığını açıklayın.
+2. Attention tek başına sıra körüdür. Temsil yarışmasında
+   (@sec-karsilastirma) ortalama alındığında kosinüsü 1,0000 çıkan kelime
+   sırası çiftini alın. Bu iki cümlenin farklı temsil edilebilmesini bir
+   transformer bloğunun tam olarak hangi bileşeninin sağladığını açıklayın.
 3. 32 katmanlı, 32 head'li ve head boyu 128 olan bir model 100.000 token'lık
    bağlam sunuyor. 16 bit hassasiyette KV cache'in boyutunu gigabyte cinsinden
    hesaplayın. Ardından grouped-query attention'ın neden var olduğunu açıklayın.
@@ -3182,21 +3234,22 @@ işliyor.
    değerlerinde parametre ve çarpma sayarak doğrulayın. Sonra $h$ büyüdükçe
    gerçekten neyin kaybedildiğini ve bunun hangi noktada canınızı yakmasını
    beklediğinizi belirtin.
-7. Sinüzoidal kodlamalar için göreli konum tablosunu alın. 32 kaydırmasındaki
-   ortalama, 16 kaydırmasındakinden *yüksek*. Bunun sebebini
+7. Sinüzoidal kodlamalar için göreli konum tablosunu alın. 32'lik kaydırmadaki
+   ortalama, 16'lık kaydırmadakinden *yüksek*. Bunun sebebini
    $\sum_i \cos(k\omega_i)$ formülünden açıklayın ve sinüzoidal kodlamaların
    yakın konumları daha benzer yaptığı yolundaki yaygın iddia açısından bunun ne
    anlama geldiğini söyleyin.
-8. RoPE deneyini yeniden üretin: sabit ve rastgele bir query ile key, 0, 100,
-   1.000 ve 5.000 mutlak konumlarından 5 kaydırmayla skorlansın. Yayılımı
+8. RoPE deneyini yeniden üretin: sabit, rastgele bir query ve key alın. Bu
+   çifti 0, 100, 1.000 ve 5.000 mutlak konumlarında, aralarında 5'lik bir
+   kaydırma olacak biçimde skorlayın. Yayılımı
    raporlayın. Sonra aynısını öğrenilmiş tarzda toplamalı bir kodlamayla yapın ve
    o yayılımı da raporlayın. Bu iki sayıyı kullanarak bir paragrafta RoPE lehine
    ya da aleyhine argüman kurun.
-9. 70B sınıfı bir modelin 80 katmanı, 64 query head'i ve 128 head boyu var.
+9. 70B sınıfı bir modelin 80 katmanı ve 64 query head'i var; head boyu 128.
    fp16 ağırlıkları 140 GB, dolayısıyla dört adet 80 GB'lık hızlandırıcıdan
    oluşan bir düğümde — toplam 320 GB — sunuluyor. KV cache hesaplayıcısını
    kullanarak, dört eşzamanlı kullanıcıya sunabileceğiniz en uzun bağlamı önce
-   64 KV head ile, sonra da piyasaya çıkan her 70B'de gerçekte olduğu gibi 8 KV
+   64 KV head ile, sonra da yayına alınan her 70B'de gerçekte olduğu gibi 8 KV
    head ile bulun. İki uzunluğu ve aralarındaki oranı raporlayın. Ardından
    önbellek formülünde değişen ve değişmeyen bütün nicelikleri adlandırın.
 10. Bir duyuru, bir modeli "toplam 120B parametre, 5B aktif" diye tanıtıyor.
