@@ -35,8 +35,11 @@ option costs, and the failure both families share.
 ## Two chapters, one argument to settle
 
 @sec-text-as-data taught you to count words. @sec-embeddings taught you to
-place them as coordinates. Each chapter ended with a claim, and the claims do
-not agree.
+place them as coordinates. Each chapter ended with a claim. The two claims do
+not logically contradict each other — a sparse classifier *can* be strong
+while a word-level vocabulary generalises badly across morphology at the same
+time — but which one dominates on a particular dataset is something you only
+learn by measuring.
 
 ::: {#gloss-baseline .column-margin .term-gloss}
 **baseline** — the plain, cheap method a fancier one has to beat before it
@@ -148,7 +151,7 @@ which is a real limitation and is flagged again where it matters.
   <text x="682" y="170" class="t-xs t-mid t-muted">SAME SEED, SAME SPLIT</text>
 
   <line x1="18" y1="278" x2="742" y2="278" class="ln-thin"/>
-  <text x="380" y="294" class="t-xs t-mid t-muted">EVERYTHING EXCEPT THE REPRESENTATION IS HELD FIXED — SO THE REPRESENTATION IS THE ONLY POSSIBLE CAUSE OF ANY DIFFERENCE</text>
+  <text x="380" y="294" class="t-xs t-mid t-muted">EVERYTHING EXCEPT THE REPRESENTATION IS HELD FIXED — SO THE REPRESENTATION IS THE LEADING EXPLANATION OF ANY DIFFERENCE (EXCEPTIONS LISTED BELOW)</text>
 </svg>
 ```
 
@@ -223,7 +226,9 @@ De-duplicate *before* splitting, always. 1,657 duplicates is only 0.7% of the
 file, but a duplicate sitting on both sides of the train/test split is a
 memorised answer scoring as a generalisation, and it inflates every method
 unevenly — whichever model memorises hardest benefits most. This one line
-is the difference between an experiment and a demo.
+is the difference between an experiment and a demo. It is not claimed to be
+sufficient: exact de-duplication is necessary but not enough, and templated or
+near-duplicate texts can still survive it.
 
 We then take a stratified 50,000-review subsample and split it 80/20,
 preserving the imbalance exactly:
@@ -302,7 +307,8 @@ model look useless: 48.37 instead of 93.68.
 ::: {.callout-note collapse="true"}
 ## Why macro-F1, spelled out with the actual arithmetic
 
-So accuracy is out. What replaces it, and why does that replacement not have
+So on this dataset accuracy cannot be the decision metric on its own. What
+replaces it, and why does that replacement not have
 the same problem?
 
 For one class, with $TP$ true positives, $FP$ false positives and $FN$ false
@@ -345,9 +351,22 @@ carries the value, so it gets half the weight.
 The same reasoning is why `class_weight="balanced"` appears in every model
 below. It reweights the training loss by inverse class frequency, so one
 negative review costs the optimiser about 14.8 times what one positive review
-costs. Without it, every model in this chapter collapses toward the majority
-class and the comparison measures nothing.
+costs. Without it the models are at serious risk of collapsing toward the
+majority class — but this chapter did not measure that; exercise 2 asks you
+to.
+
+Do not conflate the two: choosing macro-F1 as the **headline metric** and
+**reweighting** the training loss by class frequency are separate design
+decisions. One sets what the evaluation cares about, the other what training
+cares about, and picking one does not automatically bring the other. Balanced
+class weights are a strong default, but compare unweighted, weighted and
+threshold-tuned variants on a validation set.
 :::
+
+Macro-F1 is not a universal answer either: in a real triage system, recall on
+the negative class, precision at a given workload, or expected cost can be a
+more direct decision metric. We choose macro-F1 here because on this task the
+value sits in the minority class.
 
 From here on, **macro-F1 is the headline and accuracy is reported only to
 show how misleading it is.** Watch the two columns diverge in every table
@@ -355,8 +374,10 @@ that follows.
 
 ## Tokenising Turkish, and the trap inside that
 
-Before either road, the text has to become tokens. @sec-text-as-data made
-lowercasing sound like the trivial step. In Turkish it is a bug.
+Before either road, the text has to become tokens. @sec-text-as-data already
+warned that `str.lower()` is outright wrong in Turkish, left the fix to
+@sec-turkish-nlp and left the trace of the bug in a real corpus to this
+chapter. Here is that trap on the actual data.
 
 ```python
 "IYI".lower()          # → 'iyi'
@@ -389,8 +410,8 @@ tr_lower("İYİ")        # → 'iyi'
 The default rule silently merges `ıyı` into `iyi` and produces a
 combining-dot hybrid for `İYİ` that matches nothing in your vocabulary. Both
 are wrong; both fail quietly; both cost you accuracy you will attribute to
-the model. **Case conversion is locale-dependent, and the locale is part of the
-model.** (The operation here is lowercasing; Unicode *casefolding* is a
+the model. **Case conversion is language-dependent, and a language-specific
+lowercasing policy is part of the preprocessing and tokenizer contract.** (The operation here is lowercasing; Unicode *casefolding* is a
 related but distinct operation intended for caseless matching, and it has its
 own Turkish tailoring.)
 
@@ -409,6 +430,11 @@ TOKEN_RE = re.compile(r"[a-zçğıöşü]+")
 def tokenize(s):
     return TOKEN_RE.findall(tr_lower(s))
 ```
+
+Say what this pattern deliberately throws away: it keeps letters only, so
+punctuation, digits and emoji all disappear. In product reviews `!!!`, `5/5`
+or an emoji can carry sentiment; this experiment does not model them. That is
+a simplification, not a measured decision.
 
 ```text
 ### the training corpus, 40,000 reviews
@@ -494,8 +520,32 @@ tf-idf 1-2 gram          92.57      76.21     56.47  101,659    1.0 s
 tf-idf char_wb 3-5       88.63      70.39     47.14   94,939    3.3 s
 ```
 
-Two footnotes on that table, both of which are exceptions to "everything except
-the representation is held fixed", and exceptions should be counted.
+Three footnotes on that table, all of which are exceptions to "everything
+except the representation is held fixed", and exceptions should be counted.
+
+**The character row does not go through the same tokenizer.** In
+`scikit-learn`, `token_pattern` is used only when `analyzer="word"`; `char_wb`
+ignores it entirely and runs its own character stream. So the character row
+differs from the word rows not only in feature granularity but in the
+feature-extraction path itself:
+
+```text
+### the same string through the two analyzers
+input:  "5/5 harika!! ürün çok i̇yi 👍"
+
+analyzer="word", token_pattern=[a-zçğıöşü]+
+  ['harika', 'ürün', 'çok', 'i', 'yi']
+  — 5/5, !!, the emoji are gone; the combining dot split "i̇yi" in two
+
+analyzer="char_wb", ngram_range=(3, 5)     (first few of the 3-grams)
+  [' 5/', '5/5', '/5 ', ' ha', 'har', 'ari', 'rik', 'ika', 'ka!', 'a!!', '!! ', ...]
+  — digits, the slash, the exclamation marks and the spaces all survive as features
+```
+
+The character row is therefore not a clean instance of "same tokenizer,
+different representation": it treats punctuation, digits and word boundaries
+differently. Keep that in mind when you read the conclusions this chapter
+draws from character n-grams later on.
 
 The character scheme uses `min_df=3` where the three word schemes use
 `min_df=2`. That is a defensible choice — character n-gram counts explode — but
@@ -568,13 +618,54 @@ numbers, and a perfect one maxes out both. If you optimise accuracy on this
 dataset you will select the model that does nothing.
 
 **Plain TF-IDF loses to plain counting here.** That is not what chapter 2's
-narrative would lead you to expect, and the reason is the interaction between
-IDF and short documents. Reviews average 22.6 tokens, most words appear once
-in a document, so within-document term frequency carries almost no signal;
-what IDF then does is down-weight exactly the frequent sentiment words —
+narrative would lead you to expect, and the first explanation that comes to
+mind is to blame IDF: reviews average 22.6 tokens, most words appear once in a
+document, so IDF may be down-weighting exactly the frequent sentiment words —
 `güzel`, `iyi`, `tavsiye` — that are the most reliable evidence available.
-Rare words get amplified instead, and in a corpus that is 58.6% hapax, rare
-mostly means *typo*.
+
+That explanation is testable, because **three** things change at once between
+`CountVectorizer` and `TfidfVectorizer`: IDF weighting, sublinear term
+frequency (`sublinear_tf=True`), and the L2 row normalization
+`TfidfVectorizer` applies by default. Turn each on and off separately — same
+vocabulary, same classifier, same `C = 1.0`:
+
+```text
+### one change at a time, unigram word features, min_df=2
+                                    idf   log-TF   norm   accuracy  macro-F1  F1(neg)
+raw counts  (= "bag of words")       no     no     none     92.14     73.51    51.30
+counts + L2                          no     no      L2      88.07     69.57    45.85
+log-TF + L2                          no     yes     L2      88.37     70.00    46.53
+counts + idf + L2                    yes    no      L2      90.20     72.16    49.74
+log-TF + idf, no norm                yes    yes    none     92.67     71.83    47.61
+log-TF + idf + L2  (= "tf-idf")      yes    yes     L2      90.07     71.95    49.41
+```
+
+The result refutes the first explanation. The single most expensive change is
+**not IDF but L2 row normalization**, which costs 3.94 macro-F1 points against
+raw counts. IDF *gives points back* when added on top of it — 69.57 to 72.16.
+So "TF-IDF lost here because of IDF" is not what the experiment shows.
+
+Why does normalization move things so much? Because we did not tune `C`.
+L2-normalized rows have norm 1 while raw count rows grow with document length,
+so a fixed `C = 1.0` applies a different effective regularization to the two
+representations — the same caveat this chapter flagged up front for the dense
+family, now inside the sparse one. Give both the same small tuning budget:
+split the 40,000 training documents into 32,000 fit and 8,000 validation,
+choose `C` there, then open the test set once:
+
+```text
+### C chosen on a validation split carved out of train (32,000 fit / 8,000 val)
+                     best C on validation    test macro-F1
+raw counts                  1.0                  73.51
+tf-idf                     10.0                  74.71
+```
+
+The ranking reverses. **The "raw counts beat TF-IDF" result in the round 1
+table is not a fact about the representations; it is a consequence of a
+shared, untuned `C`.** The table is not wrong — that is genuinely what was
+measured — but the lesson to take from it is not "TF-IDF loses on short text":
+it is that *a representation comparison run without an equal tuning budget may
+not be measuring what you wanted it to measure.*
 
 ::: {#gloss-bigram .column-margin .term-gloss}
 **bigram** — a pair of words counted as a single unit, so that *not good*
@@ -585,7 +676,10 @@ can be told apart from *good*. [↩](#term-bigram){.term-back}
 unigram TF-IDF, +2.7 over raw counts.** (Not the largest in the chapter — that
 is the 14.6 points embeddings take from counts at 250 labels. This is the
 largest available once the label budget is fixed.)
-This is negation being captured, and it is worth seeing why. `değil` ("not")
+One important mechanism behind the gain is probably negation — we did not
+ablate it separately, so that is a hypothesis; bigrams also pick up multi-word
+sentiment phrases, product names and collocations. The negation side is worth
+seeing. `değil` ("not")
 as a unigram is a strong negative feature on its own, but `beğendim` ("I
 liked it") and `beğenmedim` ("I did not like it") are already separate
 unigrams thanks to Turkish morphology — the negation is a *suffix*, inside
@@ -596,8 +690,8 @@ and some in the syntax, where it needs bigrams.
 
 ### What the model learned, in words
 
-The under-rated property of a sparse linear model: the parameters are
-readable. There is one coefficient per word, and you can simply sort them.
+The under-rated property of a sparse linear model: the parameters map
+directly onto feature names. There is one coefficient per word, and you can simply sort them.
 
 ```text
 ### tf-idf + logistic regression, largest coefficients
@@ -620,8 +714,17 @@ unhappy, and `fakat`/`ama` ("however", "but") are negative because a Turkish
 review that contains a contrastive conjunction is usually about to complain.
 Nobody wrote those rules down. They fell out of 40,000 labels.
 
-Keep this column in mind when the dense methods arrive, because none of them
-can produce it.
+Do not read the list as more than it is. These are not universal sentiment
+scores for the words; they are global associations learned on *this* training
+distribution, conditional on every other feature. And a word's contribution to
+the decision on a single document is not the coefficient itself but roughly
+$x_j \beta_j$ — the coefficient times its value in that document. The global
+coefficient list tells you what the model learned; it does not tell you why
+one particular prediction came out the way it did. Those are separate
+questions.
+
+Keep this column in mind when the dense methods arrive, because they do not
+give you the same direct word-to-coefficient table for free.
 
 ## Round 2 — the chapter-3 methods
 
@@ -669,7 +772,14 @@ majority baseline        93.68      48.37      0.00        —
 ```
 
 ::: {.callout-warning appearance="simple"}
-**Do not read that ordering as a ranking.** Every row is one run, on one split,
+**Do not read that ordering as a ranking.** The row names are short; in full,
+the three dense rows are averaged static vectors trained *from scratch* on
+this corpus's 0.9 million tokens, not pretrained ones. The dense scores are
+also unnormalised and `C` was tuned for no row at all — recall what the `C`
+experiment in the previous section did on the sparse side. Interpret the large
+gap between the families, not one-point differences.
+
+Every row is one run, on one split,
 with one seed, and no interval is attached to any of it. This chapter measures
 its own noise floor further down — the word2vec learning curve swings about 2.3
 points while its training data grows 160-fold — so the top gap here (76.21
@@ -690,15 +800,16 @@ and exercise 8 asks you to supply it.
 
 ::: {#gloss-recall .column-margin .term-gloss}
 **recall** — of the reviews that really were negative, the share the model
-found. It is the cost of a miss. [↩](#term-recall){.term-back}
+found. Low recall goes with a lot of misses. [↩](#term-recall){.term-back}
 :::
 
 ::: {#gloss-precision .column-margin .term-gloss}
 **precision** — of the reviews the model called negative, the share that
-really were. It is the cost of a false alarm. [↩](#term-precision){.term-back}
+really were. Low precision goes with a lot of false alarms. [↩](#term-precision){.term-back}
 :::
 
-**Counting wins, and not narrowly.** The gap between the best sparse method
+**In this setup the best sparse representation beats the from-scratch averaged
+embedding setup by a wide margin.** The gap between the best sparse method
 and the best dense one is 14.8 macro-F1 points. On the negative class, where
 the value is, it is **21.83** points of F1 — and the shape of that gap matters.
 (A coincidence to disarm before it confuses you: a precision of 21.8% turns up
@@ -789,8 +900,12 @@ is not user-generated review text. Treat the agreement as a coincidence worth
 noticing rather than a confirmed prediction — and note that the *type*-level
 numbers do not agree at all. Chapter 3 saw 28.99% of types unseen; this test
 set gives 46.4%, and that disagreement is where the information is. But look at the second pair of numbers, because they
-are the ones that hurt: **46.4% of the distinct word forms in the test set are not in the learned word2vec vocabulary** — either never seen in training, or seen once and dropped by `min_count=2`. Nearly half the vocabulary of any new batch of
-reviews is, to word2vec, a `KeyError`.
+are the ones that hurt: **46.4% of the distinct word forms in the test set are not in the learned word2vec vocabulary** — either never seen in training, or seen once and dropped by `min_count=2`. So
+nearly half the distinct forms in *this* test set are, to word2vec, a
+`KeyError`; the rate will of course vary from batch to batch and domain to
+domain. It is worth keeping two cases apart, too: "never seen in training" and
+"not in the learned vocabulary" are not the same thing — the second also
+covers the words the `min_count` threshold cut.
 
 fastText's coverage of that same set is 100%, by construction — it sums
 character n-gram vectors, so any string of characters gets a vector. Here is
@@ -845,9 +960,12 @@ ways to say a product is bad. fastText answers with the word `kalitesi`
 lost the negative polarity `-siz` carried, and it earns its place by sharing eight leading characters.
 
 This is @sec-embeddings' stated weakness — *assumes spelling similarity
-implies meaning similarity* — showing up as a measurable cost. The subword
-budget that buys perfect coverage is spent on modelling morphology, and it is
-taken from the budget that was modelling meaning.
+implies meaning similarity* — becoming visible. The plausible explanation is
+that the subword budget which buys perfect coverage is spent on modelling
+morphology, and is taken from the budget that was modelling meaning. Read that
+as a hypothesis: a two-word example cannot establish it, and the systematic
+version is the prefix test described in the previous paragraph, which this
+chapter did not run.
 
 Which is why, having solved the out-of-vocabulary problem completely,
 fastText scores **61.36** where word2vec scores **61.39**. Coverage went to
@@ -970,14 +1088,16 @@ chapter are not tested at all. See the caution below the leaderboard. The intere
   "cok guzel! kedi bayildi buna"       gold positive — ft says negative
 ```
 
-The dense wins are exactly the promised ones: misspellings and missing
+These are examples, not a systematic categorisation: classifying all 272
+would make the claims much stronger, and this chapter did not do it. The dense
+wins are exactly the promised ones: misspellings and missing
 diacritics, where a count vector sees an unknown column and a subword model
 sees a familiar shape. The dense losses are the promised ones too — the
 second example is a `ne … ne …` construction ("neither very bad nor very
 good") in which the individual words give mixed signals and the *structure*
 carries the decision.
 
-That points at the real cause, and it is testable directly.
+That points at a representational failure consistent with the classification gap, and it is testable directly.
 
 ```text
 ### cosine between a review and its negation
@@ -1000,8 +1120,9 @@ nothing along with everything else.
 ## The arithmetic of why averaging dilutes negation
 
 That explanation was qualitative. It is worth doing properly, because the
-result is a formula that tells you in advance how long a document has to be
-before averaging destroys the thing you care about.
+result is a formula. It does not hand you a fixed length threshold — that
+depends on the norms and directions of the vectors — but it does show how the
+dilution scales as the shared content grows.
 
 Take a five-word review and its negation, differing in exactly one word:
 
@@ -1089,8 +1210,9 @@ Read the word2vec column downwards before reading anything else. From 250
 labels to 40,000 — a 160-fold increase in training data — it goes 61.59, 61.02,
 59.52, 60.91, 61.52, 61.80, 60.94, 61.39: an irregular swing of about 2.3
 points that has no relationship to the amount of data. [Take that as a rough
-indication of how much this design moves for reasons unrelated to the thing
-being measured.]{.hl}
+indication of variability — not a noise floor in the technical sense — of how
+much this design moves for reasons unrelated to the thing being
+measured.]{.hl}
 
 Be exact about what it is not. A noise floor is the spread of *repeated runs of
 the same experiment*; these eight points differ in training size and in which
@@ -1185,12 +1307,35 @@ in different regimes, and the regime is set by your annotation budget.
 :::
 ::::
 
+::: {.callout-warning appearance="simple"}
+**Do not read that crossover as a transferable number.** The "≈ 1,500 labels"
+on the chart is a result observed on this dataset, in this setup, on this
+split: an exploratory demonstration, not a threshold to ship. Three reasons at
+once. It uses a single seed and a single sequence of subsamples, so no
+interval is attached to either curve; it should be repeated stratified
+subsamples per `n`, reported as a mean with a 95% interval. The threshold was
+read off the test set, which is also serving as the *selection* set — the
+thing this chapter called indefensible up front; the right version splits
+`train` again and reads the crossover on the inner slice. And the chapter's
+actual winner is not on the chart: word bigram TF-IDF was never plotted, and
+it would be expected to sit above unigram TF-IDF at the left edge too, which
+pushes the crossover *left*.
+
+What transfers is not the threshold but the shape: in a low-label regime a
+representation learned from unlabelled text can have a head start, and as
+labels accumulate the sparse linear model closes it. Plot your own curve for
+your own task.
+:::
+
 Read the left edge of that chart carefully. **With 250 labelled reviews — of
 which 16 are negative — TF-IDF scores 48.53, which is the do-nothing
-baseline.** It has learned nothing whatsoever. Averaged fastText scores 63.10
+baseline.** It fails to beat the baseline in macro-F1 — which is not the same
+as having learned nothing; the same aggregate score does not mean the same
+predictions, but there is no measurable gain on the decision metric. Averaged
+fastText scores 63.10
 with the same 250 labels, which is better than TF-IDF manages with 1,000.
 
-The reason is the mechanism, not luck.
+The pattern is consistent with the following mechanism.
 
 With 16 negative examples, TF-IDF sees 16 sparse rows drawn from a
 30,195-dimensional space. A word appearing in one of them and nowhere else
@@ -1220,17 +1365,23 @@ partly gone, and no quantity of labels restores it. TF-IDF, meanwhile, keeps
 climbing until about 10,000 labels because each new label can sharpen an
 individual word's coefficient.
 
-**Two curves, two different limits: embeddings are limited by their
-representation, counts are limited by their labels.** That sentence is the
-practical content of this chapter, and it generalises well past these seven
-methods.
+**Two curves, two different limits: here the averaging-based static dense
+setup is limited by its representation, and the sparse linear model is limited
+by its labels.** Keeping the sentence that narrow matters — what was measured
+is not "dense representations" but *this* setup: averaged 100-dimensional
+static vectors trained from scratch. What generalises is asking which *kind*
+of limit you are against: is my bottleneck labels, or representation?
 
 ## What it costs
 
 We now know which method wins, and at what number of labels. Neither of those
 is what a reviewer will ask you first.
 
-Accuracy is not the only axis. Here is the whole bill.
+Accuracy is not the only axis. Now put cost next to performance — not "the
+whole bill", only the three axes this experiment measured. The size of the
+model artifact, the memory taken by the vocabulary and embedding table, the
+size of the classifier itself, peak RAM during training, p95 latency and the
+cost of deploying an index are all absent here.
 
 ```text
 ### cost, on one CPU core, 40,000 training documents (single run, not repeated)
@@ -1256,9 +1407,13 @@ TF-IDF by 3.2 points), but they are not a free upgrade.
 
 **doc2vec must run gradient descent to vectorise a new document.** 1.73
 seconds for 10,000 reviews, against 0.11 for averaging — a 16-fold difference,
-and unlike training it is paid on every request, forever. Combined with the
-worst macro-F1 in the comparison (55.13), this is the clearest
-recommendation in the chapter: for classification, **do not use doc2vec.**
+and unlike training that cost recurs on every new document. Look at the
+absolute number too: 0.17 milliseconds per document is still small for most
+services, and the decision belongs to your latency budget. Combined with the
+worst macro-F1 in the comparison (55.13), the recommendation this chapter can
+support is: **do not make doc2vec your default on a short, noisy
+classification task like this one** — there is no performance-cost case for
+it.
 @sec-embeddings had it ahead of averaging on 20 Newsgroups; on 40,000 short,
 noisy Turkish reviews it is 6.3 points behind. Long, clean documents are the
 regime where learning a document vector pays, and reviews are neither.
@@ -1302,35 +1457,45 @@ the whole thing as a decision rather than a leaderboard.
 
 | | [Strengths]{.pro} | [Weaknesses]{.con} | Choose it when |
 |---|---|---|---|
-| **Bag of words** | Fastest to build and reason about. Beat TF-IDF here on short documents. Coefficients readable word by word. | No length normalisation; long documents dominate. No notion of which words are informative. | You want a baseline in five minutes that is genuinely hard to beat, and your documents are short. |
-| **TF-IDF (words)** | The standard strong baseline. Down-weights ubiquitous words. Trivially interpretable and auditable. | [Hurt]{.con} by IDF on short texts — lost to raw counts here. One column per word form: 895 columns for one Turkish verb. Zero generalisation to unseen forms. | Documents are long enough for term frequency to mean something, and you have thousands of labels. |
-| **TF-IDF (word bigrams)** | Best score in this chapter, 76.21. Captures multi-word negation that unigrams miss. Still a linear model you can read. | 3.4× the columns. Gains shrink as documents get longer. Still blind to unseen vocabulary. | You have labels and the task turns on short phrases — sentiment, intent, triage. This should be your default. |
-| **TF-IDF (char n-grams)** | Robust to spelling: a misspelt word still shares most of its n-grams with the correct one. (The vectorizer does learn a finite n-gram vocabulary and discards unseen n-grams — the point is that a new *word* rarely produces only new n-grams.) Strongest sparse method in the low-label regime. Language-agnostic — no tokeniser to get wrong. | 144.8 MB and 301 non-zeros per document. Lower macro-F1 than plain counting at full data. Coefficients are not human-readable. | Spelling is unreliable, the language is agglutinative, or you have no trustworthy tokeniser. |
-| **Averaged word2vec** | 100 dimensions for 61.4 macro-F1 — 302× fewer dimensions than word tf-idf. Trained without labels. [Ahead of both sparse methods tested here]{.pro} under ~1,500 labels. Semantic neighbours you can inspect. | `KeyError` on 46.4% of the distinct word forms in the test set. Confident nonsense on rare in-vocabulary words. Averaging dilutes negation. Word order gone. | Labels are scarce, or you need compact vectors for similarity search over millions of documents. |
+| **Bag of words** | Fastest to build and reason about. Beat TF-IDF here at a fixed `C = 1.0`. Coefficients readable word by word. | No length normalisation; long documents dominate. Applies no global informativeness weighting at the representation stage; it leaves that to the downstream classifier. | You want a baseline in five minutes that is genuinely hard to beat, and your documents are short. |
+| **TF-IDF (words)** | The standard strong baseline. Down-weights ubiquitous words. Trivially interpretable and auditable. | [Lost]{.con} to raw counts on this short-review corpus under a shared, untuned `C` — and moved ahead of them once both got an equal tuning budget, so measure both on short text. One column per word form: 895 columns for one Turkish verb. Zero generalisation to unseen forms. | A general-purpose first sparse baseline — just remember to tune `C` on a validation set. |
+| **TF-IDF (word bigrams)** | Best score in this chapter, 76.21. Captures multi-word negation that unigrams miss. Still a linear model you can read. | 3.4× the columns. Still blind to unseen vocabulary. | You have labels and the task turns on short phrases — sentiment, intent, triage. A strong first sparse baseline to build for short-text classification. |
+| **TF-IDF (char n-grams)** | Robust to spelling: a misspelt word still shares most of its n-grams with the correct one. (The vectorizer does learn a finite n-gram vocabulary and discards unseen n-grams — the point is that a new *word* rarely produces only new n-grams.) Strongest sparse method in the low-label regime. Less dependent on a word tokeniser — but lowercasing, Unicode normalisation and broken characters are still language-specific decisions. | 144.8 MB and 301 non-zeros per document. Lower macro-F1 than plain counting at full data. Coefficients are not human-readable. | Spelling is unreliable, the language is agglutinative, or you have no trustworthy tokeniser. |
+| **Averaged word2vec** | 100 dimensions for 61.4 macro-F1 — 302× fewer dimensions than word tf-idf. Trained without labels. On this dataset, [ahead of both sparse methods tested here]{.pro} below roughly 1,500 labels — the threshold itself does not transfer. Semantic neighbours you can inspect. | `KeyError` on 46.4% of the distinct word forms in the test set. Confident nonsense on rare in-vocabulary words. Averaging dilutes negation. Word order gone. | Labels are scarce, or you need compact vectors for similarity search over millions of documents. |
 | **Averaged fastText** | Every string gets a vector — coverage is 100% by construction. Handles the missing diacritics and typos in real user text. Best of any method at 250 labels. | Neighbours are [orthographic, not semantic]{.con}: `kalitesiz` → `kalitesi`. 2× word2vec's training time. Bought perfect coverage for +0.0 macro-F1 here. | The text is user-generated and misspelled, the language is agglutinative, and you cannot control the input vocabulary. |
-| **doc2vec** | One vector per document with no averaging heuristic. Learns document-level structure averaging cannot. | [Worst]{.con} score here, 55.13. Inference needs gradient steps: 16× slower per document, forever. Extra hyperparameters. | Documents are long and clean and you have measured that it beats averaging on *your* data. Rarely, on short text. |
+| **doc2vec** | One vector per document with no averaging heuristic. Learns document-level structure averaging cannot. | [Worst]{.con} score here, 55.13. Inference needs gradient steps: 16× slower per document, forever. Extra hyperparameters. | It may be worth trying where documents are long and clean — that is a hypothesis this chapter did not measure — and only once you have measured that it beats averaging on *your* data. |
 
 : What to reach for, and why {tbl-colwidths="[13,30,30,27]"}
 
 The decision procedure, compressed to something you can apply before writing
-any code:
+any code. Note what it is: a list of questions, not a list of thresholds.
 
 ```text
 ### how to choose, in order
-1. Count your labels.
-     < ~1,500 → averaged embeddings (fastText if morphology or typos)
-     > ~1,500 → sparse counts, and start with word bigrams
-2. Check your document length.
-     short (< 50 tokens) → raw counts may beat tf-idf; test both, it is free
-     long                → tf-idf, and doc2vec becomes worth testing
-3. Check your vocabulary stability.
-     users type it → character n-grams or subwords
-     you control it → word features are fine
-4. Check what you must ship.
-     an explanation → sparse, always
-     10M vectors for similarity search → dense, always
-5. Only now consider anything more complicated.
+1. Write down the task and the decision metric.
+2. Measure two budgets: how many labels you have, how much unlabelled text.
+3. Build at least three cheap baselines:
+     word counts / tf-idf
+     word n-grams
+     character n-grams   (especially if the spelling is noisy)
+4. If you have a strong unlabelled corpus, add a pretrained or
+   domain-trained embedding baseline.
+5. Audit the vocabulary: OOV rate, spelling, morphology.
+6. Read the error pairs. Do the errors come from order/negation,
+   or from spelling/OOV?
+7. For each candidate, write down four numbers together:
+     score + interval   ·   latency   ·   memory   ·   explainability need
+8. Make the decision on a validation set.
+9. Open the test set once.
 ```
+
+The numbers this chapter observed — the crossover around 1,500 labels, the
+counts-versus-tf-idf ordering on short documents — are useful as *expectations*
+at step 4, not as rules at step 1. The same goes for "sparse if you need an
+explanation" and "dense if you need similarity search over millions of
+vectors": both are strong first candidates, not absolutes. Sparse lexical
+retrieval can be entirely standard over millions of documents, and dense
+models can be made explainable.
 
 ## The failure they share
 
@@ -1360,9 +1525,11 @@ would distinguish a complaint about price from a complaint about quality,
 so no classifier built on top of them can ever recover it — not with more
 labels, not with a better classifier, not ever.
 
-For sentiment on product reviews this rarely bites, because most reviews are
-entirely positive or entirely negative and the bag is sufficient. For
-"which component is the customer complaining about", it is fatal.
+Document-level sentiment can tolerate this loss better than aspect-level
+tasks; that most reviews are entirely positive or entirely negative is a
+reasonable expectation, but this chapter did not measure it. For "which
+component is the customer complaining about", the same loss directly blocks
+the task.
 
 Label that 1.0000 precisely, because one family in this chapter escapes it.
 The two rows above are **unigram TF-IDF and averaged embeddings**. Word
@@ -1377,9 +1544,12 @@ sees a fixed window and nothing beyond it, so a dependency four words apart —
 fixed-length n-gram can represent, and the vocabulary cost of chasing it grows
 exponentially in the window. To handle that the representation has to be a
 function of the *sequence*: something that reads `kalite`, then `iyi`, and produces a
-different state than if it had read `kalite`, then `kötü`. That is a language
-model, and it is @sec-language-models. Making that state depend on every
-other word at once is attention, and it is @sec-transformers.
+different state than if it had read `kalite`, then `kötü`. That takes us to
+sequence-aware encoders. Language models are one important way of learning
+such encoders from large amounts of unlabelled text, and @sec-language-models
+starts there — but a sequence-aware encoder does not have to be a language
+model. The mechanism that makes that state depend on every other word at once
+is attention, and it is @sec-transformers.
 
 The bake-off has told us exactly what to demand of them: keep TF-IDF's
 sensitivity to the individual decisive word, keep embeddings' generalisation
@@ -1398,16 +1568,22 @@ Averaged fastText, and the second sentence of the question is why.
 At 400 labels you are on the left of the crossover chart, where TF-IDF is
 still near the do-nothing baseline — at 500 labels it scored 49.28 against
 fastText's 61.16. Two million unlabelled tickets is a large free corpus for
-self-supervised training, and it is exactly the resource an embedding model
-converts into performance and a count model cannot use at all.
+self-supervised training. Do not read that as "a count model cannot use
+unlabelled data" — this chapter's own TF-IDF learned its vocabulary and IDF
+weights from all 40,000 documents without looking at a label. The difference
+is *what can be learned*: TF-IDF is limited to vocabulary and document
+frequency, while an embedding model can extract co-occurrence structure and
+subword geometry from the same text — far richer unsupervised information.
 
 Choose fastText over word2vec because the tickets are Turkish and
 user-written: 46.4% of the test set's distinct word forms were outside the
-trained vocabulary here, and
-support tickets are worse than reviews.
+trained vocabulary here; support tickets may well be noisier still, but audit
+that on your own data rather than assuming it.
 
 Then say the second half out loud: *label 2,000 more tickets and re-run this
-comparison*, because the chart says the answer flips.
+comparison*. This chapter's bake-off suggests the sparse side can take the
+advantage within a few thousand labels — but that threshold belongs to this
+dataset; plot your own learning curve.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -1441,7 +1617,7 @@ cosine 0.78–0.96.
 There is also a cost hiding in the fix. fastText spends its capacity on
 character n-grams, so its nearest neighbours become morphological rather than
 semantic — `kalitesiz` retrieves `kalitesi`, which has the opposite polarity.
-It gained coverage and lost some meaning, and the two roughly cancelled.
+One possible explanation: it gained coverage and lost some meaning, and the two roughly cancelled. We did not measure that; separating the two effects takes its own experiment.
 
 The transferable lesson: an intrinsic improvement only shows up extrinsically
 if the thing it improved was the bottleneck. Measure which one you have
@@ -1487,7 +1663,9 @@ change your answer. An answer with no number is an opinion; an answer with no
 :::
 
 1. **Embeddings or TF-IDF for text classification?** Ask how many labels they
-   have, because that is the axis the answer turns on. On this corpus the
+   have; that is the first axis, not the only one — the size of the unlabelled
+   corpus, the structure of the task (document-level or aspect-level),
+   document length and spelling/OOV noise all move the answer too. On this corpus the
    curves cross at roughly **1,500 labels**: at 250 labels averaged fastText
    scores 63.10 macro-F1 against word TF-IDF's 48.53 — which is the do-nothing
    baseline — and at 40,000 that same TF-IDF scores 71.95 against 61.36. Note
@@ -1498,8 +1676,8 @@ change your answer. An answer with no number is an opinion; an answer with no
    sparse model you put on it. The embeddings
    were trained without labels, so their knowledge is paid for before the first
    annotation; TF-IDF has to buy everything it knows out of the labelled set.
-   Finish with the shape, and with its limit: [the dense curve plateaus by 500
-   labels; the sparse one climbs until roughly 10,000 and then flattens]{.hl} —
+   Finish with the shape, and with its limit: [this from-scratch averaged
+   embedding curve plateaus by 500 labels; the sparse one climbs until roughly 10,000 and then flattens]{.hl} —
    72.55 at 10,000 against 71.95 at 40,000, a difference well inside this
    experiment's noise. So the more labels you expect *up to about ten
    thousand*, the more the answer tilts sparse; past that, neither curve is
@@ -1520,7 +1698,8 @@ change your answer. An answer with no number is an opinion; an answer with no
    fastText over word2vec, and the number to quote is not the token rate. On
    this test set 7.27% of *tokens* were outside the word2vec vocabulary, which
    sounds survivable — but **46.4% of the distinct word forms** were outside it, so nearly
-   half the vocabulary of any new batch is a `KeyError`. fastText covers 100% by
+   half the distinct forms in that test set are a `KeyError` — and the rate
+   varies by batch and domain. fastText covers 100% by
    construction because it sums character n-grams. Then deliver the twist,
    because it is the part that shows you measured rather than assumed:
    [fixing out-of-vocabulary coverage completely moved macro-F1 by 0.03
@@ -1567,6 +1746,11 @@ change your answer. An answer with no number is an opinion; an answer with no
 
 : Beyond the papers {tbl-colwidths="[42,58]"}
 
+Note that the name "fastText" covers two different things: **unsupervised
+subword word vectors** (what round 2 of this chapter used) and the
+**supervised fastText classifier** (the first paper below). They come from the
+same library but they are not the same thing.
+
 - **fastText for classification** [@joulin2017bag]. A linear model over
   averaged subword n-grams, trained in minutes on a CPU, reported as "on par
   with deep learning classifiers". The direct industrial ancestor of this
@@ -1583,44 +1767,53 @@ change your answer. An answer with no number is an opinion; an answer with no
   [@arora2017simple]. Weighted averaging with the first principal component
   removed — the cheapest realistic upgrade to round 2, and the first thing to
   try if you want to move the dense curve.
+- **The Hitchhiker's Guide to Testing Statistical Significance in NLP**
+  [@dror2018hitchhikers]. The protocol exercise 8 asks for, and exactly what
+  is missing to settle this chapter's adjacent differences.
 - **scikit-learn** [@pedregosa2011scikit] and **gensim**
   [@rehurek2010software]. The two libraries this chapter is built from; the
   user guides are unusually good.
 
 ## Exercises
 
-1. **Move the crossover.** Rerun the learning curve with `min_df=1` and with
+The label on each exercise marks its level: **Basic** consolidates a concept,
+**Applied** makes you measure something on your own data, **Advanced** goes
+past this chapter, and **Research** is open-ended.
+
+1. **Move the crossover.** *(Applied)* Rerun the learning curve with `min_df=1` and with
    `min_df=5` for TF-IDF. Predict first which direction the low-label end
    moves, then check. Explain the result in terms of how many observations
    support each coefficient.
-2. **Kill the imbalance instead.** Drop `class_weight="balanced"` and rerun
+2. **Kill the imbalance instead.** *(Basic)* Drop `class_weight="balanced"` and rerun
    every model. Report accuracy *and* macro-F1 for each. Which methods
    collapse to the majority class, and why does the ranking by accuracy
    change more than the ranking by macro-F1?
-3. **Weighted averaging.** Implement @arora2017simple: average the word
+3. **Weighted averaging.** *(Advanced)* Implement @arora2017simple: average the word
    vectors with weight $a/(a + p(w))$ for $a = 10^{-3}$, then remove the
    first principal component of the resulting document matrix. Report the
    new dense scores. Did it beat plain averaging, and did it close any of
    the 14.8-point gap?
-4. **The negation probe, extended.** Build twenty negation pairs from your
+4. **The negation probe, extended.** *(Applied)* Build twenty negation pairs from your
    own domain and measure both cosines. Then find the pair with the highest
    averaged-embedding cosine that the classifier *still* gets right, and
    explain how it can.
-5. **Break the char n-gram model.** Character n-grams were the best sparse
+5. **Break the char n-gram model.** *(Applied)* Character n-grams were the best sparse
    method at 1,000 labels and among the worst at 40,000. Construct the
    argument for why, using the number of features and the number of
    observations per feature, then test it by varying `min_df`.
-6. **A different task, same pipeline.** Swap sentiment for a task where the
+6. **A different task, same pipeline.** *(Research)* Swap sentiment for a task where the
    bag is insufficient — for example, labelling which aspect (shipping,
    price, quality) a review complains about. Predict what happens to the gap
    between counting and embeddings before you run it, then run it.
-7. **Repair the casefolding damage.** Running round 1 with `str.lower()` on
+7. **Repair the casefolding damage.** *(Applied)* Running round 1 with `str.lower()` on
    *this* corpus changes nothing, for the reason given above — there is no
    uppercase left to get wrong. The damage was done upstream instead: 4,183
    documents carry a stray U+0307. Strip it, re-tokenise, and rerun the round-1
    table. Report the change in vocabulary size and in macro-F1, then say which
    of the two you expected to move more, and why.
-8. **Supply the intervals this chapter does not have.** Bootstrap the 10,000
+8. **Supply the intervals this chapter does not have.** *(Advanced — not a
+   bonus but basic experimental science for this chapter's subject; if you do
+   only one of these, do this one.)* Bootstrap the 10,000
    test rows 1,000 times and put a 95% interval on every row of the combined
    leaderboard. Then run a paired test on each adjacent pair — McNemar for the
    accuracy column, a paired bootstrap for macro-F1, since McNemar tests error
@@ -1629,7 +1822,20 @@ change your answer. An answer with no number is an opinion; an answer with no
    repeat the whole chapter with five seeds and see how much of your answer was
    the seed. @dror2018hitchhikers is the protocol.
 
-9. **Ship one.** Take the winning configuration, write the confusion matrix
+9. **Ship one.** *(Applied)* Take the winning configuration, write the confusion matrix
    at three different decision thresholds, and choose one — writing the
    sentence that justifies the choice to whoever handles the false alarms.
    That sentence, not the macro-F1, is the actual deliverable.
+10. **Is IDF really the culprit?** *(Applied)* Rerun the ablation ladder from
+    this chapter yourself — raw counts, counts + L2, log-TF + L2, TF-IDF —
+    then add one rung: repeat every row with `C` tuned on a validation set.
+    How much of the normalization effect survives?
+11. **Analyzer audit.** *(Basic)* Write ten sentences containing punctuation,
+    digits, an emoji and a U+0307. Put the features produced by
+    `analyzer="word"` next to those produced by `char_wb`. Write down what
+    extra material the character arm sees, and how that affects the round 1
+    comparison.
+12. **Repeated learning curves.** *(Research)* For each `n` on the learning
+    curve, draw 20 stratified subsamples and report the mean and a 95%
+    interval for each representation. Report the crossover as a distribution
+    rather than a single number — and put bigram TF-IDF on the curve too.
