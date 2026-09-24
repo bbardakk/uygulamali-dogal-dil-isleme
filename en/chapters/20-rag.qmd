@@ -22,6 +22,14 @@ rather than repeated. Software: `ollama` 0.24.0 serving `qwen3.5:9b`,
 
 ## Why not just paste everything into the prompt? {#sec-rag-longcontext}
 
+First, what the name means. **Retrieval-augmented generation (RAG)** is a
+simple recipe: when a question arrives, *search* your own documents for the few
+passages most likely to contain the answer, *paste* those passages into the
+prompt, and *ask* the model to answer from them. The search is @sec-retrieval's
+subject; this chapter is about everything around it. The original formulation
+[@lewis2020rag] trained the retriever and the generator together; the version
+almost everyone builds today keeps them separate, and that is the version here.
+
 RAG exists because [models are frozen and your knowledge is not]{.hl}. That
 is the permanent reason. But context windows kept growing, and every time
 they did, somebody argued the problem had gone away: if the whole corpus fits,
@@ -33,9 +41,9 @@ enforce who may see which document; and **recency**, because a cached prompt
 goes stale. All three are true, with one qualification worth making now: the
 second and third are things retrieval *lets you build*, not properties the
 label confers. A retrieval layer gives you a place to filter by permission and
-a place to re-index, and an unfiltered index over documents a user may not read
-is a leak with extra steps, while an index nobody refreshes is as stale as the
-prompt it replaced. The fourth answer, the one repeated most confidently, is
+a place to re-index. But an index that does not filter out documents a user may
+not read still leaks them, just through one more step, and an index nobody refreshes is
+as stale as the prompt it replaced. The fourth answer, the one repeated most confidently, is
 that **a model does not use a long context evenly**.
 
 That fourth claim is the only one of the four that is a factual assertion about
@@ -116,9 +124,10 @@ generation of models, and long-context handling is precisely the thing that has
 had the most engineering attention since.
 
 One caveat the table cannot show. With 40 queries per cell, a perfect score has
-a 95% Wilson lower bound of **91.2%** — so this design can rule out the
-thirty-point mid-context collapse @liu2024lost reported, and cannot rule out an
-eight-point one. The claim is "no *large* positional effect", not "no positional
+a 95% Wilson lower bound of **91.2%** — so this design can rule out a drop the
+size of the one @liu2024lost reported for GPT-3.5-Turbo in the multi-document
+setting (about twenty points, from 75.8% with the answer first to 53.8% with it
+in the middle of twenty documents), and cannot rule out an eight-point one. The claim is "no *large* positional effect", not "no positional
 effect".
 
 So the honest statement of what I measured is narrow, and I would rather write
@@ -149,30 +158,34 @@ linearly in sequence length, so the latency bill grows faster than the token
 bill.
 
 **Prompt caching is the honest rebuttal to that number and it deserves stating
-plainly.** A stable corpus prefix can be cached: cached input is typically
-billed at around a tenth of fresh input and the prefill is skipped. That turns
-148× into something nearer 15× — smaller, still not free, and available only
+plainly.** A stable corpus prefix can be cached: cached input is billed at a
+fraction of the fresh price — a tenth is common in 2026, though the discount
+varies by provider and writing the cache can cost extra — and the prefill is
+skipped. At a tenth, that turns 148× into something nearer 15× — smaller, still not free, and available only
 while the prefix does not change, which is exactly the case retrieval exists
 for. Note also that the 113-token baseline assumes *perfect* retrieval of
 exactly one document; a real system passes $k$ chunks and pays to build and
-query an index. The two structural arguments below are the ones caching does
-not touch.
+query an index. The structural arguments below are the ones caching does not
+touch.
 
 That reframes the whole chapter. Retrieval is not a workaround for a model that
 cannot read long inputs — this one reads them fine. Retrieval is [how you stop
-paying for 79 documents you did not need]{.hl}, and it remains the only
-mechanism that handles the two things a context window structurally cannot:
-knowledge that changes after training, and knowledge that a given user is not
-allowed to see.
+paying for 79 documents you did not need]{.hl}. It is also the natural place to
+handle three things a single, shared, stuffed prompt handles badly: a corpus far
+larger than any context window (most real document collections are gigabytes,
+not thousands of tokens), knowledge that changes after training, and knowledge
+that a given user is not allowed to see.
 
 **What we will look at.** First the pipeline, which is worth naming stage by
-stage only because each stage fails on its own and produces the same symptom.
-Then chunking, which is the chapter's real experiment: eleven ways of cutting
+stage only because each stage fails on its own and produces the same symptom,
+together with the prompt that turns retrieved chunks into a grounded answer
+with citations. Then chunking, which is the chapter's real experiment: eleven ways of cutting
 the same corpus, queried two ways, where the best configuration under one kind
 of question is the worst under the other and the received default is a guess
 about questions its author never saw. Then the three failure modes and the
 afternoon of code that tells them apart — which is the thing you will reach for
-every week, and the thing almost nobody builds before they need it.
+every week, and the thing almost nobody builds before they need it — and the
+standard metrics for scoring each half of the system.
 
 ## The canonical pipeline {#sec-rag-pipeline}
 
@@ -268,15 +281,18 @@ possible, because each one can fail on its own.
 ```
 
 ::: {.fig-cap}
-The upper row is built once; the lower row runs on every request. Three of the
-seven stages have a failure mode that produces the *same* symptom — a wrong
-answer — which is why @sec-rag-failures is about telling them apart before
-tuning any of them.
+The upper row is built once; the lower row runs on every request. The three
+failure modes along the bottom — one at retrieval, two at generation — all
+produce the *same* symptom, a wrong answer, which is why @sec-rag-failures is
+about telling them apart before tuning anything.
 :::
 ::::
 
-Two things about that diagram are worth saying out loud, because both are
-routinely skipped.
+Stages 3 to 6 — embedding, the index (exhaustive, or an approximate
+nearest-neighbour index, *ANN*, that trades a little recall for speed), top-*k*
+retrieval and cross-encoder reranking — were @sec-retrieval's subject, and this
+chapter treats them as given. Two things about the diagram are worth saying out
+loud, because both are routinely skipped.
 
 ::: {.column-margin}
 The pipeline is also the thing every RAG survey enumerates — @gao2023rag is
@@ -299,8 +315,12 @@ tuning anything else.
 
 **Stage 5 sets a ceiling on stage 7.** @sec-retrieval measured this and it is
 the single most useful fact in the chapter: if recall@k is 80% for the *k* you
-pass to the model, then 20% of questions are unanswerable before generation
-starts, and no prompt engineering reaches them.
+pass to the model, then 20% of questions cannot be answered *from the retrieved
+text* before generation starts, and no prompt engineering reaches them. (The
+model may still answer some of them from its own memory, but those answers are
+not grounded in anything you retrieved; and when the same fact appears in
+several documents, the bound is looser — @sec-retrieval states the exact
+conditions.)
 
 ::: {.column-margin}
 Which is why the two halves of a RAG system want different metrics and
@@ -309,6 +329,47 @@ the generation half on using what arrived and refusing when it did not.
 @sec-rag-failures is about telling those two apart, and it is harder than it
 sounds because both produce the same symptom: a wrong answer.
 :::
+
+### Stage 7: a grounded prompt, with citations
+
+The generate stage is usually a single prompt, and its *shape* matters more
+than its wording. The goal is a **grounded** answer: one in which every claim
+can be traced to the retrieved text rather than to the model's own memory.
+Three habits get you most of the way.
+
+- **Number the chunks and ask for citations.** Give each chunk an ID and its
+  source, and ask the model to mark each claim with the ID of the chunk that
+  supports it. A citation turns "trust me" into something a reader, or a
+  script, can check: does chunk [2] actually say that?
+- **Give the model a legal way out.** State exactly what to write when the
+  chunks do not contain the answer. @sec-rag-failures explains why a system
+  without this option never abstains.
+- **Documents first, question last.** Model providers commonly recommend putting
+  long material at the top and the instruction and question at the end. Placing
+  the highest-ranked chunks at the start of the block rather than in the middle
+  is a free precaution against position effects, even though this chapter's
+  needle test did not detect one.
+
+```text
+Answer the question using ONLY the numbered documents below.
+After each sentence, cite the document that supports it, e.g. [2].
+If the documents do not contain the answer, reply exactly:
+"The documents do not answer this question."
+
+[1] (source: budget-2025.pdf, page 14)
+The approved 2025 budget for project ZRG-14 is 743,912 lira. ...
+
+[2] (source: board-minutes-2025-03.docx)
+...
+
+Question: What is the approved 2025 budget for project ZRG-14?
+```
+
+A citation is itself a claim, and models do cite chunk [2] for a sentence that
+chunk 2 does not support. So check citations rather than display them: for each
+cited sentence, ask whether the cited chunk supports it — an exact match for
+numbers and names, a validated judge for paraphrase — and count the failures.
+That count is the *faithfulness* score defined at the end of @sec-rag-failures.
 
 ## Chunking is a modelling decision {#sec-rag-chunking}
 
@@ -338,8 +399,9 @@ measured the wrong thing and produced a confident, wrong rule.
 - **A. article-level.** The query is the article's professional one-sentence
   summary. *What is this document about?*
 - **B. fact-level.** The query is six content words drawn from **one sentence**
-  of the article, re-inflected through stem-mates so the surface forms differ
-  from the text. *Where is this specific detail?*
+  of the article. Each word is then replaced by another inflected form of the
+  same stem (as in *seçim* → *seçimde*), so the query does not repeat the text's
+  exact word forms. *Where is this specific detail?*
 
 A hit means any chunk of the source article. Read that definition against each
 condition before reading the numbers. In condition A it is the right target —
@@ -385,7 +447,7 @@ whole-article index hands the generator 366 words and the 50-word index hands
 it 51, so part of condition A's ordering is simply *more text wins*. The
 comparison the table is missing is recall at an equal word budget — whole
 article at $k{=}1$ against 200w at $k{=}2$, 100w at $k{=}4$, 50w at $k{=}7$.
-Note which way that cuts: condition B's 50-word index already beats the
+Note the direction of that effect: condition B's 50-word index already beats the
 400-word one with a *sixth* of the text, so equalising the budget would
 strengthen that finding, not weaken it.
 
@@ -407,12 +469,17 @@ weaker choice, and the intervals above should be read as a caution against
 over-reading small gaps rather than as a test that settles them.
 
 With those in hand: [the best chunk size in one condition is the worst in the
-other.]{.hl} Chunks at or above article length lead condition A — 72.5% and
-71.8%, indistinguishable from each other — and come last in condition B at
-93.8%. Fifty-word chunks are last in A at **57.0%** and near the top of B at
-**96.5%**. That is a 15-point swing in A and a reversal in B, both well outside
-the intervals above. The two columns are not noisy versions of one ranking;
-they are close to opposite orderings of the same eleven systems.
+other.]{.hl} Chunks at or above article length lead condition A — 400-word
+chunks at 72.5% and whole articles at 71.8%, indistinguishable from each other —
+and fall to the bottom of condition B: 400-word chunks are last at **93.8%**,
+whole articles eighth of eleven at 96.0%. Fifty-word chunks are last in A at
+**57.0%** and mid-table in B at **96.5%**, above both. The 15.5-point gap in A
+is far outside any interval above. The reversal in B is smaller — 2.7 points
+between 50-word and 400-word chunks, 4.0 between the best and the worst — and
+sits at the edge of what unpaired intervals can resolve, which is exactly where
+the paired test would earn its keep. The two columns are not noisy versions of
+one ranking: their rank correlation is negative (Spearman $\rho \approx -0.62$),
+so they come close to opposite orderings of the same eleven systems.
 
 Ranked side by side, the two columns are hard to mistake for noise:
 
@@ -517,22 +584,25 @@ Ask what a document
 is about and a chunk that holds only part of it can only match part of your
 query, so bigger wins. Ask where a specific fact is and a short chunk that
 contains it is almost entirely *about* it, so smaller wins — this is BM25's
-length normalization doing exactly what it was designed to do, seen from two
+length normalisation doing exactly what it was designed to do, seen from two
 sides.
 
 Two more results in that table were not obvious to me before running it.
 
 **Overlap earns its cost, but only for facts.** At 100 words, adding a 25-word
 overlap moved condition B from 95.5% to **97.5%** — 18 errors in 400 down to
-10, a *net* movement of eight queries; how many changed in each direction is
-what the paired test above needs, and this run did not record it — and condition
-A from 66.5% to 65.8%, a fifth of that condition's noise band. That is a small
-difference, which is not the same as a demonstrated absence of one; decide in
-advance how large a change would matter to you and read it against that. So: a gain where a fact
-can straddle a boundary, nothing where the query describes the whole
-document. So overlap is not a general-purpose
-safety margin. It is a specific repair for a specific failure, and if your
-questions are not fact-shaped you are paying 29% more index for no return.
+10, a *net* movement of eight queries. (How many queries changed in each
+direction is what the paired test above needs, and this run did not record it.)
+The same overlap moved condition A from 66.5% to 65.8%, three queries and well
+inside that condition's noise band. A small difference is not the same as a
+demonstrated absence of one, so decide in advance how large a change would
+matter to you and read the result against that.
+
+The pattern is a gain where a fact can straddle a chunk boundary, and nothing
+where the query describes the whole document. Overlap is therefore not a
+general-purpose safety margin. It is a specific repair for a specific failure,
+and if your questions are not fact-shaped you are paying for 29% more chunks
+for no return.
 
 **Structure beat arithmetic — with one confound named.** Sentence-aligned
 chunks of about 100 words scored **97.8%** in condition B against fixed 100-word
@@ -544,19 +614,21 @@ Interpolating the fixed-size series, an 86-word *fixed* window would be expected
 somewhere near 95.8%, so roughly two of those 2.3 points look attributable to
 the boundary and the rest to size. A size-matched control — `fixed 86w, no
 overlap` — is the missing row in that table. What survives either way is that
-packing whole sentences costs nothing and beats both the naive split and the
-padded one.
+packing whole sentences costs nothing, beats the naive split, and matches the
+padded one (97.8% against 97.5% is a single query out of 400) with fewer
+chunks.
 
 ::: {.column-margin}
-Note what the R@5 and R@10 columns do while R@1 swings by fifteen points: in
-condition B every configuration is between 97.2% and 100% at rank 5. If your
-generator reads five chunks, this entire table is a rounding error *for
-article-level retrieval*, which is what these columns measure. Do not promote
-that into a claim about the system: whether the chunk that arrives actually
-carries the answering sentence is a different question this run does not score,
-so a flat R@5 column is not evidence that the answers would be equally well
-grounded. If your generator reads one, the table is your system for
-article-level retrieval. @sec-retrieval made the same point about fusion,
+Note what the R@5 columns do. In condition B, every configuration is between
+97.2% and 100% at rank 5, so if your generator reads five chunks, the B half of
+this table is close to a rounding error — for finding the right *article*,
+which is all these columns measure. Condition A is different: R@5 still spans
+ten points (81.8% to 91.8%), so for questions about a whole document the choice
+matters even at five chunks. Do not promote the flat B column into a claim
+about the system either: whether the chunk that arrives actually carries the
+answering sentence is a different question this run does not score. If your
+generator reads one chunk, the R@1 columns are your system.
+@sec-retrieval made the same point about fusion,
 and it generalises: [the metric that matters is the one your consumer actually
 reads.]{.hl}
 :::
@@ -578,10 +650,13 @@ whose subject and qualifier are forty words apart lands whole in some chunk,
 though at some offsets a 100-word window will hold both. That is why it is a
 repair and not a guarantee.
 
-It costs index size in direct proportion, and the table above
-suggests that keeping the document's own boundaries does the same job more
-cheaply: sentence-aligned chunks reached 97.8% while fixed windows padded with
-overlap reached 97.5%, and the sentence-aligned index was 9% smaller. Paying for
+It costs index size: a window of $w$ words advancing by $w - o$ words (overlap
+$o$) produces about $w/(w-o)$ times as many chunks — 100/75 ≈ 1.33 for the
+25-word overlap, 1.29 measured, since an article shorter than one window
+yields one chunk either way. The table above suggests that keeping the document's own boundaries does
+the same job more cheaply: sentence-aligned chunks reached 97.8% while fixed
+windows padded with overlap reached 97.5% — the same, within one query — and
+the sentence-aligned index was 9% smaller. Paying for
 overlap to repair a boundary you did not have to draw is the expensive way
 round.
 
@@ -601,8 +676,8 @@ Two document types where fixed-size chunking simply fails:
 behind condition B — short chunks winning because they are almost entirely about
 the query — *is* BM25's length normalisation, which is a property of the scorer
 as much as of the cutting. A dense retriever has no length normalisation. It has
-a maximum sequence length that truncates and a mean pooling that dilutes a long
-chunk's signal, and those produce a different optimum. The direction is probably
+a maximum sequence length that truncates, and a pooling step (often a mean over
+tokens) that squeezes a long chunk into one vector and dilutes its signal, and those produce a different optimum. The direction is probably
 similar; the numbers are not transferable, and the pipeline diagram at the top of
 this chapter shows an embedding stage, so a reader is entitled to assume
 otherwise unless we say this.
@@ -616,9 +691,11 @@ ones you will get. But if you need a starting point before you have that:
   and larger, up to whole documents, if they are about what a document covers.
 - Add **overlap only for fact-shaped questions**, and treat it as a boundary
   repair rather than a default.
-- If your questions are genuinely both kinds, index at two granularities rather
-  than compromising at one — the table shows the compromise is worse at each
-  job than the specialist.
+- If your questions are genuinely both kinds, consider indexing at two
+  granularities rather than compromising at one. Measure first: on this corpus
+  the best compromise (200 words, 50 overlap) was only about a point behind the
+  best configuration in each condition, which is within noise, but the gap is
+  not guaranteed to be that small on yours.
 
 ## Failure modes, and attributing them {#sec-rag-failures}
 
@@ -637,22 +714,34 @@ is to find out which stage failed.
 The diagnostic is mechanical and takes an afternoon to build:
 
 ```python
-for q, gold_doc, answer in evaluation_set:
-    hits = retrieve(q, k=10)
-    if gold_doc not in hits:
+for q, gold_doc, expected in evaluation_set:
+    hits = retrieve(q, k=10)                   # the same k the generator reads
+    answer = generate(q, hits)
+    if answer == expected:
+        continue                               # correct: nothing to attribute
+    if gold_doc not in {h.doc_id for h in hits}:
         bucket["retrieval miss"] += 1          # fix retrieval
     elif not answer_supported_by(answer, hits):
         bucket["grounding miss"] += 1          # fix the prompt, or the model
-    elif answer != expected:
+    else:
         bucket["synthesis miss"] += 1          # fix decomposition, or the task
 ```
 
+Read the three tests in order. Only wrong answers are attributed. If the gold
+document never arrived, nothing downstream could have saved it. If it arrived
+but the answer is not supported by the retrieved text, the model ignored or
+contradicted its evidence. If every claim is supported and the conclusion is
+still wrong, the facts were combined wrongly. In practice `==` becomes a
+normalised match or a judge, and `answer_supported_by` is the faithfulness
+check defined at the end of this section.
+
 [Do this before touching the embedding model.]{.hl} The default reflex when a
 RAG system disappoints is to swap the embeddings, and the measurement in
-@sec-retrieval says that is often the wrong lever entirely — the choice of
+@sec-retrieval says that is often not the biggest lever — the choice of
 embedding model was worth 2.4 points on easy queries and 25.3 on hard ones,
-while the choice between lexical and dense was worth *sixty*, in whichever
-direction the query type dictated.
+while the choice between lexical and dense was worth *sixty to seventy*, in
+whichever direction the query type dictated. And an embedding swap can only
+fix the first of the three buckets.
 
 ### Two failures worth naming separately
 
@@ -687,20 +776,46 @@ questions you know the corpus cannot answer. That last test is the one nobody
 runs, and it is the difference between a system that abstains and a system
 that has never been given the option.
 
-::: {.column-margin}
-The evaluation frameworks — RAGAS [@es2024ragas] and its relatives — score
-exactly this decomposition: context precision and recall for the retrieval
-half, faithfulness and answer relevance for the generation half. Use them for
-the structure they impose rather than the absolute numbers, and note from
-@sec-summarization that two automatic faithfulness measures agreed on the
-ranking while flagging five summaries and eleven summaries respectively, and
-overlapping on exactly one.
-:::
+### Scoring the two halves
+
+The three-way attribution works on single failures. To track a system over
+time you want numbers, and the evaluation frameworks — RAGAS [@es2024ragas] and
+its relatives — offer a standard set that follows the same split. The names
+recur in every tool and job interview, so here they are in plain terms:
+
+| metric | half | the question it asks | score |
+|:--|:--|:--|:--|
+| **context precision** | retrieval | are the retrieved chunks relevant, and are the relevant ones ranked near the top? | share of relevant chunks, weighted by rank |
+| **context recall** | retrieval | does the retrieved text contain everything the reference answer needs? | share of the reference answer's claims found in the context |
+| **faithfulness** | generation | is every claim in the answer supported by the retrieved text? | supported claims ÷ all claims in the answer |
+| **answer relevance** | generation | does the answer address the question that was asked? | a similarity score between the question and the answer |
+
+: The four standard RAG metrics {tbl-colwidths="[20,14,42,24]"}
+
+A worked example makes faithfulness concrete: an answer that makes four
+claims, three of which the retrieved chunks support, scores 3/4 = 0.75, even
+if the fourth claim happens to be true — faithfulness asks *where* a claim came
+from, not whether it is correct. The mapping to the attribution buckets is
+direct: low context recall is a retrieval miss, low faithfulness is a
+grounding miss, and a wrong answer with both high is a synthesis miss.
+
+Two cautions. First, a note on provenance: the RAGAS paper itself defines
+faithfulness, answer relevance and *context relevance*; context precision and
+context recall were added later in the library, and context recall needs a
+reference answer written by a person. Second, every one of these numbers is produced by
+an LLM judge that splits text into claims and checks each one, so its errors
+are judge errors. @sec-summarization found two automatic faithfulness measures
+that agreed on the ranking while flagging five summaries and eleven summaries
+respectively, and overlapping on exactly one. Use the metrics for the
+structure they impose, validate the judge on a sample you have labelled by hand
+(@sec-llm-eval-judge shows how), and do not compare absolute scores across
+tools.
 
 ## Intuition checks {#sec-rag-intuition}
 
-Answer each one before you open it. All six are questions this chapter settled
-with a measurement rather than an argument.
+Answer each one before you open it. Most of them are questions this chapter
+settled with a measurement rather than an argument; where it did not, the
+answer says so.
 
 ::: {.callout-note collapse="true"}
 ## 1. Context windows keep growing. Is RAG a temporary workaround?
@@ -710,8 +825,10 @@ asserted rather than shown: answering from 80 documents instead of the 1 that
 mattered cost **148× the input tokens for identical accuracy**. The permanent
 reasons are different again: **the model is frozen and your documents are
 not** — a retrieval step is how new, private or changing information reaches a
-model that finished training before it existed. Access control is the second permanent reason: a prompt cannot
-enforce who may read which document, and an index can. Long context and
+model that finished training before it existed, and most real corpora are far
+larger than any context window anyway. Access control is the other permanent
+reason: a prompt cannot enforce who may read which document, and an index with
+per-document permission filters can. Long context and
 retrieval are complements, not competitors — a bigger window changes how many
 chunks you can afford to pass, not whether you needed to choose them.
 :::
@@ -724,8 +841,9 @@ and this chapter measured how much: on the same corpus, 400-word chunks led
 on article-level questions at **72.5%** recall@1 and came *last* on fact-level
 questions at **93.8%**, while 50-word chunks did the reverse. If you need a
 default before you have measured, pack whole sentences to roughly 100–200
-words. If your questions are genuinely of both kinds, index twice rather than
-compromising once.
+words. If your questions are genuinely of both kinds, consider indexing twice
+rather than compromising once — and measure whether the compromise actually
+costs you anything, because on this corpus it cost about a point.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -735,8 +853,8 @@ Only if your questions are fact-shaped. Measured here, a 25-word overlap on
 100-word chunks moved fact-level recall@1 from 95.5% to **97.5%** and moved
 article-level recall@1 *down* from 66.5% to 65.8% — while adding 29% more
 chunks to the index. It is a repair for facts that straddle a boundary, not a
-general safety margin. And chunking on sentence boundaries beat overlapping
-fixed windows outright, with a smaller index.
+general safety margin. And chunking on sentence boundaries matched overlapping
+fixed windows (97.8% against 97.5%, one query apart) with a 9% smaller index.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -754,9 +872,13 @@ addresses only the first.
 ::: {.callout-note collapse="true"}
 ## 5. Is more retrieved context always safer?
 
-No. Irrelevant context actively degrades answers [@shi2023large], so *k* is a
+No — but this is one of the answers the chapter did not measure for itself.
+Irrelevant context can actively degrade answers [@shi2023large], so *k* is a
 real trade rather than a "more is safer" dial: raising it improves recall and
-imports noise, and past some point the second effect wins. There is a second
+imports noise, and past some point the second effect can win. That evidence
+comes from reasoning problems; this chapter's own needle test put 79
+irrelevant documents around the answer at no cost, so measure the penalty on
+your task before you assume it. There is a second
 reason to keep *k* honest — every chunk you pass is paid for on every request,
 so a *k* chosen by superstition is a permanent line item.
 :::
@@ -805,8 +927,8 @@ add overlap only for fact-shaped questions.
 
 **Q: Why does adding more retrieved context sometimes make answers worse?**
 
-Because irrelevant context is not neutral — it distracts [@shi2023large] — and
-because models do not read a long context evenly [@liu2024lost]. Both are
+Because irrelevant context is not neutral — it can distract [@shi2023large] —
+and because models do not always read a long context evenly [@liu2024lost]. Both are
 reasons to treat *k* as a tuned parameter with a measured optimum rather than a
 safety margin. If you have run the needle test yourself, say what you found and
 under what conditions, because the effect's size depends heavily on the model
@@ -828,7 +950,8 @@ are unattributable after the fact.
 In two halves, because they fail independently: the retrieval half on recall@k
 and nDCG against labelled queries, the generation half on faithfulness to the
 retrieved context and on answer correctness. Frameworks like RAGAS
-[@es2024ragas] impose exactly this decomposition and are worth using for the
+[@es2024ragas] impose exactly this decomposition — context precision and
+recall, faithfulness and answer relevance — and are worth using for the
 structure. Add the test almost nobody runs — questions the corpus cannot
 answer, scored on whether the system abstains — and say plainly that automatic
 faithfulness scores need validating before you trust them, which is
@@ -843,6 +966,18 @@ and when the requirement is really a database query wearing a natural-language
 costume, in which case text-to-SQL over a schema beats embedding rows and
 hoping. Knowing where the technique stops is the part that separates a
 practitioner from someone repeating an architecture diagram.
+
+**Q: RAG or fine-tuning?**
+
+Usually the wrong either-or. Use retrieval for *knowledge* — facts that change,
+facts a user must be able to check against a source, facts some users may not
+see — because updating an index is cheap, every answer can cite its evidence,
+and permissions can be enforced per document. Use fine-tuning for *behaviour* —
+format, tone, a narrow task done reliably — because that is what a small
+training run changes well, while it adds new facts only unreliably and cannot
+easily remove them again. The two compose: a model fine-tuned on your format,
+answering over retrieved documents that supply your facts. @sec-decision-tree
+walks through the decision question by question.
 
 ## The 2026 toolbox {#sec-rag-tools}
 
@@ -995,7 +1130,8 @@ literature is relevant to you.
   is how you stop paying for 79 documents you did not need.
 - **Two reasons to retrieve are permanent and have nothing to do with window
   size.** The model is frozen and your documents are not, and a prompt cannot
-  enforce who may see which document.
+  enforce who may see which document. A third is practical: most real corpora
+  are far larger than any window.
 - **Chunk size is a bet on the granularity of the question.** On one corpus,
   400-word chunks led article-level retrieval at **72.5%** recall@1 and came
   *last* on fact-level retrieval at **93.8%**; 50-word chunks did the reverse.
@@ -1007,22 +1143,27 @@ literature is relevant to you.
   article-level ones, for 29% more index. It fixes facts that straddle a
   boundary and nothing else.
 - **Structure beat arithmetic, mostly.** Sentence-aligned chunks of ~100 words
-  reached **97.8%** where fixed 100-word windows reached 95.5% — and beat the
-  overlapping variant with a **9% smaller** index. The sentence-aligned chunks
+  reached **97.8%** where fixed 100-word windows reached 95.5% — and matched the
+  overlapping variant (97.5%, one query behind) with a **9% smaller** index. The sentence-aligned chunks
   are also smaller (86 words against 99); interpolating the fixed-size series
   credits roughly two of the 2.3 points to the boundary, but the size-matched
   control has not been run. The cheapest way to stop cutting through a
   fact is to cut where the text already breaks.
-- **Watch the metric your consumer actually reads.** Recall@1 swung fifteen
-  points across these configurations while recall@5 stayed between 97.2% and
-  100%. If your generator reads five chunks, the whole chunking table is a
-  rounding error *at the article level*; if it reads one, the table *is* your
-  system. Whether the retrieved chunk carries the answering sentence is a
+- **Watch the metric your consumer actually reads.** On fact-level queries,
+  recall@1 moved four points across these configurations and recall@5 stayed
+  between 97.2% and 100%; on article-level queries, recall@1 swung fifteen
+  points and recall@5 still spanned ten. If your generator reads five chunks
+  and your questions are fact-shaped, the chunking choice barely moves
+  article retrieval; if it reads one, the R@1 columns *are* your system. Whether the retrieved chunk carries the answering sentence is a
   separate measurement, and this run does not make it.
 - **Three failures, one symptom.** A wrong answer is a retrieval miss, a
   grounding miss, or a synthesis miss, and they have three different fixes.
   Attribute before you tune — the reflex fix, swapping the embedding model,
   addresses one of the three.
+- **Number the chunks, ask for citations, and check them.** A citation is a
+  claim too. Faithfulness (supported claims ÷ all claims) and context recall
+  score the two halves over time, but they come from an LLM judge, so validate
+  the judge before trusting the number.
 - **A system with no way to abstain will not abstain.** Give it an explicit
   refusal output and then test it on questions the corpus cannot answer. That
   test is the one nobody runs, and it is the difference between a system that
