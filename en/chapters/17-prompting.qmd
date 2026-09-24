@@ -38,9 +38,9 @@ now is a good reminder of how much of "prompt engineering" was working around
 a missing capability.
 
 Two things changed. **Scale** made models able to infer a task from examples
-in the context [@brown2020language], and **instruction tuning** (@sec-post-training)
-trained them to treat an instruction as an instruction
-rather than as text to continue. The second is why modern prompting feels like
+in the context [@brown2020language], and **instruction tuning**, followed by
+preference training (@sec-post-training), trained them to treat an instruction
+as an instruction rather than as text to continue. The second is why modern prompting feels like
 asking rather than tricking.
 
 ::: {#gloss-in-context-learning .column-margin .term-gloss}
@@ -56,13 +56,18 @@ is the first of those: you put input-output pairs in the prompt, and the model
 does better on the next input, **with no parameter updated and nothing retained
 after the call**.
 
+Two words you will meet constantly name how many examples you give. A
+**zero-shot** prompt has none — only the instruction and the input. A
+**few-shot** prompt adds a handful of *demonstrations* (input–output pairs), and
+*$k$-shot* names the exact number: an 8-shot prompt carries eight.
+
 So it is not learning in the sense @sec-post-training uses the word — nothing is
 fitted, nothing persists. That is a claim about the *mechanism*, not about what
 the model can pick up: a mapping it genuinely acquires from the context is still
-acquired from the context, and the next section names exactly that case. A
+acquired from the context, and a paragraph below names exactly that case. A
 useful working description of the common case is *task inference*: the examples
-narrow down which of the many tasks the model already knows how to do you are
-asking for.
+narrow down which task you are asking for, out of the many the model already
+knows how to do.
 
 That framing predicts something odd, and the prediction holds.
 @min2022rethinking replaced the labels in the demonstrations with **random**
@@ -133,13 +138,20 @@ counts as a relevant detail. It is weakest when it asks for expertise the
 model does not have (a role prefix does not make a model a doctor) and
 strongest when it disambiguates *style*, which is a real and frequent need.
 
+In a chat model, the role and any standing rules usually go in the **system
+prompt** — a separate message, before the user's turn, that the chat template
+(@sec-post-training) marks with its own tokens. Models are trained to give it
+priority over what the user writes, but it is still text in the same context
+window, not a setting the model cannot ignore: it makes instructions *stronger*,
+not *tamper-proof*.
+
 **Structure.** Sections, delimiters, an explicit place for the input. The job
 is to make the boundary between your instruction and the user's data
 unambiguous. `<review>...</review>` is not decoration; it is what tells the
 model which span is data. Be precise about what it is not: a delimiter *marks*
 that boundary, it does not *enforce* it. Text inside the tags is still text the
 model reads, and a review that closes the tag and issues its own instruction is
-the standard attack — @sec-agent-security is where that is treated as the
+the standard attack, *prompt injection* — @sec-agent-security is where that is treated as the
 security problem it is, and structure alone is not a defence.
 
 **Demonstrations.** Input-output pairs. The job, per @min2022rethinking, is
@@ -161,9 +173,10 @@ leverage and it gets its own section.
 ::: {.callout-note collapse="true"}
 ## What about "think step by step"?
 
-It belongs to @sec-reasoning, which measures it properly, and the short answer
-is that the phrase is a relic. @kojima2022large found it worked on models that
-had not been trained to reason; models that *have* been trained to reason
+This is the prompted form of *chain-of-thought*: the model writes intermediate
+steps before its final answer. It belongs to @sec-reasoning, which measures it
+properly, and the short answer is that the phrase is largely a relic.
+@kojima2022large found it worked on models that had not been trained to reason; models that *have* been trained to reason
 produce the trace whether or not you ask, and adding the phrase to a reasoning
 model mostly wastes tokens.
 
@@ -192,8 +205,9 @@ specification   "Return one JSON object with keys `issue` (string, max 15
 
 The second version gives you three things the first does not: a parser that
 either succeeds or fails loudly, a set of values you can validate, and a
-`null` that distinguishes *absent* from *unknown* — which is the distinction
-@sec-sequence-labeling found LLM extractors quietly destroying.
+`null` that gives the model a legal way to say *no product is named* instead of
+inventing one — though, as @sec-decoding stresses, you still have to check that
+the model actually uses it.
 
 Three rules that follow:
 
@@ -260,7 +274,9 @@ run, and a prompt experiment whose prompts are not printed is not reproducible.
 Print yours.
 
 All twelve ran on the same 150 balanced reviews, same model, temperature 0,
-fixed seed. Every response parsed; nothing was dropped.
+fixed seed. Every response parsed; nothing was dropped. The intervals below are
+*Wilson* intervals — a 95% confidence interval for a proportion that, unlike the
+textbook $\hat p \pm 1.96\,\text{SE}$, stays sensible near 0% and 100%.
 
 ```text
 variant                        acc      95% CI (Wilson)
@@ -287,8 +303,9 @@ such draws about **10 points** — from sampling noise alone. So 14.67 is roughl
 one and a half times what chance would hand you, not an order of magnitude
 above it. The paired design makes the true null tighter than the independent
 calculation, so the effect is probably real; the number to report is a
-permutation one — shuffle the twelve variant labels across the item-level
-results ten thousand times and read off where 14.67 falls. We did not run that,
+permutation one — within each review, shuffle which variant produced which of
+its twelve answers, recompute the spread, repeat ten thousand times, and read
+off where 14.67 falls. We did not run that,
 and it is the first thing to add if you repeat this experiment.
 
 ::: {.anlp-widget}
@@ -348,7 +365,7 @@ pattern in circulation, comes 11th of 12.`
 ```
 :::
 
-[Fourteen and a half points of accuracy, between two prompts that say the same
+[Almost fifteen points of accuracy, between two prompts that say the same
 thing.]{.hl}
 
 ### Is that real, or is it 150 documents of noise?
@@ -370,6 +387,12 @@ worst 'review first'             75.33%
   Bonferroni over 66 pairs              p = 0.062
 ```
 
+The intuition behind McNemar's test is a coin: if the two prompts were equally
+good, each of the 42 disagreements would be equally likely to go either way,
+and the exact test asks how surprising a 32–10 split is for a fair coin tossed
+42 times. Bonferroni then multiplies that raw $p$ by the number of comparisons
+you could have made — here 66.
+
 The difference survives an uncorrected paired test — and *best against worst* is
 the extreme of the $\binom{12}{2} = 66$ possible pairs, chosen after looking at
 the data, so the uncorrected number is not the one to quote. Corrected for those
@@ -383,9 +406,9 @@ The honest primary test is the omnibus one — Cochran's Q across all twelve
 variants on the same 150 items — because that is the question actually being
 asked: *does the prompt matter at all?* Run Q first, then Holm-corrected
 pairwise McNemar for the pairs you want to name. We report the pair because it
-is the one people quote; treat the effect as a **spread**, which the next
-statistic measures directly and without this problem. And the stronger statistic is the one that does
-not involve accuracy at all:
+is the one people quote, but treat the effect as a **spread**. The next
+statistic measures that spread directly, avoids the multiple-comparison problem,
+and does not involve accuracy at all:
 
 ```text
 all 12 variants give the same answer on   104/150 = 69.3% of reviews
@@ -396,8 +419,8 @@ two variants disagree on: median 12.0% of reviews, max 28.7%
 
 **On three reviews in ten, the answer changed across the twelve tested prompt
 variants.** The review, the model, the temperature and the seed were all held
-fixed, so the prompt is what moved — though "the prompt" here covers role,
-ordering and politeness, not formatting alone. Note what that first number is and is not: twelve
+fixed, so the prompt is what moved — though "the prompt" here covers label
+wording, role, ordering and politeness, not formatting alone. Note what that first number is and is not: twelve
 variants *agreeing* does not mean the agreed answer is right, and this run does
 not report accuracy on the unanimous 104 separately. Add that row when you
 repeat the experiment — it is the difference between "the model has an opinion"
@@ -413,15 +436,23 @@ That is 41.5%, below the 50% floor of a balanced task.** The best variant gets
 31 of the 46 and the worst gets 9.
 
 Twelve prompts answering at random on hard items would sit at 50%. Sitting
-*below* 50% on average, with the extremes at 67% and 20%, is a different
+*below* 50% on average, with the extremes at 67% and 20%, points to a different
 picture: twelve prompts at twelve different **thresholds**, each systematically
 leaning toward one label.
+
+Hold that reading loosely, because it rests on the "all correct" assumption. If
+just four of the 104 unanimous reviews were wrong, the contested 46 would be at
+50.2%, not 41.5%. And a below-chance score on a subset *chosen because the
+prompts disagree on it* can also come from reviews whose gold label is itself
+debatable. The threshold story is the hypothesis to test, not the conclusion.
 
 Which points at a fix the prompt-engineering framing hides.
 @zhao2021calibrate showed that much of this sensitivity is *label bias* — the
 model's prior over the answer tokens, shifted by surface features of the
-prompt — and that estimating it on a content-free input and dividing it out
-removes most of the variance. So the honest version of this section's result is:
+prompt — and that estimating it on a content-free input (such as `N/A`) and
+dividing it out substantially reduces the variance across prompt formats. The
+fix needs the model's probabilities for the label tokens, not just the text it
+returns; @sec-decoding shows how to read them. So the honest version of this section's result is:
 **before calibration the prompt is worth 14.67 points.** How much of that
 survives *after* is the experiment to run next, and reporting each variant's
 $P(\text{predict positive})$ on a balanced set — which should be 50% and
@@ -492,14 +523,21 @@ Put this next to @sec-classification's result on the same model. There, writing
 the *instruction* in English rather than Turkish — the single most repeated
 piece of prompting folklore — was worth **+0.54 macro-F1**, with a 95% interval
 running only to +2.25: not a demonstration that the effect is gone, but a
-ceiling of about two points on whatever remains. Here, changing the *bullet
-formatting* is worth eight.
+ceiling of just over two points on whatever remains. Here, changing the *bullet
+formatting* is worth eight. The two numbers come from different tasks and
+metrics — complaint detection scored by macro-F1 on 2,000 documents there,
+balanced sentiment scored by accuracy on 150 here — so read the comparison as
+one of orders of magnitude, not as a precise ratio.
 
 Read the table again before concluding that language does not matter, though,
 because it complicates the folklore rather than killing it. Changing the *label*
-from `positive`/`negative` to `olumlu`/`olumsuz` cost **12 points** — the largest
-single effect in this experiment. Instruction language did almost nothing; label
-language did more than any formatting change. "Does language matter?" is not one
+from `positive`/`negative` to `olumlu`/`olumsuz` cost **12 points** against the
+`label positive/negative` variant — the largest single-variable change in this
+experiment. (Against `baseline` the same two Turkish words cost only 1.33
+points, so which reference you pick matters; the variants' full texts, which
+this chapter does not print, are what would settle the cleaner comparison.)
+Instruction language did almost nothing; label language did more than any
+formatting change. "Does language matter?" is not one
 question, and the two halves of it gave opposite answers on the same model.
 
 [The variable everyone argues about was noise where they argue about it, and the
@@ -517,8 +555,10 @@ Three consequences, and the third is the one that changes how you work:
    The sampling interval on 150 documents spans about 12 points end to end. The
    prompt spread, on the same data, is 14.67 — the same order of magnitude,
    which is the point: one of those error bars is computed and printed and the
-   other is neither. Note also that they move in opposite directions. Add
-   documents and the sampling interval shrinks; the prompt spread does not.
+   other is neither. Note also that they respond differently to more data. Add
+   documents and the sampling interval keeps shrinking toward zero; the observed
+   prompt spread shrinks only until the sampling noise inside it is gone, and
+   then stays at the true prompt effect.
 3. **Prompt changes need regression tests, not review.** No reviewer reading
    "moved the review above the instruction" would predict −4 points, because
    the change is semantically empty. Only a measurement catches it, which is
@@ -532,8 +572,8 @@ features move scores by amounts comparable to real model differences.
 result is the sharper one: permuting a *fixed* set of examples moved scores from
 near state-of-the-art to near chance, the examples identical and only their
 sequence changed. The `review first` variant above is the zero-shot shadow of
-that effect; in a few-shot prompt the ordering degree of freedom is larger than
-the formatting one measured here, and you are almost certainly not measuring
+that effect; in a few-shot prompt the ordering degree of freedom can be larger
+than the formatting one measured here, and you are almost certainly not measuring
 it. The
 literature has been clear about this for years; the practice has not caught
 up, because the prompt still feels like a message rather than a component.
@@ -549,7 +589,7 @@ prompt without it). *You are an experienced customer-feedback analyst* is the
 most reproduced prompting pattern in circulation, and on this task it cost
 three points.
 
-**Politeness cost 2.66 points.** *Lütfen… Teşekkürler* is harmless-looking and
+**Politeness cost 2.67 points** (four reviews of 150). *Lütfen… Teşekkürler* is harmless-looking and
 it is not free.
 
 Neither result generalises — that is the point. They are two more variables
@@ -705,8 +745,8 @@ whether examples help at all; and if your task's difficulty is in the mapping
 rather than the format, expect demonstrations to underdeliver.
 
 What does move the number is *which* examples you show — @liu2022makes found
-that retrieving demonstrations semantically close to the input beats a fixed
-hand-picked set, which turns example selection into a retrieval problem and
+that retrieving demonstrations semantically close to the input beats choosing
+them at random, which turns example selection into a retrieval problem and
 hands it to @sec-retrieval's machinery.
 :::
 
@@ -759,8 +799,8 @@ examples largely convey is the format and label space rather than the mapping.
 
 Because instruction tuning happened. A base model continues text, so early
 prompting meant constructing a prefix whose natural continuation was the
-answer. Instruction tuning (@sec-post-training) trained models to treat an
-instruction as an instruction. Candidates who cannot separate "the model got
+answer. Instruction tuning, followed by preference training
+(@sec-post-training), trained models to treat an instruction as an instruction. Candidates who cannot separate "the model got
 bigger" from "the model got trained to follow instructions" have not thought
 about where the capability came from.
 
@@ -772,7 +812,7 @@ Run both on the same frozen evaluation set and use a **paired** test — count
 the items where they disagree and test that count, not the two accuracies.
 Measured here, two prompts with overlapping confidence intervals were
 separated at $p = 0.0009$ by McNemar, because the pairing discards the items
-both got right.
+on which both gave the same answer, right or wrong.
 
 If the answer is "I read them and the second is clearer", the candidate has
 not measured a prompt.
@@ -783,8 +823,8 @@ The honest answer is that most teams do not know, and the measurement is a
 morning's work: write several semantically identical prompts and run all of
 them. Here twelve of them spanned **14.67 points**, and all twelve agreed on
 only **69.3%** of items — so on three items in ten the choice of prompt variant decided
-the output. That number is an error bar that almost nobody reports and that is
-usually larger than the sampling interval.
+the output. That number is an error bar that almost nobody reports, and here
+it was larger than the sampling interval.
 
 **Q: How do you stop prompt changes from breaking production?**
 
@@ -796,7 +836,7 @@ cost 4 points here and no reviewer would have predicted it.
 **Q: Your evaluation results changed and nothing was deployed. What happened?**
 
 Check reproducibility before anything else. Same prompt, same input, ten
-repeats. Locally, temperature 0 was fully deterministic here; without a seed
+repeats. Locally, temperature 0 showed no variation in 300 calls here; without a seed
 at temperature 0.7, 29 of 30 items varied. And hosted endpoints are often
 non-deterministic even at temperature 0, because batching changes
 floating-point reduction order — so the answer may be that nothing happened
@@ -964,6 +1004,8 @@ will land differently once you have seen your own spread.
 | which examples to show | @liu2022makes |
 | zero-shot reasoning from one sentence | @kojima2022large |
 | prompting as an interface, thought through early | @reynolds2021prompt |
+| label bias, and calibrating it away | @zhao2021calibrate |
+| a survey of the whole technique zoo | @schulhoff2025prompt |
 
 : The primary sources {tbl-colwidths="[46,54]"}
 
@@ -1001,7 +1043,7 @@ will land differently once you have seen your own spread.
 
 - **The folklore variable was noise and the ignored one was the effect.**
   @sec-classification measured English-versus-Turkish instructions at
-  **+0.54, $p = 0.54$** on this model family. Bullet formatting, here, was
+  **+0.54, $p = 0.54$** on this same model. Bullet formatting, here, was
   worth eight points. The role prefix — the most reproduced pattern in
   circulation — came 11th of 12 and cost 3.33 points against its own baseline.
 
@@ -1010,8 +1052,8 @@ will land differently once you have seen your own spread.
   edit cost 4.00 points, and no reviewer would have predicted the sign.
 
 - **Check reproducibility before you measure anything.** Locally, temperature 0
-  was fully deterministic with or without a seed, and a fixed seed made even
-  temperature 0.7 deterministic — but with neither, 29 of 30 items varied
+  gave identical output on every repeat with or without a seed, and so did a
+  fixed seed at temperature 0.7 — but with neither, 29 of 30 items varied
   across ten runs. Hosted APIs are frequently non-deterministic even at
   temperature 0, because batching changes floating-point reduction order. Run
   the ten-repeat check on the endpoint you will ship on.
