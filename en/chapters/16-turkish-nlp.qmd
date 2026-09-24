@@ -176,10 +176,13 @@ The tail shows the same thing:
 ```
 
 ::: {.column-margin}
-@sec-bake-off measured 58.6% hapax on a completely different Turkish corpus —
-product reviews rather than news. Two unrelated corpora landing on the same
-figure is a coincidence in the third digit, but the agreement in the first two
-is not: it is what a productive morphology does to any Turkish text you pick.
+A form that occurs exactly once is called a *hapax* (plural *hapax
+legomena*). @sec-bake-off measured 58.6% hapax on a completely different
+Turkish corpus — product reviews rather than news, and six times larger — and
+@sec-embeddings 50.0% on Turkish Wikipedia. Treat the exact match as a
+coincidence: the hapax share depends on corpus size and on how noisy the text
+is. What holds across all three is that Turkish sits at or above half, well
+over the 44.1% of English news above.
 :::
 
 ### One stem, many words
@@ -197,10 +200,11 @@ Stemming the corpus and counting the forms each stem produced:
   çocuk     31 forms   çocuk, çocuğu, çocuğa, çocukla, çocuğun, çocukta, ...
 ```
 
-The mean of 1.84 is misleading downward for two reasons, and only one of them
-is measured here: most stems in a corpus this small appear exactly once, which
-drags the mean towards 1 regardless of the language, and the stemmer
-under-merges wherever the stem itself changes shape (rule 4 below). The informative row is the
+The mean of 1.84 understates the effect, for two reasons. Most stems in a
+corpus this small appear exactly once, which drags the mean towards 1
+regardless of the language. And the stemmer under-merges wherever the stem
+changes shape in a way its rules do not undo (rule 4 below), so some forms of
+one word are counted under two stems. The informative row is the
 top: **thirty-nine forms of one everyday noun in 141,000 tokens**, and the
 list is nowhere near exhausted. @sec-bake-off, on a larger corpus, found 895
 forms sharing the stem *kulla*.
@@ -227,15 +231,22 @@ first-person possessive *-Im* surfaces as *-im* (*ev-im*), *-ım* (*kitab-ım*),
 fastest, and it is the one the usual one-sentence summary of vowel harmony
 leaves out.
 
-**4. Consonants change too — and not only at the seam.** Voicing inside the
-stem (*kitap* → *kitab-ı*, *çocuk* → *çocuğ-u*), devoicing of the suffix
-(*arkadaş* + *-dI* → *arkadaş-tı*), and a buffer consonant inserted between two
-vowels (*ülke* + *-I* → *ülke-y-i*). All three are in the list above and none of
-them is a suffix change.
+**4. Sounds change on both sides of the seam.** The last consonant of the
+stem becomes voiced before a vowel (*kitap* → *kitab-ı*, *çocuk* → *çocuğ-u*), the first
+consonant of the suffix loses its voicing (*arkadaş* + *-dI* → *arkadaş-tı*),
+a buffer consonant is inserted between two vowels (*ülke* + *-I* →
+*ülke-y-i*), and in some words the last vowel of the stem drops out (*ağız* →
+*ağz-ı*, *burun* → *burn-u*). None of these is a different suffix: it is the
+same stem, or the same suffix, changing shape.
 
 Rule 4 is the one that breaks stemmers. **The stem is not constant**, so a
 rule-based stemmer that only strips suffixes has no way to merge *kitap* with
-*kitabı*, and every such failure is a document a query will not find.
+*kitabı*, and every such failure is a document a query will not find. The
+Snowball Turkish stemmer used in this chapter patches the commonest case: after
+stripping, it turns a final *b*, *c*, *d* or *ğ* back into *p*, *ç*, *t* or
+*k*, which is why *çocuğu* sits under *çocuk* in the list above and *kitabı*
+stems to *kitap*. The other changes it does not undo: *ağzı* and *burnu* stay
+apart from *ağız* and *burun*, and *rengi* from *renk*.
 
 ### Where this shows up
 
@@ -244,7 +255,7 @@ places, each of which this book has now measured:
 
 | where | what happens | measured in |
 |:--|:--|:--|
-| Tokenization | more tokens per word, so more cost and less effective context | @sec-pretraining |
+| Tokenization | with an English-centric tokenizer, more tokens for the same content, so more cost and less effective context | @sec-pretraining |
 | Vocabulary | twice the types, a longer tail, more out-of-vocabulary | here |
 | Lexical retrieval | a query form that differs from the document form matches nothing | @sec-turkish-nlp-retrieval |
 | Word-level metrics | fewer tokens per sentence, so each error costs more | @sec-machine-translation |
@@ -258,8 +269,9 @@ code looks right. Then morphological analysis, which subword tokenizers mostly
 replaced, and the four jobs it is still the right tool for. Then search, where
 one preprocessing step moves recall@1 from 28% to 95%. Then the pattern this
 book keeps walking into — a standard tool, silently wrong outside English,
-caught by a control rather than by reading its source. And finally monolingual
-against multilingual, settled by running both, with a result I did not expect.
+caught by a control rather than by reading its source. Then a short map of
+Turkish corpora, models and benchmarks. And finally monolingual against
+multilingual, settled by running both, with a result I did not expect.
 
 ## Turkish normalization, and the two bugs that survive review {#sec-turkish-nlp-normalization}
 
@@ -368,7 +380,7 @@ unavailable; it is that the default is wrong and silent.
 ### Bug two: the result is not even one word any more
 
 The first bug is a wrong string. The second is worse, and it is the one
-@sec-clustering found in production:
+@sec-clustering found in real data:
 
 ```text
   'İSTANBUL'.lower()  =  'i̇stanbul'
@@ -395,9 +407,9 @@ And it does not go away when you normalize:
   'TAVSİYE'.lower()                                   →   ['tavsi', 'ye']
 ```
 
-NFC does not recombine, because `i` + combining dot is not canonically
-equivalent to `i` — the composed character `i̇` does not exist as a single code
-point. There is no Unicode-level fix.
+NFC does not recombine, because NFC only composes a sequence into a single
+code point when such a code point exists, and none exists for `i` + combining
+dot. There is no Unicode-level fix.
 
 There is no standard-library fix either, and the folk answer is wrong: `str.casefold()`
 is not locale-aware, and on `TAVSİYE` it produces the identical eight codepoints
@@ -423,7 +435,7 @@ def tr_upper(s):
 
 Six lines, applied before anything else touches the text — and the NFC line is
 not optional. Text arrives decomposed more often than you would like: from HTML
-forms, from some macOS filenames, from OCR. Without the normalisation,
+forms, from some macOS filenames, from OCR. Without the normalization,
 `tr_lower` on a decomposed `İstanbul` returns `ı̇stanbul` — the combining dot is
 still there and it is now over the *wrong* vowel, which is worse than what you
 started with.
@@ -486,15 +498,18 @@ Before subword tokenizers, handling Turkish meant *analysing* it: taking
 grammatical functions stacked on it. Turkish has one of the field's great
 success stories here — @oflazer1994two built a two-level finite-state
 analyser that covers the language's morphology properly, and its descendants
-still work.
+still work. ("Two-level" means the rules relate two strings directly: the
+dictionary-level form, such as *kitap* + *-I*, and the surface form *kitabı*.
+That is how an analyser undoes rule 4 above rather than stumbling over it.)
 
 Two things make analysis harder than it sounds:
 
 **Ambiguity.** *Yüzü* is at least four different words: *yüz* "face" with the
-third-person possessive (*his face*), *yüz* "face" with the accusative (*the
+third-person possessive (*his* or *her face*), *yüz* "face" with the accusative (*the
 face*), *yüz* "hundred" with either, and *yüz* "surface" with a possessive. A
 sharper case is *koyun*, which is three separate stems in one surface form:
-*koyun* "sheep", *koy* "bay" with a possessive, and *koy-* "put" in the
+*koyun* "sheep", *koy* "bay" with a possessive (*your bay*) or genitive
+(*of the bay*), and *koy-* "put" in the
 second-person plural imperative. A morphological analyser returns all the
 readings; picking the right one is *morphological disambiguation*, and it needs
 sentence context. So the tidy pipeline — analyse, then model — has a
@@ -503,6 +518,17 @@ sentence-level model inside its first step.
 **Coverage.** An analyser knows the stems it was built with. New words,
 brand names, and the productive compounding that Turkish does freely fall
 outside it, and the failure mode is a hard one: no analysis at all.
+
+**Stem or lemma.** @sec-text-as-data separated stemming (chopping endings off
+to get a matching key) from lemmatization (returning the dictionary form). In
+Turkish the gap between the two is wide. The Snowball stemmer's output need not
+be a word — *burun* "nose" becomes *bur*, and *ağız* "mouth" becomes *ak*,
+which is a different word ("white"). It also targets the endings nouns take,
+so verbs keep their tense and aspect: *okuyorlar* "they are reading" becomes
+*okuyor*, and *gidiyor* "is going" comes back unchanged. A lemmatizer built on
+an analyser, such as Zemberek's, returns *burun* for *burnu* and *git* for
+*gidiyor* — but only after choosing among the readings, which is the
+ambiguity problem above.
 
 ### So do you need it in 2026?
 
@@ -528,7 +554,7 @@ give you:
 The compromise most projects land on is a stemmer rather than an analyser:
 crude, fast, no ambiguity to resolve, and — as @sec-turkish-nlp-retrieval
 shows — carrying most of the benefit for retrieval. The Snowball Turkish
-stemmer used throughout this chapter is a hundred lines of rules. It
+stemmer used throughout this chapter is a few hundred lines of rules. It
 under-merges, it over-merges, and it takes recall@1 from 28.0% to 95.3%.
 :::
 
@@ -539,9 +565,12 @@ generally know it. What is worth knowing is *how much* of the difficulty is
 morphology alone — because that part has a cheap fix, and the rest does not.
 
 The experiment isolates it. Take 7,165 Turkish sentences as documents, index
-them with BM25, and query with three content words drawn from a target
-document — but in a **different surface form than the document uses**. That is
-the real case: the user types *İstanbul*, the document says *İstanbul'da*.
+them with BM25 — the standard word-matching ranking function, which scores a
+document by the query words it contains (@sec-text-as-data) — and query with three
+content words drawn from a target document, but in a **different surface form
+than the document uses**. That is the real case: the user types *İstanbul*, the
+document says *İstanbul'da*. The score is recall@1, the share of queries whose
+target document comes back in first place (recall@10: anywhere in the top ten).
 
 ```text
 7,165 Turkish documents (sentences of 8+ words)
@@ -573,12 +602,15 @@ what a user's query will do.
 
 **And part of the gain is string surgery rather than morphology.** Since
 version 3.0.0, `snowballstemmer`'s Turkish algorithm truncates a token at its
-first apostrophe. So the chapter's own headline example, `İstanbul'da` →
+first apostrophe (ignoring one in the first two characters, so *O'Neill'ın*
+keeps *O'Neill*). So the chapter's own headline example, `İstanbul'da` →
 `İstanbul`, is not a morphological analysis; it is a `split("'")`. On a news
 corpus full of inflected proper nouns that step alone is worth a share of the
 gap, and we did not separate it. Two rows would: apostrophe truncation with no
 stemming, and Snowball with the apostrophe step disabled. They are the first
-thing to run before quoting 3.4× anywhere.
+thing to run before quoting 3.4× anywhere. (One practical trap: only the ASCII
+apostrophe `'` counts. The typographic `’`, common in edited text, is not
+recognised, so replace it with `'` before stemming.)
 
 Finally, 69% of query terms were deliberately chosen to be a different
 inflection, and a query only succeeds if enough of its three terms match. That
@@ -591,9 +623,8 @@ Three practical consequences:
 1. **Stemming is not optional in Turkish lexical search — on queries like
    these.** In English it is a marginal tweak worth a point or two. Here it is
    the difference between a search box that works and one that does not. Keep
-   the condition attached: 69% of these queries were deliberately built in a
-   different inflection from the document, which is what makes exact matching
-   fail. On a corpus whose users type the same forms the documents use, the gap
+   the condition attached — the 69% above is what makes exact matching fail —
+   and on a corpus whose users type the same forms the documents use, the gap
    shrinks. Measure it on your own query log before quoting this as a universal
    requirement.
 2. **Character n-grams are the robust fallback.** 74.9% recall@1 with no
@@ -609,9 +640,10 @@ Three practical consequences:
 This is also the strongest single argument for dense retrieval in Turkish:
 an embedding of *İstanbul'da* and an embedding of *İstanbul* are close
 whatever the tokenizer did, because the model learned them from context rather
-than matching strings. @sec-retrieval builds that properly. The measurement
-here is what the sparse half of a hybrid retriever needs in order to pull its
-weight — and untreated, it does not.
+than matching strings. @sec-retrieval builds that properly, including the
+*hybrid* retriever that combines a word-matching (sparse) half with an
+embedding (dense) half. The measurement here says what the sparse half needs
+in Turkish: stemming. Without it, that half does not pull its weight.
 :::
 
 ## The five-chapter pattern {#sec-turkish-nlp-pattern}
@@ -640,9 +672,10 @@ exactly what its definition says. WikiANN was built as described. Each is
 correct on the language it was validated on, and each carries an assumption
 its documentation does not state.
 
-**Every one was caught by a control, not by inspection.** Copied text that
-must score perfectly; a majority-class floor; a comparable error in two languages;
-test inputs hashed against training. [When you cannot verify a metric
+**Every one was caught by a control, not by inspection.** Two case mappings
+side by side; a cluster that should not exist; test inputs hashed against
+training; two implementations of one metric compared; copied text that must
+score perfectly; a comparable error in two languages. [When you cannot verify a metric
 directly, feed it an input whose correct answer you already know.]{.hl} That
 habit found every one of them, and reading the code found none.
 
@@ -675,8 +708,14 @@ Turkey assume.
 **Encoders.** BERTurk [@schweter2020berturk] remains the default Turkish
 encoder and is what @sec-sequence-labeling and @sec-classification fine-tuned.
 It exists in cased and uncased variants, and for Turkish the **cased** one is
-almost always right — see @sec-turkish-nlp-normalization for what the uncasing
-step does to `İ`.
+almost always right. The uncased checkpoint's configuration only says "lowercase";
+loaded with the library defaults, its tokenizer then lowercases with the
+English rules (@sec-turkish-nlp-normalization) and, because accent stripping
+is switched on by default whenever lowercasing is, also removes the
+diacritics. `IŞIK` comes out as `isik`, and `öldü` as `oldu` — the merge the
+diacritics section warns about — even though the model's vocabulary is full
+of pieces containing `ş`, `ü` or `ç` that then never get used. If you do use it, pass `strip_accents=False` and lowercase the text
+yourself with `tr_lower` first.
 
 **Multilingual encoders.** mBERT and XLM-R [@conneau2020unsupervised] cover
 Turkish among a hundred other languages. @sec-turkish-nlp-decide measures what
@@ -730,10 +769,12 @@ mBERT  (multilingual)      92.25   93.27    92.76   92.67     537.5       8.8
 **The multilingual model came out ahead, by 0.84 span F1.** That is the
 opposite of what this section was set up to show, and it is worth working
 through rather than explaining away — starting with what the number can carry.
-Both rows are a single training run at a single seed. At this model scale on
-this task the seed-to-seed spread on span F1 is a few tenths of a point, so
-0.84 is around one or two standard deviations of it: enough to notice, not
-enough to settle. Five seeds per row is the measurement this table is missing,
+Both rows are a single training run at a single seed, and this book has not
+measured how much a different seed moves span F1 on this task
+(@sec-sequence-labeling says the same of its own table). For BERT-base
+fine-tuning on NER the spread is commonly a few tenths of a point; if that
+holds here, 0.84 is around one or two standard deviations of it: enough to
+notice, not enough to settle. Five seeds per row is the measurement this table is missing,
 and until they exist the defensible statement is that **this experiment did not
 separate the two models**. Everything below is about why a gap this small is
 unsurprising rather than about who won.
@@ -744,10 +785,14 @@ The obvious objection is size — mBERT has 177.3M parameters against BERTurk's
 110.0M. But look at where the difference is:
 
 ```text
-model                    total    embeddings   transformer body
-BERTurk                 110.0M         24.6M              85.5M
-mBERT                   177.3M         91.8M              85.5M
+model                    total    word-embedding table   everything else
+BERTurk                 110.0M                  24.6M             85.5M
+mBERT                   177.3M                  91.8M             85.5M
 ```
+
+("Everything else" is the twelve transformer layers plus the small position
+embeddings and the tagging head; the word-embedding table is vocabulary size
+× 768.)
 
 [The transformer bodies are identical.]{.hl} Twelve layers, same width, same
 85.5M parameters doing the actual computation. The entire difference is the
@@ -777,8 +822,8 @@ corpus is a filtered OSCAR dump plus OPUS corpora plus a Wikipedia dump plus a
 corpus contributed by Kemal Oflazer, so Wikipedia is a *minority* of its
 training data rather than all of it. The domain match is therefore a difference
 of degree rather than of kind — which is exactly the shape of thing that
-produces a gap of a few tenths of a point, and the most plausible reason for
-one this size.
+produces a gap of under a point, and the most plausible systematic reason for
+one this size, if more seeds show that the gap is real.
 
 [The honest reading is therefore not "multilingual models are better for
 Turkish".]{.hl} It is: *on a Wikipedia-derived task, the model whose pretraining
@@ -800,7 +845,8 @@ runs:
    to your data? The measurement above is mostly a demonstration of how much
    this matters.
 3. **The task itself, both models, identical recipe.** Same data, same
-   hyper-parameters, same seed. Anything else is not a comparison.
+   hyper-parameters, the same set of several seeds. Anything else is not a
+   comparison.
 4. **The operational columns.** Training time, inference latency, memory. Here
    mBERT trained 13% slower and — despite longer sequences — ran inference
    slightly faster, which is a reminder to measure rather than reason about
@@ -814,9 +860,9 @@ start.
 ::: {.column-margin}
 Note what the result does *not* undermine. mBERT still fragments Turkish 19%
 worse, which is a permanent tax on cost and context that no accuracy number
-removes. If this task had been a generation task billed per token rather than
-a tagging task scored per span, the same two models would produce a different
-verdict from the same measurements.
+removes. If this had been a generation task billed per token rather than a
+tagging task scored per span, the same tokenizer measurement could have
+decided the choice on its own — before any accuracy was compared.
 :::
 
 ## Intuition checks {#sec-turkish-nlp-intuition}
@@ -845,8 +891,10 @@ size, and truncating to five characters gets 74.6% for free.
 Two reasons, and the second is worse.
 
 Turkish has four letters where English has two — `İ i I ı` — and the case
-mapping is not the ASCII one. On the WMT16 Turkish source, **438 of 438**
-words containing `I` or `İ` come out differently under English rules.
+mapping is not the ASCII one. Every word containing `I` or `İ` comes out
+differently under English rules — that follows from the two mappings — and on
+the WMT16 Turkish source such words are **0.95%** of all tokens, many of them
+names.
 
 Then: `'İSTANBUL'.lower()` produces `i` followed by `U+0307 COMBINING DOT
 ABOVE`, which is a nonspacing mark and not a word character. So
@@ -934,9 +982,11 @@ Turkish has four letters where English has two: dotted `i`/`İ` and dotless
 mapping between them is not the ASCII one — `I` lowercases to `ı`, and `i`
 uppercases to `İ`. The consequence is the part interviewers are listening for:
 `str.lower()` is not a style choice in Turkish, it is a **correctness bug**. It
-turns `IŞIK` into `işik` where Turkish requires `ışık`, and — measured in this
-chapter — on **438 of 438** words containing one of these letters it produced
-something a Turkish reader would not accept. It fails a second way too:
+turns `IŞIK` into `işik` where Turkish requires `ışık`. That every word
+containing one of these letters comes out differently is guaranteed by the two
+mappings; the measured number is how often such words occur — about one token
+in a hundred on WMT16 news, concentrated in names and sentence-initial words.
+It fails a second way too:
 `'İstanbul'.lower()` returns `i` plus a *combining dot above*, nine code points
 where `istanbul` has eight, so the two compare unequal while rendering
 identically on screen — and a `\w+` tokenizer then splits it into
@@ -960,11 +1010,11 @@ where English flattens.
 Start with the stemmer and be surprised by how far it goes: Snowball is crude,
 over-merges and under-merges, and still took recall@1 from **28.0% to 95.3%**
 on this chapter's retrieval task — a 3.4× improvement from one preprocessing
-step, no model involved. Reach for a real morphological analyzer when you need
+step, no model involved. Reach for a real morphological analyser when you need
 the analysis itself rather than a matching key: recovering case to decide who
-did what to whom, disambiguating `yüzü` (his face / the face / a hundred), or generating
+did what to whom, disambiguating `yüzü` (her face / the face / the hundred), or generating
 forms. The engineering answer is that the stemmer is the default and the
-analyzer is a requirement you should be able to justify.
+analyser is a requirement you should be able to justify.
 
 ### Testing whether you have shipped something
 
@@ -973,9 +1023,15 @@ analyzer is a requirement you should be able to justify.
 Not train anything. Run the controls, because this chapter's whole argument is
 that tools fail *silently* outside English. Lowercase a list of words with I
 and İ and diff it against a correct lowercaser. Feed your metric a copy of the
-reference and check that it scores a perfect one — @sec-summarization found a
-ROUGE implementation whose tokenizer destroyed 44.4% of Turkish words, and a
-faithfulness proxy of mine that called professional journalists 56% unfaithful.
+reference and check that it scores a perfect one; that catches a harness that
+processes the two sides differently, like the faithfulness proxy of mine that
+called professional journalists 56% unfaithful (@sec-summarization).
+It does *not* catch a tokenizer that damages both sides the same way:
+`rouge-score`, whose tokenizer splits 44.4% of Turkish words, still gives a
+Turkish reference a perfect score against itself. For that, score two
+sentences that differ in one Turkish word, or compare against a second
+implementation, and print the tokens — on *güzel* against *özel*, which share
+no word, `rouge-score` reports a ROUGE-1 of 0.67 instead of 0.
 Then measure fertility on real production text. Each of those is an afternoon,
 and each one has historically found a real bug.
 
@@ -992,16 +1048,19 @@ invoice: the two ratios come from different samples, and the bill also separates
 input from output pricing, caching and retries. If you want the number, count
 total tokens for both languages on one parallel sample.
 The same total ratio shrinks the effective context window, which is the
-constraint that actually breaks features. Say that model choice moves this number: a language-specific
-tokenizer is the single largest lever, and it is fixed at pretraining time, so
-it is a procurement decision rather than something you tune later.
+constraint that actually breaks features. Then add that the choice of model
+moves this number: a language-specific tokenizer is the single largest lever,
+and it is fixed at pretraining time, so it is a procurement decision rather
+than something you tune later.
 
 **Q: Your Turkish benchmark shows 92. Do you trust it?**
 
-Ask what the control says. This chapter fine-tuned a monolingual and a
-multilingual model on the same Turkish task and the multilingual one won,
-**92.76** to **91.92** F1, against the folklore and against my own expectation
-— but the two share a transformer body of the same size, so the honest reading
+Ask what the control says: what does a simple baseline score, and how far
+does a second seed move the number? This chapter fine-tuned a monolingual and a
+multilingual model on the same Turkish task and the multilingual one came out
+ahead, **92.76** to **91.92** F1 from a single seed, against the folklore and
+against my own expectation — but the two share a transformer body of the same
+size, so the honest reading
 is that the comparison is about pretraining data, not architecture, and one
 task is not a verdict. What earns trust is a protocol: fertility measured on
 your text, domain overlap checked, both models fine-tuned on your data, and a
@@ -1023,10 +1082,10 @@ Worth knowing about, not used above:
 
 | resource | current version | when you would reach for it |
 |:--|:--|:--|
-| `zeyrek` | 0.1.3 | a pure-Python morphological analyzer — full analyses when a stem is not enough |
-| `zemberek-python` | 0.2.3 | bindings to Zemberek, the reference Turkish NLP toolkit; heavier, and more complete |
-| `turkish-morphology` | 1.2.5 | Google's finite-state analyzer, if you want a second opinion on an analysis |
-| `trnlp` | 0.2.3a0 | analysis plus generation, useful when you need to *produce* inflected forms |
+| `zeyrek` | 0.1.3 | a pure-Python morphological analyser and lemmatizer — full analyses when a stem is not enough |
+| `zemberek-python` | 0.2.3 | a partial pure-Python port of Zemberek, the reference Turkish NLP toolkit (no Java needed): analysis with disambiguation, word generation when you need to *produce* inflected forms, tokenization, normalization of noisy text |
+| `turkish-morphology` | 1.2.5 | Google's finite-state analyser, if you want a second opinion on an analysis |
+| `trnlp` | 0.2.3a0 | stemming, analysis and suggestions for words typed with ASCII letters instead of Turkish ones |
 | BERTurk / mBERT | on the Hub | the two models compared above; start with both, not with one |
 | Mukayese | on GitHub | a Turkish benchmark suite — use it for the tasks it standardises, and read what each task actually measures before quoting a score |
 
@@ -1047,13 +1106,17 @@ building a measuring instrument, not a challenge set.
 ### Step 2 — validate the scorer before scoring anything
 
 Feed each metric a **perfect prediction** and confirm it returns a perfect
-score. Then feed it a copied input, an empty prediction, and a prediction that
-differs by one character. Write down what each *should* return before you run
-it.
+score. Then feed it a copied input, an empty prediction, a prediction that
+differs by one character, and a pair of sentences that differ in one whole
+Turkish word. Write down what each *should* return before you run it.
 
-This step is the whole lab. @sec-summarization found a standard metric
-mutilating 44.4% of Turkish words; it was caught exactly this way and by
-nothing else.
+This step is the whole lab — and the perfect-prediction check alone is not
+enough. @sec-summarization found a standard metric mutilating 44.4% of Turkish
+words, and that metric passes the perfect-prediction test: both sides are
+split the same way, so a reference still matches itself exactly. What exposes
+it is a pair with a known *non-perfect* answer (*güzel* against *özel* should
+share no word, yet scores 0.67), a second implementation that disagrees, or
+simply printing the tokens.
 
 ### Step 3 — check your own text for the two normalization bugs
 
@@ -1112,7 +1175,9 @@ ship and what would change your mind.
 6. **Audit a Turkish benchmark.** Pick one you would use. Check for
    translation artefacts, hash its test set against its training set, and run
    its scoring script on a perfect prediction to confirm it returns a perfect
-   score. Report what you find, including if the answer is "nothing wrong".
+   score — then on two Turkish sentences that differ in one word, because a
+   tokenizer that damages both sides equally still passes the first check.
+   Report what you find, including if the answer is "nothing wrong".
 
 7. **The control habit.** Take any metric you rely on and feed it an input
    whose correct answer you know for certain — identical strings, a copied
@@ -1131,7 +1196,7 @@ chapter is downstream of believing that result.
 | [Mukayese](https://github.com/alisafaya/mukayese) | a Turkish benchmark suite with baselines; read what each task measures before quoting a score |
 | [BERTurk](https://github.com/stefan-it/turkish-bert) | the monolingual models used here, with their corpora and training documented |
 | [TDD — Türkçe Doğal Dil İşleme](https://tdd.ai/) | Turkish corpora, models and tools collected in one place |
-| [Speech and Language Processing](https://web.stanford.edu/~jurafsky/slp3/) — Jurafsky & Martin | the morphology and FST chapters, free online, for the theory under agglutination |
+| [Speech and Language Processing](https://web.stanford.edu/~jurafsky/slp3/) — Jurafsky & Martin | free online; the "Words and Tokens" chapter covers morphemes and subword tokenization. The finite-state treatment of morphology is in the printed second edition, not in this draft |
 
 : Beyond the papers {tbl-colwidths="[42,58]"}
 
@@ -1155,11 +1220,12 @@ chapter is downstream of believing that result.
   generates forms by rule rather than drawing them from a list. Any design
   that assumes a vocabulary can be enumerated is fighting that.
 
-- **`str.lower()` is a correctness bug in Turkish, twice over.** All **438 of
-  438** words containing `I` or `İ` in the WMT16 source come out wrong under
-  English rules. And `'İSTANBUL'.lower()` emits `i` plus a combining mark, so
-  `\w+` returns `['i', 'stanbul']` — the word splits and NFC does not repair
-  it. Four lines of `tr_lower` before anything else touches the text.
+- **`str.lower()` is a correctness bug in Turkish, twice over.** Every word
+  containing `I` or `İ` comes out wrong under English rules — that part is
+  arithmetic — and such words are about one token in a hundred (**0.95%** of
+  the WMT16 source), concentrated in names. And `'İSTANBUL'.lower()` emits
+  `i` plus a combining mark, so `\w+` returns `['i', 'stanbul']` — the word splits and NFC does not repair
+  it. A three-line `tr_lower` before anything else touches the text.
 
 - **Stemming is not optional in Turkish lexical search — on queries like the
   ones tested here.** Sixty-nine percent of that query set was built to differ
@@ -1169,22 +1235,24 @@ chapter is downstream of believing that result.
   74.9% with no linguistic knowledge, at 3.5× the index. In English this is a
   tweak; here it is whether the search box works.
 
-- **Stripping diacritics merges 72 forms and each merge is total.** *oldu* and
-  *öldü* — "it happened" and "he died" — become the same string. Rare enough
-  to pass every aggregate metric, severe enough to matter every time.
+- **Stripping diacritics causes only 72 collisions, and some of them are
+  total.** *oldu* and *öldü* — "it happened" and "he died" — become the same
+  string (a few, like *mi*/*mı*, cost nothing). Rare enough to pass every
+  aggregate metric, severe enough to matter every time it hits.
 
-- **A multilingual model beat the monolingual one on this task**, 92.76
+- **A multilingual model came out ahead of the monolingual one on this task**, 92.76
   against 91.92 span F1 — with identical transformer bodies (85.5M each; the
   parameter gap is all embedding table) and *despite* tokenizing Turkish 19%
-  worse. The likely reason is domain: the benchmark is built from Wikipedia
-  and mBERT was pretrained on Wikipedia alone. There is no general verdict here,
+  worse — from a single seed, so not yet a separation. If the gap holds up,
+  the likely reason is domain: the benchmark is built from Wikipedia and mBERT
+  was pretrained on Wikipedia alone. There is no general verdict here,
   only a protocol — fertility on your text, domain overlap, both models on
   your task with an identical recipe, then the operational columns.
 
 - **Subword tokenization replaced morphological analysis for modelling, not
   for everything.** Reach for a real analyser when the grammar is the output,
   when a wrong answer must be explainable, or when you need the stem to index
-  on — and note that a hundred-line stemmer carried most of the retrieval
+  on — and note that a stemmer of a few hundred lines carried most of the retrieval
   benefit.
 
 - **The pattern, across five chapters: standard tools fail silently outside
@@ -1197,5 +1265,7 @@ chapter is downstream of believing that result.
 
 - **So build the control first.** Before trusting a tool on your language,
   give it something whose answer cannot be in doubt: identical strings, copied
-  text, a perfect prediction, a majority-class floor. Ten minutes, and it is
+  text, a perfect prediction, two texts that share no word, a majority-class
+  floor. A perfect score on identical inputs is necessary, not sufficient — it
+  cannot see a tokenizer that damages both sides alike. Ten minutes, and it is
   the highest-return ten minutes in a non-English NLP project.
