@@ -20,24 +20,38 @@ Software: `ollama` 0.24.0 serving `qwen2.5:7b`, Python 3.14.5, Apple Silicon.
   identical change;
 - curate a golden set from real traffic, and know when it has aged out;
 - score a sample of live traffic without scoring all of it;
+- treat user feedback as the biased sample it is, and size an A/B test before
+  running it;
 - separate the three kinds of drift that look the same on a dashboard.
 
 ## The ladder, and what each rung can catch {#sec-production-eval-ladder}
 
 Everything up to now evaluated systems in a room by themselves. Production adds
 a constraint that changes the whole design: [the thing you are evaluating is
-already serving users while you evaluate it]{.hl}. That turns evaluation from an
-event into a ladder, where each rung is cheaper and blinder than the one above.
+already serving users while you evaluate it]{.hl}. That turns evaluation from a
+single event into a ladder. The table lists the rungs from the cheapest to the
+most expensive, and each rung sees less than the one after it.
 
 | rung | what it costs | what it catches | what it cannot see |
 |:--|:--|:--|:--|
 | **Offline eval** | seconds, no users | regressions on cases you thought of | anything your suite does not contain |
 | **CI gate** | one build | a bad change *before* merge | whether the change helps real users |
 | **Shadow** | double inference, no user impact | crashes, latency, malformed output on live inputs | the *effect on users* — nobody is served the output, so nothing about behaviour, satisfaction or downstream action is observable |
-| **Canary** | a slice of real users | quality failures, on a small blast radius (@sec-deployment) | small effects — the slice is too small to resolve them |
+| **Canary** | a slice of real users | quality failures, while a failure still reaches only a few users (@sec-deployment) | small effects — the slice is too small to resolve them |
 | **A/B test** | days, and real exposure | whether it actually helps | fast-moving regressions — unless you wire in guardrail metrics and a stopping rule, which you should; an A/B test is not a commitment to run it out |
 
 : Five rungs, in the order a change should climb them {tbl-colwidths="[14,20,33,33]"}
+
+Four of the rung names are engineering jargon. **CI** (continuous integration)
+is the set of automated checks that runs on every proposed change to the code
+before that change is *merged* into the main version; a **CI gate** is a check
+that can refuse the merge. In a **shadow** deployment the new version receives a
+copy of live requests, but its answers are only stored, never shown to users. A
+**canary** serves the new version to a small share of real users first, so a
+failure is seen early and rolled back (@sec-deployment-release covers both). An
+**A/B test** splits users at random
+between the old version (A) and the new one (B) and compares outcomes;
+@sec-production-eval-ab sizes one.
 
 The mistake is not skipping a rung. It is *believing* a rung about something it
 cannot see. A shadow deployment that runs clean tells you the new prompt does
@@ -67,7 +81,8 @@ The discipline that fixes this is borrowed wholesale from testing:
 3. **The gate blocks the merge**, or it is not a gate — it is a dashboard, and
    dashboards do not stop anything.
 4. **A production failure becomes a case in the suite** before the fix is
-   merged, which is @sec-agent-eval's regression discipline applied to prompts.
+   merged — and you confirm that the case fails before the fix and passes after
+   it — which is @sec-agent-eval's regression discipline applied to prompts.
 
 All of that is standard practice imported from software engineering, and none of
 it is the hard part. [The hard part is that an eval score is a random variable
@@ -174,10 +189,12 @@ rules.
 
 **Which of those two numbers survives a test, and which does not.** Both
 prompts ran the same 100 items, so the comparison is paired, and the per-item
-pairings were not stored — but the margins bound the answer. On the `day`
-field, 91 correct under A against 74 under C leaves a net 17 discordant
-decisions in one direction, and across *every* split consistent with those
-margins McNemar's exact test gives p between 1.5 × 10⁻⁵ and 0.006. That
+pairings were not stored — but the margins (the two totals, 91 and 74) bound
+the answer. A *discordant* item is one where the two prompts disagree: right
+under one, wrong under the other. On the `day` field, 91 correct under A against
+74 under C leaves a net 17 discordant decisions in one direction, and across
+*every* split consistent with those margins McNemar's exact test (the paired
+test of @sec-llm-eval, which looks only at discordant items) gives p between 1.5 × 10⁻⁵ and 0.006. That
 regression is real on any reading. The exact-match difference does not fare as
 well: 81 against 72 leaves a net 9, and the same sweep gives p anywhere from
 0.004 to 0.24, so it can be significant or nothing at all depending on
@@ -190,8 +207,8 @@ has no interface, so no edit can be proven local. Ordering is load-bearing and
 invisible.
 :::
 
-The failure mode is specific enough to name. Inspecting every wrong `day` value
-across 40 items under each prompt:
+The failure mode is specific enough to name. A separate probe took 40 items,
+ran them under each prompt, and inspected every wrong `day` value:
 
 ```text
   prompt A:  day wrong on  4/40 — 4 of 4  are the leading digits of the amount
@@ -225,7 +242,7 @@ Prompt A, twice at temperature 0:
 
 Perfectly reproducible: not merely the same score, but the same result on every
 one of the 100 items. That is worth having in a gate, because it removes the
-noise floor entirely and makes a failing run reproducible on a laptop.
+run-to-run noise and makes a failing run reproducible on a laptop.
 
 Two caveats, both worth stating. Temperature 0 scored **95.20**, which sits
 *below* the entire temperature-0.7 range of 95.40–96.00 — greedy decoding is one
@@ -236,12 +253,22 @@ makes a gate reproducible; it does not make it right. Your users are
 probably not served at temperature 0 either, so a temperature-0 gate measures a
 configuration you do not ship.
 
+Two further limits keep "no noise" from meaning "every delta is real". First,
+the byte-identical result is a property of this setup — one local server
+answering one request at a time. Hosted APIs and servers that batch many
+requests together often return slightly different text at temperature 0, so
+check it on yours, as @sec-decoding also recommends. Second, any
+prompt edit, even one that changes no meaning, flips the greedy output on a few
+items. A small delta between two temperature-0 runs of *different* prompts can
+therefore still be chance, and it still needs the paired test above.
+
 ## Designing the gate so it fires on the right things {#sec-production-eval-gate}
 
 Given a noise floor, a gate is a threshold decision, and the obvious threshold is
-wrong in an instructive way. Resampling the measured per-item results 2,000
-times per cell — comparing one baseline run against one new run, as a real gate
-does. One caveat on provenance: the per-item pairing across variants was not
+wrong in an instructive way. To see how a threshold behaves, the measured
+per-item results were resampled 2,000 times per cell of the tables below. Each
+draw compares one baseline run against one new run, as a real gate does, and
+the tables report how often the gate fired. One caveat on provenance: the per-item pairing across variants was not
 stored (see above), so this resampling cannot have been item-matched across A
 and C. Read the rates below as an illustration of how a threshold behaves, not
 as measured operating characteristics of a paired gate.
@@ -255,7 +282,7 @@ as measured operating characteristics of a paired gate.
 : A gate that blocks whenever the new score is lower {tbl-colwidths="[16,30,27,27]"}
 
 The naive gate — block if the new run scores lower than the baseline — catches
-everything, and [blocks 42.5% of changes that changed nothing]{.hl}. Worse, it
+almost every regression, and [blocks 42.5% of changes that changed nothing]{.hl}. Worse, it
 gets *worse as the suite grows*: at 20 items the two runs often tie exactly, and
 ties pass; at 100 items exact ties are rare, so the comparison converges on a
 coin flip. A team that responds to a flaky gate by adding more test cases makes
@@ -314,11 +341,22 @@ range, and entirely inside one field.
 suite against an unchanged system five times and record the run-to-run `sd` —
 not the range, which is a five-draw estimate that future runs will exceed. A
 threshold placed just above the observed range barely helps: at this `sd` two
-fresh runs clear 0.60 points a tenth of the time. Roughly **4 × `sd`** is where
-the false-block rate drops below a few percent, which here is the 1.0-point
-threshold used above. That is a twenty-minute experiment that turns a gate
+fresh runs clear 0.60 points a tenth of the time. Roughly **4 × `sd`** is the
+working rule, which here is the 1.0-point threshold used above.
+
+The headroom is large because `sd` itself is uncertain. If the five-run `sd`
+were exact, the difference between two runs would have a standard deviation of
+$\sqrt{2}\times$`sd`, and a threshold of $k \times$ `sd` would falsely block
+about $\Phi(-k/\sqrt{2})$ of no-op changes ($\Phi$ is the standard normal
+cumulative distribution): roughly 8% at 2 × `sd`, 2% at 3 × `sd` and 0.2% at
+4 × `sd`. The resampling above found 4.3% at 1.0 point — twenty times that 0.2%.
+It behaves as if the true run-to-run `sd` were nearer 0.45 than 0.26, which is
+well inside the $\chi^2$ interval of 0.16 to 0.75. Four times a five-run
+estimate is what keeps false blocks at a few percent even when the estimate
+came out low. That is a twenty-minute experiment that turns a gate
 people learn to ignore into one they trust. A gate that is overridden by habit
-is worse than no gate, because it launders the override into a green check.
+is worse than no gate, because the record then shows a green check where a
+human actually skipped the test.
 
 ## The golden set has a lifecycle {#sec-production-eval-golden}
 
@@ -358,10 +396,15 @@ entered as real failures are regression tests, and they stay.
 
 **Its size is set by @sec-llm-eval's arithmetic, not by taste.** That chapter
 measured it: at 80% power on a system that is right 80% of the time, 30 items
-detect nothing at all, 100 items detect 13.4 points, and 1,000 detect 4.8. Note
-what that means next to this chapter's numbers — the reordered prompt's 3.4-point
-drop is *below* what 1,000 items can resolve as a difference in the population,
-even though the gate on the same 100 items fires 99.4% of the time.
+detect nothing at all, 100 items detect 13.4 points, and 1,000 detect 4.8.
+Those figures belong to an 80% baseline, so redo the arithmetic for your own
+metric rather than borrowing them. Exact match here sits at 81%, close to that
+baseline, and the reordered prompt cost it 9.2 points — *less* than the 13.4
+points that 100 items per system can resolve without pairing. Field accuracy is
+a different case: near 96% the binomial variance $p(1-p)$ is about a quarter of
+its value at 80%, and the same calculation says 1,000 unpaired decisions per
+system would resolve a drop of about 2.9 points from 95.6%. Yet the gate on these same 100
+items fires on the reordered prompt 99.4% of the time.
 
 Those two numbers answer different questions, and it is worth keeping them
 apart. The 13.4 and 4.8 are **minimum detectable effects**: they carry the
@@ -379,8 +422,9 @@ on fresh samples.
 
 Offline evaluation asks whether the system handles cases you collected. Online
 evaluation asks whether it is handling the cases arriving right now. You cannot
-score all of them — judging every request roughly doubles inference cost — so the
-question is what to sample.
+score all of them — with a judge about as large as the model it judges, judging
+every request roughly doubles inference cost — so the question is what to
+sample.
 
 The cheap signals first, because they need no judge and cover all traffic:
 schema validity and parse rate (@sec-decoding), refusal rate, latency and token
@@ -403,6 +447,76 @@ do so in production too. And **record the judge's version and prompt alongside
 the score**, because a judge upgrade shifts the whole series; @sec-gateway's
 pinning argument applies to the evaluator as much as to the model.
 
+## User feedback and A/B tests {#sec-production-eval-ab}
+
+Two more kinds of evidence exist only in production: what users tell you, and
+what they do when you change the system under them.
+
+**User feedback is a biased sample, not a metric.** Explicit signals — a
+thumbs-up or thumbs-down, a star rating, a written complaint — come from a small
+minority of users, and not a random one: people who are annoyed, or delighted,
+rate more often than people who simply got their answer and left. That is
+selection bias, and it means a thumbs-down *rate* describes the users who chose
+to click, not your traffic. Implicit signals — the user regenerates the answer,
+copies it, edits it, asks the same question again, abandons the conversation or
+asks for a human — cover everyone, but each is a proxy with more than one
+meaning: a regenerate can mean "wrong" or "show me another version". A
+thumbs-down also mixes "wrong" with "not what I wanted": a correct refusal, or
+an accurate answer the user did not like, collects one too. Optimise a system
+directly for thumbs-up and you meet @sec-post-training's reward hacking again:
+answers that please rise, answers that are right but unwelcome fall. And the
+rate moves when the interface moves — a button that is easier to reach changes
+the rate with no change in quality. So use feedback the way the previous
+section does: as a *sampler* that sends suspicious cases to the judge and to
+people, and as a source of golden-set candidates — not as the quality score.
+
+**An A/B test answers the question the other rungs leave open**: does the change
+help real users? It is the only rung that can, because random assignment makes
+the two groups alike in everything except the version they received. Four
+decisions are written down *before* it starts:
+
+1. **The unit of randomisation.** Usually the user, not the request, so one
+   person does not meet two behaviours in one conversation. Analyse at the same
+   level: one user's requests are correlated, so treating 50,000 requests from
+   5,000 users as 50,000 independent observations overstates your precision.
+2. **One primary metric** — the outcome the change is meant to move, such as
+   the share of conversations resolved without a human. Choosing it after
+   seeing the data is the many-tests problem @sec-llm-eval warns about: check
+   enough metrics and one of them crosses p < 0.05 by chance.
+3. **Guardrail metrics** — what must *not* get worse while you pursue the
+   primary one: latency, cost per conversation, escalation rate, complaint rate.
+   The name is A/B-testing vocabulary, not the runtime guardrail of
+   @sec-guardrails, although a clearly breached guardrail metric should stop
+   the test just as fast.
+4. **The sample size and the stopping rule.**
+
+The sample size is @sec-llm-eval's arithmetic again, but real effects on user
+outcomes are small, so the numbers become large. For two independent groups,
+detecting a change from $p_1$ to $p_2$ at 80% power and a two-sided 5% level
+needs about
+
+$$
+n \approx \frac{(1.96 + 0.84)^2 \,\bigl[p_1(1-p_1) + p_2(1-p_2)\bigr]}{(p_1 - p_2)^2}
+$$
+
+users *per arm*. If 20% of conversations now end in an escalation to a human
+and you hope to cut that to 18%, that is about 6,000 users per arm; to detect a
+one-point change, from 20% to 19%, about 24,600 per arm. [Halving the effect you
+want to see multiplies the sample by about four]{.hl}, because the difference
+sits squared in the denominator. At 5,000 eligible users a day split evenly,
+the one-point test needs about ten days — which is why the A/B test is the slow
+rung.
+
+The stopping rule matters as much as the size. Checking the p-value every day
+and stopping at the first p < 0.05 — *peeking* — inflates the false-positive
+rate far beyond 5%: in a simulation of an A/A test (both arms identical) with
+ten equally spaced looks, about 19% of runs crossed the line at some look. Fix
+the duration in advance and test once at the end, or use a sequential test
+designed for repeated looks. Guardrail metrics are watched continuously for the
+opposite reason: stopping early for harm is cheap, while a false *win* ships.
+And before the first real test, run an A/A test through the whole pipeline — it
+is this chapter's noise-floor measurement, applied to the experiment platform.
+
 ## Three kinds of drift that look identical on a dashboard {#sec-production-eval-drift}
 
 A quality metric declines. The dashboard shows one line going down, and there
@@ -410,7 +524,7 @@ are three unrelated causes with three unrelated fixes.
 
 | what moved | what it looks like | how to tell | what to do |
 |:--|:--|:--|:--|
-| **The model** | a step change on a specific day, across all traffic | `gen_ai.response.model` changed while `request.model` did not (@sec-observability) | pin versions (@sec-gateway); re-run the golden set against both |
+| **The model** | a step change on a specific day, across all traffic | `gen_ai.response.model` changed while `gen_ai.request.model` did not (@sec-observability) | pin versions (@sec-gateway); re-run the golden set against both |
 | **The inputs** | a gradual slide, concentrated in some segments | input distribution moved: new phrasings, lengths, languages, a new customer | refresh the golden set; the system did not change, the job did |
 | **The system** | a step change you can attribute to a deploy | it lines up with a release (@sec-deployment) | the gate should have caught it; add the case that escaped |
 
@@ -421,10 +535,22 @@ these; without them, all three are "quality is down" and the response is a
 guess.]{.hl} The distinguishing evidence is cheap and must be collected in
 advance — you cannot reconstruct last month's input distribution after the fact.
 
-A fourth case deserves naming because it is the most common of all: nothing
+How do you *see* the inputs move? Compare recent traffic with a reference window
+on a few cheap descriptors: input length, language, the share of each intent
+(from a classifier, or from clusters of input embeddings as in @sec-clustering),
+and the share of inputs that sit far from every golden-set item in embedding
+space. A chi-square test on the binned counts, or simply a chart of the shares
+over time, shows which segment has grown; the last descriptor also points to the
+new inputs your golden set does not cover.
+
+A fourth case deserves naming because it is often the most common: nothing
 drifted, and your metric is noisy. That is what the noise floor is for. A weekly
-score that moves 0.5 points is not a signal on a suite whose measured floor is
-0.6.
+re-run of a fixed suite that moves 0.5 points is not a signal on a suite whose
+measured floor is 0.6. An online score has a larger floor still, because each
+week it is computed on *different* requests: on top of run-to-run noise it
+carries ordinary sampling error. For a judged sample of 500 requests with an
+80% pass rate that is a standard error of about 1.8 points — compute it before
+you read a weekly wobble as drift.
 
 ## Routing the uncertain cases to people {#sec-production-eval-humans}
 
@@ -540,8 +666,9 @@ noise floor rather than from a round number.
 It is a real benefit with two real limits.
 
 At temperature 0 the two runs here were byte-identical per item — not just the
-same score, the same result on all 100. That removes the noise floor and makes a
-failing gate reproducible on a laptop, which is worth a lot.
+same score, the same result on all 100. That removes the run-to-run noise on
+this setup (batched or hosted serving may not be as exact) and makes a failing
+gate reproducible on a laptop, which is worth a lot.
 
 But greedy decoding scored **95.20**, *below* the entire temperature-0.7 range of
 95.40–96.00: it is one particular sample, not the best one. And it fixed nothing
@@ -579,7 +706,7 @@ Four candidates, and you cannot distinguish them after the fact without evidence
 collected in advance.
 
 **The model moved** — a step change on one day, visible as
-`gen_ai.response.model` changing while `request.model` did not
+`gen_ai.response.model` changing while `gen_ai.request.model` did not
 (@sec-observability). **The inputs moved** — a gradual slide in some segments;
 the system is unchanged and the job is not. **The system moved** — a step change
 that lines up with a deploy, and a case your gate did not contain. **Or nothing
@@ -624,7 +751,8 @@ tell a cosmetic prompt change from a behavioural one by reading it.
 
 From the difference you need to detect, using @sec-llm-eval's arithmetic: at 80%
 power on an 80%-accurate system, 100 items resolves 13.4 points and 1,000
-resolves 4.8. Then note the distinction that matters for gating — those are
+resolves 4.8 — and redo that for your own baseline, because near 96% accuracy
+the variance is about four times smaller. Then note the distinction that matters for gating — those are
 unpaired minimum detectable effects, and a gate compares two runs on the *same*
 items. Do not cite the 99.4% catch rate as evidence for pairing: the resampling
 behind it could not match items across prompts, and it takes the observed
@@ -643,7 +771,7 @@ First diagnose rather than loosen it: the usual cause is a gate with no
 threshold, which measured here falsely blocks 42.5% of no-op changes at 100
 items — and gets worse as the suite grows, because exact ties become rare. Set a
 threshold from the measured noise floor; at one point that fell to 4.3% while
-still catching a real regression 99.4% of the time. Then say why urgency matters:
+still catching a real regression 99.4% of the time. Then say why it is urgent:
 a habitually overridden gate is worse than none, because the override is recorded
 as a green check.
 
@@ -659,13 +787,25 @@ measuring something users do not care about.
 
 **Q: How much production traffic would you score with an LLM judge, and which?**
 
-Not all of it: judging every request roughly doubles inference cost. Take the
+Not all of it: with a judge of similar size, judging every request roughly
+doubles inference cost. Take the
 free signals on 100% — parse rate, refusals, latency, tool errors, ceiling hits —
 then judge three overlapping samples: a fixed uniform slice for a comparable
 baseline, everything that already looks wrong, and a stratified slice of rare
 cases. Then the two disciplines: audit the online judge the way you would an
 offline one, and pin and record its version, because a judge upgrade shifts the
 entire series.
+
+**Q: Product wants the thumbs-down rate as the headline quality metric. What do
+you say?**
+
+That it is a biased sample, not a measurement. Only a small, self-selected
+minority clicks; a thumbs-down mixes "wrong" with "unwelcome"; and the rate
+moves with the interface. Optimising it rewards pleasing answers over correct
+ones. Keep it as a sampler that routes cases to the judge and to reviewers, and
+measure quality with a judged uniform sample — or, for a specific change, with
+an A/B test sized in advance, with guardrail metrics and a stopping rule fixed
+before the first look.
 
 ## The 2026 toolbox {#sec-production-eval-tools}
 
@@ -687,7 +827,7 @@ Worth knowing about, not used above:
 | project | version | when you would reach for it |
 |:--|:--|:--|
 | `promptfoo` | 0.122.2 | declarative prompt test suites with assertions and a CI runner; the shortest path from this chapter to a working gate |
-| `inspect-ai` | 0.3.261 | the UK AI Safety Institute's eval framework; solvers and scorers as composable pieces, strong on reproducibility |
+| `inspect-ai` | 0.3.261 | the UK AI Security Institute's (formerly AI Safety Institute) eval framework; solvers and scorers as composable pieces, strong on reproducibility |
 | `deepeval` | 4.2.0 | eval metrics packaged as pytest assertions, which fits the gate-as-test framing directly |
 | `ragas` | 0.4.3 | retrieval-specific metrics when the thing under test is a RAG pipeline (@sec-rag) |
 | `langfuse` | 4.15.1 | traces, datasets and eval runs in one place, so a golden set and the traces it came from stay linked |
@@ -711,9 +851,9 @@ Run the unchanged system over the suite five times and record both the widest
 gap and the standard deviation. Do this before writing any gate logic. Write the
 `sd` down where the gate's threshold is defined, with the date and the model
 version, and set the threshold at roughly four times it. Five runs pin the floor
-only to within a factor of about two — the $\chi^2$ interval on $\sigma$ from
-four degrees of freedom is wide — so if the threshold decision is close, run
-twenty.
+only loosely — the $\chi^2$ interval on $\sigma$ from four degrees of freedom
+puts the true `sd` anywhere from about 0.6 to about 3 times the estimate — so if
+the threshold decision is close, run twenty.
 
 ### Step 3 — make a regression you would approve in review
 
@@ -792,6 +932,12 @@ cannot.
    confirm your dashboard tells them apart. Note which evidence you had to
    collect in advance.
 
+8. **Size an A/B test, then peek at it.** Pick a yes/no outcome your system
+   logs, and compute the users per arm needed to detect a one-point and a
+   two-point change at 80% power (@sec-production-eval-ab), and how many days
+   that takes at your traffic. Then simulate an A/A test checked after every
+   tenth of the data and report how often it "finds" a difference at p < 0.05.
+
 ## Where to go deeper {#sec-production-eval-deeper}
 
 Before reading: run your existing eval suite twice, unchanged, and look at the
@@ -805,7 +951,7 @@ the tooling that turns them into a gate.
 | resource | what it is |
 |:--|:--|
 | [`promptfoo`](https://github.com/promptfoo/promptfoo) | declarative prompt evals with a CI runner; the shortest path from this chapter to a gate that blocks a merge |
-| [`inspect_ai`](https://github.com/UKGovernmentBEIS/inspect_ai) | the UK AI Safety Institute's framework; read it for how it separates solvers from scorers, which is the abstraction most homegrown harnesses are missing |
+| [`inspect_ai`](https://github.com/UKGovernmentBEIS/inspect_ai) | the UK AI Security Institute's framework; read it for how it separates solvers from scorers, which is the abstraction most homegrown harnesses are missing |
 | [`deepeval`](https://github.com/confident-ai/deepeval) | eval metrics as pytest assertions — the gate-as-test framing in library form |
 | [`ragas`](https://github.com/explodinggradients/ragas) | retrieval-specific metrics for when the system under test is a RAG pipeline (@sec-rag) |
 | [`langfuse`](https://github.com/langfuse/langfuse) | traces, datasets and eval runs in one system, which is what keeps a golden set linked to the traces it came from |
@@ -863,6 +1009,13 @@ the tooling that turns them into a gate.
   overlapping samples: a fixed uniform slice, everything that already looks
   wrong, and a stratified slice of the rare. Audit that judge, and pin and record
   its version, because a judge upgrade shifts the whole series.
+
+- **User feedback samples; it does not measure. A/B tests measure, slowly.**
+  Thumbs come from a self-selected minority and reward pleasing answers, so use
+  them to route cases, not as the score. An A/B test randomises users, fixes one
+  primary metric, guardrail metrics and a stopping rule in advance, and is large:
+  a one-point change from 20% needs about 24,600 users per arm, and peeking
+  daily at ten looks turns a 5% false-positive rate into about 19%.
 
 - **Three drifts look identical on a dashboard.** The model moved, the inputs
   moved, or the system moved — distinguishable only with the responded model and
