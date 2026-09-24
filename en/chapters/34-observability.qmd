@@ -32,8 +32,28 @@ exactly what distributed tracing was built for. Spans, trace context
 propagation, sampling, exporters and every backend you already run apply
 unchanged.
 
-Three things genuinely differ, and they are where the GenAI conventions earn
-their existence:
+::: {#gloss-span .column-margin .term-gloss}
+**span** — one timed unit of work in a trace: a name, a start and end time, a
+parent, key–value attributes and a status.
+[↩](#term-span){.term-back}
+:::
+
+If those words are new, here is the whole vocabulary in one paragraph. A
+**trace** is the record of one request as it moves through a system. It is a
+tree of [**spans**](#gloss-span){#term-span .term-ref}: each span is one timed
+operation (a model call, a tool call) with a name, start and end times, a
+parent, a status and a set of key–value **attributes**. **Instrumentation** is
+the code that creates those spans; to *instrument* a program is to add such
+code. **OpenTelemetry** (OTel) is the open, vendor-neutral standard and set of
+libraries for doing this. **Context propagation** passes the trace id from a caller to everything it
+calls, even across processes, so that child spans find their parent. An
+**exporter** sends finished spans to a **backend**, the storage and user
+interface where you search and read them. **Sampling** means keeping only some
+traces. Traces sit beside the other two OpenTelemetry signals: **metrics**
+(numbers aggregated over time, such as a latency histogram) and **logs**.
+
+Three things genuinely differ, and they are the reason the GenAI conventions
+exist:
 
 **The interesting payload is text, and it is large.** An HTTP span records a
 method and a status. An LLM span's most useful content is the prompt and the
@@ -56,8 +76,10 @@ knows the run failed.
 
 Instrumenting with your own attribute names works until you want a vendor's UI,
 a shared dashboard, or a migration. The OpenTelemetry **GenAI semantic
-conventions** are the agreed vocabulary, and two facts about their current state
-matter more than any individual attribute name.
+conventions** are the agreed vocabulary: standard names for spans, attributes
+and metrics, so that every tool records the same thing under the same name.
+Two facts about their current state matter more than any individual attribute
+name.
 
 **They moved.** As of 2026 the GenAI conventions live in their own repository,
 `open-telemetry/semantic-conventions-genai`, split out of the main
@@ -65,18 +87,23 @@ matter more than any individual attribute name.
 forwarding notice. Documentation, blog posts and instrumentation libraries
 written before the split point at pages that no longer hold the spec.
 
-**Most of them are not stable.** Counting the stability badges — one per marked
-item, which is not the same as one per distinct attribute, since an attribute
-can be marked in more than one document — in the span, agent-span and metric
-documents of the repository snapshot counted for this chapter in 2026 (the
-commit was not recorded, so expect later versions to differ): **286 of 308 marked items in the span conventions are
-`Development`, and only 22 are `Stable`** — with much the same
-ratio in the agent and metric documents. At that snapshot the new repository
-had no tagged release.
+**Most of them are not stable.** Every item in the specification carries a
+stability badge. For this chapter we counted the badges in the span, agent-span
+and metric documents of a 2026 snapshot of the repository. (We count marked
+items, not distinct attributes, because one attribute can be marked in more
+than one document; and the commit was not recorded, so expect later versions to
+differ.) **Of 308 marked items in the span conventions, 286 are `Development`
+and only 22 are `Stable`**, with much the same ratio in the agent and metric
+documents. The 22 are also not what you might hope for: in the current
+repository, every `Stable` badge in the span document belongs to a general
+attribute borrowed from the core conventions — `error.type`, `server.address`,
+`server.port` — and none to a `gen_ai.*` name. At that snapshot the new
+repository had no tagged release.
 
 ::: {.callout-warning appearance="simple"}
 [A convention marked `Development` can change its attribute names between
-versions, and roughly nine in ten of these are.]{.hl} That is not a reason to
+versions, and roughly nine in ten of these items are — including every
+`gen_ai.*` attribute.]{.hl} That is not a reason to
 avoid them — they are still the only common vocabulary — but it is a reason to
 pin the version you instrumented against, to record it, and to expect a
 migration rather than to be surprised by one.
@@ -90,24 +117,24 @@ rather than free text:
 | a model call | `{gen_ai.operation.name} {gen_ai.request.model}` | `chat llama3.2:3b` |
 | a tool call | `execute_tool {gen_ai.tool.name}` | `execute_tool lookup` |
 | a retrieval | `{gen_ai.operation.name} {gen_ai.data_source.id}` | `retrieval kb-main` — use the retrieval operation for the search itself and keep `embeddings` for the call that produced the vectors; they are two spans, not one |
-| an agent turn | `{gen_ai.operation.name}` | `invoke_agent` |
+| an agent invocation | `invoke_agent {gen_ai.agent.name}` | `invoke_agent maintenance-bot`, or plain `invoke_agent` when the agent has no name |
 
 : Span naming, as the specification defines it {tbl-colwidths="[20,42,38]"}
 
-The operation names are an **open** enum with a well-known list — the
-specification's own wording is that if one of the listed values applies you
-MUST use it, and otherwise you MAY define your own — and reading that list
-tells you what the working group thinks an agent *is*: `chat`,
+The operation names are an **open** enum: a list of well-known values that you
+may extend. The specification's own wording is that if one of the listed values
+applies you MUST use it, and otherwise you MAY define your own. Reading that
+list tells you what the working group thinks an agent *is*: `chat`,
 `text_completion`, `generate_content`, `embeddings`, `retrieval`,
 `execute_tool`, `plan`, `invoke_agent`, `create_agent`, `invoke_workflow`,
-`fetch_response`, plus a family of memory operations. A planning phase, a
-retrieval operation distinct from embedding, and memory CRUD arriving in a
-tracing spec is a fair summary of where @sec-memory, @sec-rag and
-@sec-deployment ended up. The list grows; check it rather than copying this
-one.
+`fetch_response`, plus a family of memory operations (create, search, update,
+delete). A planning phase, a retrieval operation separate from embedding, and
+memory operations have all arrived in a tracing specification — a fair summary
+of where @sec-agent-anatomy, @sec-rag and @sec-memory ended up. The list grows;
+check it rather than copying this one.
 
-The attributes worth knowing by heart are few, out of 65 in the span document
-alone:
+Out of 65 attributes in the span document alone, only a few are worth knowing
+by heart:
 
 ```text
 gen_ai.operation.name        chat, execute_tool, invoke_agent, ...
@@ -123,10 +150,10 @@ gen_ai.input.messages        the prompt — see "Sensitive data in telemetry"
 gen_ai.output.messages       the completion
 ```
 
-Two of those repay attention. `gen_ai.response.model` differs from
-`gen_ai.request.model` whenever an alias resolves to a dated version — which is
-@sec-gateway's pinning problem, visible in your traces if you record both and
-invisible if you record one. And `gen_ai.conversation.id` is what turns a pile
+Two of those deserve a closer look. `gen_ai.response.model` differs from
+`gen_ai.request.model` whenever an alias (a name such as "latest") resolves to a
+dated version — which is @sec-gateway's pinning problem, visible in your traces
+if you record both and invisible if you record one. And `gen_ai.conversation.id` is what turns a pile
 of spans into a session you can replay.
 
 The metrics are similarly formulaic, and one of them should look familiar:
@@ -135,24 +162,46 @@ The metrics are similarly formulaic, and one of them should look familiar:
 gen_ai.client.token.usage             tokens, by type
 gen_ai.client.operation.duration      end-to-end per call
 gen_ai.server.time_to_first_token     chapter 31's TTFT, as a metric
-gen_ai.server.time_per_output_token   the decode rate, as a metric
+gen_ai.server.time_per_output_token   decode time per token (1 / decode rate)
 gen_ai.execute_tool.duration
 gen_ai.invoke_agent.duration
 ```
 
+The first line has already changed, which proves the point made above about
+unstable names.
+After this chapter's snapshot, the specification's main branch replaced
+`gen_ai.client.token.usage` — one histogram that mixed input and output tokens —
+with separate counters such as `gen_ai.client.inference.usage.input_tokens` and
+`gen_ai.client.inference.usage.output_tokens`, plus subsets for cached input and
+reasoning output. Check the current names before you build a dashboard on them.
+
+The duration metrics are histograms, so a dashboard shows them as percentiles:
+the median (p50) for the typical request, and p95 or p99 for the slow tail that
+users actually complain about. Watch the tail rather than the mean; a few very
+long agent runs move the mean without telling you how many users waited.
+
 [The serving measurements from @sec-serving are not a separate exercise; they
 are two of the standard metrics.]{.hl} If you instrument to the convention you
 get something close to the prefill/decode split as a dashboard rather than as a
-one-off experiment. Close, not identical: measured from the client, TTFT also
-contains queueing at the server and the first decode step, so it is prefill plus
-whatever the request waited for. Watch the two together and remember that a
-rising TTFT can mean a longer prompt or a busier server, and only a server-side
-breakdown separates them.
+one-off experiment. Two caveats. First, the `gen_ai.server.*` metrics are
+reported by the model server itself, so you get them only from a server you run
+that implements the convention; calling a hosted API, you see only the client
+side, where the current specification defines
+`gen_ai.client.operation.time_to_first_chunk` for streaming calls. Second, close
+is not identical: by the specification's own description, TTFT includes time
+spent waiting in the server's queue as well as prefill, and measured from the
+client it adds the network too. A rising TTFT can therefore mean a longer prompt
+or a busier server, and only a server-side breakdown separates them.
 
 ## The hierarchy, and where to hang each id {#sec-observability-hierarchy}
 
-A trace is only navigable if the levels are consistent. Five, and the mistake
-teams make is collapsing the middle two:
+A trace is only navigable if the levels are consistent. There are five:
+the **session** (one user's conversation, possibly over days), the **run** (one
+user request), the **agent** that handles it, and inside the agent the **model
+calls** and **tool calls** it makes. In a single-agent system, as in the figure,
+the run and the agent are the same `invoke_agent` span; with several agents,
+each gets its own `invoke_agent` span inside the run. The common mistake is to
+draw the trace boundary at the wrong level:
 
 :::: {.anlp-fig}
 ```{=html}
@@ -194,12 +243,13 @@ teams make is collapsing the middle two:
 ::: {.fig-cap}
 Five levels, and the two ids that make them navigable: a conversation id that
 survives across runs, and a trace id per run. Token counts sit on the model
-spans and roll up; everything above them is arithmetic. The measured run here
-averaged 4.8 spans — one agent span, 2.4 model calls and 1.4 tool calls.
+spans and roll up; everything above them is arithmetic. Attribute names are
+shown without their `gen_ai.` prefix. The measured runs here averaged 4.8
+spans — one agent span, 2.4 model calls and 1.4 tool calls.
 :::
 ::::
 
-The two collapses to avoid: putting every run in one trace, which makes a
+The two mistakes to avoid: putting every run in one trace, which makes a
 week-long conversation a single unnavigable tree; and giving each step its own
 trace, which loses the run. **One trace per run, one conversation id across
 runs** is the shape that supports both "show me this request" and "show me this
@@ -224,22 +274,29 @@ bytes per run        3,167
 content share        48.3%
 ```
 
-Half the volume is the prompt and completion text — and [these are toy prompts:
-content was 48.3% in this sample, and its share rises in the projection below as
-soon as only the prompt grows]{.hl}. The runs above averaged 301 prompt
+Here "content" means the prompt and completion text (`gen_ai.input.messages`
+and `gen_ai.output.messages`); "structure" is everything else — names, ids,
+timings, token counts. Half the volume is content — and [these are toy prompts:
+content was 48.3% here, and its share climbs fast once the prompt alone grows,
+as the projection below shows]{.hl}. The runs above averaged 301 prompt
 tokens. @sec-summarization measured a realistic single-shot request at **890
-prompt tokens**, and @sec-serving worked with contexts of 4,258. Holding the
-measured structure fixed at 1,636 bytes per run and scaling the measured 1,531
-bytes of content linearly in prompt size:
+prompt tokens**, and @sec-serving's main example prompt was 4,247 tokens. Holding
+the measured structure fixed at 1,636 bytes per run and scaling the measured
+1,531 bytes of content linearly in prompt size:
 
 | prompt size per call | bytes per run | content share | against structure alone |
 |:--|--:|--:|--:|
 | 301 tokens (measured here) | 3,167 | 48.3% | 1.9× |
 | 890 tokens (@sec-summarization) | 6,163 | 73.4% | 3.8× |
-| 4,258 tokens (@sec-serving) | 23,294 | 93.0% | 14.2× |
+| 4,247 tokens (@sec-serving) | 23,238 | 93.0% | 14.2× |
 
 : Trace volume against prompt size, structure held fixed
 {tbl-colwidths="[34,22,22,22]"}
+
+Read the projection as an order of magnitude, not a forecast. It scales the
+completions along with the prompts, although answers do not grow with context
+(so it overstates content a little); and it ignores that an agent re-sends its
+growing history at every step (so it understates it).
 
 At a million runs a month that is 4.8M spans and **1.6 GB of structure against
 6.2 GB with realistic prompts recorded** — a near-fourfold difference that is
@@ -247,14 +304,37 @@ entirely the decision to log content, and a fourteen-fold one at long context.
 
 So the decision to record prompts is a storage decision, a retention decision
 and a privacy decision at the same time, and it should be made deliberately
-rather than by leaving a default on. The usual resolution is to sample:
-structure on every run, content on a small percentage and on every error.
+rather than by leaving a default on. The conventions mark the message
+attributes *Opt-In*, so an instrumentation that follows them leaves content off
+until you enable it; but several vendor SDKs, OpenLLMetry among them, record it
+by default. The usual resolution is to sample: structure on every run, content
+on a small percentage and on every error.
+
+That resolution needs one more piece of vocabulary, because an OpenTelemetry
+sampler keeps or drops *whole traces*; it cannot drop the content and keep the
+rest. **Head sampling** decides when a trace starts, before anyone knows whether
+the run will fail. **Tail sampling** decides after the trace is complete —
+usually in the OpenTelemetry Collector, a separate process that receives,
+transforms and forwards telemetry — so it can keep every trace that contains an
+error. Content sampling is therefore usually built from two paths: every trace exported
+with the content attributes removed, and a tail-sampled path that keeps full
+traces for errors and for a small random share. Exercise 7 asks you to build
+it.
 
 ## Attributing cost {#sec-observability-attribution}
 
 Token counts on model spans are what make @sec-governance's unit economics
 possible, and the mechanism is unglamorous: put the dimensions you will want to
 group by on the span, because you cannot add them retrospectively.
+
+Note that the conventions record tokens, not money. Cost is tokens multiplied by
+a price per token, and the price differs for input, output and cached input:
+the specification's `gen_ai.usage.cache_read.input_tokens` counts the part of
+the input served from cache, which is included in `gen_ai.usage.input_tokens`
+and which hosted providers bill at a discount (@sec-serving). The price table
+lives outside the trace, in your code or your backend. Keep it versioned,
+because prices change and last month's spend must be computed at last month's
+prices.
 
 The four that are almost always wanted, and none of which are in the GenAI
 conventions because they are yours rather than the model's: user id, team or
@@ -267,13 +347,17 @@ protocol propagates it. What propagates with the context is **Baggage**. So set
 the keys in baggage at the root, and install a span processor that copies those
 baggage keys onto every span it sees — `BaggageSpanProcessor` in the
 `opentelemetry-python` contrib packages does exactly this. Environment is the
-exception: it belongs on the **Resource**, which *is* attached to every span
-the SDK emits. Some backends roll attributes up to the trace level and give the
-impression that inheritance happened; that is a backend feature, not the
-specification.
+exception: it belongs on the **Resource** — the set of attributes that
+describes the service producing the telemetry — which *is* attached to every
+span the SDK emits. Some backends roll attributes up to the trace level and give
+the impression that inheritance happened; that is a backend feature, not the
+specification. One warning before you put a user id in baggage: baggage also
+travels *out* of your process, on every outgoing call, and Step 3 of the lab
+shows what to do about it.
 
 [The number worth reporting is not spend, it is spend per unit of value.]{.hl}
-Cost per session flatters a feature nobody finishes; @sec-agent-eval made the
+Cost per session flatters a feature nobody finishes (abandoned sessions are
+short, so they look cheap); @sec-agent-eval made the
 same argument for cost per *correct* answer. Cost per resolved ticket, per
 completed task, per accepted suggestion — those are the numbers that survive a
 budget review, and computing them needs the outcome on the trace too.
@@ -327,7 +411,12 @@ policy statements:
 **Redact at the boundary, before export.** A span processor that scrubs before
 the exporter is the only place it can be done once. Redacting in the backend
 means it was transmitted; redacting per instrumentation means five
-implementations, which is @sec-gateway's argument in a different building.
+implementations — the same argument @sec-gateway made for one shared choke
+point, applied to telemetry. One practical catch: in the Python SDK a span is
+read-only by the time the processor's end hook sees it, so the scrubbing step is
+often written as a wrapper around the exporter, or run in an OpenTelemetry
+Collector inside your own network (it has a redaction processor). Either way,
+the rule is the same: the text is cleaned before it leaves your control.
 
 **Telemetry has residency and retention obligations too.** The data is a copy of
 the same personal data your database holds, and the fact that it lives in a
@@ -343,9 +432,10 @@ which is convenient, and it is worth making it for both reasons at once.
 
 Answer each one before you open it. The first and third are about what tracing
 is and is not — the two claims most often conflated when this layer is bought
-rather than built — and the rest carry the chapter's numbers: the content share
-of a trace, the stability ratio in the conventions, and the two attributes that
-make a silent model upgrade visible.
+rather than built. The second, fourth and fifth carry the chapter's numbers
+and names: the content share of a trace, the two attributes that make a silent
+model upgrade visible, and the stability ratio in the conventions. The sixth
+asks which cost figure to report.
 
 ::: {.callout-note collapse="true"}
 ## 1. You already run distributed tracing. What actually changes?
@@ -473,7 +563,7 @@ Answer with a method, not a number. Spans per run times traffic, plus bytes per
 run — and note that bytes are dominated by prompts. Measured here at 4.8 spans
 and 3.2 KB per run on toy prompts. Projected at @sec-summarization's realistic
 890-token prompts the same structure is 6.2 KB, and content becomes 73.4% of it;
-at 4,258-token contexts it is 23.3 KB and 93.0%. So the estimate turns almost
+at 4,247-token contexts it is 23.2 KB and 93.0%. So the estimate turns almost
 entirely on whether you record content.
 
 ### Testing whether you have shipped one
@@ -491,9 +581,9 @@ that span's prompt. Then turn it into a regression test.
 
 Almost certainly content. Structure is small and roughly fixed per run; prompts
 are not, and they grow with context. Projected from this chapter's measurement,
-moving from 301-token prompts to 4,258-token ones takes a run from 3.2 KB to
-23.3 KB with the same number of spans. The fix is sampling content while keeping structure on
-everything, and keeping content on errors.
+moving from 301-token prompts to 4,247-token ones takes a run from 3.2 KB to
+23.2 KB with the same number of spans. The fix is sampling content while keeping
+structure on everything, and keeping content on errors.
 
 **Q: How do you keep personal data out of your traces?**
 
@@ -508,9 +598,11 @@ justify twice.
 
 The measurement needed a model and nothing else, so the first table has one row.
 Read the second one as a layering rather than a menu: the OpenTelemetry SDK is
-the floor, the instrumentation packages sit on it, and the last three are UIs
-that read what those produce. Note the pre-release version numbers — they are
-the same maturity signal as the convention badges above.
+the floor; the instrumentation packages (OpenTelemetry's own, OpenInference,
+and OpenLLMetry's `traceloop-sdk`) sit on it and create the spans; Phoenix,
+Langfuse and LangSmith are backends with a UI that store and display what those
+produce. Note the beta and pre-1.0 version numbers — they are the same maturity
+signal as the convention badges above.
 
 | library | version used | what it is for here |
 |:--|:--|:--|
@@ -529,6 +621,7 @@ Worth knowing about, not used above:
 | `arize-phoenix` | 20.4.0 | an open-source trace UI you can run locally, useful while learning what to record |
 | `langfuse` | 4.15.1 | LLM-focused tracing with evaluation and prompt management attached |
 | `traceloop-sdk` | 0.62.3 | OpenLLMetry's SDK, wrapping OTel with LLM-specific defaults |
+| `langsmith` | 0.11.2 | the client for LangChain's hosted tracing and evaluation platform; the natural choice if you already build on LangChain or LangGraph |
 
 : The wider ecosystem, versions as of writing {tbl-colwidths="[30,12,58]"}
 
@@ -561,7 +654,9 @@ third-party tools, so a user id in baggage is a user id you are sending to them.
 Redacting spans before export does not close that path — it is a different
 channel. Configure the propagator so baggage is not injected on external calls,
 or keep anything identifying out of baggage and attach it with a span processor
-instead. Then produce cost per feature for a day.
+that reads it from in-process state (in Python, a `contextvars` variable set at
+the root), which never leaves the process. Then produce cost per feature for a
+day.
 
 ### Step 4 — produce cost per unit of value
 
@@ -635,11 +730,12 @@ counted on a specific day.
 | [`semantic-conventions-genai`](https://github.com/open-telemetry/semantic-conventions-genai) | the specification itself, in its current home; read the stability badges before depending on any attribute name |
 | [OpenTelemetry tracing concepts](https://opentelemetry.io/docs/concepts/signals/traces/) | spans, context propagation and the model everything above assumes you already have |
 | [The trace SDK specification](https://opentelemetry.io/docs/specs/otel/trace/sdk/) | where span processors are defined — the hook redaction has to use to happen before export |
-| [Sampling](https://opentelemetry.io/docs/concepts/sampling/) | head and tail sampling as the spec defines them; tail sampling is what lets you keep content on errors only |
+| [Sampling](https://opentelemetry.io/docs/concepts/sampling/) | head and tail sampling as the spec defines them; tail sampling is what lets you keep full traces, content included, for every error |
 | [`opentelemetry-python`](https://github.com/open-telemetry/opentelemetry-python) | the SDK, and the place to read what a span processor actually looks like |
 | [`openinference`](https://github.com/Arize-ai/openinference) | instrumentation for the common agent frameworks, when you would rather not write spans by hand |
 | [`arize-phoenix`](https://github.com/Arize-ai/phoenix) | a trace UI you can run locally; the cheapest way to learn what you wish you had recorded |
 | [`langfuse`](https://github.com/langfuse/langfuse) / [`openllmetry`](https://github.com/traceloop/openllmetry) | two takes on LLM-specific tracing with evaluation attached, which is the seam into @sec-production-eval |
+| [LangSmith observability](https://docs.langchain.com/langsmith/observability) | the hosted, commercial counterpart from LangChain; worth reading for how it turns traces into the datasets you evaluate against |
 
 : Beyond this chapter {tbl-colwidths="[42,58]"}
 
@@ -656,11 +752,13 @@ counted on a specific day.
   semantic-conventions repository, which still carries forwarding notices at the
   old paths. Of the marked items in the span document as counted for this
   chapter, **286 are `Development` against 22 `Stable`**, and at that snapshot
-  the new repository had no tagged release. Use them — they are the only shared vocabulary — but pin the version
-  and record the pin.
+  the new repository had no tagged release; no `gen_ai.*` attribute is among
+  the stable ones. Use them — they are the only shared vocabulary — but pin the
+  version and record the pin.
 
 - **Span names are formulaic, not free text.** `{operation} {model}` for a model
-  call, `execute_tool {tool.name}` for a tool call. Getting this right is what
+  call, `execute_tool {tool.name}` for a tool call, `invoke_agent {agent.name}`
+  for an agent. Getting this right is what
   makes someone else's dashboard work on your traces.
 
 - **Record the responded model as well as the requested one.** They diverge
@@ -671,18 +769,22 @@ counted on a specific day.
 - **@sec-serving's measurements are standard metrics.**
   `gen_ai.server.time_to_first_token` and
   `gen_ai.server.time_per_output_token` are in the specification, so the
-  prefill/decode split is a dashboard rather than a one-off experiment.
+  prefill/decode split is a dashboard rather than a one-off experiment — on a
+  model server you run yourself; against a hosted API you see only the client
+  side.
 
 - **Estimate telemetry volume before you turn content recording on.** Measured
   here: **4.8 spans and 3,167 bytes per run**, of which **48.3% was prompt and
   completion text** — and that was on 301-token prompts. Holding the structure
   fixed and scaling the text to @sec-summarization's realistic 890 tokens gives
-  6,163 bytes and **73.4% content**; at @sec-serving's 4,258-token contexts,
+  6,163 bytes and **73.4% content**; at @sec-serving's 4,247-token prompt,
   **93.0%**. [Whether you log prompts is a four- to fourteen-fold decision
   about your monitoring bill.]{.hl}
 
 - **Sampling content is a cost control and a privacy control at once.**
-  Structure on every run, content on a small share and on every error. Redact
+  Structure on every run, content on a small share and on every error; since a
+  sampler keeps or drops whole traces, that takes a content-stripped path for
+  everything plus a tail-sampled full path. Redact
   before export, in a span processor, so it happens once rather than five times
   differently — and remember that telemetry inherits the same residency and
   retention obligations as the database it copies from.
