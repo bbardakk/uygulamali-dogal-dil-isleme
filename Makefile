@@ -2,7 +2,7 @@
 # Requires: quarto (https://quarto.org), python deps from requirements.txt,
 # node (for check-ojs)
 
-.PHONY: preview preview-tr render serve glossary glossary-check check-links check-glossary-use check-ojs check-numbering check-themes check-tables renumber readability check clean
+.PHONY: preview preview-tr render serve glossary glossary-check check-links check-glossary-use check-ojs check-numbering check-themes check-tables check-markdown renumber readability check clean
 
 ## Rebuild the glossary tables from en/appendices/glossary.csv
 glossary:
@@ -35,6 +35,10 @@ check-themes:
 check-tables:
 	python3 scripts/check-tables.py
 
+## Fail on a reflowed line pandoc will read as a list marker
+check-markdown:
+	python3 scripts/check-markdown.py
+
 ## Renumber chapters to match _quarto.yml, fixing links in both editions
 renumber:
 	python3 scripts/renumber-chapters.py
@@ -46,7 +50,7 @@ readability:
 ## Every fast check CI runs, without the full render.
 ## Numbering runs before links: bad numbers cause dead links, so reporting
 ## the root cause first saves chasing the symptom.
-check: glossary-check check-numbering check-links check-glossary-use check-ojs check-themes check-tables
+check: glossary-check check-numbering check-links check-glossary-use check-ojs check-themes check-tables check-markdown
 
 ## Live-preview the English edition (auto-reloads on save)
 preview:
