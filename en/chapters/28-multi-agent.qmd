@@ -37,9 +37,9 @@ aesthetic:
 
 Anything else — "the task is complex", "it has stages", "different expertise"
 — is usually a task a single agent handles with a longer prompt and a few more
-tools. Usually, not always: an expertise argument that cashes out as *a
+tools. Usually, not always: an expertise argument that turns out to mean *a
 different model*, *a different tool set* or *a different permission set* is
-justification 3 wearing the wrong name, and that one is real. What does not
+justification 3 under another name, and that one is real. What does not
 survive is expertise as a description of the work rather than of the runtime.
 Build the single agent, measure it, and let the split earn its place.
 
@@ -48,8 +48,8 @@ heuristic that chooses between them: independent reads are easy to
 parallelise, and concurrent writes need explicit ownership, isolation or
 conflict resolution. Then the arithmetic behind the first justification, often
 asserted without an explicit cost model — how much material the work has to
-produce before three agents cost less than one. Then what that saving is paid
-for in, which is information rather than money. Then shared state, where these
+produce before three agents cost less than one. Then what that saving costs
+you, which is information rather than money. Then shared state, where these
 systems actually break, and the queue discipline that stops a failing task
 billing you forever. And finally the frameworks, each of which is a commitment
 to a control flow before you know which one you need.
@@ -65,7 +65,7 @@ work and fails in a different way.
 | **Hub-and-spoke** (also called *supervisor* or *orchestrator-worker*) | one coordinator, N specialists, no lateral links | the default when you split at all. The coordinator is a *context firewall*: raw observations reach it only through a specialist's report | the coordinator becomes a bottleneck and a single point of failure — and the firewall is only as strong as the discipline in that report's format, since a specialist that pastes a stack trace has removed it |
 | **Sequential** | a pipeline of agents, each consuming the last | stages with genuinely different requirements — extract, then verify, then write | [it is a pipeline. Ask whether it needs agents at all]{.con} |
 | **Parallel fan-out** | N specialists on independent slices, results merged | read-heavy work over separable inputs: many documents, many repositories | merging is a real design problem, not a `join` |
-| **Loop / debate** | agents critique or refine each other's output | narrow: where an independent check genuinely catches things | expensive, and @sec-reasoning measured self-correction failing to fix what it could not already see |
+| **Loop / debate** | agents critique or refine each other's output | narrow: where an independent check genuinely catches things | expensive, and a critic that sees nothing new rarely helps: @sec-tool-design-errors measured recovery at 1.7% from feedback that carried no new information |
 
 : Four topologies {tbl-colwidths="[16,24,34,26]"}
 
@@ -79,6 +79,19 @@ distributed-systems problem you did not intend to take on, and
 disjoint — one agent per file, per record, per partition — which is the same
 fix a database would make you apply.
 
+One more piece of arithmetic for the parallelism justification: a fan-out
+finishes when its *slowest* specialist finishes, and the coordinator's own
+calls come on top. Ten slices where one is five times larger than the rest
+buy you nothing like a tenfold speed-up.
+
+**A note on debate.** The best-known loop is multi-agent *debate*: several
+agents answer the same question, read each other's answers, and revise over a
+few rounds ([Du et al., 2023](https://arxiv.org/abs/2305.14325)). Before
+paying for it, run the cheap control from @sec-parallel-compute: sample the
+same model the same number of times and take a majority vote, at the same
+token budget. [Choi et al. (2025)](https://arxiv.org/abs/2508.17536) found that
+voting alone explains most of the gain usually credited to debate.
+
 ### Handoff or delegation?
 
 Two things get called the same thing, and they have different failure modes.
@@ -88,20 +101,35 @@ a result back. The specialist is a function call with a model inside it, and it
 should be **stateless**: everything it needs arrives in the request. This is
 the pattern that behaves.
 
-**Handoff** — the coordinator passes the conversation itself to another agent,
-which now owns it. Cheaper, and it loses the firewall: whatever the second
-agent does is now in the same transcript, and there is no coordinator left to
-summarise or reject it.
+[**Handoff**](#gloss-handoff){#term-handoff .term-ref} — the coordinator
+passes the conversation itself to another agent, which now owns it. Cheaper,
+because no coordinator call sits between the two, and it loses the firewall:
+whatever the second agent does is now in the same transcript, and there is no
+coordinator left to summarise or reject it.
+
+::: {#gloss-handoff .column-margin .term-gloss}
+**Handoff** — a coordinator passes the conversation itself to another agent,
+which now owns it; unlike delegation, nothing is left to summarise or reject
+what the second agent does. [↩](#term-handoff){.term-back}
+:::
 
 Prefer delegation with stateless specialists. A specialist that remembers
-previous calls is a distributed cache with no invalidation story.
+previous calls is a distributed cache with no invalidation story: it may
+answer from stale memory, and nothing decides when that memory should be
+thrown away. Handoff has one honest use — when the next agent must talk to the
+*user* directly, as when a triage agent routes a customer to a billing agent.
+There the conversation is the work, and passing it on is the point.
 
 ## Does splitting actually save context? {#sec-multi-agent-cost}
 
-The first justification — context — is often asserted without an explicit cost model. It is arithmetic, so here it is.
+The first justification — context — is arithmetic, so here is the cost model
+it usually lacks.
 
-A single agent re-sends its whole transcript on every model call, so its cost
-has a quadratic term: *n*·*F* + *o*·*n*(*n*−1)/2. The linear part is the fixed
+Write *n* for the number of steps (one model call each), *F* for the fixed
+prefix every call carries (system prompt plus tool definitions), and *o* for
+the tokens one observation adds. A single agent re-sends its whole transcript
+on every model call, so call *i* costs *F* + *i*·*o* and the total has a
+quadratic term: *n*·*F* + *o*·*n*(*n*−1)/2. The linear part is the fixed
 prefix paid once per call and the quadratic part is the accumulated
 observations — which is already the answer to why the split *loses* on short
 work with small results, where the linear term still dominates.
@@ -111,8 +139,9 @@ system prompt plus tool definitions, which @sec-mcp measured at 89 tokens per
 tool — in exchange for two things: each specialist starts from a clean window,
 and the coordinator sees summaries instead of raw results.
 
-Taking the fixed cost as 1,450 tokens (a system prompt plus fourteen tool
-definitions) and a specialist's report back as 120. Here is the whole model,
+Take the fixed cost as 1,450 tokens — fourteen tool definitions at 89 each is
+about 1,250, plus a system prompt of about 200 — and a specialist's report
+back as 120 tokens. Here is the whole model,
 because every conclusion below depends on assumptions that are easier to argue
 with when they are written down:
 
@@ -145,6 +174,12 @@ particular, the coordinator never runs a final synthesis and output tokens are
 free — a real system pays for both, and the synthesis reads three reports, so
 the split's true cost is above what is printed. These are modelled numbers, not
 a measured end-to-end saving.
+
+One more assumption hides in the word *step*: each step is its own model call.
+@sec-agent-anatomy measured a model batching five independent lookups into 2.0
+model calls. When that happens, *n* counts model calls rather than lookups,
+the single agent's quadratic term shrinks, and the case for splitting is weaker
+still. The table is for work whose steps are genuinely sequential.
 
 ```text
  steps  obs size   single agent   3 specialists    ratio
@@ -232,10 +267,11 @@ specialists become cheaper than one agent:
 
 ::: {.fig-cap}
 One cell is red, and it is the cheap corner — short work with small results,
-which is the case most multi-agent systems are actually built for. The two axes
-are also not symmetric: twenty-four steps with 200-token results still only
-reaches 0.63×, while six steps with 3,000-token ones already reaches 0.42×. How
-much each step returns moves this more than how many steps there are.
+which is exactly where many multi-agent systems get built. Both axes matter,
+but the step axis matters more than it looks: the break-even observation size
+falls with roughly the square of the step count, so doubling the steps cuts it
+by about four (393 → 98 → 25). At the same total material — 4,800 tokens —
+twenty-four steps of 200 reach 0.63× while six steps of 800 reach only 0.76×.
 :::
 
 ::::
@@ -255,7 +291,8 @@ single agent carries every observation through every subsequent call, and the
 specialists do not.
 
 [The dial is not how complex your task is. It is how much material it
-produces.]{.hl} Long transcripts with big observations are what splitting is
+produces.]{.hl} More exactly, it is material multiplied by how many later calls
+have to carry it. Long transcripts with big observations are what splitting is
 for. Short ones are not.
 
 ### Two assumptions that decide the whole table
@@ -274,15 +311,19 @@ cell moves like this:
     d = 2.0              1,154,310 against 862,800      1.34x
 ```
 
-At *d* = 2 there is **no observation size at any point on the axis** that makes
-splitting cheaper. Measure your duplication before you trust the ratio; it is
+At *d* = 2 — each specialist doing twice its fair share — there is **no
+observation size at any step count** that makes splitting cheaper. Even
+*d* = 1.5 puts four of the nine cells against the split, three more than the
+printed table. Measure your duplication before you trust the ratio; it is
 the parameter the conclusion actually hangs on, and it is not in the table.
 
 **The second is prompt caching, and it is not a footnote.** Every turn of an
-agent loop sends an exact prefix of the previous turn, which is the pattern
-caching is built for — and the single agent, with the longest repeated prefix,
-is the biggest beneficiary. Charging cached reads at 0.1× and cache writes at
-1.25× of the base rate, which is a common published schedule:
+agent loop re-sends the previous turn's prompt as an exact prefix and adds a
+little at the end, which is the pattern caching is built for — and the single
+agent, with the longest repeated prefix, is the biggest beneficiary. In the
+model below, each call reads everything the previous call sent from the cache
+and writes only its new tokens. Charging cached reads at 0.1× and cache writes
+at 1.25× of the base rate, which is a common published schedule:
 
 ```text
   steps / obs      raw ratio    with caching
@@ -290,7 +331,7 @@ is the biggest beneficiary. Charging cached reads at 0.1× and cache writes at
      6 /   800        0.76x        1.35x   <- flips
      6 / 3,000        0.42x        0.80x
     12 /   200        0.84x        1.60x   <- flips
-    12 /   800        0.52x        1.00x   <- exactly level
+    12 /   800        0.52x        1.00x   <- level (1.004x)
     12 / 3,000        0.35x        0.75x
     24 /   200        0.63x        1.09x   <- flips
     24 /   800        0.42x        0.76x
@@ -298,11 +339,14 @@ is the biggest beneficiary. Charging cached reads at 0.1× and cache writes at
 ```
 
 The crossovers move from 393 / 98 / 25 tokens per observation to
-**1,643 / 810 / 268** — four to eleven times further out — and three of the
-nine cells change sign. Caching does not shave the saving; on short work it
+**1,643 / 810 / 268** — four to eleven times further out — three of the nine
+cells flip outright, and a fourth ends level, a hair on the wrong side.
+Caching does not shave the saving; on short work it
 removes it. @sec-mcp makes the same point from the other end, that tool
 definitions are the most cacheable thing in a context. If your provider caches,
-the single agent is a much stronger baseline than the first table admits.
+the single agent is a much stronger baseline than the first table admits —
+provided its calls come quickly enough, since cached prefixes typically expire
+after a few idle minutes.
 
 ## The saving is paid for in information {#sec-multi-agent-honest}
 
@@ -327,17 +371,19 @@ never coincide pull it the other way, down to 1 − 3 × 10% = 70%, which is the
 floor under any dependence. So the honest figure is not a point but the band
 **[70%, 90%]**, with independence at 72.9% inside it. Where your system sits in
 that band you have to measure rather than compute — and the band is wide enough
-to be the whole decision. Either way it is before the coordinator's own synthesis, which
-@sec-agent-anatomy measured as the step that actually breaks: tool use was
-perfect at every step count while accuracy fell from 100% to 40%, purely in
-aggregation.
+to be the whole decision. Either way it is before the coordinator's own
+synthesis — the kind of step where @sec-agent-anatomy's single agent broke:
+tool use was perfect at every step count while accuracy fell from 100% to 40%,
+so the failure was in combining what came back, not in the calls.
 
 **The most visible production system measures the opposite trade, and it
 belongs here rather than in a link at the end.** @anthropic2025multiagent
 reports its research system beating single-agent Claude Opus 4 by 90.2% on an
 internal research eval while spending about **15× the tokens of a chat**, with
-token usage alone explaining roughly 80% of the performance variance on one of
-their benchmarks. Read that together with the arithmetic above and the two
+token usage alone explaining roughly 80% of the performance variance on
+BrowseComp, a web-browsing benchmark. The same post puts a single agent at
+about 4× a chat, so the multi-agent system spends roughly four times what one
+agent does. Read that together with the arithmetic above and the two
 results do not conflict: the split can save context tokens *per unit of work
 done* and still cost far more in total, because the agents you added do more
 work rather than the same work in thirds. @sec-multi-agent-cost is a saving on
@@ -345,19 +391,21 @@ the transcript. It is not a saving on the bill.
 
 There is a second lever there that this chapter's token arithmetic cannot see,
 and it is probably the bigger one: that system runs an expensive coordinator
-over cheaper specialists. Cost per token is a dial a single agent does not
-have, and it belongs in the comparison before the token counts do — along with
-the fact that output tokens are typically three to five times the input rate
-and are counted as free above.
+(Claude Opus 4) over cheaper specialists (Claude Sonnet 4). Cost per token is a
+dial a single agent does not have, and it belongs in the comparison before the
+token counts do — along with the fact that output tokens typically cost four
+to eight times the input rate on current price lists, and are counted as free
+above.
 
 **A specialist's report is untrusted input.** Whatever a specialist read — a
 web page, a ticket, a PDF — can reach the coordinator through its summary, and
 the coordinator has no way to tell a finding from an instruction. The context
 firewall filters volume, not authority. Give reports a fixed schema the
 coordinator parses rather than reads, and never let a low-permission
-specialist's prose decide what a high-permission coordinator writes: that is a
-confused deputy with a language model in it, and @sec-agent-security is where
-it gets taken seriously.
+specialist's prose decide what a high-permission coordinator writes. That is a
+*confused deputy* — a program with high privileges tricked by a less
+privileged party into using them on its behalf — with a language model in it,
+and @sec-agent-security is where it gets taken seriously.
 
 **Debugging gets qualitatively harder.** One agent produces one transcript.
 Five agents produce five, plus the delegation decisions between them, and the
@@ -393,30 +441,35 @@ discipline.
 
 Those four are the classic concurrency bugs, and they are the ones your
 distributed-systems training prepares you for. The ones that actually dominate
-in practice are not concurrency bugs at all. @cemri2025whyfail annotated 1,600+
-traces from seven multi-agent frameworks and built a taxonomy of fourteen
-failure modes ($\kappa$ = 0.88 between annotators) clustered in three
-categories, and none of the most common ones appear above:
+in practice are not concurrency bugs at all. @cemri2025whyfail built a taxonomy
+of fourteen failure modes in three categories from 150 traces labelled by human
+experts ($\kappa$ = 0.88 between annotators), then used an LLM judge to label
+1,600+ traces from seven multi-agent frameworks. The most frequent modes in
+their counts appear nowhere in the table above:
 
 | problem | how it shows up here |
 |:--|:--|
-| **Role misspecification** | a specialist quietly does a neighbouring agent's job, or refuses work it was given, because the boundary lived in a prompt |
-| **Information withholding** | a specialist knows something and does not put it in the report — which is the section above, measured, and the reason the coordinator cannot recover it |
-| **Ignoring another agent's input** | a report arrives and the coordinator reasons past it |
-| **Premature termination** | the system stops with the task half done and reports a result |
-| **No verification step** | nothing checks the synthesis, which is exactly the step @sec-agent-anatomy found breaking |
+| **Step repetition** (15.7%) | an agent redoes work already done — the duplication factor *d* from @sec-multi-agent-cost, observed |
+| **Reasoning–action mismatch** (13.2%) | an agent's reasoning says one thing and its next action does another |
+| **Unaware of stopping conditions** (12.4%) | the agents do not recognise that the task is done, and keep going long after they should have stopped |
+| **Disobeying the task specification** (11.8%) | an agent ignores a constraint the task stated — a format, a scope, a limit |
+| **Missing or incorrect verification** (8.2% + 9.1%) | nothing checks the synthesis, or the check passes a wrong answer — and synthesis is the kind of step @sec-agent-anatomy found breaking |
 
-: Five ways the agents themselves fail [@cemri2025whyfail] {tbl-colwidths="[26,74]"}
+: The five most frequent ways the agents themselves fail, with their share of all labelled failures [@cemri2025whyfail] {tbl-colwidths="[30,70]"}
 
-The mitigations for the first table are the boring ones, and they are boring
-because they work:
+Two modes that describe this chapter's argument exactly are *rare* in those
+counts: information withholding (0.85%) — a specialist knows something and
+leaves it out of its report — and ignoring another agent's input (1.9%). Read
+that with care: a trace shows what an agent said, not what it failed to say,
+so a failure of omission is hard to label, and a low count need not mean a
+rare problem.
+
+The second table has no tidy fix; the paper's own conclusion is that these
+failures need more than prompt tweaks. The mitigations for the first table are
+the boring ones, and they are boring because they work:
 
 - **Give each agent its own workspace.** A branch, a scratch directory, a
   transaction. Merge deliberately, at a point you chose.
-- **Name what you are doing.** Append-only proposals is *event sourcing*; a
-  single mutating owner is the *single-writer principle*; per-agent workspaces
-  merged deliberately is *optimistic concurrency*. The literature on all three
-  is thirty years old and better than anything an agent framework will hand you.
 - **Decide the transaction boundary explicitly.** Is one delegated subtask
   atomic, or can it half-succeed? If it can, every side effect needs a
   compensating action — the *saga* pattern — because there is no distributed
@@ -428,6 +481,12 @@ because they work:
   and a second `create_invoice` is not a rounding error.
 - **Prefer append-only.** A log of proposals that someone reconciles beats
   concurrent mutation of shared state, and it leaves a trace you can debug.
+- **Name what you are doing.** Keeping state as an append-only log of
+  proposals is close to *event sourcing*; one owner making every change is the
+  *single-writer principle*; letting each agent work on its own copy and
+  checking for conflicts only at merge time is *optimistic concurrency*. The
+  literature on all three is decades old and better than anything an agent
+  framework will hand you.
 
 ## Queues, and what to do with a poisoned message {#sec-multi-agent-queues}
 
@@ -435,24 +494,35 @@ The previous section was about two agents reaching for the same state. This one
 is about the wire between them, which is a decision you have already made even
 if you did not notice making it.
 
-Direct calls are the default, and they are simple: they couple the caller's
-lifetime to the callee's. A queue decouples them and buys the things queues
-always buy — backpressure, retries, and the ability to restart one side without
-the other.
+Direct calls are the default, and they are simple, but they couple the
+caller's lifetime to the callee's: if the specialist crashes or stalls, the
+coordinator waits or fails with it. A queue decouples them and buys the things
+queues always buy — backpressure (a slow consumer makes producers wait instead
+of being flooded), retries, and the ability to restart one side without the
+other.
 
 Three rules that are ordinary infrastructure practice and get skipped here
 because the payloads look like conversation rather than messages:
 
-- **Bound the retries.** An agent task that fails will fail again, usually
-  identically and usually expensively — every retry is a fresh model bill.
-  @sec-agent-anatomy's step cap, one level up.
-- **Have a dead-letter queue, and read it.** A task that cannot be processed
+- **Bound the retries.** A timeout or a rate limit may clear on retry, but an
+  agent task that failed for a real reason — a bad input, a request the model
+  cannot satisfy — will usually fail again, often identically and always
+  expensively: every retry is a fresh model bill. @sec-agent-anatomy's step
+  cap, one level up.
+- **Have a [dead-letter queue](#gloss-dead-letter-queue){#term-dead-letter-queue .term-ref},
+  and read it.** A task that cannot be processed
   goes somewhere a human looks. Without this, poisoned messages either loop
   forever or vanish, and both are worse than an alert.
 - **Make the payload self-contained.** A message that refers to state
   elsewhere — *continue the analysis we were doing* — cannot be retried or
   replayed. This is the stateless-specialist rule from
   @sec-multi-agent-topologies, enforced by the transport.
+
+::: {#gloss-dead-letter-queue .column-margin .term-gloss}
+**Dead-letter queue** — where a task that keeps failing lands so a person
+reads it, instead of retrying forever or vanishing.
+[↩](#term-dead-letter-queue){.term-back}
+:::
 
 ## Frameworks, as of 2026 {#sec-multi-agent-frameworks}
 
@@ -462,10 +532,10 @@ matters more than the API. This section will date; check versions.
 | framework | what it opts you into |
 |:--|:--|
 | **LangGraph** | the loop as an explicit state machine. Verbose, and the right choice when the control flow deserves to be a diagram you can inspect |
-| **OpenAI Agents SDK** | a small loop with handoffs and guardrails; the closest thing to @sec-agent-anatomy's fourteen lines with production edges added |
+| **OpenAI Agents SDK** | a small loop with handoffs and guardrails; the closest thing to @sec-agent-anatomy's fourteen statements with production edges added. It also supports delegation, by exposing an agent as a tool |
 | **Pydantic AI** | typed tools and typed results; strongest when the boundary between agents needs validation rather than prose |
 | **CrewAI** | roles and tasks as first-class concepts. Fast to a working demo; the abstraction is opinionated about a topology you may not want |
-| **AutoGen** | conversational multi-agent, with agents talking to each other. Powerful, and the pattern most likely to produce the failures in @sec-multi-agent-honest |
+| **AutoGen** | conversational multi-agent, with agents talking to each other. Powerful, and the pattern most likely to produce the failures in @sec-multi-agent-honest. Now in maintenance mode: Microsoft points new projects to its successor, Microsoft Agent Framework |
 | **Google ADK** | agents as deployable services, oriented at operating them rather than prototyping |
 
 : Six frameworks and their commitments {tbl-colwidths="[24,76]"}
@@ -515,8 +585,8 @@ summary rather than the observations, so it reasons about a lossy compression
 of what the specialist saw. Errors also compound across a boundary nobody can
 check: three specialists at 90% give about 73% if their errors are independent,
 and anywhere from 70% to 90% depending on how much their errors overlap. All of
-that is before the coordinator's own synthesis, which @sec-agent-anatomy
-measured as the step that breaks first.
+that is before the coordinator's own synthesis — combining what came back,
+which is where @sec-agent-anatomy's agent broke.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -526,8 +596,9 @@ Because concurrent writes make it a distributed system: lost updates where the
 second write erases the first with no error, inconsistent reads of half-written
 state, conflicting conclusions the coordinator has no rule to resolve, and
 non-determinism that makes yesterday's bug unreproducible. Ten agents reading
-ten documents is ten times faster; ten agents editing one codebase is a problem
-you did not intend to take on.
+ten documents can approach ten times faster; ten agents editing one codebase is
+a problem you did not intend to take on — unless each owns a disjoint part of
+it.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -594,7 +665,8 @@ exactly this reason.
 **Q: How do you debug a five-agent system?**
 
 By admitting it is a distributed tracing problem and building for it in
-advance: a correlation id through every delegation, every specialist transcript
+advance: a correlation id (one identifier carried by every message that
+belongs to the same user request) through every delegation, every specialist transcript
 persisted, and the coordinator's delegation decisions logged as first-class
 events. The honest addition is that this is a real cost of the architecture —
 one agent produces one transcript, and that is a debugging property you gave up
@@ -621,7 +693,7 @@ Worth knowing about, not used above:
 | `openai-agents` | 0.22.0 | handoffs and guardrails with very little machinery |
 | `pydantic-ai` | 2.35.3 | typed boundaries between agents |
 | `crewai` | 1.15.18 | roles and tasks, fastest to a demo |
-| `autogen-agentchat` | 0.7.5 | conversational multi-agent research |
+| `autogen-agentchat` | 0.7.5 | conversational multi-agent research; maintenance mode, so do not start new production work on it |
 | `google-adk` | 2.8.0 | agents packaged as deployable services |
 
 : The wider ecosystem, versions as of writing {tbl-colwidths="[24,16,60]"}
@@ -715,7 +787,7 @@ easier to evaluate once you have a baseline.
 | why self-critique does not rescue a wrong answer | @huang2024large; @madaan2023selfrefine |
 | planning as a separate search | @yao2023tree |
 | what a long shared context does to retrieval | @hsieh2024ruler |
-| why these systems fail in practice, over 1,600 traces | @cemri2025whyfail |
+| why these systems fail in practice: a taxonomy from 150 expert-labelled traces, applied to 1,600+ | @cemri2025whyfail |
 | the production case for fan-out, and its 15x token bill | @anthropic2025multiagent |
 
 : The primary sources {tbl-colwidths="[46,54]"}
@@ -731,15 +803,15 @@ easier to evaluate once you have a baseline.
   costs **0.34×**. The dial is how much material the work produces, not how
   hard it is. Both numbers assume no prompt caching and no duplicated work
   between specialists: turn caching on and the 0.34× becomes 0.65× while three
-  of the nine cells change sign, and let each specialist repeat half a
-  neighbour's work and the whole table stops paying.
+  of the nine cells flip, and let each specialist do twice its fair share
+  (*d* = 2) and no cell pays at all.
 - **The saving is paid for in information.** The coordinator sees summaries
   because that *is* the mechanism, so it reasons about a lossy compression.
   Three specialists at 90% give somewhere in **[70%, 90%]**: 70% if their
   errors never coincide, 72.9% if they are independent, 90% if they fully
   overlap. Where your system sits in that band has to be measured, not
-  computed — and all of it is before the coordinator's own synthesis, the step
-  @sec-agent-anatomy measured as the first to break.
+  computed — and all of it is before the coordinator's own synthesis, the kind
+  of step where @sec-agent-anatomy's agent broke.
 - **Read-heavy work parallelises; write-heavy work does not.** Concurrent
   writes turn an architecture into a distributed system with lost updates that
   raise no error and bugs that will not reproduce.
