@@ -7,10 +7,12 @@ correct answer can only have come from the context. This chapter is the
 consequence of @sec-agent-anatomy's finding that the transcript *is* the
 agent's state; @sec-memory covers what persists between runs. One reproduction
 note if you rerun the long-context probe: `ollama` silently truncates a prompt
-longer than the served `num_ctx` and warns about nothing, so set it explicitly
-above your longest condition and verify the served length rather than assuming
-it — an 11k-token prompt quietly cut to 4k would produce exactly the flat curve
-below. Software: NumPy 2.5.2 on Python 3.14.5.
+longer than the served `num_ctx` (its context-length setting) and warns about
+nothing. Set it explicitly above your longest condition, and check the served
+length rather than assuming it. An 11k-token prompt quietly cut to 4k is no
+longer a long-context condition, and the cut may remove a needle as well, so
+neither a flat curve nor a drop would mean what it seems to. Software: NumPy
+2.5.2 on Python 3.14.5.
 :::
 
 **Learning objectives.** After this chapter you can:
@@ -47,30 +49,12 @@ case for treating the window as a budget where **every token competes**:
 constraint — and, for everything that does, "what is each token
 earning".]{.hl} The second is the one nobody asks.
 
-### The one thing that changes the arithmetic {#sec-context-engineering-cache}
-
-One qualifier before any of that arithmetic gets applied. Providers cache the
-**prefix** of a prompt: an unchanged system prompt and tool block, re-sent on
-the next call, is billed at a fraction of its first-call price and skips most
-of the prefill — @sec-serving measured warm prefill flat at 13–18 ms whatever
-the prompt length. So "every token is re-sent on every call" is exactly true
-of the *tokens* and only partly true of the bill.
-
-Two consequences follow and they point in opposite directions. Fixed costs are
-cheaper than they look, so pruning the system prompt returns less than
-multiplying it by the step count suggests. And **compaction invalidates the
-cache**: rewriting the middle of a context invalidates the prefix from that
-point on, so the run in which you compact pays full price for everything after
-it. Design the context to be append-only where you can — stable prefix,
-growing suffix, the task restated at the end — and compact rarely in large
-steps rather than often in small ones.
-
-That reframing has an immediate practical consequence: you cannot answer it
-without instrumentation. The first move in context engineering is not a
-technique, it is a **budget by category** — how many tokens went to the system
-prompt, to tool definitions, to retrieved documents, to observations, to
-history. Almost everyone who runs that count for the first time finds one
-category they did not know was there and would not have guessed.
+That reframing has an immediate practical consequence: you cannot answer the
+second question without instrumentation. The first move in context engineering
+is not a technique, it is a **budget by category** — how many tokens went to
+the system prompt, to tool definitions, to retrieved documents, to
+observations, to history. Almost everyone who runs that count for the first
+time finds one category they did not know was there and would not have guessed.
 
 ::: {.column-margin}
 The categories that surprise people, in rough order of frequency: tool
@@ -80,12 +64,50 @@ months; and retrieved documents whose *k* was set once and never revisited.
 None of these are visible without counting.
 :::
 
+### The one thing that changes the arithmetic {#sec-context-engineering-cache}
+
+One qualifier before any of that arithmetic gets applied. Providers cache the
+**prefix** of a prompt: an unchanged system prompt and tool block, re-sent on
+the next call, is billed at a fraction of its first-call price and skips most
+of the *prefill* (the pass that reads the prompt before the first output token)
+— @sec-serving measured warm prefill flat at 12–16 ms whatever the prompt
+length. So "every token is re-sent on every call" is exactly true of the
+*tokens* and only partly true of the bill.
+
+Why only a *prefix*? Because attention is causal: the keys and values stored
+for token *i* (the KV cache of @sec-attention-cost) depend on every token
+before it. Change one token and everything after it has to be recomputed,
+while everything before it can be reused. The practical rules follow from
+that one fact (@sec-serving-cache has the mechanics). The prefix must be
+byte-identical, so a timestamp or a user name near the top of the system
+prompt quietly switches caching off for everything below it. By default a
+cache entry also expires after a few idle minutes, and some providers charge a
+premium to write it.
+
+A worked example makes the size of the effect concrete. Take a 10-call agent
+run whose system prompt and tool definitions total 5,000 tokens, and use
+multipliers that are typical of 2026 price sheets (they vary by provider and
+model): a cache write costs 1.25× the normal input price, a cache read 0.1×.
+Uncached, the fixed part costs what 10 × 5,000 = 50,000 input tokens cost.
+Cached, it costs what 1.25 × 5,000 + 9 × 0.1 × 5,000 = 10,750 cost — about
+4.7 times less, for exactly the same tokens.
+
+Two consequences follow, and both make cutting tokens worth less than the raw
+count suggests. Fixed costs are cheaper than they look, so pruning the system
+prompt returns less than multiplying it by the step count suggests. And
+**compaction invalidates the cache**: rewriting the middle of a context
+invalidates the cached prefix from that point on, so the first call after you
+compact pays full price — plus any write premium — for everything after the
+rewritten point. Design the context to be append-only where you can — stable
+prefix, growing suffix, the task restated at the end — and compact rarely in
+large steps rather than often in small ones.
+
 **What we will look at.** First whether long contexts really do degrade, where
 this chapter's own measurement finds nothing and the published benchmarks find
 a collapse — and the reason for the disagreement is the most useful thing in
-the section. Then the four techniques, roughly in order of how much they buy:
-compaction, which is a lossy compression problem where you choose the loss in
-advance; isolation, which is the largest single lever; just-in-time retrieval
+the section. Then the four techniques: compaction, which is a lossy
+compression problem where you choose the loss in advance; isolation, which is
+usually the largest single lever; just-in-time retrieval
 instead of loading everything up front; and the filesystem as somewhere to put
 what the transcript cannot hold. And finally the case where all of it still
 fails, because the data was never text.
@@ -106,10 +128,10 @@ qwen3.5:9b, 60 tasks, two invented figures to find and sum
 
  distractor docs  accuracy   95% CI          prompt tokens
                0    100.0%   [94.0, 100.0]             142
-               4     93.3%   [84.0,  97.4]             863
+               4     93.3%   [84.1,  97.4]             863
               12     88.3%   [77.8,  94.2]           2,319
               28     88.3%   [77.8,  94.2]           5,228
-              60     96.7%   [88.7,  99.1]          11,048
+              60     96.7%   [88.6,  99.1]          11,048
 ```
 
 Sixty distractors scored *higher* than twelve. That non-monotone shape is
@@ -130,20 +152,24 @@ the edge of what 60 tasks can resolve either way.
 
 ### Why the easy test finds nothing
 
-It would be comfortable to conclude that context rot is folklore. It is not —
-@hong2025contextrot, the report that named it, ran 18 frontier models over
-inputs from 10k to 500k tokens and found performance falling in every one of
-them, well before any window was full — and my two experiments missed it for
-two reasons rather than one.
+The name for the louder claim is *context rot*: a model's accuracy decays as
+its input grows, even when everything still fits in the window. It would be
+comfortable to conclude that context rot is folklore. It is not.
+@hong2025contextrot, the report that popularised the name, ran 18 frontier
+models on deliberately simple tasks at lengths inside their advertised windows,
+and found performance degrading as the input grew in every one of its
+experiments. My two experiments missed it for two reasons rather than one.
 
-The second is easy and worth getting out of the way: 11,048 tokens is about a
-third of the length at which the published benchmarks report their headline
-drops, so this probe never entered the regime they measure. The first is the
-interesting one, because it is the same reason most in-house evaluations miss
-the effect even when they *do* reach the length.
+The simpler reason first: 11,048 tokens is about a third of the length at
+which the published benchmarks report their headline drops, so this probe
+never entered the regime they measure. The second reason is the interesting
+one, because it is the same reason most in-house evaluations miss the effect
+even when they *do* reach the length.
 
-**Both of my tests allowed literal matching.** The question contained
-`ZRG-14`; so did the needle. Attention is extremely good at finding a rare
+**Both of my tests allowed literal matching.** Both were
+*needle-in-a-haystack* (NIAH) tests: one fact — the *needle* — is hidden in a
+long filler text — the *haystack* — and the model is asked for it. The
+question contained `ZRG-14`; so did the needle. Attention is extremely good at finding a rare
 string that is already in the query. @modarressi2025nolima was built exactly
 to remove that crutch — its needles share minimal lexical overlap with the
 question, so the model has to infer the association rather than match it — and
@@ -161,7 +187,7 @@ So the honest synthesis, which is more useful than either result alone:
 
 | what you measure | what you will find |
 |:--|:--|
-| Locating a rare string that appears in the query | no degradation; this is what my tests and vanilla NIAH measure |
+| Locating a rare string that appears in the query | little or no degradation at the lengths tested here; this is what my tests and vanilla NIAH measure |
 | Locating information by *meaning*, not by string match | progressive degradation, largest where it was measured: 11 of 13 models below half their short-context baseline **by** 32K, not starting there [@modarressi2025nolima] |
 | Tracing across several facts, or aggregating them | large degradation, earlier [@hsieh2024ruler] |
 
@@ -190,12 +216,14 @@ large score is diluted: with a target logit $a$ and $N$ equal distractor logits
 $b$, the target's weight is $e^{a}/(e^{a} + N e^{b})$, which still falls as $N$
 grows for any finite gap. Treat this as a possible mechanism, unmeasured
 here.
-Separately, most advertised windows are not *trained* windows: a model trained
-at 8K and extended to 128K by RoPE scaling is being asked to interpolate
-positions it never saw, and interpolation quality falls with distance. That is
-the machinery behind *capacity, not competence*.
+Separately, many advertised windows are only partly *trained* windows. A model
+pretrained at 8K is typically extended to 128K by rescaling its RoPE positions
+(Position Interpolation, YaRN — @sec-position) plus a comparatively short
+continued training on long inputs. It works, but the model has seen far fewer
+examples of long distances than of short ones, and quality tends to fall with
+distance. That is the machinery behind *capacity, not competence*.
 
-One published result cuts the other way and is worth holding onto.
+One published result points the other way and is worth holding onto.
 @shi2023large found that irrelevant sentences added to arithmetic word
 problems dropped accuracy substantially, with no length increase to blame. My
 distractors cost nothing and theirs cost a great deal — the difference is the
@@ -204,7 +232,7 @@ when the job is to *reason*, because reasoning has to decide what is relevant
 and finding does not.
 
 And the widely-run test that would reassure you — needle-in-a-haystack — is
-precisely the one designed-in lexical overlap makes easy. If you take one
+precisely the test that its built-in lexical overlap makes easy. If you take one
 operational thing from this section, make it this: **evaluate long context on
 your own task with your own paraphrases, never on literal matches**, because
 the literal-match version will pass and tell you nothing.
@@ -274,8 +302,8 @@ a scale no laptop reaches.
 ::: {.fig-cap}
 Two different models, so the curves are not a head-to-head comparison and the
 left one is far smaller. What transfers is the *shape*. When the answer shares
-a rare string with the question you get the left panel, whatever you do to the
-context; when it does not, you get the right one. The easy test is the one
+a rare string with the question you get the left panel, at least at these
+lengths; when it does not, you get the right one. The easy test is the one
 almost everyone runs.
 :::
 
@@ -353,7 +381,8 @@ avoids polluting it.
 
 ::: {#gloss-context-isolation .column-margin .term-gloss}
 **Context isolation** — running a read-heavy sub-task in its own window and
-returning only its conclusion, so the parent never pays for what it read.
+returning only its conclusion, so the parent's context never carries what it
+read. The reading is still paid for, once, by the sub-agent.
 [↩](#term-context-isolation){.term-back}
 :::
 
@@ -371,10 +400,10 @@ conclusion. The parent never sees the fifty documents. It sees one paragraph.
 ```
 
 The saving is not the 40k. On the parent's side it is roughly
-$(40{,}000 - 200) \times M$ **over the $M$ model calls left in its loop** — a
-gross figure, from which the sub-agent's own 40k of reading, its fixed prompt
-and output, and any cache pricing still have to be subtracted, so treat the
-sketch as illustrative rather than as a bill. How large $M$ is depends on
+$(40{,}000 - 200) \times M$ **over the $M$ model calls left in its loop**. That
+is a gross figure. The sub-agent's own 40k of reading, its fixed prompt and
+output, and any cache pricing still have to be subtracted, so treat the sketch
+as illustrative rather than as a bill. How large $M$ is depends on
 something @sec-agent-anatomy measured rather than assumed. When the steps are
 independent the model batches its tool calls: five lookups collapsed into 2.0
 model calls there, and the growth was nowhere near quadratic. When the steps
@@ -455,7 +484,7 @@ capacity:
 The discipline that makes it work: **write structured, read selectively.** A
 notes file that becomes free-form prose is a second transcript with the same
 problem. Give it headings, or make it JSON, so a later step can read one field
-rather than the lot.
+rather than the whole file.
 
 ## When text retrieval is not enough {#sec-context-engineering-structure}
 
@@ -539,7 +568,8 @@ alone.
 
 When its inputs are large and its output is small: searching, scanning,
 filtering, verifying. The saving is not the tokens the sub-task read, it is
-those tokens multiplied by every remaining model call in the parent's loop.
+those tokens multiplied by every remaining model call in the parent's loop —
+minus what the sub-agent itself costs.
 Do not isolate when the parent will need the detail — you pay a round trip and
 then ask for it again. And return a pointer alongside the summary, because the
 parent has otherwise lost the evidence and cannot notice a wrong conclusion.
@@ -586,8 +616,8 @@ an unchanged prefix but not a rewritten middle, which is why compaction is not
 free — and @sec-rag measured 148× the input
 tokens for identical accuracy when you skip the choosing. Capability is
 conditional but documented: a claimed window is not an effective one, and
-@hsieh2024ruler found half of 17 models failing to hold up at the 32K they
-advertise.
+@hsieh2024ruler found half of 17 models failing to hold up at 32K, a length
+all of them claim to support.
 
 **Q: Someone shows you a perfect needle-in-a-haystack result. What do you
 say?**
@@ -605,7 +635,8 @@ it looks?**
 The transcript, monotonically — every decision and every observation is
 appended and nothing is removed. It costs more than it looks because each
 model call re-sends all of it, so the total is the sum of a growing series
-rather than the final length. That is why fixed costs like tool definitions
+rather than the final length — roughly quadratic in the number of sequential
+steps, as @sec-agent-anatomy showed. That is why fixed costs like tool definitions
 matter disproportionately: they are paid once per *call*, not once per run.
 
 ### Testing whether you have shipped one
@@ -623,15 +654,18 @@ points quietly.
 
 **Q: How do you decide between eager loading and fetching on demand?**
 
-On tokens the answer is almost always "on demand", and the arithmetic is one
-line: eager loading costs *T* tokens on every request, just-in-time costs the
-tool definition *c* plus *T* on the fraction *h* of requests that need it, so
-fetching wins whenever *h* < 1 − *c*/*T*. With a pointer at ten tokens against
-a document at two thousand that threshold is about 0.995 — which is to say it
-almost never binds. Say what just-in-time
-costs — a round trip of latency on the steps that need the data — and how to
-get most of both: pass identifiers rather than payloads, and dereference them
-only when a step actually needs the contents.
+On tokens the answer is usually "on demand", and the first-order arithmetic is
+one line: eager loading costs *T* tokens on every request; just-in-time costs
+the fetch tool's definition *c* on every request, plus *T* on the fraction *h*
+of requests that need it. So fetching wins whenever *h* < 1 − *c*/*T*. With a
+tool definition of about a hundred tokens against a two-thousand-token
+document, that threshold is 0.95 — only something needed on nearly every
+request is worth loading eagerly. The line leaves out one real cost: each
+fetch is an extra model call, which re-sends the context so far (cheaply, if
+it is cached). Say that, say what just-in-time costs in time — a round trip of
+latency on the steps that need the data — and say how to get most of both:
+pass identifiers rather than payloads, and dereference them only when a step
+actually needs the contents.
 
 ## The 2026 toolbox {#sec-context-engineering-tools}
 
@@ -735,7 +769,9 @@ would keep if you could only keep one.
    structured facts list and check again.
 6. **Hit-rate audit.** For each thing you load eagerly, measure how often it
    is actually used. Anything below about half is a candidate for
-   just-in-time.
+   just-in-time. (The token arithmetic in the interview questions would allow
+   a much higher threshold; the extra round trip and its latency are why half
+   is a sensible place to start.)
 7. **Notes file.** Give an agent a scratchpad it must write findings to, and a
    tool to read sections back. Compare token usage and accuracy against the
    same agent without one, on a task long enough to need compaction.
@@ -751,7 +787,7 @@ takes an hour and it decides which of the sections above you actually need.
 | [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) — Anthropic | the surrounding architecture, and when *not* to add machinery |
 | [`RULER`](https://github.com/NVIDIA/RULER) | the benchmark that separates claimed from effective context length; runnable on your own model |
 | [`NoLiMa`](https://github.com/adobe-research/NoLiMa) | the needle set built without lexical overlap — the evaluation to copy rather than the vanilla one |
-| [`tiktoken`](https://github.com/openai/tiktoken) | counting tokens honestly, which is step one of everything here |
+| [`tiktoken`](https://github.com/openai/tiktoken) | counting tokens honestly, which is step one of everything here. It implements OpenAI's tokenisers only; for other models use the model's own tokeniser or the token counts the API reports |
 | [`langgraph`](https://github.com/langchain-ai/langgraph) | state as an explicit object rather than an accumulating list, which makes compaction a design decision |
 
 : Beyond the papers {tbl-colwidths="[42,58]"}
@@ -762,10 +798,9 @@ takes an hour and it decides which of the sections above you actually need.
 | what the needle test hides | @modarressi2025nolima |
 | position effects in long contexts | @liu2024lost |
 | irrelevant context as active harm | @shi2023large |
-| the agent's transcript as memory | @packer2023memgpt |
+| managing a fixed window like an operating system's memory, paging context in and out | @packer2023memgpt |
 | retrieval as the alternative to a longer prompt | @lewis2020rag |
-| the report that named context rot, and measured it | @hong2025contextrot |
-| where in a long input a model attends least | @liu2024lost |
+| the report that popularised the name context rot, and measured it | @hong2025contextrot |
 
 : The primary sources {tbl-colwidths="[46,54]"}
 
@@ -790,7 +825,7 @@ takes an hour and it decides which of the sections above you actually need.
 - **Isolation is the largest lever *when the shape is right*.** A read-heavy
   sub-task in its own context returns a paragraph instead of forty thousand
   tokens, multiplied by every remaining call in the parent's loop.
-  @sec-multi-agent measured where it inverts: six steps producing 200-token
+  @sec-multi-agent modelled where it inverts: six steps producing 200-token
   results cost **1.20×** as three agents, because the per-agent fixed cost is
   paid three extra times; twenty-four steps producing 3,000-token results saved
   two thirds. Large inputs, small outputs, many remaining steps — all three, or
