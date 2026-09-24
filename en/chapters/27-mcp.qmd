@@ -20,8 +20,8 @@ between it and the host. Software: `ollama` 0.24.0 on Python 3.14.5.
 ## The problem MCP solves {#sec-mcp-why}
 
 Before the protocol, every integration was a pair: this application, that
-tool, hand-wired. *N* applications and *M* tools meant *N × M* pieces of glue,
-each maintained separately and none of them portable.
+tool, hand-wired. *N* applications and *M* tools meant *N × M* pieces of glue
+code, each maintained separately and none of them portable.
 
 MCP's proposition is the one the Language Server Protocol made for editors and
 programming languages, and the specification names the inspiration explicitly:
@@ -108,8 +108,8 @@ to be asked again.
 **What we will look at.** First what actually crosses those arrows — three
 features a server offers and one a client offers back, a list that got shorter
 in the current revision and for a reason worth understanding. Then the wire
-itself, which stopped being a stateful connection and became stateless
-requests. Then how to build a server that fails well, since it now fails in
+itself — the actual messages the two processes send each other — which stopped
+being a stateful connection and became stateless requests. Then how to build a server that fails well, since it now fails in
 someone else's process. Then the security problem, which is unusual and follows
 entirely from tool descriptions being prompt text. Then what all of it costs,
 measured. And finally the protocol MCP is most often confused with.
@@ -131,20 +131,23 @@ than the one you remember, and the difference is not cosmetic.
 
 : Server features, revision 2026-07-28 {tbl-colwidths="[16,50,34]"}
 
+A useful way to keep the three apart is to ask *who decides when each one is
+used*. The specification's own words are that tools are **model-controlled**
+(the model chooses to call one), resources are **application-driven** (the host
+decides what to attach) and prompts are **user-controlled** (the user picks one,
+for example as a slash-command).
+
 **Clients offer one:** **Elicitation** — a server that needs a missing
 parameter can ask for it, through the host, rather than failing.
 
-*How* it asks is the part a 2025 tutorial will get wrong. Implement the
-revision you negotiated: a server that speaks only the older pattern will fail
-against a host that has negotiated 2026-07-28, and the backward-compatibility
-rules below are what keep the older revisions working where both sides agree on
-them. There is no longer any such
-thing as a server-initiated JSON-RPC request. Revision 2026-07-28 replaces
-`elicitation/create` — along with `sampling/createMessage` and `roots/list` —
-with the **Multi Round-Trip Requests** pattern (SEP-2322): the server *returns*
-an `InputRequiredResult`, carrying `resultType: "input_required"` and an
-`inputRequests` field, and the client answers by **re-sending the original
-request** with `inputResponses` attached. Every result now carries a required
+*How* it asks is the part a 2025 tutorial will get wrong. In revision
+2026-07-28 there is no longer any such thing as a server-initiated JSON-RPC
+request. The revision replaces `elicitation/create` — along with
+`sampling/createMessage` and `roots/list` — with the **Multi Round-Trip
+Requests** pattern (SEP-2322). The server *returns* an `InputRequiredResult`,
+carrying `resultType: "input_required"` and an `inputRequests` field. The client
+gathers the answer and **re-sends the original request**, with a new request id
+and `inputResponses` attached. Every result now carries a required
 `resultType`, `"complete"` for ordinary ones, and a client must treat a missing
 field from an older server as `"complete"`.
 
@@ -154,8 +157,14 @@ towards the host has been turned into a return value that the host chooses
 whether to act on. A server does not call the host. It answers, and says what
 it still needs.
 
+In practice, implement the revision your counterpart actually speaks. A client
+that speaks only 2026-07-28 cannot talk to a server that speaks only the older,
+handshake-based pattern, and the reverse fails too. The backward-compatibility
+rules in the next section are what let an implementation that supports *both*
+eras detect which one it is talking to and fall back.
+
 ::: {.callout-warning appearance="simple"}
-**Three things a 2025 tutorial will tell you that are now deprecated.**
+**What a 2025 tutorial will still teach you that is now deprecated.**
 Revision 2026-07-28 moved **Sampling** (a server asking the host to run a
 model), **Roots** (a client telling a server which directories it may operate
 in), and **Logging** into the Deprecated state, with published migration
@@ -169,8 +178,9 @@ Client ID Metadata Documents.
 
 That deprecation list is worth reading as design commentary rather than
 housekeeping. Sampling and Roots were both mechanisms for a *server* to reach
-back into the host's world, and both are being removed in favour of passing
-what the server needs as ordinary parameters. The protocol is getting
+back into the host's world, and both are now scheduled for removal — still
+working, but not to be adopted in new code — in favour of passing what the
+server needs as ordinary parameters. The protocol is getting
 narrower, and narrower is easier to secure.
 
 ## The wire: stateless requests, and why that changed {#sec-mcp-transport}
@@ -179,22 +189,48 @@ Two of the three deprecations above were about a server reaching backwards. The
 change in this section is larger than any of them, and it is about how a
 connection works at all.
 
-The base protocol is JSON-RPC 2.0 over one of two transports:
+The base protocol is **JSON-RPC 2.0**: a small, language-neutral convention
+for remote procedure calls in which every message is one JSON object. A
+*request* names a `method`, carries `params` and an `id`; the *response* echoes
+the `id` and carries either a `result` or an `error`. A tool call and its reply
+look like this (the `_meta` block is explained below):
+
+```json
+{"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+ "params": {"name": "read_text_file",
+            "arguments": {"path": "notes/todo.md"},
+            "_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                      "io.modelcontextprotocol/clientInfo": {"name": "my-host",
+                                                             "version": "1.0"},
+                      "io.modelcontextprotocol/clientCapabilities": {}}}}
+
+{"jsonrpc": "2.0", "id": 7,
+ "result": {"resultType": "complete",
+            "content": [{"type": "text", "text": "- buy milk\n- ..."}],
+            "isError": false}}
+```
+
+Those messages travel over one of two transports:
 
 - **stdio** — the host launches the server as a subprocess and talks over pipes.
   Local, simple, and the right default for anything on the user's machine.
-- **Streamable HTTP** — for remote servers. (An older **HTTP+SSE** transport is
-  deprecated in favour of it.)
+- **Streamable HTTP** — for remote servers. Every client message is its own
+  HTTP POST, and the server answers either with one JSON object or with a short
+  **Server-Sent Events (SSE)** stream — a standard way for an HTTP server to
+  send a sequence of messages down one response, used here for progress updates
+  before the final result. (The older **HTTP+SSE** transport has been deprecated
+  in favour of it since revision 2025-03-26.)
 
 The important change in 2026-07-28 is not the transport list but the
 connection model. Earlier revisions described **stateful connections** with
 capability negotiation during an `initialize` handshake. The current
 specification describes [**"Stateless, self-contained requests"** with
 **"per-request capability negotiation"**]{.hl}: each request declares its
-protocol version in `_meta` (and, over HTTP, in an `MCP-Protocol-Version`
-header), and the server accepts or rejects it independently. A mandatory
-`server/discover` RPC lets a client ask up front what versions, capabilities
-and identity a server has, but calling it is optional.
+protocol version and the client's capabilities in `_meta` (and, over HTTP, the
+version again in an `MCP-Protocol-Version` header), and the server accepts or
+rejects it independently. Every server **must** implement a `server/discover`
+RPC that reports its supported versions, capabilities and identity; a client
+**may** call it up front, but does not have to.
 
 The reason is operational, and it is the same reason stateless HTTP won
 generally: **a stateless server scales horizontally**. Any replica can serve
@@ -204,7 +240,11 @@ process.
 
 Backward compatibility with the handshake-based revisions (`2025-11-25` and
 earlier) is specified rather than assumed, which is what you would want from a
-protocol people have already deployed.
+protocol people have already deployed. A client that supports both eras first
+sends a modern request (on stdio, a `server/discover` probe); if that fails
+with anything other than a recognised modern error, it falls back to the old
+`initialize` handshake. A client or server that implements only one era has no such
+fallback.
 
 Three consequences land on whoever writes the server, and they are the ones
 that turn "stateless" from an adjective into work:
@@ -213,7 +253,10 @@ that turn "stateless" from an adjective into work:
   `Mcp-Session-Id` header gone, a server that needs to remember something
   between calls mints its own **handle** and passes it back as an ordinary tool
   argument the model carries forward. That is a design you can see and audit,
-  which is the point, but it is also a design you now have to write.
+  which is the point, but it is also a design you now have to write. A handle
+  is a name, not a password: the specification says a server that implements
+  authorization **must not** treat possession of a handle as proof of identity,
+  so check on every call that the handle belongs to the caller.
 - **Change notifications moved to one opt-in stream.** `resources/subscribe`
   and the HTTP GET endpoint are replaced by `subscriptions/listen`, a single
   long-lived stream the client opts into by notification type.
@@ -221,24 +264,25 @@ that turn "stateless" from an adjective into work:
   stream of the request they belong to.
 - **A broken stream loses the request.** SSE resumability — `Last-Event-ID` and
   event ids — is gone, so a client must re-issue a dropped request with a new
-  id. Any tool that is not idempotent needs that fact designed for, which is
-  @sec-tool-design's argument arriving over the wire.
+  id. Any tool that is not idempotent (safe to run twice with the same effect
+  as once) needs that fact designed for, which is @sec-tool-design's argument
+  arriving over the wire.
 
 `ping`, `logging/setLevel` and `notifications/roots/list_changed` are removed
 outright rather than deprecated; log level is now a per-request `_meta` field.
 
 Beyond the core, the specification defines opt-in **extensions**, negotiated by
-both sides: **Tasks** for long-running work with polling and durable handles —
-which is also why the MCP-is-synchronous shorthand is wrong —
-**Skills over MCP** for structured agent instructions, and **MCP Apps** for
-interactive UI rendered inline. The Tasks extension is the one to know about
+both sides. **Tasks** handles long-running work with polling and durable
+handles, which is also why the shorthand "MCP is synchronous" is wrong.
+**Skills over MCP** carries structured agent instructions, and **MCP Apps**
+renders interactive UI inline in the conversation. The Tasks extension is the one to know about
 if anything you expose takes longer than a request should.
 
 ## Building one {#sec-mcp-building}
 
 The protocol is the easy part; the SDK handles it. What makes a server good is
-everything @sec-tool-design already established, plus three things that only
-matter once the tool lives in another process.
+everything @sec-tool-design already established, plus four things that
+matter more once the tool lives in another process.
 
 **Validate at the boundary, and mean it.** The schema you publish is a promise
 to a host you do not control, invoked on behalf of a model you did not write.
@@ -256,16 +300,18 @@ extension is for, rather than a long request nobody can cancel.
 the value that failed and never what would have worked. Across a process
 boundary the temptation to pass the raw exception through is stronger, and the
 cost is the same. There is also a protocol distinction worth getting right: a
-*tool* that fails is a successful call carrying an error result the model can
-read and react to, while a JSON-RPC error is a failure of the call itself and
-the model may never see it. Sending a bad argument back as a JSON-RPC error is
+*tool* that fails is a successful call carrying an error result — marked
+`isError: true` — that the model can read and react to, while a JSON-RPC error
+is a failure of the call itself and the model may never see it. The
+specification puts input-validation errors explicitly in the first group. Sending a bad argument back as a JSON-RPC error is
 how you get a model that cannot recover because it was never told.
 
 **Publish an `outputSchema` if your result has a shape.** A tool may declare
 one and return `structuredContent` alongside its text, so the host gets a value
 it can validate and route rather than a string it has to re-parse.
-Revision 2026-07-28 loosened both to full JSON Schema 2020-12, which makes this
-worth doing rather than a curiosity.
+Revision 2026-07-28 lets `inputSchema` and `outputSchema` use any JSON Schema
+2020-12 keyword and lets `structuredContent` be any JSON value, not only an
+object, which makes this worth doing rather than a curiosity.
 
 Two more that are specific to being a server:
 
@@ -276,21 +322,68 @@ Two more that are specific to being a server:
   protocol obligation: your return value is a write into a context you cannot
   see. Paginate, and say in the result that you did.
 
+Here is what those rules look like in a small server, sketched with the
+`fastmcp` library (see @sec-mcp-tools); it was checked with `fastmcp` 4.0.9,
+and `search_tickets` stands for your own function:
+
+```python
+import asyncio
+from typing import Literal
+from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError   # becomes a result with isError: true
+
+mcp = FastMCP("tickets")
+
+@mcp.tool
+async def find_tickets(status: Literal["open", "pending", "closed"],
+                       limit: int = 20) -> list[dict]:
+    """Search support tickets by status and return at most `limit` of them.
+    Read-only: this tool never creates, edits or closes a ticket."""
+    if not 1 <= limit <= 100:                       # validate at the boundary
+        raise ToolError(f"limit must be between 1 and 100; you sent {limit}.")
+    try:                                            # every call gets a deadline
+        return await asyncio.wait_for(search_tickets(status, limit), timeout=10)
+    except asyncio.TimeoutError:
+        raise ToolError("Search timed out after 10 s. Retry with a smaller limit.")
+
+if __name__ == "__main__":
+    mcp.run()                                       # stdio transport by default
+```
+
+The type hints become the published `inputSchema`, so `status` reaches the
+model as an enum rather than a free string. The docstring becomes the
+description, including what the tool does *not* do. Both errors tell the model
+what would have worked.
+
 ### Authorization, for servers that leave the laptop
 
-A stdio server inherits the user's machine and its permissions. A remote server
-does not, and needs a real authorization story: the specification builds on
-OAuth 2.1, and as of 2026-07-28 **Dynamic Client Registration is deprecated in
-favour of Client ID Metadata Documents**. Most of the practical points are
-ordinary web-security ones — scope tokens to the least you need, keep them out
-of the model's context, and remember that the *host* holds the credential while
-the *model* merely triggers its use. Three, though, are normative in the
-specification rather than advice, and are the kind of thing an SDK will not do
-for you: an authorization server *should* return the `iss` parameter and a
-client **must** validate it against the recorded issuer before redeeming a
-code; client credentials are bound to the authorization server that issued them,
-so a client **must** key them by issuer, **must not** reuse them elsewhere, and
-**must** re-register when the authorization server changes.
+A stdio server inherits the user's machine and its permissions; the
+specification says it should take its credentials from the environment rather
+than run an authorization flow. A remote server does not inherit anything, and
+needs a real authorization story. Authorization is optional in the
+specification, but when an HTTP server uses it, it builds on OAuth 2.1: the MCP
+server acts as an OAuth *resource server* that accepts access tokens, and the
+client obtains those tokens from an *authorization server*. As of 2026-07-28
+**Dynamic Client Registration is deprecated in favour of Client ID Metadata
+Documents** — the two ways a client can get an identity there.
+
+Most of the practical points are ordinary web-security ones: scope tokens to
+the least you need, keep them out of the model's context, and remember that the
+*host* holds the credential while the *model* merely triggers its use. A few,
+though, are normative in the specification rather than advice, and are the
+kind of thing an SDK will not do for you:
+
+- **A server accepts only tokens issued for it.** It **must** check that a
+  token's intended audience is this server, and it **must not** pass a client's
+  token through to an upstream API. That "token passthrough" creates a
+  *confused deputy*: a program that holds authority (the server) is tricked into
+  using it for a party that should not have it.
+- **A client checks who answered.** An authorization server *should* return the
+  `iss` (issuer) parameter, and when it is present the client **must** compare
+  it with the issuer it recorded before redeeming the authorization code.
+- **Client credentials belong to one issuer.** A client **must** store them
+  keyed by the issuer, **must not** reuse them with another authorization
+  server, and **must** re-register when the authorization server changes.
 
 ## Security: the description is the attack surface {#sec-mcp-security}
 
@@ -299,10 +392,12 @@ already established: [a tool description is prompt text]{.hl}
 (@sec-tool-design). It is executable influence over a model, shipped by a third
 party, and re-read on every call.
 
-The specification is explicit about the consequence. Tool descriptions and
-annotations "should be considered untrusted, unless obtained from a trusted
-server", and hosts "must obtain explicit user consent before invoking any
-tool".
+The specification is explicit about the consequence. Descriptions of tool
+behaviour, such as annotations, "should be considered untrusted, unless
+obtained from a trusted server", and hosts "must obtain explicit user consent
+before invoking any tool". It is equally explicit that "MCP itself cannot
+enforce these security principles at the protocol level": the consent prompt,
+the review and the sandbox are the host's job, not the protocol's.
 
 Three concrete failure modes:
 
@@ -320,9 +415,17 @@ server it does not control. @cve2025mcpremote is the reference case — a widely
 used remote-MCP bridge took the `authorization_endpoint` URL from the server's
 own response and passed it, unescaped, into a shell command to open a browser,
 so a malicious server got arbitrary code execution on the user's machine at
-CVSS 9.6. No prompt injection, no model in the loop, just a URL that was not
-escaped. Connecting to a server is running its data through your parser, and
-that is the ordinary supply-chain question rather than the exotic one.
+CVSS 9.6 (fixed in `mcp-remote` 0.1.16). No prompt injection, no model in the
+loop, just a URL that was not escaped. MCP's own security best-practices guide
+now says it outright: a client **must** accept only `http`/`https`
+authorization URLs and **must not** open them through a shell. Connecting to a
+server is running its data through your parser, and that is the ordinary
+supply-chain question rather than the exotic one.
+
+The same distrust applies to what a tool *returns*. A result that contains a
+web page, an e-mail or a ticket body contains whatever its author wrote,
+including instructions aimed at the model. That is prompt injection through
+tool output, and @sec-agent-security treats it in full.
 
 The reviewing question for a third-party server is therefore not "is this
 package popular" but **"what would this description do if it were adversarial,
@@ -363,9 +466,13 @@ definitions alone**, before anybody says anything.
 
 Three honest caveats before that number is used as an argument.
 
-The 89 is **this server's** average, and the filesystem server has unusually
-terse definitions: short names, few parameters, no long prose. A server whose
-tools take a dozen optional filters will be several times that. Use 89 as a
+The 89 is **this server's** average, and the filesystem server has terse
+definitions: short names, few parameters, descriptions of a few sentences. A
+server whose tools take a dozen optional filters will be several times that.
+The count also depends on *what the host serialises*. A host that forwards only
+name, description and input schema pays less than one that also forwards the
+optional `title`, `outputSchema` and annotations fields, which recent releases
+of this same server now publish. Use 89 as a
 low reference point rather than a guaranteed floor, and measure your own; @sec-tool-design cites a published catalogue
 costing 77,000 tokens of definitions before a single call, which is what the
 other end of the range looks like.
@@ -415,6 +522,12 @@ data out of the call is your job.
 **A2A connects agents to each other.** The unit is a *task* delegated to
 another agent that has its own model, its own context and its own tools, and
 which reports back. It is a peer relationship rather than an invocation.
+A2A (Agent2Agent) was developed by Google and donated to the Linux Foundation;
+its specification reached version 1.0. An agent advertises itself with an
+**Agent Card**, a JSON document listing its identity, skills, endpoint and
+authentication requirements. A task moves through states such as *working*,
+*input-required* and *completed*, and the other side can stream progress or
+push updates to a webhook while it works.
 
 The distinction that matters in design is *what the unit is*, not how long it
 takes. MCP's unit is a **capability you invoke**: the caller decides what to
@@ -575,7 +688,7 @@ Worth knowing about, not used above:
 | library | current version | when you would reach for it |
 |:--|:--|:--|
 | `mcp` | 2.1.1 | the official Python SDK — client and server |
-| `fastmcp` | 3.4.7 | decorator-style server building; the fastest route from a function to a server |
+| `fastmcp` | 4.0.9 | decorator-style server building; the fastest route from a function to a server, and what the sketch in @sec-mcp-building uses |
 | `@modelcontextprotocol/sdk` | 1.30.0 (npm) | the TypeScript SDK, which most reference servers are written against |
 | `pydantic-ai` | 2.35.3 | typed tools that map cleanly onto MCP schemas |
 | `langgraph` | 1.2.11 | an agent runtime that consumes MCP servers as tool sources |
@@ -664,6 +777,7 @@ anything you read.
 |:--|:--|
 | [The specification](https://modelcontextprotocol.io/specification/2026-07-28) | authoritative and readable; the overview and security sections take twenty minutes |
 | [Deprecated features registry](https://modelcontextprotocol.io/specification/2026-07-28/deprecated) | the fastest way to tell whether something you read about is still current |
+| [Security best practices](https://modelcontextprotocol.io/docs/2026-07-28/tutorials/security/security_best_practices) | confused deputy, token passthrough, SSRF, local-server compromise — each attack with its mitigation |
 | [`modelcontextprotocol/servers`](https://github.com/modelcontextprotocol/servers) | reference servers; read the filesystem one's tool descriptions as a model of the genre |
 | [`python-sdk`](https://github.com/modelcontextprotocol/python-sdk) | the SDK, small enough to read where you are unsure what the protocol requires |
 | [Writing tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents) — Anthropic | how to write the descriptions your server ships, which is the part that decides whether it works |
