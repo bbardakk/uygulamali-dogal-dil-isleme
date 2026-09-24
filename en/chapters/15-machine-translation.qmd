@@ -48,8 +48,9 @@ number of floats as everything it would know about a four-word one.
 
 The symptom was unmistakable: [translation quality fell off a cliff as source
 sentences got longer]{.hl}, and it fell off in a specific way — the model
-would translate the beginning and then drift, because the end of the source
-had overwritten the start of the vector.
+would translate the beginning well and then drift away from the source,
+because a vector of fixed size cannot hold every detail of a long sentence,
+and the details it has lost are the ones the decoder needs later.
 
 @bahdanau2015neural's fix was to stop compressing. Keep one vector per source
 token, and let the decoder, at each output step, compute a weighted average
@@ -78,17 +79,23 @@ to a translation bug.
 **What we will look at.** First the three eras of translation systems, briefly,
 because each one left something the next kept. Then the metric the field runs
 on, computed by hand on a sentence that is a correct translation and scores 50.
-Then decoding, where the settings that make a chat reply feel natural cost half
-the quality of a translation. Then the measurement this chapter exists for: how
+Then decoding, where the settings that make a chat reply feel natural cost a
+translation half its BLEU score. Then the measurement this chapter exists for: how
 much harsher a word-level metric is on Turkish than on English, from an
 exploratory test that puts a comparable error into both. And finally an LLM against a model roughly forty times smaller, and where each of them belongs.
 
 ## Three eras, and what each got right {#sec-machine-translation-history}
 
 Three answers to the same problem, each replacing the last, and each leaving
-behind something the next era still needs.
+behind something the next era still needs. (Before all three came
+*rule-based* MT, from the 1950s onwards: bilingual dictionaries plus grammar
+rules written by linguists. It was precise where its rules applied and
+brittle everywhere else, and writing enough rules for a whole language never
+became affordable.)
 
-**Statistical MT** [@brown1993mathematics; @koehn2003statistical] learned a
+**Statistical MT** began with word-based alignment models
+[@brown1993mathematics] and matured into phrase-based systems
+[@koehn2003statistical]. A phrase-based system learned a
 phrase table — *this source phrase maps to that target phrase with this
 probability* — plus a target-language model to keep the output fluent, and a
 reordering model. It was assembled from parts you could inspect. If a
@@ -97,8 +104,9 @@ read it.
 
 [Word alignment is the thing worth carrying forward from that era.]{.hl} It
 was the last time the field had a fully interpretable account of what a
-translation system was doing, and it is still what terminology enforcement,
-translation memories and localisation QA are built on.
+translation system was doing, and it is still what terminology checks and
+localisation QA are built on. (Translation memories are a close relative: they
+store *sentence*-aligned pairs.)
 
 A system that cannot say which source words produced which target words cannot
 be audited by a human translator, and in regulated localisation that is a hard
@@ -138,6 +146,31 @@ reference, averaged over n = 1 to 4, with a penalty for being too short. The
 field's default metric since 2002, and blind to any correct paraphrase that
 uses different words. [↩](#term-bleu){.term-back}
 :::
+
+Two words in that definition need unpacking first. *Modified* (or *clipped*)
+precision means a candidate n-gram is credited at most as many times as it
+occurs in the reference. Without the clip, the candidate *the the the the*
+would get a perfect unigram precision against *the cat sat on the mat*; with
+it, only the reference's two *the*s count, so the precision is 2/4. The
+*brevity penalty* exists because precision alone rewards saying very little:
+four correct words offered for a twenty-word reference have perfect precision. With
+$p_n$ the clipped n-gram precision, $c$ the candidate length and $r$ the
+reference length:
+
+$$
+\text{BLEU} = \text{BP}\cdot\exp\Big(\frac{1}{4}\sum_{n=1}^{4}\log p_n\Big),
+\qquad
+\text{BP} = \begin{cases} 1 & \text{if } c > r \\ e^{\,1 - r/c} & \text{if } c \le r \end{cases}
+$$
+
+The exponential of an average of logs is simply the geometric mean of the four
+precisions, and the result is usually multiplied by 100. On a whole test set,
+BLEU is **not** the average of sentence scores: the matched and total n-gram
+counts, and the lengths $c$ and $r$, are summed over all sentences first, and
+the formula is applied once. Every table in this chapter reports that
+*corpus* BLEU. A single-sentence score like the one below is a teaching device,
+and it needs smoothing whenever one n-gram order has no match at all, because
+$\log 0$ is undefined.
 
 ```text
 REF: In Istanbul , heavy rain caused flooding on Monday evening .   (11 tokens)
@@ -231,15 +264,16 @@ worth naming because they recur constantly:
 - Moving *in Istanbul* broke every n-gram that crossed the move. The unigrams
   survived; the 4-grams did not.
 - `Heavy` did not match `heavy`, and `in` did not match `In`. BLEU is
-  case-sensitive by default. That alone cost two unigrams out of ten.
+  case-sensitive by default. That alone cost two unigrams out of ten and two
+  bigrams (*heavy rain*, *in Istanbul*). Switch on the lowercase toggle above
+  and the same pair scores 57.81; the remaining loss is the reordering.
 
-For the same pair, **chrF2 scores 83.23** — character 6-grams with $\beta = 2$,
-`sacrebleu`'s default, and the variant every chrF number in this chapter uses.
-The chrF++ variant used at WMT adds word bigrams and would score this pair
-lower, because the reordering the pure character metric forgave becomes visible
-again as soon as words re-enter. It scores 83.23 here because at the character
-level
-almost everything still matches.
+For the same pair, **chrF2 scores 83.23** — character n-grams of length 1 to 6
+with $\beta = 2$, `sacrebleu`'s default, and the variant every chrF number in
+this chapter uses. It scores this high because at the character level almost
+everything still matches. The chrF++ variant, which adds word unigrams and
+bigrams, scores the pair lower (78.07), because the reordering the pure
+character metric forgave becomes visible again as soon as words re-enter.
 
 ::: {.column-margin}
 Reproduce it and you will get 50.27 exactly — but only if you say which BLEU.
@@ -267,8 +301,8 @@ what they cost:
 |:--|:--|:--|:--|
 | [BLEU](#gloss-bleu){.term-ref} | word n-grams | exact phrase matches | any paraphrase; partially-correct words |
 | [chrF](#gloss-chrf){#term-chrf .term-ref} [@popovic2015chrf] | character n-grams | partially-correct words, morphology | meaning; a fluent sentence built of right characters |
-| [COMET](#gloss-comet){#term-comet .term-ref} [@rei2020comet] | learned | meaning, as far as its training data taught it | anything its training data did not contain; and it needs a GPU |
-| Human MQM [@freitag2021experts] | annotated errors | the widest range, by category and severity | whatever its annotators miss or disagree on — report inter-annotator agreement with the score; and it costs money and days |
+| [COMET](#gloss-comet){#term-comet .term-ref} [@rei2020comet] | learned | meaning, as far as its training data taught it | anything its training data did not contain; and it is slow without a GPU |
+| Human MQM (Multidimensional Quality Metrics) [@freitag2021experts] | annotated errors | the widest range, by category and severity | whatever its annotators miss or disagree on — report inter-annotator agreement with the score; and it costs money and days |
 
 : Four ways to score a translation {tbl-colwidths="[16,16,34,34]"}
 
@@ -276,7 +310,7 @@ what they cost:
 **chrF** — an F-score over character n-grams. Unlike BLEU, which is precision
 only with a length penalty bolted on, chrF combines precision *and* recall and
 weights recall $\beta$ times as heavily; `sacrebleu`'s default is $\beta = 2$
-over character 6-grams, which is chrF2. That recall term is why it notices a
+over character n-grams of length 1 to 6, which is chrF2. That recall term is why it notices a
 missing suffix, which is the case an agglutinative language produces
 constantly.
 [↩](#term-chrf){.term-back}
@@ -289,6 +323,15 @@ better with humans than BLEU, and inherits every bias of the judgements it was
 trained on. [↩](#term-comet){.term-back}
 :::
 
+Human evaluation comes in two main forms, and they are worth telling apart.
+In **Direct Assessment (DA)**, raters score each translation on a 0–100
+scale; it is cheap enough for many raters, and the widely used COMET models
+were trained to predict these scores. In **MQM**, trained translators mark
+each error span, give it a category (accuracy, fluency, terminology, …) and a
+severity, and the score is a weighted count of errors. MQM is slower and more
+expensive, but @freitag2021experts found it more reliable than crowd ratings
+and it tells you *what* went wrong, not only how much.
+
 The 2026 consensus is: **report chrF and a neural metric; report BLEU as well
 because everyone else does; never rank systems on BLEU alone.**
 @kocmi2024navigating is the current guidance on how large a difference in each
@@ -296,9 +339,9 @@ metric has to be before it means anything.
 
 This chapter follows two thirds of that rule and you should hold the missing
 third against it. Every table below reports BLEU and chrF2 and no neural
-metric, because everything here ran on one laptop with no CUDA GPU — the MT model uses Apple's MPS backend — which is
-itself the honest cost of the neural metrics rather than an argument against
-them. Read the rankings below as provisional, and add a COMET column before
+metric, because everything here ran on one laptop with no CUDA GPU — the MT model uses Apple's MPS backend. COMET would still run there, only slowly;
+that slowness is itself the honest cost of the neural metrics rather than an
+argument against them. Read the rankings below as provisional, and add a COMET column before
 you ship a decision based on one.
 
 ## Decoding for translation {#sec-machine-translation-decoding}
@@ -341,6 +384,14 @@ sample      0.7   25.90   55.17      1.013       45
 sample      1.0   14.34   45.27      1.111       53
 ```
 
+How to read the rows. `beam 1` keeps a single hypothesis, which is *greedy*
+decoding: take the most probable token at every step. The `lenpen` rows hold
+the beam at 4 and vary the length penalty, explained below. The `sample` rows
+draw each token at random at the given **temperature**, which rescales the
+model's probabilities before the draw: below 1 it sharpens them towards the
+most likely token, and at 1.0 the draw follows the model's own distribution.
+`len ratio` is output length divided by reference length.
+
 ### Sampling costs you half the score here
 
 **BLEU 30.17 at beam 4 against 14.34 at temperature 1.0.** The same model, the
@@ -354,8 +405,8 @@ repetitive*.
 
 [The lesson generalises past translation: decoding parameters are not model
 settings, they are task settings]{.hl}, and copying a temperature from a chat
-example into a translation pipeline is a way to lose fifteen BLEU without
-touching the model.
+example into a translation pipeline is a way to lose between four BLEU (at 0.7)
+and sixteen (at 1.0) without touching the model.
 
 ### Beam search: the folklore is wrong here
 
@@ -378,22 +429,24 @@ differences on 500 sentences, and neither has been tested. A paired bootstrap
 over 500 sentences puts a BLEU interval of roughly a point around each of
 them, and @kocmi2024navigating — cited two sections ago for exactly this
 purpose — gives thresholds that both of these differences sit below. **The
-defensible reading of this table is that no beam width above 1 was measurably
-better than any other**, which is a stronger claim than the raw numbers
-suggest and the one to write down. Beam 4 stays the right default, not because
+defensible reading of this table is that no beam width was shown to be
+measurably better than its neighbours** — a more cautious claim than the raw
+numbers invite, and the one to write down. Beam 4 stays the right default, not because
 it is measurably better than beam 2 but because it costs almost nothing and
 the wide settings cost a lot.
 
-The absence of the curse is explained by the *decoder*, not by the model.
-`generate()` scores a beam by its log-probability divided by its length raised
-to `length_penalty`, and that argument defaults to `1.0` — full length
-normalisation, which is precisely the correction @murray2018correcting proposed
-for the length bias that produces the curse. The proof is in the next
-subsection: the knob that "fixes" the curse is a `generate()` argument, not a
+The most likely explanation for the missing curse is the *decoder*, not the
+model. `generate()` scores a beam by its log-probability divided by its length
+raised to `length_penalty`, and that argument defaults to `1.0` — full length
+normalisation, one of the standard corrections for the length bias that
+produces the curse; @murray2018correcting analyse that bias and propose a
+tuned per-word reward as an alternative. This is a hypothesis, not a result:
+nothing here ran the beam sweep with normalisation switched off. What the next
+subsection does show is that the knob is a `generate()` argument, not a
 property of the Marian weights. To actually go looking for the curse, set
 `length_penalty=0.0` and sweep the beam again; @koehn2017six documented the
-degradation and @meister2020beam is the paper on why the length-normalised
-objective is the one that behaves.
+degradation, and @meister2020beam argue that beam search works well precisely
+because it does *not* find the exact highest-probability sequence.
 
 ### Length penalty moves BLEU without moving quality
 
@@ -415,7 +468,7 @@ which is exactly the mechanism BLEU's brevity penalty and precision denominator
 respond to. A human or MQM check would settle it; the length ratio is the cheap
 evidence that it is worth checking.
 [If you tune the length penalty against BLEU you are tuning your system to
-produce slightly short output]{.hl}, which is a real and common way to buy a
+produce slightly shorter output]{.hl}, which is a real and common way to buy a
 point of BLEU that no reader would notice.
 
 ## Why BLEU is worse than usual for Turkish {#sec-machine-translation-turkish}
@@ -465,19 +518,28 @@ edit is a suffix and not a corrupted stem, only words with an explicit
 apostrophe were perturbed, where the morpheme boundary is unambiguous. In
 English it is a preposition: `in` → `from`.
 
-**Two things about that pairing that the table cannot show, and both cut against the section's own thesis.** Treat the comparison as exploratory until the pairing is redone with one hand-checked substitution per sentence. The match is not exact: Turkish `'da` is
-unambiguously locative, while English `in` is locative only some of the
-time — *interested in*, *in 2016*, *in fact* all get rewritten too, and some
-of those become ungrammatical rather than merely wrong. And the two rows are
-not the same sentences: the filters ran independently, so 264 Turkish
-sentences qualify against 997 English ones, and the English side very likely
-carries more than one edit per sentence where the Turkish side carries one.
+**Two things about that pairing that the table cannot show, and both cut
+against the section's own BLEU claim.**
+
+First, the match is not exact. Turkish `'da` is unambiguously locative, while
+English `in` is locative only some of the time — *interested in*, *in 2016*,
+*in fact* all get rewritten too, and some of those become ungrammatical
+rather than merely wrong.
+
+Second, the two rows are not the same sentences. The filters ran
+independently, so 264 Turkish sentences qualify against 997 English ones, and
+the English side very likely carries more than one edit per sentence where
+the Turkish side carries one.
+
 Both effects make the *English* perturbation the harsher of the two, which
-biases the comparison **against** the claim below. The Turkish penalty coming
-out larger anyway is the result; the exact multiplier is not something this
-design can pin down. Running the English side on the English halves of the
-same 264 pairs, editing only the first match in each, is the version to trust,
-and it is the first thing to fix here.
+biases the BLEU comparison **against** the claim below. The Turkish penalty
+coming out larger anyway is the result; the exact multiplier is not something
+this design can pin down. The same bias works *for* the chrF reading, though:
+with one edit per English sentence, the English chrF penalty would shrink and
+the 0.57 below would rise. So treat the whole comparison as exploratory.
+Running the English side on the English halves of the same 264 pairs, editing
+only the first match in each, is the version to trust, and it is the first
+thing to fix here.
 
 ```text
                               BLEU      chrF     BLEU/chrF     n
@@ -501,9 +563,10 @@ character level the Turkish error is genuinely smaller, and chrF says so.
 
 **The disagreement between the two metrics is more than twice as large in
 Turkish** — 4.89× against 2.37×. This is the number that matters
-operationally. In English, BLEU and chrF mostly agree about how bad an error
-is; in Turkish they differ by a factor of five, so [which metric you chose
-decides which system you ship]{.hl}.
+operationally. In English, BLEU charges this error about two and a half times
+what chrF charges; in Turkish, nearly five times. The two metrics therefore
+rank Turkish systems differently more easily, so [which metric you choose can
+decide which system you ship]{.hl}.
 
 The whole argument fits in one picture, and every number in it is from the two
 tables above:
@@ -597,7 +660,7 @@ same thing in both languages.
 This is why chrF was proposed [@popovic2015chrf] and why the WMT community
 moved to character-level and neural metrics for morphologically rich
 languages. It is also why comparing a Turkish BLEU score against an English
-one — "our Turkish system gets 29 and our German system gets 34, so Turkish is
+one — "our Turkish system gets 23 and our German system gets 34, so Turkish is
 harder" — is not a valid comparison at all. The metric is measuring different
 amounts of the sentence in each language.
 :::
@@ -612,27 +675,35 @@ movement.
 The consequence for a word n-gram metric is the one @sec-machine-translation-eval
 already showed: moving a phrase destroys every n-gram that crosses the move,
 while leaving the meaning intact. A correct English paraphrase that reorders
-one phrase scored **50.27**. In a language where reordering is a normal
-stylistic choice rather than an occasional one, a translator's legitimate
-variation is charged at that rate every time.
+one phrase scored **50.27** (57.81 once casing is taken out of the picture).
+In a language where reordering is a normal stylistic choice rather than an
+occasional one, a translator's legitimate variation is charged at that rate
+every time.
 
-Both problems have the same fix and it is not a better n-gram metric: score
-at the character level, and score with a model that was trained on human
-judgements.
+Both problems have the same fix and it is not a better *word* n-gram metric:
+score at the character level, which softens both penalties without removing
+them, and score with a model that was trained on human judgements.
 
 ## LLMs as translators {#sec-machine-translation-llm}
 
 A general-purpose model can translate without being asked to be a translator.
 The question is not whether it works but what it costs and where it wins, so
 here is the head-to-head: `qwen3.5:9b` prompted zero-shot against
-`opus-mt-tc-big`, a 237M-parameter model that does nothing else, on the
-identical 400 sentences.
+`opus-mt-tc-big`, on the identical 400 sentences. `opus-mt-tc-big` is really
+two 237M-parameter models, `-tr-en` and `-en-tr`, one per direction, and
+each does nothing else.
 
 Before the table, the two things that decide how to read it. **State the
 decoder.** @sec-machine-translation-decoding just measured what sampling costs
 a translator — 30.17 BLEU at beam 4 against 14.34 at temperature 1.0, the same
-model and the same sentences — and `ollama`'s default is temperature 0.8 with
-top-$k$ 40, which is sampling. Benchmarking an LLM at a chat default and
+model and the same sentences — and `ollama` samples by default. Its global
+fallback is temperature 0.8 with top-$k$ 40, but a library model can ship its
+own settings, and the `qwen3.5:9b` entry lists temperature 1.0, top-$k$ 20,
+top-$p$ 0.95 and a presence penalty of 1.5 at the time of writing. Unless the
+request overrode them, the LLM row was sampled at the very temperature that cost
+the Marian model half its BLEU — softened somewhat by top-$k$ and top-$p$,
+which restrict the draw to the most likely tokens (@sec-decoding covers
+them). Benchmarking an LLM at a chat default and
 concluding that LLMs translate badly is the most common way to get this
 comparison wrong, and the LLM row below is only interpretable if its decoding
 settings are published beside it. They are not, and that is a gap this chapter
@@ -641,10 +712,13 @@ ceiling until it has been re-run with the decoder pinned.
 
 **And state the precision.** `ollama` serves an untagged model 4-bit quantised
 by default, while `opus-mt-tc-big` runs unquantised through `transformers`. So
-the headline is not 237M against 9B but 237M unquantised against a 4-bit 9B,
-and quantisation costs most where the target is morphologically rich — which is
-the en-tr column where the gap is largest. Read the 6-BLEU figure as an upper
-bound on the architectural difference.
+the headline is not 237M against 9B but 237M unquantised against a 4-bit 9B.
+Quantisation plausibly hurts more when the model must *generate* a
+morphologically rich language, which would put its cost in the en-tr column
+where the gap is largest — but that has not been measured here. Both the
+sampling and the quantisation push the LLM's score down, so the 6-BLEU figure
+more likely overstates than understates the gap between the models themselves;
+contamination, discussed below, pulls the other way.
 
 ```text
 wmt16 tr-en                          BLEU    chrF   s/sentence
@@ -697,12 +771,14 @@ far more English than Turkish, and generating a morphologically rich language
 is harder than parsing one. [Never assume your MT quality is symmetric —
 measure both directions.]{.hl}
 
-**Both directions are harder into Turkish for everyone.** opus-mt drops from
-32.33 to 23.13 when the target changes. Part of that is genuine difficulty and
-part is @sec-machine-translation-turkish's measurement artefact: the same
-quality of translation scores lower when the target language gives BLEU 29%
-fewer tokens to match. chrF, which does not have that bias, drops far less —
-60.08 to 57.41.
+**Translating into Turkish is harder for every system here.** opus-mt drops
+from 32.33 to 23.13 when the target changes. Part of that is genuine
+difficulty and part is @sec-machine-translation-turkish's measurement
+artefact: the same quality of translation scores lower when the target
+language gives BLEU 22.5% fewer tokens to match. chrF, which does not have
+that bias, drops far less — 60.08 to 57.41. The same check applies to the
+previous point: in chrF the LLM's deficit is 1.76 into English and 3.74 into
+Turkish, so the doubling is not only BLEU's harshness on Turkish.
 
 ### What an LLM buys that the dedicated model cannot
 
@@ -713,13 +789,26 @@ benchmark cannot express, because WMT is a list of isolated sentences:
 - **Document context.** A dedicated sentence-level model translates each
   sentence independently and so cannot resolve a pronoun whose antecedent was
   two sentences ago, or keep a consistent formality register across a page.
+  Turkish makes this concrete: *o* means *he*, *she* or *it*, so translating
+  *o bir doktor* into English forces a choice the sentence alone cannot make.
+  Without context, a system falls back on whatever its training data made most
+  frequent, which is how *o bir doktor* becomes *he is a doctor* — a
+  well-documented source of gender bias in MT
+  ([Prates et al., 2019](https://arxiv.org/abs/1809.02208) tested exactly
+  this with Turkish and other languages whose pronouns carry no gender).
 - **Terminology adherence.** Put the glossary in the prompt and the model
   will mostly follow it. Enforcing terminology in a dedicated model means
   constrained decoding or retraining.
 - **Register and audience.** *Translate this formally, for a legal audience,
   keeping the second person plural* is an instruction, not a model.
 - **Any pair, immediately.** There is no `opus-mt` for most of the pairs a
-  real product needs, and no data to train one.
+  real product needs, and no data to train one. There is a middle option
+  worth checking first: *massively multilingual* dedicated models such as
+  M2M-100 ([Fan et al., 2021](https://jmlr.org/papers/v22/20-1307.html)) and
+  NLLB-200 ([NLLB Team, 2022](https://arxiv.org/abs/2207.04672)) translate
+  directly between 100 and 200 languages from one model. They are still far
+  smaller than an LLM, but read the licence before shipping: the NLLB-200
+  weights are released for non-commercial use.
 
 @vilar2023prompting is the systematic study of how much prompting choices
 matter here; the short version is that examples in the prompt help, and that
@@ -815,17 +904,22 @@ Two more considerations that decide it in practice:
    both before assuming.
 2. **What is the task?** Translate-test destroys anything that depends on
    surface form — @sec-sequence-labeling's span offsets do not survive
-   translation, so extraction cannot use it at all. Document classification
-   survives it comparatively well.
+   translation, so extraction can use it only with an extra step that maps
+   the predicted spans back to the original text through a word alignment,
+   and that step adds its own errors. Document classification survives it
+   comparatively well.
 
-@sec-turkish-nlp gives the verdict for Turkish specifically, with numbers.
-This chapter's contribution is the mechanics and the arithmetic; the two
-should not be read as competing.
+@sec-turkish-nlp measures the third row for Turkish — a multilingual model
+against a monolingual Turkish one on the same task — and finds no general
+verdict, only a protocol. Translate-train and translate-test are not measured
+in this book; this chapter's contribution is the mechanics and the arithmetic,
+and the lab and exercise 7 are where you measure them for your own task.
 
 ## Intuition checks {#sec-machine-translation-intuition}
 
-Answer each one before you open it. All six are questions this chapter settled
-with a measurement rather than an argument.
+Answer each one before you open it. The first five are questions this chapter
+settled with a measurement rather than an argument; the sixth is settled by
+arithmetic.
 
 ::: {.callout-note collapse="true"}
 ## 1. Your Turkish system scores 23 BLEU and your German one scores 34. Is Turkish harder?
@@ -836,7 +930,7 @@ same content, so Turkish gives a word n-gram metric 22.5% fewer slots to match
 and each error costs more of the score.
 
 Measured here: the *same* semantic error — locative to ablative — costs
-14.90 BLEU in Turkish and 12.65 in English. Some of your nine-point gap is
+14.90 BLEU in Turkish and 12.65 in English. Some of your eleven-point gap is
 the metric.
 
 Report chrF, which sees essentially the same amount of material in both
@@ -847,7 +941,8 @@ metric. Then compare.
 ::: {.callout-note collapse="true"}
 ## 2. You copy the temperature from your chat pipeline into your translation pipeline. What happens?
 
-The score falls by more than half. Measured on the same model and sentences:
+At a chat-style temperature of 1.0, the score falls by more than half (at 0.7,
+by about four points). Measured on the same model and sentences:
 beam-4 scores **30.17** BLEU, temperature 1.0 sampling scores **14.34** — a
 large drop in BLEU, not a measured halving of translation quality.
 
@@ -870,10 +965,11 @@ times the compute.
 
 And check the folklore before repeating it: the "curse of beam search", where
 quality *degrades* at large widths, does not appear here at all — BLEU rises
-monotonically to 64 and the length ratio stays flat. The reason is the decoder,
-not the model: `generate()` normalises a beam's score by its length by
-default — `length_penalty=1.0` — and that is the fix @murray2018correcting
-proposed for the length bias behind the curse. Turn it off (`length_penalty=0.0`)
+monotonically to 64 and the length ratio stays flat. The most likely reason is
+the decoder, not the model: `generate()` normalises a beam's score by its
+length by default — `length_penalty=1.0` — which is one of the standard
+corrections for the length bias behind the curse that @murray2018correcting
+analyse. Turn it off (`length_penalty=0.0`)
 and sweep again if you actually want to look for the disease. And note that the
 rises are small enough that none of them was tested for significance, so
 "rises monotonically" describes the point estimates and nothing more.
@@ -888,7 +984,7 @@ points and chrF by 0.09, while the output length ratio moves from 1.007 to
 
 BLEU is responding to how many words you produced, through its brevity
 penalty and its precision denominator. Tuning against it teaches your system
-to be slightly terse. If a change moves BLEU and leaves chrF flat, suspect a metric artefact
+to produce slightly shorter output. If a change moves BLEU and leaves chrF flat, suspect a metric artefact
 before you call it an improvement, and read the outputs to find out which it
 is.
 :::
@@ -917,9 +1013,9 @@ learn around it.
 
 Two things decide the rest: which direction your MT is actually better in —
 measure, they are not symmetric — and whether your task depends on surface
-form. Span extraction cannot survive translate-test at all, because the
-offsets do not transfer. Document classification survives it comparatively
-well.
+form. Span extraction does not survive translate-test without an extra
+alignment step, because the offsets do not transfer. Document classification
+survives it comparatively well.
 :::
 
 ## Interview questions {#sec-machine-translation-interview}
@@ -947,8 +1043,10 @@ does not hold up.
 **Q: What does BLEU actually compute?**
 
 Modified n-gram precision for n = 1 to 4, geometric mean, times a brevity
-penalty. Be able to work an example. Then say what it cannot see: any correct
-paraphrase, any reordering, and — by default — anything that differs in case.
+penalty. Be able to work an example, and say that on a test set the counts are
+summed over sentences before the formula is applied. Then say what it cannot
+see: any correct paraphrase, the difference between a legitimate reordering
+and a wrong one, and — by default — anything that differs in case.
 A correct English translation that moves one phrase scores 50.
 
 **Q: When would you not report BLEU?**
@@ -982,7 +1080,7 @@ control. The number that decides the split is latency-per-sentence: measured
 here, 0.024 seconds against 1.088 is the difference between one machine and
 forty. Say also that you would measure both directions separately, because
 they are not symmetric — 32.33 out of Turkish against 23.13 into it, on the
-same model and corpus.
+same model family and corpus.
 
 **Q: How would you build MT for a domain with no parallel data?**
 
@@ -1013,7 +1111,7 @@ Worth knowing about, not used above:
 
 | library | current version | when you would reach for it |
 |:--|:--|:--|
-| `unbabel-comet` | 2.2.7 | the neural metric the WMT community now leads with; needs a GPU and a model download, and is worth both |
+| `unbabel-comet` | 2.2.7 | the neural metric the WMT community now leads with; wants a GPU (on a CPU it runs, slowly) and a model download, and is worth both |
 | `ctranslate2` | 4.8.1 | serving Marian and similar models 2–4× faster than PyTorch eager mode, with int8 quantisation — the obvious next step after the latency table above |
 | `sentencepiece` | 0.2.2 | the subword vocabulary these models are built on (@sec-text-as-data) |
 | `sacremoses` | 0.2.0 | the Moses tokenizer and truecaser, still needed when reproducing older MT results |
@@ -1157,7 +1255,8 @@ else's — which is the entire argument of @post2018call.
 
 - **BLEU gives a correct translation 50.27** when it moves one phrase and
   differs in case on two words. It is modified n-gram precision with a brevity
-  penalty and nothing more; it cannot see paraphrase, reordering, or meaning.
+  penalty and nothing more; it cannot see paraphrase or meaning, and cannot
+  tell a legitimate reordering from a wrong one.
   Report it, never rank on it alone, and always report its signature.
 
 - **In this corpus the English/Turkish word-token ratio is 1.29.** The same content needs 1.29×
@@ -1166,8 +1265,8 @@ else's — which is the entire argument of @post2018call.
   costs proportionally more. In an exploratory test that puts a comparable
   error into each language, on different sentence subsets, BLEU charges **14.90** in Turkish against **12.65** in English, while chrF
   charges **3.05** against **5.34**. The two metrics disagree **4.89×** in
-  Turkish and **2.37×** in English — which is why the metric you choose decides
-  which system you ship.
+  Turkish and **2.37×** in English — which is why the metric you choose can
+  decide which system you ship.
 
 - **Never compare BLEU across languages.** "Turkish scores 23 and German 34"
   is not a statement about difficulty; the metric is measuring different
@@ -1184,7 +1283,7 @@ else's — which is the entire argument of @post2018call.
   beam 2→64 buys +0.57 for seven times the compute.
 
 - **A BLEU gain with a flat chrF is a reason to suspect a metric artefact.** Sweeping the length penalty moves BLEU 1.26 points and chrF 0.09, tracking output length; confirm by reading outputs before you believe the gain. Tuning
-  against BLEU teaches your system to be terse.
+  against BLEU teaches your system to produce shorter output.
 
 - **A 237M dedicated model beat a 9B LLM in both directions**, by 3 BLEU into
   English and 6 into Turkish, at 41–164× the speed. Reach for the LLM when you
@@ -1192,9 +1291,9 @@ else's — which is the entire argument of @post2018call.
   adherence, register, or a pair nobody publishes a model for.
 
 - **Measure both directions.** 32.33 out of Turkish, 23.13 into it, same model
-  family and corpus. MT quality is never symmetric and the asymmetry decides
-  pipeline design.
+  family and corpus. Never assume MT quality is symmetric; the asymmetry
+  decides pipeline design.
 
 - **Translate-test pays forever and translate-train pays once.** And
-  translate-test cannot be used at all for anything that depends on surface
-  form — span offsets do not survive translation.
+  translate-test breaks anything that depends on surface form — span offsets
+  do not survive translation without an extra alignment step.
