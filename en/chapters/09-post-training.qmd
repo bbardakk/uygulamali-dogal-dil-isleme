@@ -50,7 +50,7 @@ Try this yourself: on the Hub, models named `Llama-3.1-8B` and
 model. The second has been through the two stages in this chapter. The
 difference in behaviour is enormous; the difference in cost is large but not
 published for these two models. For scale, InstructGPT's own figures put SFT
-plus PPO at 64.9 petaflop-days against 3,640 for pretraining — about 1.8%, or a
+plus PPO at 64.9 petaflop/s-days against 3,640 for pretraining — about 1.8%, or a
 factor of 56, before the reward model and everything around it.
 :::
 
@@ -170,7 +170,7 @@ optimizes, and which weights it is allowed to touch.
   <text x="636" y="366" class="t-sm t-b">10⁴–10⁵</text>
   <text x="636" y="384" class="t-xs t-muted">comparisons</text>
 
-  <text x="382" y="462" class="t-xs t-mid t-muted">Stages 2 and 3 use the same frozen knowledge. They change what the model does with it.</text>
+  <text x="382" y="462" class="t-xs t-mid t-muted">Stages 2 and 3 mostly reuse stage 1's knowledge. They change what the model does with it.</text>
 </svg>
 ```
 ::: {.fig-cap}
@@ -187,8 +187,8 @@ knowledge of the world mostly comes from. That is not a claim that supervised
 fine-tuning *cannot* teach facts — it demonstrably can, and continued
 pretraining on domain text is a standard way to add some. The claim is about
 scale and reliability: a stage-2 run touching a few million tokens cannot
-broadly or dependably revise a world model built from four orders of magnitude
-more text, and [when people reach for it as their knowledge-update mechanism,
+broadly or dependably revise a world model built from millions of times
+more text (15.6 trillion tokens against a few million), and [when people reach for it as their knowledge-update mechanism,
 that is precisely when fine-tuning disappoints]{.hl}. @sec-rag exists because
 retrieval is the mechanism that does that job.
 
@@ -248,6 +248,11 @@ once. Every model family uses different markers, and a template mismatch
 between training and serving quietly degrades quality with no error message
 anywhere — quietly enough that people spend weeks blaming the data. This is the single most common way an
 otherwise correct fine-tune underperforms.
+
+At inference, call it with `add_generation_prompt=True`: that appends the
+empty assistant header, which is the model's cue that it is now its turn to
+answer. Forget it and even a well-tuned chat model may simply continue the
+user's message.
 :::
 
 ### Loss masking: the detail that silently breaks runs
@@ -307,12 +312,17 @@ In practice you build a `labels` tensor that is a copy of `input_ids` with
 every non-response position set to `-100`, the value PyTorch's cross-entropy
 treats as *ignore*. Modern SFT libraries do this for you if you tell them
 where the response starts; the failure mode is reaching for a plain causal-LM
-training loop and forgetting.
+training loop and forgetting. Two related details. Do not shift the labels one
+position yourself: Hugging Face causal-LM models already compare the prediction
+at position $t$ with the label at $t+1$ internally, and shifting twice trains
+the model to predict two tokens ahead. And in a multi-turn conversation the
+usual choice is to keep the loss on *every* assistant turn and mask every user
+turn, not just the last exchange.
 
 ::: {.column-margin}
 There is one legitimate reason to train on prompt tokens: if your prompts are
 themselves in a domain the base model has never seen, the extra signal helps
-the model model that domain. It is a deliberate choice, and it should be
+the model learn the language of that domain. It is a deliberate choice, and it should be
 justified in your run notes rather than inherited from a copied script.
 :::
 
@@ -325,7 +335,7 @@ magnitude, and the spread is informative rather than embarrassing.
 |:--|--:|:--|
 | LIMA [@zhou2023lima] | 1,000 | showing that a *little* is enough |
 | InstructGPT [@ouyang2022training] | 12,725 prompts | a general-purpose assistant |
-| Self-Instruct [@wang2023selfinstruct] | ~52,000 | synthetic data, no human writers |
+| Self-Instruct [@wang2023selfinstruct] | ~52,000 instructions | synthetic data, no human writers |
 | Tülu 3 [@lambert2025tulu3] | 939,344 prompts | a competitive open recipe |
 
 That last row hides the real work. Tülu 3's team assembled **23,327,961**
@@ -335,14 +345,14 @@ one in twenty-four — with a further 425,145 routed to preference tuning
 than it is a collection effort.
 
 LIMA is the interesting entry. Its authors fine-tuned a 65B LLaMa on exactly
-1,000 curated prompt-response pairs — 750 harvested from Stack Exchange and
-wikiHow, 250 written by hand — with *no* reinforcement learning and *no*
+1,000 curated prompt-response pairs — 750 harvested from community Q&A sites
+(Stack Exchange, wikiHow, Reddit), 250 written or adapted by the authors — with *no* reinforcement learning and *no*
 preference modelling at all. Against GPT-4, human raters judged LIMA's answers
 equal or better 43% of the time; against Bard 58%, against the RLHF-trained
 DaVinci003 65% [@zhou2023lima].
 
-There is a second reason a small set can go so far, established earlier: a
-model fine-tuned on a *collection* of instruction-phrased tasks improves on
+There is a second reason a small set can go so far, shown in 2021 by the FLAN
+work, before LIMA: a model fine-tuned on a *collection* of instruction-phrased tasks improves on
 tasks it never saw during that fine-tune [@wei2022finetuned]. What SFT installs
 is not a list of answers but the habit of treating an instruction as one.
 
@@ -400,8 +410,16 @@ work at all.
 Read the two totals against each other. [The model itself is one eighth of the
 bill. Optimizer state — the three fp32 rows — is three quarters of it, and the
 gradient is the remaining eighth.]{.hl} That ratio is the whole of
-parameter-efficient tuning: freeze a parameter and *seven* of its eight
+[parameter-efficient fine-tuning](#gloss-parameter-efficient-fine-tuning){#term-parameter-efficient-fine-tuning .term-ref}
+(PEFT): freeze a parameter and *seven* of its eight
 instalments disappear, leaving only the bf16 weight you still have to read.
+
+::: {#gloss-parameter-efficient-fine-tuning .column-margin .term-gloss}
+**parameter-efficient fine-tuning (PEFT)** — the family LoRA belongs to: train
+a small fraction of the weights (or a few added ones) and leave the rest
+frozen. Usually written *PEFT*.
+[↩](#term-parameter-efficient-fine-tuning){.term-back}
+:::
 
 The arithmetic is checkable against a published figure. QLoRA states that
 16-bit fine-tuning of a 65B LLaMA "requires more than 780 GB of GPU memory"
@@ -437,8 +455,10 @@ $$
 is the frozen bf16 weights *and nothing else*. The starting point is not.
 1.2 TB across 175B parameters is about 6.9 bytes each, well under the 16 the
 table predicts, so that figure was measured under a setup the paper does not
-spell out — 8-bit optimizer states, sharding across many cards, or activation
-checkpointing would each get you there. Quote the 350 GB as arithmetic you can
+spell out. Only cheaper per-parameter state gets you there — 8-bit or 16-bit
+optimizer moments, or no fp32 master copy. Sharding across many cards and
+activation checkpointing do not: sharding spreads the same bytes over more
+GPUs, and checkpointing trims activations, not the per-parameter state. Quote the 350 GB as arithmetic you can
 reproduce, and the 1.2 TB as *their* measurement.
 
 ### The low-rank hypothesis
@@ -536,11 +556,11 @@ worth understanding.
   <text x="700" y="206" class="t-xs t-muted">dim d</text>
 
   <line x1="14" y1="366" x2="750" y2="366" class="ln-thin"/>
-  <text x="14" y="386" class="t-xs t-muted">B starts at zero, so BA = 0 and the adapted model is bit-identical to the pretrained one at step 0. A starts random, so the gradient is not.</text>
+  <text x="14" y="386" class="t-xs t-muted">B starts at zero, so BA = 0 and the adapted model is identical to the pretrained one at step 0. A starts random, so B's gradient is not.</text>
 </svg>
 ```
 ::: {.fig-cap}
-Read the detour right to left and the two matrices have distinct jobs: $A$
+Follow the detour from $x$ to $h$ and the two matrices have distinct jobs: $A$
 projects the input down to $r$ numbers — it decides *which few directions of
 the input this task cares about*. $B$ projects those $r$ numbers back up — it
 decides *what to write into the output* for each direction $A$ found.
@@ -593,9 +613,9 @@ widespread convention $\alpha = 2r$ means nothing more exotic than "scale the
 adapter by 2".
 
 That convention is the community's, not the authors'. They report setting
-$\alpha$ "to the first $r$ we try" and then leaving it alone — which is an
-admission that they never tuned it, and which is *not* $\alpha = r$ at every
-rank. Fix $\alpha$ at 8 because you tried $r = 8$ first, and $r = 16$ then runs
+$\alpha$ "to the first $r$ we try" and then leaving it alone. In other words,
+they did not tune it. Note also that this is *not* $\alpha = r$ at every rank:
+if you fix $\alpha$ at 8 because you tried $r = 8$ first, then $r = 16$ runs
 at $\alpha/r = 0.5$. [Treat $\alpha = 2r$ as a default someone else picked for you, not
 as a result.]{.hl}
 
@@ -606,7 +626,7 @@ as a result.]{.hl}
   the task is far from anything in pretraining — a new language, a new
   notation, a genuinely new output format.
 - **$\alpha$** asks *how hard should the adapter push?* Raise it when training
-  is underfitting and lowering it when the model has started producing
+  is underfitting and lower it when the model has started producing
   confident nonsense.
 
 They are commonly conflated because $\alpha = 2r$ makes them move together.
@@ -656,8 +676,8 @@ an attention-only adapter is the single largest jump on the table: 2.25× on
 BERTurk, 3.08× on Llama. Measured from `q_proj, v_proj` alone the jump is
 larger still — 4.5× on BERTurk, 6.2× on Llama, 8.0× on Qwen. Second, even the
 most generous setting here is under 0.3% of an 8B model. Rank spans a wider
-range than targets do — $r$ from 1 to 128 is a factor of 128 — but it moves
-through a much smaller absolute band:
+range than targets do — $r$ from 1 to 128 is a factor of 128 — yet even the
+top of that range stays well under one percent of the model:
 
 | $r$ | 1 | 4 | 8 | 16 | 32 | 64 | 128 |
 |:--|--:|--:|--:|--:|--:|--:|--:|
@@ -791,8 +811,8 @@ step faster than plain LoRA on a card where plain LoRA already fits.
 LoRA has an operational property that matters more, in a company, than any of
 the training savings: an adapter can be **merged back into the base weights**.
 Since $h = W_0x + \frac{\alpha}{r}BAx = (W_0 + \frac{\alpha}{r}BA)x$, you can
-compute that sum once and ship an ordinary model. Serving is bit-for-bit the
-speed of the original — the paper's "no additional inference latency"
+compute that sum once and ship an ordinary model. Serving is exactly as fast
+as the original — the paper's "no additional inference latency"
 [@hu2022lora], and the reason LoRA displaced the earlier bottleneck adapters
 [@houlsby2019parameter], which insert extra layers and therefore extra latency
 forever.
@@ -858,10 +878,20 @@ one that only exists as a comparison [@christiano2017deep].
 
 ### RLHF: the four-model dance
 
-The original recipe [@stiennon2020learning; @ouyang2022training] turns those
+The original recipe,
+reinforcement learning from human feedback (RLHF)
+[@stiennon2020learning; @ouyang2022training], turns those
 comparisons into a training signal in two steps: fit a
 [reward model](#gloss-reward-model){#term-reward-model .term-ref} to the
 preferences, then optimize the language model against it.
+
+
+Two words from reinforcement learning appear from here on. The **policy** is
+simply the model being trained, seen as a rule that picks the next token given
+the text so far. The **KL divergence** $\mathbb{D}_{\text{KL}}[\pi \,\|\, \pi_{\text{ref}}]$
+measures how far one probability distribution has moved from another; it is
+zero when the two are identical and grows as they separate. Here it measures
+how far the policy has drifted from the model it started as.
 
 ::: {#gloss-reward-model .column-margin .term-gloss}
 **reward model** — a model trained on human comparisons that reads a prompt and
@@ -971,7 +1001,11 @@ separate object. Usually written *DPO*.
 Before the shortcut, the two objectives it is a shortcut *around*, because the
 derivation below leans on both. First, the reward model is fitted to the
 comparisons with the **Bradley–Terry** likelihood — the assumption that a person
-prefers $y_w$ over $y_l$ with probability $\sigma(r(x,y_w) - r(x,y_l))$:
+prefers $y_w$ over $y_l$ with probability $\sigma(r(x,y_w) - r(x,y_l))$. Here
+$y_w$ is the preferred (*winning*) answer, $y_l$ the rejected (*losing*) one,
+and $\sigma$ the logistic function. If you know chess ratings, this is the same
+model as Elo: only the difference between two scores decides who is expected
+to win.
 
 $$
 \mathcal{L}_{\text{RM}} = -\,\mathbb{E}_{(x, y_w, y_l)}\left[\log \sigma\!\left(r_\phi(x, y_w) - r_\phi(x, y_l)\right)\right]
@@ -993,10 +1027,15 @@ $$
 \;-\; \beta\, \mathbb{D}_{\text{KL}}\!\left[\pi_\theta(y \mid x) \,\|\, \pi_{\text{ref}}(y \mid x)\right]
 $$
 
+The number $\beta$ is the strength of the leash. A large $\beta$ keeps the
+policy close to the reference and gives up some reward; a small $\beta$ lets it
+chase the reward further — and, with a learned reward model, closer to reward
+hacking.
+
 PPO is one way of taking a step on that objective: it maximises a clipped
 surrogate so that a single batch cannot move the policy far
-[@schulman2017ppo]. That clip range is the hyperparameter the table above
-charges to PPO's account.
+[@schulman2017ppo]. That clip range is one of the hyperparameters the table
+below charges to PPO's account.
 
 *That* objective — maximise reward, penalised by KL divergence from the
 reference — has a known closed-form optimum:
@@ -1030,10 +1069,15 @@ measure both relative to where the reference model already had them, so you
 are rewarded for moving in the right direction rather than for agreeing with
 the reference.*
 
+One precision on "raise" and "lower". The loss only asks for the *gap* between
+the two log-ratios to widen. In practice both probabilities often fall during
+DPO, the rejected one faster, so do not be surprised if the preferred answer's
+own likelihood goes down while the loss improves.
+
 Notice what $\pi_{\text{ref}}$ is doing here, because it is the reason for the
 *"never DPO a base model"* rule you will meet later.
 
-The derivation assumed the preferences were sampled from the reference. So the
+DPO's setup assumes the preference pairs were sampled from the reference. So the
 paper sets $\pi_{\text{ref}} = \pi_{\text{SFT}}$ whenever an SFT model
 exists — and when one does not, it recommends fine-tuning on the *preferred*
 completions first and using that, explicitly "to mitigate the distribution
@@ -1090,9 +1134,20 @@ $$
 A_i = \frac{r_i - \operatorname{mean}(r_1, \ldots, r_G)}{\operatorname{std}(r_1, \ldots, r_G)}
 $$
 
+$A_i$ is called the **advantage** of answer $i$: positive means "better than
+this group's average", and the update makes that answer more likely; negative
+makes it less likely. Dividing by the standard deviation puts every prompt on
+the same scale, so easy and hard prompts pull with comparable force. One
+consequence to remember: if all $G$ answers get the same reward — all right or
+all wrong — every $A_i$ is zero (implementations add a tiny constant to avoid
+dividing by zero), and that prompt teaches nothing.
+
 The question stops being *how good is this answer in absolute terms* and
 becomes *was this attempt better than my other attempts at the same question*
-— which is both a more stable signal and a free one. In the paper's words,
+— which is both a more stable signal and a free one. GRPO still keeps the
+frozen reference and the KL leash, and it still needs *some* reward — a reward
+model or, as the next section shows, a checker. In the paper's words (*critic*
+is another name for the value model),
 GRPO "foregoes the critic model, instead estimating the baseline from group
 scores, significantly reducing training resources" [@shao2024deepseekmath].
 On DeepSeekMath-Instruct 7B it moved GSM8K from 82.9% to 88.2% and MATH from
@@ -1126,9 +1181,9 @@ The trade is close to clean: a learned reward model covers any task and is easy
 to hack; a verifier covers almost nothing and is much harder to hack, but only
 as far as its specification and implementation go. A test suite with gaps rewards
 a program that hard-codes the visible cases; a loose answer parser rewards
-whatever matches its regex. @sec-reasoning has the version of this that bites in
-practice. Which is why production recipes use both, on different subsets of the
-data.
+whatever matches its regex (@sec-reasoning has the version of this that bites
+in practice). Because the two kinds of reward fail in different ways,
+production recipes use both, on different subsets of the data.
 
 ### Choosing, by what data you have
 
@@ -1160,8 +1215,10 @@ The bottleneck in everything above is annotation. Constitutional AI
 The method has two halves. In the supervised half, the model answers a
 red-team prompt, then **critiques its own answer** against a written
 principle, then **revises** it; the revision becomes the training target. In
-the RL half, the same principles are used to label preference pairs, replacing
-the human annotator entirely — reinforcement learning from AI feedback, RLAIF.
+the RL half, the same principles are used to label preference pairs for
+harmlessness, replacing the human annotator there — reinforcement learning
+from AI feedback, RLAIF. (In the paper, the helpfulness comparisons were still
+labelled by people.)
 
 ::: {.column-margin}
 Anthropic's team wrote 16 principles for the harmlessness experiments and
@@ -1183,7 +1240,8 @@ and into a document is a real gain in accountability, independent of whether
 the technique works better.
 
 **What is not settled:** the feedback model has the same blind spots as the
-model being trained, because it usually *is* the same model. Where it cannot
+model being trained, because it is often the same model or a close relative
+of it. Where it cannot
 tell that an answer is subtly wrong, the training signal is confidently wrong,
 and no amount of scale fixes a bias shared by both sides of the loop. AI
 feedback is at its best on properties a model can check — is this rude, does
@@ -1199,8 +1257,8 @@ often skipped by teams who then complain about their inference bill.
 
 ::: {#gloss-knowledge-distillation .column-margin .term-gloss}
 **knowledge distillation** — training a small model to reproduce a large one's
-outputs. The small model inherits behaviour, not understanding: it cannot learn
-anything the teacher got wrong.
+outputs. The small model inherits behaviour, not understanding: where the
+teacher is wrong, the student learns the mistake rather than correcting it.
 [↩](#term-knowledge-distillation){.term-back}
 :::
 
@@ -1380,10 +1438,10 @@ documentation were never in the gradient in any retrievable form.
 </svg>
 ```
 ::: {.fig-cap}
-The tree is ordered by cost, cheapest first, and every branch above the line is
-a way of *not* running a training job. That ordering is the recommendation: a
+The tree is ordered by cost, cheapest first, and every exit before question 4
+is a way of *not* running a training job. That ordering is the recommendation: a
 fine-tune is a maintenance commitment — a model to re-run, re-evaluate and
-re-deploy every time the base model updates — and the branches above it are
+re-deploy every time the base model updates — and those earlier exits are
 not.
 :::
 ::::
@@ -1493,8 +1551,8 @@ them.
 4.6× more.** Say what that ratio is: 12.5% against 2.7% is a ratio of *relative
 loss increases* measured through a frozen head, not a measurement that one model
 forgot 4.6 times as much Turkish. On text that has nothing to do with the task,
-a full fine-tune costs 12.5% of the model's masked-language loss and four points
-of top-1 accuracy. That is not
+a full fine-tune raises the model's masked-language loss by 12.5% and costs four
+points of top-1 accuracy. That is not
 catastrophic in the dramatic sense — the model still speaks Turkish — but it is
 a real, measurable loss of the thing you paid for during pretraining, bought
 with a task nobody will ever ask this model about again.
@@ -1652,8 +1710,9 @@ everyone uses. Whether it stops paying under rank-stabilised scaling is a
 different experiment, and this chapter did not run it.
 
 The curve rises once and then flattens, and the flat part is
-where you should be standing. This is the rank sweep the arithmetic in
-@sec-lora said would be an afterthought, and on this task it is.
+where you should be standing. That is what the low-rank hypothesis in
+@sec-lora would lead you to expect — the parameter arithmetic alone could not
+have told you — and on this task rank is an afterthought.
 
 **The full fine-tune wins, and it wins on one class.** 83.90 against $r=8$'s
 82.69 is a 1.21-point difference in this run, and the minority class is where
@@ -1724,10 +1783,11 @@ demonstration, not an experiment.
   split. The 0.30 that separates $r=8$ from $r=64$, and the 0.03 separating
   $r=1$ from $r=4$, are the size of differences a single seed cannot resolve —
   do not read a ranking into them. With one seed per row this chapter cannot
-  say which gaps are noise and which are not; what it can say is that the gap
-  between row 1 and everything else is far larger than the rest, as is the
-  parameter counts, and the accuracy-versus-macro-F1 split between the full
-  fine-tune and every LoRA row.
+  say which gaps are noise and which are not. What it can say is that the gap
+  between row 1 and everything else is far larger than any other gap in the
+  table, and that the accuracy-versus-macro-F1 split between the full
+  fine-tune and the LoRA rows holds for every single LoRA row. (The parameter
+  counts are arithmetic, not measurements, so no seed can move them.)
 
 ### Your turn
 
@@ -1821,10 +1881,10 @@ No — the curve flattens almost immediately and then goes slightly backwards.
 Measured: $r=1 \to r=8$ buys **2.2** macro-F1 points. $r=8 \to r=64$, eight
 times the parameters, *loses* **0.30**. Stand on the flat part.
 
-The caveat that makes this honest: 0.30 is well inside single-seed noise, so do
-not read a ranking into it. What is *outside* the noise is the shape — [the
-curve rises once and then stops]{.hl}. Rank is an afterthought on this task, and
-the arithmetic in @sec-lora predicted it would be.
+The caveat that makes this honest: 0.30 is the size of gap a single seed cannot
+resolve, so do not read a ranking into it. What matters is the shape — [the
+curve rises once and then stops]{.hl}. Rank is an afterthought on this task,
+which is what the low-rank hypothesis in @sec-lora would lead you to expect.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -1871,7 +1931,8 @@ rather than a bug you can patch out.
 
 Gradient descent on a narrow objective moves weights that other capabilities
 depended on. The mitigations are all versions of *move less*: lower learning
-rate, fewer epochs, PEFT (the frozen weights literally cannot drift), or mixing
+rate, fewer epochs, PEFT (the base weights cannot drift, although the merged
+model can still forget, as @sec-forgetting measured), or mixing
 some general data back into the fine-tuning set.
 
 The reason this matters more than it sounds: [it is measured against whatever
@@ -1897,16 +1958,17 @@ default answer to "should we fine-tune?" is usually no.
    It does not reliably install *facts*; retrieval does that, and a fact injected
    by fine-tuning is expensive to update and hard to attribute. The framing that
    makes this land: a base model is not broken, it is answering a different
-   question — given this text, what comes next — and [whenever you use it as
-   though it were a chat model, that is precisely when fine-tuning
-   disappoints]{.hl}. Then say the uncomfortable half: most fine-tuning requests
+   question — given this text, what comes next. Fine-tuning teaches it which
+   question you are asking; it does not reliably teach it new answers, and
+   [whenever a team uses fine-tuning as its knowledge-update mechanism, that
+   is precisely when fine-tuning disappoints]{.hl}. Then say the uncomfortable half: most fine-tuning requests
    that arrive in a real team are better served by a better prompt, retrieval, or
    a fixed label schema.
 
 2. **Explain LoRA to someone who knows linear algebra.** Freeze $W$ and learn
    $\Delta W = BA$ where $B$ is $d \times r$ and $A$ is $r \times k$ with $r \ll
-   \min(d,k)$. Forward becomes $Wx + BAx$, and at serving time you can fold $BA$
-   into $W$ so inference costs nothing extra. Two details that show you have used
+   \min(d,k)$. Forward becomes $Wx + \frac{\alpha}{r}BAx$, and at serving time
+   you can fold $\frac{\alpha}{r}BA$ into $W$ so inference costs nothing extra. Two details that show you have used
    it: $A$ is randomly initialised and $B$ is zeroed, so the adapter starts as an
    exact no-op and training cannot destabilise the pretrained model at step 0;
    and $\alpha$ behaves as a learning-rate multiplier on the adapter path, which
