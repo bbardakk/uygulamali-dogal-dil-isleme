@@ -59,19 +59,36 @@ def agent(question, tools, model, max_steps=10):
     raise StepLimitExceeded(question, messages)   # 7. it did not finish
 ```
 
-That is an agent. Fourteen statements — count them — and this loop is the
-pattern underneath the frameworks you will meet; what they add is mostly
-opinions about statements 1, 4 and 7, plus the state management, validation,
-scheduling and recovery that a fourteen-line loop does not have.
+That is an agent. Fourteen statements, the `def` included — count them — and
+this loop is the pattern underneath the frameworks you will meet. (The numbers
+in the comments are labels for the discussion below, not statement counts.)
+What frameworks add is mostly opinions about the lines marked 1, 4 and 7, plus
+the state management, validation, scheduling and recovery that a
+fourteen-statement loop does not have.
 
-Three details in there are not decoration. `call.arguments` arrives as a JSON
-*string* on every OpenAI-compatible endpoint, so `**call.arguments` raises
-`TypeError` and — because it does so inside the `try` — hands the model an
-error message blaming its own call for the runtime's bug. The `tool_call_id`
-is what makes parallel tool calling expressible at all: five results come back
-in one turn and only the id says which answers which. And the exception
-carries `messages`, because whatever you decide to do when the cap fires, you
-can only do it if the transcript survives the raise.
+Three details in there are not decoration. First, the arguments. On an
+OpenAI-compatible endpoint `call.arguments` arrives as a JSON *string*, so
+`**call.arguments` raises `TypeError`. Because that happens inside the `try`,
+the model receives an error message that blames its own call for the
+runtime's bug. The reverse trap exists too: Ollama's native `/api/chat` and
+Anthropic's Messages API hand you an already-parsed object, and there it is
+`json.loads` that raises. Check which one your client returns. Second, the
+`tool_call_id` is what makes parallel tool calling expressible at all: five
+results come back in one turn and only the id says which answers which. Third,
+the exception carries `messages`, because whatever you decide to do when the
+cap fires, you can only do it if the transcript survives the raise.
+
+The message shapes are the provider's protocol, and they differ in detail
+though not in idea. Before any of this, the model is sent the list of tools —
+for each one a name, a description and a JSON Schema for its arguments, the
+same schemas @sec-decoding-tool-args constrains. In the OpenAI-style format
+used above, the assistant message carries a `tool_calls` list and each result
+goes back as a separate `role: "tool"` message with the matching
+`tool_call_id`. In Anthropic's format, the assistant message contains
+`tool_use` blocks (an `id`, a `name` and an `input` object), the response's
+`stop_reason` is `"tool_use"`, and the results go back as `tool_result` blocks,
+each with the matching `tool_use_id`, inside the next `user` message. The loop
+is the same in both; only the field names change.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -124,7 +141,7 @@ can only do it if the transcript survives the raise.
   <text x="270" y="280" class="t-xs t-rose t-b">the transcript only grows</text>
   <text x="270" y="293" class="t-xs t-muted">cost rises per model call; mistakes stay</text>
   <text x="530" y="280" class="t-xs t-rose t-b">the runtime is the boundary</text>
-  <text x="530" y="293" class="t-xs t-muted">it emits arguments, never actions</text>
+  <text x="530" y="293" class="t-xs t-muted">model emits arguments, not actions</text>
 </svg>
 ```
 
@@ -146,27 +163,32 @@ only one.
 **`messages` is the state, and it only grows.** There is no other memory. Every
 observation is appended, so the context gets longer with every step — which
 makes cost grow superlinearly in the number of steps, and eventually collides
-with the window. The fourteen statements do not handle that collision: when
+with the context window. The fourteen statements do not handle that collision: when
 the window overflows, `model.chat` raises *outside* the `try`, and the run
 dies with the transcript unsaved. A production version wraps that call too,
 persists `messages` before re-raising, and hands the overflow to a compaction
 step — which is where @sec-context-engineering starts.
 
-**Statement 3 is the termination condition, and it is a *model* decision.** The loop
+**The line marked 3 is the termination condition, and it is a *model* decision.** The loop
 ends when the model chooses not to call a tool. Nothing checks whether the task
 is complete. That is the single most surprising property of this architecture
 for someone arriving from ordinary software: the stopping rule is a
-prediction.
+prediction. It also catches more than a finished answer. A reply that was cut
+off by the output-token limit, or blocked by a content filter, has no tool
+calls either, so this loop returns the fragment as if it were the answer.
+Check the reason the provider gives for stopping (`finish_reason` or
+`stop_reason`) before you trust `reply.content`.
 
-**Statement 6 turns an exception into text.** A failed tool call is not a
+**The line marked 6 turns an exception into text.** A failed tool call is not a
 crash; it is an observation the model gets to react to. Whether it reacts
 *well* is @sec-tool-design's subject, and it is largely decided by what that
 string says. Note also what else that `except` swallows: a `KeyError` from
 `tools[call.name]` is *your* bug, and the model receives it as though the tool
-had failed. A runtime worth trusting distinguishes tool failures from harness
-failures before it writes the observation.
+had failed. A runtime worth trusting distinguishes tool failures from failures
+of the *harness* — your own code around the model — before it writes the
+observation.
 
-**Statement 7 is the honest part.** A
+**The line marked 7 is the honest part.** A
 [**step cap**](#gloss-step-cap){#term-step-cap .term-ref} is not a performance
 tuning knob,
 
@@ -180,30 +202,6 @@ it fires — retry, escalate, return partial work — is a product decision that
 deserves to be made deliberately rather than by whatever the framework defaults
 to.
 
-### Three ways to make the exit a condition again
-
-The exit does not have to stay a prediction. Three cheap moves put a checkable
-condition back into the loop, in increasing order of intrusiveness.
-
-**Make finishing a tool.** A `submit_answer(answer)` in the schema turns "I am
-done" into a call the runtime can recognise, so the loop terminates on an
-observable event rather than on an absence. It also fixes the text protocol's
-problem in @sec-agent-anatomy-decay directly: `CEVAP` stops competing with
-`ARA` once both are the same *kind* of thing.
-
-**Detect repetition.** If a call is byte-identical to one already in the
-transcript, the loop has *probably* stopped making progress — with a real
-exception to carve out: polling a job, re-reading a file the agent just wrote,
-or re-querying data that changes are all legitimate repeats. Exempt the tools
-where that is the point, and apply the check to the rest. Return an observation
-that says so rather than the same result again — the chapter's own worst failure
-below is four identical calls in a row, and one line of bookkeeping catches it.
-
-**Bound three budgets, not one.** Steps, wall-clock seconds and tokens fail
-differently: a run can stay under ten steps and still spend a minute or fifty
-thousand tokens. Each needs a defined behaviour when it fires, and the
-fourteen statements above bound only the first.
-
 **There is no plan.** The model chooses one action, sees one result, and
 chooses again. Anything that looks like planning is either the model writing a
 plan into its own context and then following it, or your code imposing
@@ -213,6 +211,35 @@ distinction is worth keeping: writing a plan into the transcript is
 over the run. Imposing a decomposition your code then executes is not planning
 at all — it is a pipeline, and @sec-agent-anatomy-decide argues it is usually
 the better trade.
+
+### Three ways to make the exit a condition again
+
+The exit does not have to stay a prediction. Three cheap moves put a checkable
+condition back into the loop, in increasing order of intrusiveness.
+
+**Make finishing a tool.** A `submit_answer(answer)` in the schema turns "I am
+done" into a call the runtime can recognise, so the loop terminates on an
+observable event rather than on an absence. For the exit to become a real
+condition, a plain-text reply must stop counting as one: where the API offers
+it, force a tool call on every turn (`tool_choice: "required"` in OpenAI's
+API, `{"type": "any"}` in Anthropic's). A finish tool also fixes the problem of the text
+protocol measured in @sec-agent-anatomy-decay directly: there the answer
+command `CEVAP` ("answer") competes with the search command `ARA` ("search"),
+and it stops competing once both are the same *kind* of thing.
+
+**Detect repetition.** If a call is byte-identical to one already in the
+transcript, the loop has *probably* stopped making progress — with a real
+exception to carve out: polling a job, re-reading a file the agent just wrote,
+or re-querying data that changes are all legitimate repeats. Exempt the tools
+where that is the point, and apply the check to the rest. Return an observation
+that says so rather than the same result again — the chapter's own worst failure
+below is the same call repeated until the step cap, and one line of
+bookkeeping catches it.
+
+**Bound three budgets, not one.** Steps, wall-clock seconds and tokens fail
+differently: a run can stay under ten steps and still spend a minute or fifty
+thousand tokens. Each needs a defined behaviour when it fires, and the
+fourteen statements above bound only the first.
 
 ::: {.column-margin}
 It is worth writing this loop yourself once, in whatever language you use,
@@ -239,8 +266,8 @@ the list of messages, and nothing else. There is no working memory, no variable
 bindings, no scratch space the model can address. Everything the agent knows at
 step 7 is whatever survived into the transcript by step 6.
 
-That is a property of the minimal loop, not a law about agents. The next four
-chapters all buy their way out of it: @sec-context-engineering moves state into
+That is a property of the minimal loop, not a law about agents. Three of the
+chapters that follow buy their way out of it: @sec-context-engineering moves state into
 files the agent reads back, @sec-memory gives it a store that outlives the run,
 and @sec-multi-agent hands sub-tasks to workers with transcripts of their own.
 Read the three consequences below as what you get *by default*, and as the
@@ -254,7 +281,8 @@ Each model call re-sends the whole transcript, so a genuinely sequential run of
 *n* steps costs roughly the sum of the first *n* context lengths — quadratic
 rather than linear. The saving grace, measured in @sec-agent-anatomy-decay, is
 that a model which emits several tool calls at once collapses many steps into
-one, and that turns out to be the single largest lever on what an agent costs.
+one, and in this chapter's measurement that is the largest lever on what the
+agent costs.
 
 **Nothing is ever forgotten, including the mistakes.** A wrong tool call and
 its error message stay in context for the rest of the run, and the model
@@ -273,11 +301,14 @@ retry it" is a more expensive suggestion for an agent than for an HTTP
 request.
 
 ::: {.column-margin}
-One thing takes the sting out of the quadratic term and it is worth knowing
-before you optimise anything else. Every turn of an agent loop sends an exact
-*prefix* of the previous turn, which is the pattern prompt caching was built
-for: a cached read costs roughly a tenth of a fresh one. The quadratic does
-not go away, its constant shrinks by about an order of magnitude — and the
+One thing softens the quadratic term and it is worth knowing before you
+optimise anything else. Every request in an agent loop *begins with* the whole
+previous request, unchanged, which is the pattern prompt caching was built
+for: on current price sheets a cached read often costs around a tenth of a
+fresh one. The exact discount varies by provider and model, some providers
+charge extra to write the cache, and by default a cache entry expires after a
+few idle minutes. The quadratic does not go away; its constant shrinks, by up to an
+order of magnitude — and the
 corollary is uncomfortable, because compacting a transcript rewrites the
 prefix and invalidates the cache. @sec-context-engineering's compaction is
 therefore not free, and @sec-serving has the mechanics.
@@ -310,7 +341,9 @@ The gate belongs in the runtime, not the prompt: a model can be talked out of
 asking for permission, a `requires_approval` flag on the tool cannot. Where
 that gate goes and who is on the other side of it is @sec-guardrails.
 
-The mistake worth naming is starting at the bottom. An open loop is the most
+The last row is not a further step up in autonomy — an approval gate can be
+added to any loop — so read the first four rows as the scale. The mistake
+worth naming is starting with the open loop. An open loop is the most
 *impressive* thing to build and almost never the thing the problem needs, and
 because it works in a demo the cost only shows up later, in the form of a
 system nobody can debug.
@@ -467,14 +500,18 @@ straight into the prompt and no tool at all. Until that exists, read the curve
 as "reliability falls with the amount that has to be combined at the end", and
 treat the agentic reading as the interpretation rather than the finding.
 
-What the curve is *not* is steady per-step attrition. Constant per-step
-success would show as $p^k$; solving for it gives 0.980, 0.928, 0.908 and
-0.833 — falling, not constant — and a flat 0.90 per step would predict 59% at
-five lookups against the 40% measured. The load per step is getting heavier,
-which is the same conclusion from a different direction. Externally, this is
-the shape @yao2024taubench measures at scale with `pass^k`: frontier
-function-calling agents that clear a task around half the time clear it eight
-times out of eight under 25% of the time.
+What the curve is *not* is steady per-step attrition. If every lookup
+succeeded independently with the same probability $p$, a task needing $k$
+lookups would succeed with probability $p^k$. Solving $p^k$ = measured
+accuracy for two to five lookups gives $p$ = 0.980, 0.928, 0.908 and 0.833 —
+falling, not constant — and a flat 0.90 per step would predict
+$0.9^5 \approx$ 59% at five lookups against the 40% measured. The load per
+step is getting heavier, which is the same conclusion from a different
+direction. Externally, @yao2024taubench measures a related decay at scale
+with `pass^k`, the probability that an agent succeeds on *all* $k$
+independent attempts at the same task: the best function-calling agent they
+tested in 2024 (`gpt-4o`) succeeded on fewer than half the tasks, and in the
+retail domain its `pass^8` was below 25%.
 
 ### Parallel tool calling collapses the loop
 
@@ -484,8 +521,8 @@ uses [**parallel tool calling**](#gloss-parallel-tool-calling){#term-parallel-to
 
 ::: {#gloss-parallel-tool-calling .column-margin .term-gloss}
 **Parallel tool calling** — a model emitting several tool calls in one turn.
-It collapses many loop iterations into one, which makes it the largest single
-lever on what an agent costs.
+It collapses many loop iterations into one, which makes it one of the largest
+levers on what an agent costs when the calls are independent.
 [↩](#term-parallel-tool-calling){.term-back}
 :::
 
@@ -522,23 +559,31 @@ protocol differed. So the second block is a clean answer to a question that
 usually gets settled by taste: does the provider's tool-calling API buy you
 anything a well-written prompt could not?
 
-The text protocol is deliberately the shape @yao2023react introduced: the
-model writes an action as text, a parser extracts it, the observation comes
-back as text. In 2022 there was no alternative — no provider exposed a typed
-tool schema — and the contribution was showing that interleaving reasoning
-with acting beat doing either alone. So what follows is not "ReAct is bad". It
+The text protocol is deliberately the shape @yao2023react introduced. In
+ReAct ("reason + act") the model writes, in plain text, a *Thought* (a short
+piece of reasoning), then an *Action* (a tool name and its arguments); a
+parser extracts the action, the runtime runs it, and the result comes back as
+an *Observation* line, after which the cycle repeats. In 2022 there was no
+alternative — no provider exposed a typed tool schema — and the contribution
+was showing that interleaving reasoning with acting beat acting without
+reasoning, and that combining it with chain-of-thought gave the best
+question-answering results. So what follows is not "ReAct is bad". It
 is what the *typed transport* added once it arrived, on one small model. Note
 too that this protocol has no `Thought:` step: it is ReAct's transport without
 ReAct's scratchpad.
 
 The native loop is ahead at every step count — by 60, 20, 28, 8 and 12
-accuracy points — while using a third of the model calls. But only the first
-of those gaps survives a test on 25 tasks: 25/25 against 10/25 is Fisher exact
-p = 3 × 10⁻⁶, while the 8-point gap at four lookups is 17 correct against 15
-(p = 0.77) and means nothing. The text protocol's own curve — 40, 76, 52, 60,
-28 — is not even monotone, and is compatible with noise around a flat line.
-The two findings the totals cannot hide are the ones to keep: the native loop
-used a third of the model calls, and it never once failed to terminate. The
+accuracy points — while using about a third of the model calls on average
+(between a fifth and two-fifths, depending on the step count). But only the
+first of those gaps survives a test on 25 tasks: 25/25 against 10/25 is Fisher
+exact p = 3 × 10⁻⁶, while the 8-point gap at four lookups is 17 correct
+against 15 (p = 0.77) and means nothing. The text protocol's own curve — 40,
+76, 52, 60, 28 — is not even monotone. It does vary more than chance alone
+would explain (a χ² test across the five cells gives p ≈ 0.009), but not as a
+steady decay: its low points are one lookup, where most runs never stopped,
+and five. The two findings the totals cannot hide are the ones to keep: the
+native loop used about a third of the model calls, and it never once failed
+to terminate. The
 reason for both is visible in the transcripts rather than in the accuracies.
 
 Here is a text-protocol run on the *easiest* task, one lookup:
@@ -674,7 +719,7 @@ data-dependent?"** Complexity is not the criterion; branching is.
 
 : The criterion is branching, not difficulty {tbl-colwidths="[46,54]"}
 
-The measurement in @sec-agent-anatomy-decay gives this teeth. A fixed pipeline
+The measurement in @sec-agent-anatomy-decay makes this concrete. A fixed pipeline
 for that task — parse the project codes, look each one up, add them — moves
 all the risk into one place, the parse. Once the codes are extracted the
 lookups and the sum are **exact at every step count**, cost nothing per call
@@ -682,11 +727,14 @@ and take microseconds; the agent reaches 40% at five lookups. That is the
 trade in its clearest form, and note what it is not: it is not "no model", and
 it is not "a regex beats a model". It is that the model does one bounded thing
 instead of five sequential ones. Where the steps are known, writing them down
-beats asking a model to rediscover them every time, and it is not close.
+beats asking a model to rediscover them every time, and by a wide margin.
 
 @anthropic2024effectiveagents makes the same argument from production
 experience, and puts it more bluntly: add complexity only when it demonstrably
-improves outcomes.
+improves outcomes. You will meet its vocabulary everywhere, so map it onto this
+chapter's: what it calls *workflows* — model calls and tools orchestrated
+through predefined code paths — are the pipelines and routers above, and it
+reserves the word *agent* for systems where the model directs its own steps.
 
 ### The failure modes are different in kind
 
@@ -757,7 +805,8 @@ transcripts are all ways of not living inside one message list.
 
 It helps, and by more than convenience. On the same model and task the native
 API beat a hand-rolled text protocol at every step count — by up to 60 accuracy
-points — while using a third of the model calls. The mechanism is termination:
+points, though only that largest gap is statistically clear on 25 tasks —
+while using about a third of the model calls. The mechanism is termination:
 in the structured API "answer instead of calling a tool" is a different *kind*
 of action, whereas in a text protocol the answer command competes with the tool
 command, and the transcript's own history argues for another tool call.
@@ -821,7 +870,7 @@ Because every model call re-sends the entire transcript, so a sequential run of
 volunteering is that this depends on whether the model batches its tool calls:
 in this chapter's measurement the native loop used two model calls whatever the
 task size, and five times the work cost 1.52× the tokens — while the sequential
-text loop paid 3.5× the model calls for the same work.
+text loop paid 3.5× the model calls for the same five-lookup task.
 
 ### Testing whether you have shipped one
 
@@ -919,7 +968,7 @@ count beyond which you would not trust this agent unsupervised.
 
 ## Exercises {#sec-agent-anatomy-exercises}
 
-1. **Fourteen lines.** Implement the loop from scratch against two tools you
+1. **Fourteen statements.** Implement the loop from scratch against two tools you
    already have. Do not use a framework. Time yourself; it is an afternoon.
 2. **Find your decay curve.** Build tasks needing 1 to 6 tool calls with
    checkable answers, and plot accuracy against step count. Mark the point
@@ -952,7 +1001,7 @@ framework. Everything below reads differently afterwards.
 |:--|:--|
 | [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) — Anthropic | the best short piece on this subject; its central argument is this chapter's, argued from production experience |
 | [Agents](https://huyenchip.com/2025/01/07/agents.html) — Chip Huyen | a long, well-organised treatment of planning, tools and failure modes |
-| [LLM Powered Autonomous Agents](https://lilianweng.github.io/posts/2023-06-23-agent/) — Lilian Weng | the survey-depth post that named most of the vocabulary people now use |
+| [LLM Powered Autonomous Agents](https://lilianweng.github.io/posts/2023-06-23-agent/) — Lilian Weng | the survey-depth post that popularised much of the vocabulary people now use |
 | [`smolagents`](https://github.com/huggingface/smolagents) | small enough to read in an afternoon, which makes it the best framework for *learning* what a framework does |
 | [`langgraph`](https://github.com/langchain-ai/langgraph) | the loop as an explicit state machine — useful precisely because it makes the control flow something you draw |
 | [`pydantic-ai`](https://github.com/pydantic/pydantic-ai) | typed tools and typed results, with the validation boundary made obvious |
@@ -996,8 +1045,8 @@ framework. Everything below reads differently afterwards.
   so debug there first.
 - **Count model calls separately from tool calls.** Parallel tool calling
   collapsed this loop to **2.0 model calls at every step count**, so five times
-  the work cost 1.52× the tokens. A sequential loop pays on every step: the
-  text protocol used 3.5× the model calls for the same work.
+  the work cost 1.52× the tokens. A sequential loop pays on every step: at
+  five lookups the text protocol used 3.5× the model calls for the same work.
 - **The structured tool API is not sugar.** It was ahead at every step count,
   by up to 60 accuracy points — though only the one-lookup gap survives a
   significance test on 25 tasks — and it never failed to terminate, mainly
