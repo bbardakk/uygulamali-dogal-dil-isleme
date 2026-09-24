@@ -6,10 +6,9 @@ Turkish [@hasan2021xlsum] — 27,176 training and 3,397 test BBC Türkçe
 articles with journalist-written one-sentence summaries. The extractive
 systems are scored on all 3,397; the LLM on a 500-article sample, stated
 where it appears. @sec-summarization-rouge reports a tokenizer defect that
-changes every Turkish ROUGE number computed with the stock tokenizer, so the
-ROUGE used here
-is written out rather than imported and validated against `rouge-score` to
-ten decimal places on text that tool can tokenize. Software: `rouge-score`
+changes every Turkish ROUGE number computed with the stock tokenizer. So the
+ROUGE used here is written out rather than imported, and it was validated
+against `rouge-score` to ten decimal places on text that tool can tokenize. Software: `rouge-score`
 0.1.2, `snowballstemmer` 3.1.1, NumPy 2.5.2 on Python 3.14.5; the local LLM
 through `ollama` 0.24.0.
 :::
@@ -24,16 +23,16 @@ through `ollama` 0.24.0.
   ceiling;
 - explain what ROUGE measures, what it cannot see, and why its standard
   implementation is broken for Turkish;
-- distinguish intrinsic from extrinsic unfaithfulness and measure the rate of
-  each;
+- distinguish intrinsic from extrinsic unfaithfulness, and say which of the
+  two a given automatic check can detect;
 - use an LLM as a judge while measuring the biases that come with it;
 - summarize documents longer than the context window, and say what the
   pipeline loses.
 
 ## "Summarize this" is not one task {#sec-summarization-tasks}
 
-Before any modelling, a specification problem that sinks more summarization
-projects than any modelling choice. The word names at least four different
+Before any modelling there is a specification problem, and it sinks more
+summarization projects than any modelling choice. The word names at least four different
 jobs, and the person asking usually has not decided which:
 
 | axis | one end | the other end |
@@ -131,7 +130,12 @@ survives, the phrasing does not. For contrast, CNN /
 DailyMail — the corpus most summarization intuitions were formed on — has
 summaries built from bullet highlights that reuse the article's own clauses.
 Running the identical measurement on 400 of its test articles makes the
-contrast concrete:
+contrast concrete. Three column names come from later sections, so here is
+what they mean for now: **lead-3** uses the article's first three sentences
+as the summary; the **oracle** is the single article sentence that best
+matches the reference — a ceiling, explained in
+@sec-summarization-extractive; and **R-1** is ROUGE-1, the word-overlap score
+of @sec-summarization-rouge, on a 0–100 scale where higher means more overlap.
 
 | corpus | ref words | coverage | density | lead-3 R-1 | oracle R-1 |
 |:--|--:|--:|--:|--:|--:|
@@ -149,8 +153,11 @@ extreme summarization: one sentence, composed rather than selected.
 
 ::: {.column-margin}
 The published lead-3 figure for CNN / DailyMail is 40.34 [@see2017get],
-higher than the 29.44 measured here, because that number comes from the
-original Perl ROUGE-1.5.5 with stemming and a truncated reference. The gap is
+higher than the 29.44 measured here. That number comes from the original Perl
+ROUGE-1.5.5, with its own options and its own preprocessing of the articles.
+Stemming alone usually moves English ROUGE-1 by about a point, not eleven, so
+much of the gap must come from preprocessing — including which three sentences
+each pipeline's sentence splitter called "the first three". The gap is
 a preview of @sec-summarization-rouge's argument: ROUGE is not one number but
 a family of them, and two papers reporting "ROUGE-1" are often not reporting
 the same quantity.
@@ -175,7 +182,8 @@ best-matching article sentence, 500 test articles
   sentences 9+: 144   28.8%
 ```
 
-Lead bias is real but weak: the first sentence wins only 15.8% of the time,
+*Lead bias* — the tendency of news writing to put the important content
+first — is real but weak here: the first sentence wins only 15.8% of the time,
 and **28.8% of summaries are best matched by something from sentence 9
 onward**. A system that reads only the opening is throwing away most of the
 evidence.
@@ -201,7 +209,7 @@ summary 'uzmanlara'    <- article 'uzmanlar'
 summary 'işgal'        <- article 'işgali'
 ```
 
-Same word, different case, counted as different by anything that compares
+Same word, different suffix, counted as different by anything that compares
 surface strings. Hold on to that: it is a corpus statistic here, and in
 @sec-summarization-rouge it becomes a defect in the field's standard metric.
 
@@ -237,14 +245,20 @@ corpus lead-3 scores **14.03** against lead-2's **14.04**. Do not read that as
 lead-2 beating it: 0.01 ROUGE-1 over 3,397 articles is a tie, and the table one
 column over shows the third sentence *is* adding something — R-2 rises from 3.61
 to 3.74. What it adds in recall it pays for in precision, seventeen words'
-worth, and the two cancel. [Report the lead baseline always; assume it is strong
-never.]{.hl}
+worth, and the two cancel. [Always report the lead baseline; never assume it is
+strong.]{.hl}
 
-**TextRank does not earn its 25 seconds.** Building the sentence-similarity
-graph and running centrality on it — @sec-clustering's machinery, no new
-model — scores 13.66, between lead-1 and lead-2 [@mihalcea2004textrank]. It
-is a real method and on this corpus it is a rounding error away from taking
-the first sentence.
+**TextRank does not earn its 25 seconds.** TextRank [@mihalcea2004textrank]
+treats each sentence as a node, links sentences that share words, and runs
+PageRank on that graph: a sentence is important if it is similar to many
+other important sentences, so the most "central" sentence is taken as the
+summary. The graph is the kind of object @sec-clustering built over
+documents; the centrality score is new, but there is no trained model.
+LexRank ([Erkan and Radev, 2004](https://arxiv.org/abs/1109.2128)) is the
+same idea with TF-IDF cosine similarity as the edge weight. TextRank scores
+13.66, between lead-1 and lead-2. It is a real method, and on this corpus
+it buys under one ROUGE-1 point over the first sentence while spending ten
+more words to do it.
 
 **The oracle is the number that decides the chapter.** The oracle picks, for
 each article, the single source sentence maximising **ROUGE-1 F1** against the
@@ -253,7 +267,9 @@ It scores **24.89**.
 
 Two cautions about how to read that row. The `9.31` and `20.39` beside it are
 the R-2 and R-L scores *of the sentence R-1 selected*, not oracles for those
-metrics — an R-2 oracle could pick differently and would score at least as high, since the same sentence may maximise both. And it is a
+metrics. An R-2 oracle could pick a different sentence, and it would score at
+least 9.31 on R-2, because by definition it picks the R-2 maximum for every
+article. And it is a
 **single-sentence** ceiling, so it is comparable across corpora only when the
 reference lengths are: XL-Sum Turkish references run about 21 words in one
 sentence, CNN / DailyMail's about 56 across three or four, which structurally
@@ -289,8 +305,31 @@ of code, and it decides the architecture.
 
 [ROUGE](#gloss-rouge){#term-rouge .term-ref} [@lin2004rouge] counts n-gram
 overlap between a candidate summary and a reference. ROUGE-1 is unigram
-overlap, ROUGE-2 bigram, ROUGE-L the longest common subsequence, each reported
-as an F1. It has been the field's default metric for twenty years, and it
+overlap, ROUGE-2 bigram, ROUGE-L the longest common subsequence — the longest
+run of words that appears in both texts in the same order, gaps allowed. The
+name stands for *Recall-Oriented Understudy for Gisting Evaluation*: the
+original version reported recall, and today each variant is usually reported
+as an F1.
+
+A worked example makes the three numbers concrete. Reference: *"the minister
+denied that the bank would be sold"* (9 words). Candidate: *"the minister said
+the bank would be sold"* (8 words). Seven candidate words also occur in the
+reference. (A word is matched at most as many times as it occurs in the
+reference; *the* occurs twice in each text, so both copies count.) So
+
+$$
+P = \tfrac{7}{8} = 0.875, \qquad R = \tfrac{7}{9} = 0.778, \qquad
+F_1 = \tfrac{2PR}{P+R} = 0.82 .
+$$
+
+For ROUGE-2 the units are word pairs: 5 of the candidate's 7 bigrams occur in
+the reference's 8, giving $F_1 = 0.67$. The longest common subsequence is
+*the minister … the bank would be sold*, 7 words, so ROUGE-L equals ROUGE-1
+here. Papers multiply by 100, so this candidate "scores 82 ROUGE-1". Keep the
+example in mind: the candidate says the opposite of the reference, and we
+come back to it below.
+
+It has been the field's default metric for twenty years, and it
 survives for the honest reason that it is cheap, deterministic and correlates
 with quality well enough to rank obviously-bad systems below obviously-good
 ones.
@@ -307,7 +346,8 @@ should worry you.
 ### Complaint one: the standard implementation destroys Turkish
 
 Google's `rouge-score` is the reference implementation. HuggingFace's
-`evaluate` wraps it, and most papers reporting ROUGE since 2019 have used it.
+`evaluate` wraps it, and a large share of papers reporting ROUGE since 2019
+have used one or the other.
 Its tokenizer, reproducing the original Perl script's behaviour, is one line:
 
 ```python
@@ -317,8 +357,8 @@ text = re.sub(r"[^a-z0-9]+", " ", text)   # <- everything else is a separator
 ```
 
 `[^a-z0-9]` does not include `ç`, `ğ`, `ı`, `ö`, `ş`, `ü` or `İ`. In Turkish
-those are not punctuation; they are letters, and six of them are among the
-language's most frequent. So:
+those are not punctuation; they are letters, and common ones — `ı` alone is
+among the language's most frequent letters. So:
 
 ```text
 görüştü        -> ['g', 'r', 't']
@@ -351,7 +391,9 @@ rougeTokenize = t => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\
 
 ```{ojs}
 //| echo: false
-properTokenize = t => t.toLocaleLowerCase("tr").match(/[\p{L}\p{N}]+/gu) ?? []
+// split into words but keep the original case: rouge-score lowercases the
+// raw text itself, and "İ".toLowerCase() is "i" plus a combining dot
+properTokenize = t => t.match(/[\p{L}\p{N}]+/gu) ?? []
 ```
 
 ```{ojs}
@@ -359,7 +401,8 @@ properTokenize = t => t.toLocaleLowerCase("tr").match(/[\p{L}\p{N}]+/gu) ?? []
 rougeTokRows = properTokenize(rougeTokInput).map(w => {
   const pieces = rougeTokenize(w);
   return {word: w, pieces: pieces.join(" · ") || "(nothing left)",
-          n: pieces.length, intact: pieces.length === 1 && pieces[0] === w};
+          n: pieces.length,
+          intact: pieces.length === 1 && pieces[0] === w.toLocaleLowerCase("tr")};
 })
 ```
 
@@ -395,8 +438,9 @@ average pieces per affected word              2.00
 ```
 
 [Forty-four percent of Turkish words do not survive the tokenizer, and the
-debris inflates every score.]{.hl} The single letters `g`, `r`, `t`, `i` match
-each other across documents at random, so overlap goes up. ROUGE-1 on the
+debris inflates every score.]{.hl} Single-letter fragments such as `g`, `r`,
+`t`, `i` turn up in almost any Turkish text, so a candidate and a reference
+share them by chance, and overlap goes up. ROUGE-1 on the
 same 3,397 summaries, under two tokenizers:
 
 ```text
@@ -420,10 +464,10 @@ varies with how much a system copies: a random baseline gains 80%, the oracle
 gains 22%.
 
 Not all of them, and the exceptions are worth knowing because they are the fix.
-XL-Sum's own authors shipped a fork of `rouge-score` carrying per-language
-tokenizers and stemmers, Turkish among them, and their published Turkish numbers
-were produced with it; the same gap has been an open issue on HuggingFace
-`evaluate` since 2022. So the defect is documented, and the thing that is
+XL-Sum's own authors shipped a fork of `rouge-score` with Unicode-aware
+tokenization and per-language stemmers, Turkish among them, and their published
+Turkish numbers were produced with it; the same gap has been an open issue on
+HuggingFace's libraries since 2020 (first on `datasets`, now on `evaluate`). So the defect is documented, and the thing that is
 actually missing is the habit of saying *which implementation* produced a
 number. Report the tokenizer beside the score, the way you would report a
 random seed. [The inflation is a function of the system, so the gaps
@@ -467,21 +511,29 @@ class TurkishTokenizer:
 
 scorer = rouge_scorer.RougeScorer(
     ["rouge1", "rouge2", "rougeLsum"],
-    use_stemmer=False,                  # Porter is English-only; see below
+    use_stemmer=False,                  # ignored once tokenizer= is set; see below
     tokenizer=TurkishTokenizer())
 ```
 
 Be exact about `use_stemmer` too, because it is the next trap. Its default is
 already `False`, and setting it to `True` applies a *Porter* stemmer, which is
-English. For Turkish the right answer is not "leave it off" but "replace it" —
-which is what the next subsection is about.
+English. Once you pass your own `tokenizer=`, the flag is ignored altogether:
+`use_stemmer` only configures the default tokenizer. So for Turkish the right
+answer is not "leave it off" but "replace it", and the replacement goes
+*inside* your `tokenize` method — a Turkish stemmer applied to each token
+before it is returned. The next subsection shows how much that choice moves
+the score. HuggingFace's `evaluate` wrapper accepts the same fix: its `rouge`
+metric takes a `tokenizer=` argument (a function from string to tokens) and
+passes it through.
 
-Three further options in increasing order of effort: XL-Sum's own fork of
-`rouge-score`, which ships per-language tokenizers and Snowball stemmers for
-its 44 languages; a BPE-tokenizer variant, which sidesteps the language
-question entirely at the cost of scoring subwords; and `sacrerouge`, which does
-for ROUGE what `sacrebleu` did for BLEU — pins the preprocessing into the
-reported score so two papers' numbers mean the same thing. If you publish a
+Two further options: XL-Sum's own fork of `rouge-score`, which removes only
+Unicode punctuation for all its 44 languages and adds stemmers for eighteen
+of them, Turkish included; and a variant that scores subword tokens from a BPE
+tokenizer, which sidesteps the language question entirely at the cost of
+scoring pieces of words. One tool that looks like a fix is not: `sacrerouge`
+gives many summarization metrics a common Python interface, but for ROUGE it
+wraps the original Perl ROUGE-1.5.5, whose tokenizer also throws away every
+character outside `A–Z`, `a–z`, `0–9` and the hyphen — the same defect. If you publish a
 Turkish ROUGE number, name the tokenizer beside it. That one sentence in a
 paper is worth more than any of the tooling.
 
@@ -500,7 +552,8 @@ TextRank                  13.66           18.24         17.11
 oracle sentence           24.89           29.30         27.77
 ```
 
-Five points of ROUGE-1 sit between "surface form" and "5-character prefix",
+About five points of ROUGE-1 (4.4 to 5.4, depending on the system) sit between
+"surface form" and "5-character prefix",
 which is a larger difference than most papers' claimed improvements over
 their baselines. **A ROUGE number is not interpretable without the tokenizer
 and the normalizer that produced it**, and those are almost never stated.
@@ -514,16 +567,17 @@ convention. The third cannot be fixed.
 [ROUGE cannot see whether the summary is true.]{.hl} It counts word overlap
 with a reference, so a summary that copies the right words in a
 truth-reversing order scores well, and a correct paraphrase using different
-words scores badly. Consider a source sentence *"the minister denied that the
-bank would be sold"*:
+words scores badly. Return to the worked example: the source says *"the
+minister denied that the bank would be sold"*, and that sentence is also the
+reference:
 
-| candidate | truth | ROUGE-1 vs reference |
+| candidate | truth | ROUGE-1 F1 vs reference |
 |:--|:--|--:|
-| the minister denied the bank would be sold | correct | high |
-| the minister said the bank would be sold | **false** | high — one word differs |
-| the sale was ruled out by the ministry | correct | low — almost no overlap |
+| the minister denied the bank would be sold | correct | 0.94 |
+| the minister said the bank would be sold | **false** | 0.82 — one word differs |
+| the sale was ruled out by the ministry | correct | 0.24 — almost no overlap |
 
-: What overlap cannot distinguish {tbl-colwidths="[46,18,36]"}
+: What overlap cannot distinguish (scores computed with `rouge-score`) {tbl-colwidths="[46,18,36]"}
 
 The false summary and the true one differ by a single token, and that token
 carries the entire meaning. @kryscinski2019neural made this case at length;
@@ -531,6 +585,17 @@ carries the entire meaning. @kryscinski2019neural made this case at length;
 judgements of *consistency* to be weak enough that it cannot be used to rank
 systems on faithfulness. @goyal2022news found human annotators preferring
 GPT-3 summaries that ROUGE ranked *below* fine-tuned models.
+
+An embedding-based metric fixes only part of this.
+BERTScore [@zhang2020bertscore] matches each candidate token to its most
+similar reference token in the contextual-embedding space of a pretrained
+encoder, instead of requiring the same string. That rescues the third row —
+*sale* and *sold*, *ministry* and *minister* are close in that space — and on
+Turkish it partly absorbs suffix differences like *bölgede* / *bölgedeki*, as
+long as you use a multilingual or Turkish encoder. It does not reliably rescue
+the second row: *said* and *denied* occur in similar contexts, so their
+embeddings are close even though they reverse the meaning. BERTScore is still
+a comparison against a reference, not against the truth.
 
 So: report ROUGE, because it is the common currency and its absence looks
 evasive. Never conclude from it alone. The next two sections are what to add.
@@ -552,14 +617,17 @@ throughput per unit of quality when you have a corpus and a fixed domain.
 teaches a model how text of every genre is shaped, including the shape of a
 news lede. @sec-post-training is what makes the model *follow the
 instruction* to produce one rather than continue the article. Summarization
-turned out to be one of the tasks that needed no task-specific training at
-all — the capability was latent in the pre-trained model, and instruction
-tuning unlocked it.
+turned out to be one of the tasks that needed no dedicated fine-tuning on a
+summarization corpus — the capability was latent in the pre-trained model,
+and general instruction tuning (whose data does include many "summarize this"
+requests) unlocked it.
 
 That is why this chapter's abstractive system is a prompt rather than a
-training run. It is also why @goyal2022news found human annotators preferring
-zero-shot GPT-3 summaries over fine-tuned models that scored *higher* on
-ROUGE — a result this chapter is about to reproduce in miniature.
+training run. It is also the background to @goyal2022news, who found human
+annotators preferring zero-shot GPT-3 summaries over fine-tuned models that
+scored *higher* on ROUGE. This chapter has no fine-tuned model to compare
+against, but it is about to show, in miniature, the mechanism behind that
+result: references that a faithful summary cannot match.
 
 ```python
 PROMPT = """Aşağıdaki haber metnini TEK BİR CÜMLEYLE özetle.
@@ -578,7 +646,10 @@ Haber metni:
 Two details in that prompt earn their place. The length cap exists because
 ROUGE-1 F1 punishes long summaries through precision, so an uncapped model
 writes three sentences and scores worse while being no less useful — a metric
-artefact you have to defend against rather than discover. And the instruction
+artefact you have to defend against rather than discover. Expect the cap to
+be followed only approximately: the model generates tokens, not words, and
+does not count reliably, so check the length distribution of what comes back
+(here the mean was 23.7 words) rather than trusting the instruction. And the instruction
 to use only what is in the text is the faithfulness constraint stated
 explicitly; @sec-summarization-faithfulness measures whether it worked.
 
@@ -604,9 +675,10 @@ that matter: generation is clearly worth it here, and the ceiling on *perfect
 sentence selection* is still above what a 9B model writing freely achieves
 against these references.
 
-Which should already make you suspicious of the metric, because a system that
-picks the single best existing sentence is not obviously better than one that
-writes a summary. @sec-summarization-faithfulness is where that suspicion is
+Which should already make you suspicious of the metric. To a reader, the
+single best existing sentence is not obviously a better summary than one
+written for the purpose; it scores higher partly because it was chosen by
+looking at the reference. @sec-summarization-faithfulness is where that suspicion is
 confirmed with a measurement.
 
 ## Long documents {#sec-summarization-long}
@@ -764,12 +836,16 @@ to §1; refine connects them and pays for it in drift and in serial time.
 ::::
 
 ::: {.column-margin}
-The arithmetic that decides this is @sec-transformers'. Attention is
-quadratic in sequence length, so one pass over 100k tokens is not ten times a
-pass over 10k. Map-reduce trades that quadratic for a linear number of small
-quadratic passes, which is why it wins on cost even where a long-context
-model would fit the document — and why "the model has a million-token window"
-does not settle the design.
+The arithmetic behind this is @sec-transformers'. Attention is quadratic in
+sequence length, so on hardware you run yourself one pass over 100k tokens
+costs more than ten times a pass over 10k. Map-reduce trades that quadratic
+for a linear number of small quadratic passes, which can make it cheaper in
+compute even where a long-context model would fit the document. Under
+per-token API pricing the sum runs the other way — map-reduce pays for the
+intermediate summaries as well — so check which bill you are paying. Either
+way, "the model has a million-token window" does not settle the design: cost
+is one question, and whether the model actually uses the middle of a very
+long input is another.
 :::
 
 The rule that survives contact with production: [chunk on structure, never on
@@ -893,8 +969,11 @@ can quote.
 The two right-hand columns of that row do not reconcile, and the honest thing
 is to say so rather than round it away: five flagged summaries cannot come from
 three unsupported proper nouns. Five is the figure the rest of this section
-uses — it is what the judge comparison below reports as 3.3%, and the 90.7%
-agreement figure there is only arithmetically possible with five. Treat the
+uses — it is what the judge comparison below reports as 3.3%, and the
+$\kappa = 0.08$ reported there is only arithmetically possible with five
+flags and one shared item. (The 90.7% agreement alone cannot decide it: three
+flags with no shared item also give 136 agreeing verdicts out of 150, but a
+$\kappa$ just below zero.) Treat the
 per-item counts in this table as needing a recount, and the per-summary rate as
 the one to quote.
 :::
@@ -907,9 +986,10 @@ orient a reader arriving cold, so it supplies background the body then takes
 for granted: the minister's first name, the date of the referendum, the
 figure from a report the article only alludes to.
 @maynez2020faithfulness documented exactly this for XSum, which is built the
-same way; here it is again in Turkish.
+same way: their annotators found extrinsic content in 73.1% of XSum's own
+reference summaries. Here it is again in Turkish.
 
-Some of the 57.3% is my proxy counting an abbreviation mismatch — the
+Some of the 57.3% is the proxy counting an abbreviation mismatch — the
 reference writes *Avrupa Birliği* where the article writes *AB* — so treat it
 as an upper bound. The direction is not in doubt.
 
@@ -934,6 +1014,31 @@ it will have learned is to assert things its input does not contain. The
 metric will not tell you. @sec-data-annotation is the chapter on noticing
 this class of problem before it reaches a model.
 :::
+
+### Between the proxy and the judge
+
+Two families of learned checks sit between a string-matching proxy and a full
+LLM judge, and you will meet both in papers. This chapter did not run them,
+but you should know what they do.
+
+- **Entailment (NLI) checks.** A natural-language-inference model is a
+  classifier that reads a *premise* and a *hypothesis* and says whether the
+  premise entails the hypothesis, contradicts it, or neither. Use the source
+  as premise and each summary sentence as hypothesis; a sentence the source
+  does not entail is flagged. SummaC
+  ([Laban et al., 2022](https://arxiv.org/abs/2111.09525)) and AlignScore,
+  listed in @sec-summarization-tools, work this way.
+- **Question-answering checks.** QAGS
+  ([Wang et al., 2020](https://arxiv.org/abs/2004.04228)) generates
+  questions from the summary, answers each one twice — once from the summary,
+  once from the source — and counts the questions whose two answers differ.
+
+Both can catch some intrinsic errors the proxy cannot: a dropped negation
+changes the entailment label, and a swapped subject changes the answer to
+"who sold the bank?". Both are far cheaper to run than an LLM judge. But both
+inherit the mistakes of the model inside them, and the standard checkpoints
+were trained on English, so on Turkish they need a multilingual model and the
+same copied-text control before you trust them.
 
 ## LLM-as-judge, and what it costs you {#sec-summarization-judge}
 
@@ -1053,15 +1158,19 @@ Stating the third one plainly rather than waving at it: if you move to a
 pairwise or 1–5 rubric judge, position and length bias both become live, and
 @zheng2023judging's swap test — present both orders, count how often the
 verdict flips — is the measurement to run before believing any of it.
+@sec-llm-eval runs that test, and a padding test for length bias, on these
+same two models over Turkish news summaries.
 
 ## Summarization in production {#sec-summarization-production}
 
 The engineering questions are the same three every generative feature has,
 and summarization has unusually clean answers to two of them.
 
-**Caching is nearly free money.** A summary is a pure function of
-(document, prompt, model, decoding parameters). Key a cache on the hash of
-those four and the same document is never summarized twice. Documents are
+**Caching is nearly free money.** With deterministic decoding, a summary is a
+pure function of (document, prompt, model, decoding parameters); with
+sampling it is not, but once you have accepted one sample there is no reason
+to pay for another. Key a cache on the hash of those four and the same
+document is never summarized twice. Documents are
 re-read far more often than they are written, so hit rates are high, and
 unlike most LLM features there is no personalisation to defeat the cache.
 Version the prompt into the key, or a prompt change will silently serve stale
@@ -1114,7 +1223,7 @@ On this corpus the same predictions score **14.03** with a Turkish-correct
 tokenizer and **22.03** with `rouge-score`'s default, which treats `ç`, `ğ`,
 `ı`, `ö`, `ş` and `ü` as punctuation and so splits 44.4% of Turkish words
 into fragments.
-Stemming moves it another five points. So "41" could be a strong system, or a
+Stemming or prefix-truncation moves it another three to five points. So "41" could be a strong system, or a
 weak system measured generously, and the number alone cannot tell you.
 
 Ask what tokenizer produced it. If the answer is "the standard one", the
@@ -1130,9 +1239,13 @@ one-sentence* selection achieves, so no single-sentence extractive system can
 beat it — say "single-sentence" out loud, because a multi-sentence selector is
 bounded by a different oracle.
 
-Here it is **24.89** and lead-1, the one-sentence baseline to compare it against, reaches **12.75**, both on the full 3,397-article test set — so about twelve points of room are left for better one-sentence selection (lead-2's 14.04 spends two sentences, so it is not the comparison to make), and anything past 24.89 needs either more sentences or writing.
+Here it is **24.89**, and lead-1, the one-sentence baseline to compare it
+against, reaches **12.75**, both on the full 3,397-article test set. So about
+twelve points of room are left for better one-sentence selection. (Lead-2's
+14.04 spends two sentences, so it is not the comparison to make.) Anything
+past 24.89 needs either more sentences or writing.
 (Quote the pair from one sample: on this chapter's 500-article subsample the
-same two numbers are 25.05 and 14.69, and mixing a figure from each is how
+same two numbers are 25.05 and 13.24, and mixing a figure from each is how
 gaps get invented.) On CNN / DailyMail the same measurement gives 40.58, which is why
 extractive systems were respectable there for a decade.
 
@@ -1170,7 +1283,7 @@ them rewards a model for reproducing that. Our prompt told the model to use
 only what is in the text; it complied, and the metric charged it for the
 compliance.
 
-@goyal2022news found exactly this at scale — humans preferring zero-shot
+@goyal2022news found the same pattern in a human study — people preferring zero-shot
 GPT-3 summaries that ROUGE ranked below fine-tuned models. When ROUGE and a
 faithfulness measurement disagree, the reference is a hypothesis about
 quality, not the definition of it.
@@ -1199,7 +1312,8 @@ When being wrong is expensive and being clumsy is not. An extractive summary is 
 Also when the oracle says the answer *is* in the document — a high oracle
 score means selection is viable — and when you need determinism, auditability,
 or a per-document cost of approximately zero. Lead-2 on this corpus takes
-0.2 seconds for 3,397 articles against 20 minutes for the LLM.
+0.2 seconds for all 3,397 articles; the LLM took 20 minutes for 500 of them,
+about 2.4 seconds each.
 :::
 
 ## Interview questions {#sec-summarization-interview}
@@ -1245,16 +1359,19 @@ Ordered by cost, and the first two are not the model. (1) Is it actually
 hallucinating, or is it surfacing something true the user did not expect?
 Have them point at a sentence. (2) Chunking — a map-reduce boundary produces
 locally-correct, jointly-wrong output that reads exactly like hallucination.
-(3) The prompt: is there an explicit grounding instruction? Adding one took
-the measured rate here from a model that was never asked to a model at 3–7%.
+(3) The prompt: is there an explicit grounding instruction? With one, the
+model measured here was flagged on 3–7% of summaries; this chapter did not
+run the same model without it, so measure that difference on your own data
+rather than assume it.
 (4) Only then, the model and its decoding parameters.
 
 **Q: How would you catch it automatically?**
 
 An entity-and-number proxy is an afternoon's work and catches extrinsic
 errors; validate it on copied text, which must score zero. An entailment
-model or an LLM judge catches intrinsic errors too, at roughly 68 seconds per
-judgement in this chapter's setup. Say that the two disagree at the item level
+model or an LLM judge catches intrinsic errors too. The entailment model is
+cheap; the LLM judge cost roughly 68 seconds per judgement in this chapter's
+setup. Say that the two disagree at the item level
 even when they agree on the ranking — measured here, an overlap of one item
 out of the five and eleven each flagged — so neither replaces a sampled human
 read.
@@ -1396,11 +1513,16 @@ system you would ship, to whom, and what happens when it is wrong.
 
 Do this before reading a single paper: score a reference summary against
 itself with your metric. If it does not come back perfect, stop and fix the
-harness — this chapter found two separate bugs that way.
+harness. This check catches the kind of bug this chapter found twice in its
+faithfulness proxy: the two sides of a comparison processed differently (the
+chapter found them with the copied-text control, a close relative of this
+check). It does not catch a tokenizer that damages
+both sides equally — `rouge-score` gives a Turkish reference a perfect score
+against itself — so also print the tokens.
 
 | resource | what it is |
 |:--|:--|
-| [Google's `rouge-score`](https://github.com/google-research/google-research/tree/master/rouge) | read `tokenize.py`. It is nine lines and it explains 44.4% of this chapter |
+| [Google's `rouge-score`](https://github.com/google-research/google-research/tree/master/rouge) | read `tokenize.py`. Its `tokenize` function is nine lines of code and it explains 44.4% of this chapter |
 | [`evaluate`](https://github.com/huggingface/evaluate) | the metric wrappers most papers use — worth knowing which implementation you are actually calling |
 | [Eugene Yan on LLM patterns](https://eugeneyan.com/writing/llm-patterns/) | practical, well-sourced writing on summarization and evaluation in production systems |
 | [XL-Sum](https://github.com/csebuetnlp/xl-sum) | the multilingual corpus used here, with the collection method documented |
@@ -1437,8 +1559,9 @@ harness — this chapter found two separate bugs that way.
   therefore whether extraction can work at all.
 
 - **Do not inherit lead-3's reputation.** It scores 40.34 in the literature
-  on CNN / DailyMail and **14.03** here, where lead-*2* beats it. Report the
-  lead baseline always; assume it is strong never.
+  on CNN / DailyMail and **14.03** here, where lead-*2* ties it with one
+  sentence fewer. Always report the lead baseline; never assume it is
+  strong.
 
 - **`rouge-score` splits 44.4% of Turkish words into fragments.** Its tokenizer treats
   `ç ğ ı ö ş ü İ` as punctuation, so `görüştü` becomes `['g','r','t']`. The
