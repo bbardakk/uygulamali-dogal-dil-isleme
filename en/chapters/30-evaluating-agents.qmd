@@ -13,7 +13,8 @@ Python 3.14.5.
 
 - separate outcome evaluation from trajectory evaluation, and say what each
   one misses on its own;
-- score tool use with a concrete metric set rather than a vibe;
+- score tool use with a concrete metric set rather than a gut feeling;
+- tell `pass@k` from `pass^k`, and say which one a deployed agent needs;
 - build scenario tests that catch regressions before users do;
 - convert a production failure into a permanent regression test.
 
@@ -24,8 +25,16 @@ need to detect, audit the judge before believing it, report intervals. Agents
 add one thing, and it changes what "correct" means.
 
 A classifier produces an answer. An agent produces an answer **and a
-trajectory** — the sequence of decisions, tool calls, observations and retries
-that led there. Two runs can agree on the answer and differ completely in what
+[trajectory](#gloss-trajectory){#term-trajectory .term-ref}** — the sequence of decisions, tool calls, observations and retries
+that led there.
+
+::: {#gloss-trajectory .column-margin .term-gloss}
+**Trajectory** — the sequence of decisions, tool calls, observations and
+retries that led an agent to its answer. Two runs can share the answer and
+differ in the trajectory. [↩](#term-trajectory){.term-back}
+:::
+
+Two runs can agree on the answer and differ completely in what
 they did to get it, and only one of those differences shows up in an accuracy
 number.
 
@@ -43,9 +52,11 @@ arrives, or until one of those redundant calls writes something.
 
 **What we will look at.** First the six numbers that cover almost every agent
 evaluation, two of which everyone skips and both of which hide something
-specific. Then the same thirty runs scored both ways, which settles what the
-second axis actually buys — and it is not what the usual argument for it
-claims. Then the part no exact metric can reach, where @sec-llm-eval's judge
+specific, and the two ways of summarising repeated runs of the same task. Then
+the same thirty runs scored both ways, which settles what the second axis
+actually buys. The usual argument for trajectory evaluation is that it catches
+runs that got the right answer by a bad route; the measurement shows a
+different, sturdier reason. Then the part no exact metric can reach, where @sec-llm-eval's judge
 comes back with one extra caution attached. Then scenario tests, which are
 ordinary unit tests once you have fixtured the world properly. Then public
 benchmarks, and what a leaderboard position is evidence of. And finally the
@@ -62,9 +73,9 @@ accuracy" means four different things to four people.
 | **Outcome accuracy** | the final answer is correct | the thing you actually want |
 | **Tool-call precision** | of the calls made, the share that were necessary | redundant work, repeated queries, exploration that went nowhere |
 | **Tool-call recall** | of the calls needed, the share that were made | the agent that answered without checking — often, though not always, from parametric memory |
-| **Step count** | tool calls, and model calls, counted separately | @sec-agent-anatomy's finding: they are different numbers and only one predicts your bill |
+| **Step count** | tool calls, and model calls, counted separately | @sec-agent-anatomy's finding: they are different numbers, and the model-call count is the one that predicts your bill, because each model call re-sends the whole transcript |
 | **Termination rate** | the share that stopped on their own rather than hitting the cap | the failure mode that looks like success in an outcome-only report |
-| **Cost per correct answer** | mean tokens per request ÷ accuracy as a 0–1 rate | the only cost number that compares two systems fairly |
+| **Cost per correct answer** | mean tokens per request ÷ accuracy as a 0–1 rate (in money rather than tokens if the two systems use different models or prices) | the only cost number that compares two systems fairly |
 
 : Six metrics {tbl-colwidths="[22,38,40]"}
 
@@ -83,14 +94,58 @@ but the common one. @sec-tool-design measured an opaque schema going uncalled
 rate means runs are ending because the budget ran out, and an outcome metric
 records the ones that happened to be right by then as successes.
 
+### One run is one sample: `pass@k` and `pass^k`
+
+An agent run is a sample, not a fact. At any temperature above zero, and often
+even at zero, the same task can pass on one run and fail on the next. So the
+honest unit is not "the agent solved task 17" but "it solved task 17 in $c$ of
+$n$ runs". Two summaries of those repeated runs answer opposite questions:
+
+- **`pass@k`** — the probability that *at least one* of $k$ attempts succeeds.
+  It is the right number when something checks every attempt and you keep the
+  one that worked, as a test suite does for generated code.
+- **`pass^k`** — the probability that *all* $k$ attempts succeed. It is the
+  right number for a deployed agent: each user gets a single attempt, and the
+  same kind of request arrives again and again.
+
+If a task succeeds independently with probability $p$ on each run, then
+`pass@k` $= 1-(1-p)^k$ and `pass^k` $= p^k$. At $p = 0.8$ and $k = 4$ that is
+99.8% against 41%. The same agent "almost always gets there" or "gets all four
+attempts right less than half the time", depending only on which question you
+ask. From $n \ge k$
+runs of a task with $c$ successes, the unbiased estimates are (the first from
+[Chen et al., 2021](https://arxiv.org/abs/2107.03374), the second from
+τ-bench)
+
+$$
+\text{pass@}k = 1 - \binom{n-c}{k}\Big/\binom{n}{k},
+\qquad
+\text{pass}^k = \binom{c}{k}\Big/\binom{n}{k},
+$$
+
+computed per task and then averaged over tasks. The order matters. Two tasks
+with $p = 1$ and $p = 0.6$ average to $p = 0.8$, and $0.8^4$ is 41%; the true
+`pass^4` is $(1 + 0.6^4)/2$, which is 56%. For $k = 1$ both summaries reduce to
+ordinary accuracy. @sec-agent-anatomy quoted the benchmark that introduced
+`pass^k`: on τ-bench the best agent tested in 2024 succeeded on fewer than half
+the tasks, and in the retail domain its `pass^8` was below 25%
+[@yao2024taubench].
+
+The measurement below ran each task once, so it reports `pass^1` and says
+nothing about consistency. That is its largest limitation, and running every
+task five or more times is the first thing to add to it.
+
 ### Scoring the same runs both ways
 
-So how much does the second axis actually add? Thirty tasks needing exactly two
-lookups and one addition, over invented data
-so nothing is guessable. Outcome passes if the sum is right. Trajectory passes
+So how much does the second axis actually add? The test set is thirty tasks,
+each needing exactly two lookups and one addition, over invented data so that
+nothing is guessable. Outcome passes if the sum is right. Trajectory passes
 if the agent made exactly the two necessary calls, no repeats, no wrong
-targets, and stopped on its own. Two systems: the structured tool loop, and a
-hand-rolled text protocol.
+targets, and stopped on its own. The two systems are the two loops from
+@sec-agent-anatomy: the **native loop**, which uses the provider's
+tool-calling API, and a hand-rolled **text protocol**, where the model writes
+its tool calls as plain text that our code parses. This is a separate run with
+its own tasks, so its numbers do not match that chapter's two-lookup row.
 
 ```text
 qwen3.5:9b, 30 tasks, 2 lookups needed
@@ -115,13 +170,14 @@ disagreement everyone argues about — a run that passes on outcome and fails on
 trajectory — happened once. But the denominator for that event is not thirty:
 a run that failed on outcome cannot exhibit it. **One of the eleven runs that
 passed on outcome failed on trajectory: 9.1%, Wilson interval [1.6, 37.7].**
-That is too wide to support a claim in either direction. An upper bound near
-38% would justify a whole library on its own.
+That is too wide to support a claim in either direction. If the true rate
+were near the upper bound, 38%, trajectory evaluation would be worth building
+for that reason alone; if it were near 2%, it would not.
 
 And the native loop adds little to the estimate, which is the deeper problem.
-It passed 30/30 on both axes, so no disagreement was observed in that arm —
-a measurement with uncertainty rather than an absence of information: 0/30
-leaves a Wilson upper bound around 11%. The regime the usual argument is actually
+It passed 30/30 on both axes, so no disagreement was observed in that arm.
+That is still a measurement, with its own uncertainty: 0/30 is compatible with
+a true disagreement rate up to about 11% (the Wilson upper bound). The regime the usual argument is actually
 about — a system that is *mostly* right but sometimes gets there badly — is not
 measured here. What this table settles is different, does not depend on that
 count, and is worth more:
@@ -138,17 +194,21 @@ answers, they are *unfinished* runs — @sec-agent-anatomy's termination problem
 and a completely different repair from a reasoning problem. Accuracy alone
 cannot distinguish "answered wrongly" from "never stopped".
 
-That reading has a consequence the rest of the table has to live with. If two
-runs in three ran out of budget, then **36.7% is what this protocol delivers
-at this step cap** — a real measurement of the system as configured. Its
-performance at a larger cap is unmeasured, and not guaranteed to be higher:
-extra steps can also produce wrong answers, repeats or new failures. It is partly a fact about
-the cap, which is exactly why the cap belongs in the caption. The ablation that settles it is one line of configuration: double the cap
-and re-run. Either accuracy climbs, and the text protocol is slow rather than
-incapable, or it does not, and the protocol is stuck in a loop that more budget
-only feeds — which is the more interesting result and the more damning one.
-That run has not happened, and until it does the 5.1× below inherits the
-uncertainty, because the cap bounds its numerator and shapes its denominator.
+That reading has a consequence for the rest of the table. If two runs in three
+ran out of budget, then **36.7% is what this protocol delivers at this step
+cap** — a real measurement of the system as configured, but partly a fact
+about the cap. That is why the cap value should always be reported next to
+such a number. Performance at a larger cap is unmeasured, and not guaranteed
+to be higher: extra steps can also produce wrong answers, repeats or new
+failures.
+
+The ablation that settles it is one line of configuration: double the cap and
+re-run. Either accuracy climbs, and the text protocol is slow rather than
+incapable. Or it does not, and the protocol is stuck in a loop that more budget
+only feeds — the more interesting result, and the more damning one. That run
+has not happened. Until it does, the 5.1× below inherits the same uncertainty,
+because the cap limits the tokens a run can spend (the numerator) and shapes
+the accuracy (the denominator).
 
 **It changes the cost comparison.** On raw tokens the text protocol looks 1.9×
 more expensive. Per *correct answer* it is **5.1×** — 4,246 tokens against 829.
@@ -201,7 +261,7 @@ p = 4 × 10⁻⁶.
   <text x="660" y="112" class="t-xs t-muted t-mid">8</text>
 
   <rect x="180" y="126" width="12" height="10" class="chip"/>
-  <text x="198" y="135" class="t-xs t-muted">CALLS THE TASK NEEDED</text>
+  <text x="198" y="135" class="t-xs t-muted">NON-REPEAT CALLS</text>
   <rect x="360" y="126" width="12" height="10" class="box-rose"/>
   <text x="378" y="135" class="t-xs t-muted">REPEATS — 70% OF THE CALLS IT MADE</text>
 
@@ -260,16 +320,22 @@ the instrument is @sec-llm-eval's judge, with every caution from that chapter
 carried over, plus one that is specific to trajectories.
 
 @sec-llm-eval measured a judge flipping its verdict on **38% of items** when
-the two candidates were swapped. A trajectory is a *sequence*, so it has more
-positions to be biased about, not fewer. Before trusting any rubric score:
+the two candidates were swapped. A trajectory is a *sequence* of many steps,
+so there are plausibly more places for position effects to act — early steps
+may weigh more than late ones, for instance — although nobody has measured
+that here. Before trusting any rubric score:
 
 - **Run the identical-trajectory control.** Score a trajectory against itself.
   Both judges in @sec-llm-eval passed this and then diverged sharply on the
   probes that mattered, so passing it establishes only that the instrument is
   not broken.
+- **Run both orders when you compare two trajectories.** If the judge sees
+  trajectory A then B, also show it B then A, and keep only the verdicts that
+  agree. This is @sec-llm-eval's position probe, and it is the one that caught
+  the 38% flip rate.
 - **Score criteria separately, not holistically.** *Did it call the right
   tools*, *did it avoid redundant work*, *did it recover from errors* — three
-  scores you can act on, instead of one number out of five that moves for
+  scores you can act on, instead of a single 1-to-5 score that moves for
   reasons nobody can name.
 - **Let the exact metrics do the work they can do.** Do not ask a judge to
   count tool calls. Count them.
@@ -288,7 +354,8 @@ and an assertion about what should happen. The environment is the hard part,
 and it is worth building properly because everything else depends on it.
 
 - **Fixture the world, not just the prompt.** A scenario needs a database in a
-  known state, tool responses that are deterministic, and a clock. Otherwise
+  known state, tool responses that are deterministic, and a fixed clock, so
+  that "today" is the same date on every run. Otherwise
   yesterday's pass and today's fail differ for reasons unrelated to your agent.
 - **Record and replay real traces.** Capture production tool responses and
   replay them. This makes a regression test out of an incident, and it is the
@@ -299,6 +366,12 @@ and it is worth building properly because everything else depends on it.
 - **Assert on the trajectory, not only the reply.** *It must call
   `check_inventory` before `place_order`* is the kind of assertion that catches
   a real regression, and an outcome-only test cannot express it.
+- **Check the end state of the world, not only the text.** For an agent that
+  *acts*, the outcome is what changed: the order row, the refund, the booking.
+  τ-bench scores a run by comparing the database at the end of the
+  conversation with an annotated goal state [@yao2024taubench]. Assert also on
+  what must *not* have changed — a correct reply that cancelled the wrong
+  booking on the way is a failure.
 
 ## Benchmarks, and what a leaderboard tells you {#sec-agent-eval-benchmarks}
 
@@ -308,20 +381,24 @@ measures it somewhere that is not your product.
 
 | benchmark | what it measures | what it does not |
 |:--|:--|:--|
-| [**τ-bench**](https://github.com/sierra-research/tau-bench) | tool-agent-user interaction in retail and airline domains, with rule-following and a simulated user | your domain, your tools, your rules |
-| [**SWE-bench**](https://www.swebench.com/) | resolving real GitHub issues, verified by the repository's own tests | anything that is not a Python repository with good tests |
+| [**τ-bench**](https://github.com/sierra-research/tau-bench) | tool-agent-user interaction in retail and airline domains, with rule-following and a simulated user; success is the final database state, and reliability is `pass^k` | your domain, your tools, your rules |
+| [**SWE-bench**](https://www.swebench.com/) | resolving real GitHub issues, verified by the repository's own tests | work outside its repositories (the original set is twelve Python projects), and any behaviour those tests do not check |
 | [**GAIA**](https://huggingface.co/spaces/gaia-benchmark/leaderboard) | multi-step reasoning with web and file tools, on questions easy for humans and hard for models | whether the capability transfers to your task |
 | [**WebArena**](https://github.com/web-arena-x/webarena) | agents operating realistic self-hosted websites end to end | API-based work, and any site not in the suite |
 | [**BFCL**](https://github.com/ShishirPatil/gorilla) | function-calling accuracy across many schemas, including parallel and multi-step calls | whether the model uses *your* tools well — @sec-tool-design measured how much the schema decides that |
-| [**AgentDojo**](https://github.com/ethz-spylab/agentdojo) | robustness to prompt-injection attacks in agentic settings | ordinary capability |
+| [**AgentDojo**](https://github.com/ethz-spylab/agentdojo) | robustness to prompt-injection attacks in agentic settings, reported next to utility on the same tasks, with and without attack | capability outside its few simulated environments (email, banking, travel, messaging) |
 
 : Six benchmarks {tbl-colwidths="[16,46,38]"}
 
 These are worth knowing and they are weak evidence about your system, for
 @sec-llm-eval's reasons: contamination you cannot check, saturation at the top
 of the table, and construct mismatch — a benchmark measures a task and you have
-a *system*. Use them to screen candidate models down to two or three. Decide
-between those on your own suite.
+a *system*. Even the outcome checks can leak: a 2024 audit of one agent's
+successful SWE-bench patches found that about a third had the fix already
+written in the issue report or its comments, and about a third passed only
+because the tests were too weak to catch a wrong patch
+([SWE-Bench+](https://arxiv.org/abs/2410.06992)). Use benchmarks to screen
+candidate models down to two or three. Decide between those on your own suite.
 
 ## From incident to regression test {#sec-agent-eval-regression}
 
@@ -346,8 +423,11 @@ A regression test that has never been seen to fail has an unknown sensitivity,
 and the common case is that it passes because it does not exercise the path at
 all.
 
-Step 2 is the one that has to be designed in advance: if you are not persisting
-full trajectories with correlation ids, an incident gives you a complaint rather
+Step 2 is the one that has to be designed in advance. A *trace id* (or
+*correlation id*) is an identifier attached to every model call, tool call and
+log line that belongs to one request, so that all of them can be pulled
+together later. If you are not persisting full trajectories with correlation
+ids, an incident gives you a complaint rather
 than a test. @sec-multi-agent said the same thing about distributed traces, and
 it is the same instrumentation.
 
@@ -418,10 +498,11 @@ so nothing surfaces it except counting the calls you expected.
 
 For the part that has no exact answer — was that a reasonable thing to try —
 with every caution from @sec-llm-eval and one more. A trajectory is a sequence,
-so it offers *more* positions for a judge to be biased about, and that chapter
+so it plausibly offers *more* places for position effects, and that chapter
 measured a judge flipping on 38% of items from a swap alone. Score criteria
 separately rather than holistically, run the identical-trajectory control
-first, and never ask a judge to count something you can count.
+first, run both orders when comparing two trajectories, and never ask a judge
+to count something you can count.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -451,7 +532,9 @@ Two axes, and say what each misses alone. Outcome: did it answer correctly.
 Trajectory: tool-call precision and recall, repeats, step count separated into
 tool and model calls, and termination rate. Then the cost metric that ties them
 together — tokens per *correct* answer, because the per-request figure flatters
-a system that is often wrong. The detail that shows experience: a low
+a system that is often wrong. Run each task several times and report `pass^k`
+next to accuracy, because a user who retries is sampling again. The detail
+that shows experience: a low
 termination rate means runs are ending on a cap, which is a different repair
 from a reasoning error and invisible in accuracy.
 
@@ -530,12 +613,15 @@ Accuracy. This is the number you already have.
 ### Step 3 — add the trajectory metrics
 
 Tool-call precision and recall against the calls each task needs, repeats,
-step count, termination rate. Record per run, not aggregated.
+step count, termination rate. Record per run, not aggregated. Run each
+scenario at least five times, so that you can report `pass^k` as well as
+accuracy.
 
 ### Step 4 — compute cost per correct answer
 
-Not per request. Compare it to the raw token figure; here the two differed by
-2.7×.
+Not per request. Compare it to the raw token figure. Here the gap between the
+two systems grew from 1.9× on raw tokens to 5.1× per correct answer, a factor
+of 2.7.
 
 ### Step 5 — break the agent on purpose
 
@@ -576,6 +662,9 @@ step 6 showing which metric detected which break.
 7. **Simulate a user.** Build a two-model multi-turn scenario, then run
    @sec-llm-eval's position probe on the simulated user itself. It is a model
    with a rubric and it has the same biases.
+8. **`pass@k` against `pass^k`.** Run ten tasks five times each. Compute both
+   with the estimators in this chapter for $k = 1$ to $5$, and plot both
+   curves. Predict first: how far apart will they be at $k = 5$?
 
 ## Where to go deeper {#sec-agent-eval-deeper}
 
@@ -584,9 +673,9 @@ tool calls needed. That ratio is usually the first surprise.
 
 | resource | what it is |
 |:--|:--|
-| [τ-bench](https://github.com/sierra-research/tau-bench) | the closest public benchmark to a real tool-and-user agent task; read its rubric design even if you never run it |
+| [τ-bench](https://github.com/sierra-research/tau-bench) | the closest public benchmark to a real tool-and-user agent task; read how it scores a run — final database state against a goal state, repeated as `pass^k` — even if you never run it |
 | [AgentDojo](https://github.com/ethz-spylab/agentdojo) | prompt-injection robustness as a measurable property, which most suites omit entirely |
-| [SWE-bench](https://www.swebench.com/) | verification by the repository's own tests — the cleanest example of an outcome metric that cannot be gamed by fluency |
+| [SWE-bench](https://www.swebench.com/) | verification by the repository's own tests — an outcome metric that fluent prose alone cannot pass, though weak tests can still let a wrong patch through |
 | [Hamel Husain on evals](https://hamel.dev/blog/posts/evals/) | the applied case for building the suite from real failures rather than imagined ones |
 | [`langsmith`](https://github.com/langchain-ai/langsmith-sdk) / [`arize-phoenix`](https://github.com/Arize-ai/phoenix) | trace capture and trajectory inspection; the instrumentation the regression loop depends on |
 | [`ragas`](https://github.com/explodinggradients/ragas) | for the retrieval half, scored separately, per @sec-rag-failures |
@@ -600,6 +689,8 @@ tool calls needed. That ratio is usually the first surprise.
 | benchmark contamination, measured | @sainz2023nlp |
 | holistic benchmarking as a methodology | @liang2023holistic |
 | tool-use benchmarks at scale | @qin2024toolllm |
+| `pass^k`, and scoring by final database state | @yao2024taubench |
+| utility and attack success measured together | @debenedetti2024agentdojo |
 | the loop being evaluated | @yao2023react |
 
 : The primary sources {tbl-colwidths="[46,54]"}
@@ -630,11 +721,17 @@ tool calls needed. That ratio is usually the first surprise.
   distinguish from wrong answers.
 - **A judge can score the residue, not the countable part.** Never ask it to
   count tool calls, score criteria separately rather than holistically, and run
-  the identical-trajectory control first — a trajectory is a sequence, so it
-  offers more positions for the position bias @sec-llm-eval measured at 38%.
+  the identical-trajectory control first and both orders when comparing — a
+  trajectory is a sequence, so it plausibly offers more places for the
+  position bias @sec-llm-eval measured at 38%.
+- **One run per task measures `pass^1` only.** Run each task several times.
+  `pass@k` (at least one of $k$ succeeds) flatters; `pass^k` (all $k$ succeed)
+  is what a deployed agent faces — at a per-run success of 0.8, four attempts
+  give 99.8% against 41%.
 - **Benchmarks screen; your scenarios decide.** Contamination, saturation and
   construct mismatch all apply, and a benchmark measures a task while you have
-  a system.
+  a system. For an agent that acts, check the end state of the world, not only
+  the reply.
 - **Every incident becomes a test the same day** — and confirm it fails before
   you fix anything, because a regression test that passes on day one has not
   yet shown it can catch the failure. That requires persisted trajectories with correlation ids, designed

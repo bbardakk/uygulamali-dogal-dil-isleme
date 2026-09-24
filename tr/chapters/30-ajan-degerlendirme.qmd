@@ -18,6 +18,8 @@ olabilir. Yazılım: `ollama` 0.24.0 üzerinden `qwen3.5:9b`, NumPy 2.5.2, Pytho
   tek başına neyi kaçırdığını söyleyebilirsiniz;
 - araç kullanımını bir hisle değil somut bir metrik kümesiyle
   puanlayabilirsiniz;
+- `pass@k` ile `pass^k`'yı ayırt edebilir ve yayındaki bir ajanın hangisine
+  ihtiyaç duyduğunu söyleyebilirsiniz;
 - kullanıcılardan önce regresyonları yakalayan senaryo testleri
   kurabilirsiniz;
 - bir üretim kusurunu kalıcı bir regresyon testine dönüştürebilirsiniz.
@@ -28,9 +30,18 @@ olabilir. Yazılım: `ollama` 0.24.0 üzerinden `qwen3.5:9b`, NumPy 2.5.2, Pytho
 farktan boyutlandırın, inanmadan önce hakemi denetleyin, aralıkları raporlayın.
 Ajanlar tek bir şey ekliyor ve o da "doğru"nun ne anlama geldiğini değiştiriyor.
 
-Bir sınıflandırıcı bir cevap üretir. Bir ajan bir cevap **ve bir trajectory**
-üretir — oraya götüren kararlar, araç çağrıları, gözlemler ve yeniden denemeler
-dizisi. İki çalıştırma cevapta anlaşıp oraya varmak için yaptıklarında tümüyle
+Bir sınıflandırıcı bir cevap üretir. Bir ajan bir cevap **ve bir
+[trajectory](#gloss-trajectory){#term-trajectory .term-ref}** üretir — oraya
+götüren kararlar, araç çağrıları, gözlemler ve yeniden denemeler dizisi.
+
+::: {#gloss-trajectory .column-margin .term-gloss}
+**Trajectory** — bir ajanı cevabına götüren kararlar, araç çağrıları,
+gözlemler ve yeniden denemeler dizisi. İki çalıştırma aynı cevaba farklı
+trajectory'lerle varabilir. *Yörünge* diye çevrilmez.
+[↩](#term-trajectory){.term-back}
+:::
+
+İki çalıştırma cevapta anlaşıp oraya varmak için yaptıklarında tümüyle
 ayrışabilir ve o farklardan yalnızca biri bir doğruluk sayısında görünür.
 
 | | ne sorar | neyi kaçırır |
@@ -46,10 +57,12 @@ doğru cevaplayanla aynı puanı alır — fatura gelene ya da o gereksiz
 çağrılardan biri bir şey yazana kadar.
 
 **Neye bakacağız.** Önce neredeyse her ajan değerlendirmesini kapsayan altı sayı;
-ikisini herkes atlıyor ve ikisi de belirli bir şeyi gizliyor. Sonra aynı otuz
+ikisini herkes atlıyor ve ikisi de belirli bir şeyi gizliyor; bir de aynı
+görevin tekrarlı çalıştırmalarını özetlemenin iki yolu. Sonra aynı otuz
 çalıştırmanın iki şekilde puanlanması; ki bu, ikinci eksenin gerçekte ne
-kazandırdığını çözüyor — ve bu, onun için yapılan alışıldık argümanın iddia
-ettiği şey değil. Sonra hiçbir kesin metriğin ulaşamadığı kısım;
+kazandırdığını çözüyor. Trajectory değerlendirmesi için yapılan alışıldık
+argüman, doğru cevaba kötü bir yoldan varan çalıştırmaları yakalamasıdır; ölçüm
+ise farklı ve daha sağlam bir neden gösteriyor. Sonra hiçbir kesin metriğin ulaşamadığı kısım;
 @sec-llm-degerlendirme'nin hakeminin bir ek uyarıyla geri döndüğü yer. Sonra
 senaryo testleri; test ortamını fixture (testin önceden hazırlanmış verisi ve
 başlangıç durumu) olarak düzgün kurduğunuzda bunlar sıradan birim testleridir.
@@ -67,9 +80,9 @@ doğruluğu" dört kişi için dört farklı şey demek.
 | **Sonuç doğruluğu** | nihai cevap doğru | gerçekten istediğiniz şey |
 | **Tool-call precision** (araç çağrısı kesinliği) | yapılan çağrılar içinde gerekli olanların oranı | gereksiz iş, tekrarlanan sorgular, hiçbir yere varmayan keşif |
 | **Tool-call recall** (araç çağrısı duyarlılığı) | gerekli çağrılar içinde yapılmış olanların oranı | kontrol etmeden cevaplayan ajan — çoğunlukla, ama her zaman değil, parametrik bellekten |
-| **Adım sayısı** | araç çağrıları ve model çağrıları, ayrı sayılmış | @sec-ajan-anatomisi'nin bulgusu: bunlar farklı sayılardır ve yalnızca biri faturanızı öngörür |
+| **Adım sayısı** | araç çağrıları ve model çağrıları, ayrı sayılmış | @sec-ajan-anatomisi'nin bulgusu: bunlar farklı sayılardır ve faturanızı öngören model çağrısı sayısıdır, çünkü her model çağrısı bütün transkripti yeniden gönderir |
 | **Sonlanma oranı** | sınıra çarpmak yerine kendiliğinden duranların oranı | yalnızca sonuç raporunda başarı gibi görünen kusur biçimi |
-| **Doğru cevap başına maliyet** | istek başına ortalama token ÷ 0–1 oran olarak doğruluk | iki sistemi adil karşılaştıran tek maliyet sayısı |
+| **Doğru cevap başına maliyet** | istek başına ortalama token ÷ 0–1 oran olarak doğruluk (iki sistem farklı modeller ya da fiyatlar kullanıyorsa token yerine para cinsinden) | iki sistemi adil karşılaştıran tek maliyet sayısı |
 
 : Altı metrik {tbl-colwidths="[22,38,40]"}
 
@@ -90,13 +103,60 @@ sonlanma oranı, çalıştırmaların bütçe bittiği için bittiği anlamına 
 yalnızca sonuç metriği o ana kadar tesadüfen doğru olanları başarı olarak
 kaydeder.
 
+### Bir çalıştırma bir örneklemdir: `pass@k` ve `pass^k`
+
+Bir ajan çalıştırması bir olgu değil, bir örneklemdir. Sıfırın üzerindeki her
+sıcaklıkta, çoğu zaman sıfırda bile, aynı görev bir çalıştırmada geçip
+ötekinde kalabilir. Dolayısıyla dürüst birim "ajan 17. görevi çözdü" değil,
+"17. görevi $n$ çalıştırmanın $c$'sinde çözdü"dür. Bu tekrarlı çalıştırmaların
+iki özeti birbirine zıt iki soruyu cevaplar:
+
+- **`pass@k`** — $k$ denemeden *en az birinin* başarılı olma olasılığı. Her
+  denemeyi bir şey denetliyor ve işe yarayanı saklıyorsanız doğru sayı budur;
+  üretilen kodu bir test süitinin denetlemesi gibi.
+- **`pass^k`** — $k$ denemenin *hepsinin* başarılı olma olasılığı. Yayındaki
+  bir ajan için doğru sayı budur: her kullanıcı tek bir deneme alır ve aynı
+  türden istek tekrar tekrar gelir.
+
+Bir görev her çalıştırmada birbirinden bağımsız olarak $p$ olasılıkla başarılı
+oluyorsa `pass@k` $= 1-(1-p)^k$ ve `pass^k` $= p^k$ olur. $p = 0{,}8$ ve
+$k = 4$ için bu, %99,8'e karşı %41 demek. Aynı ajan, yalnızca hangi soruyu
+sorduğunuza bağlı olarak ya "neredeyse her zaman oraya varıyor" ya da "dört
+denemenin dördünü birden yarıdan az sıklıkla doğru yapıyor". Bir görevin
+$c$'si başarılı $n \ge k$ çalıştırmasından yansız kestirimler şunlardır
+(birincisi [Chen ve ark., 2021](https://arxiv.org/abs/2107.03374)'den,
+ikincisi τ-bench'ten):
+
+$$
+\text{pass@}k = 1 - \binom{n-c}{k}\Big/\binom{n}{k},
+\qquad
+\text{pass}^k = \binom{c}{k}\Big/\binom{n}{k}
+$$
+
+Bunlar önce görev başına hesaplanır, sonra görevler üzerinden ortalanır. Sıra
+önemlidir. $p = 1$ ve $p = 0{,}6$ olan iki görevin ortalaması $p = 0{,}8$'dir
+ve $0{,}8^4$ %41 eder; oysa gerçek `pass^4` $(1 + 0{,}6^4)/2$, yani %56'dır.
+$k = 1$ için iki özet de sıradan doğruluğa indirgenir. @sec-ajan-anatomisi,
+`pass^k`'yı ortaya koyan ölçütü aktarmıştı: τ-bench'te 2024'te sınanan en iyi
+ajan görevlerin yarısından azında başarılı oldu ve perakende alanında
+`pass^8` değeri %25'in altındaydı [@yao2024taubench].
+
+Aşağıdaki ölçüm her görevi bir kez çalıştırdı; yani yalnızca `pass^1`'i
+raporluyor ve tutarlılık hakkında hiçbir şey söylemiyor. Bu, onun en büyük
+sınırlılığı; her görevi beş ya da daha fazla kez çalıştırmak ona eklenecek ilk
+şey.
+
 ### Aynı çalıştırmaları iki şekilde puanlamak
 
-Peki ikinci eksen gerçekte ne katıyor? Tam olarak iki arama ve bir toplama
-gerektiren otuz görev, hiçbir şey tahmin edilemesin diye uydurma veri üzerinde.
-Sonuç, toplam doğruysa geçer. Trajectory ise ajan tam olarak gereken iki çağrıyı
-yaptıysa — tekrar yok, yanlış hedef yok — ve kendiliğinden durduysa geçer. İki
-sistem: yapılandırılmış araç döngüsü ve elle yazılmış bir metin protokolü.
+Peki ikinci eksen gerçekte ne katıyor? Test kümesi, her biri tam olarak iki
+arama ve bir toplama gerektiren otuz görevden oluşuyor; hiçbir şey tahmin
+edilemesin diye veri uydurma. Sonuç, toplam doğruysa geçer. Trajectory ise ajan
+tam olarak gereken iki çağrıyı yaptıysa — tekrar yok, yanlış hedef yok — ve
+kendiliğinden durduysa geçer. İki sistem, @sec-ajan-anatomisi'ndeki iki
+döngüdür: sağlayıcının araç çağırma API'sini kullanan **yerleşik döngü** ve
+modelin araç çağrılarını bizim kodumuzun ayrıştırdığı düz metin olarak yazdığı,
+elle yazılmış bir **metin protokolü**. Bu, kendi görevleriyle ayrı bir
+çalıştırma; dolayısıyla sayıları o bölümün iki aramalı satırıyla örtüşmez.
 
 ```text
 qwen3.5:9b, 30 tasks, 2 lookups needed
@@ -120,12 +180,14 @@ Söylenecek ilk şey bu ölçümün *çözemediği* şey. Herkesin tartıştığ
 sonuçta geçip trajectory'de kalan bir çalıştırma — bir kez oldu. Ama o olayın
 paydası otuz değil: sonuçta kalan bir çalıştırma onu zaten sergileyemez.
 **Sonuçta geçen on bir çalıştırmanın biri trajectory'de kaldı: %9,1, Wilson aralığı
-[1,6, 37,7].** Bu, iki yönde de bir iddiayı desteklemeyecek kadar geniş. %38'e
-yakın bir üst sınır tek başına koca bir kütüphaneyi haklı çıkarırdı.
+[1,6, 37,7].** Bu, iki yönde de bir iddiayı desteklemeyecek kadar geniş. Gerçek
+oran üst sınıra, %38'e yakın olsaydı trajectory değerlendirmesi tek başına bu
+nedenle kurmaya değerdi; %2'ye yakın olsaydı değmezdi.
 
 Ve daha derin sorun şu: yerleşik döngü bu kestirime az şey katıyor. İki eksende
-de 30/30 geçti, yani o kolda bir uyuşmazlık gözlenmedi — bu, bilgi yokluğu değil
-belirsizliği olan bir ölçüm: 0/30'un Wilson üst sınırı %11 civarındadır. Asıl
+de 30/30 geçti, yani o kolda bir uyuşmazlık gözlenmedi. Bu yine de kendi
+belirsizliği olan bir ölçüm: 0/30, yaklaşık %11'e kadar bir gerçek uyuşmazlık
+oranıyla bağdaşır (Wilson üst sınırı). Asıl
 tartışmanın konusu olan rejim — *çoğunlukla* doğru olan ama bazen oraya kötü
 varan bir sistem — burada hiç ölçülmüyor. Bu tablonun çözdüğü şey farklı, o
 sayıya bağlı değil ve daha değerli:
@@ -142,18 +204,20 @@ bunların yanlış cevaplar değil *bitmemiş* çalıştırmalar olduğunu söyl
 farklı bir onarım. Tek başına doğruluk, "yanlış cevapladı" ile "hiç durmadı"yı
 ayırt edemez.
 
-Bu okumanın, tablonun geri kalanının birlikte yaşaması gereken bir sonucu var.
-Üç çalıştırmadan ikisinin bütçesi bittiyse, **%36,7 bu protokolün bu adım
-sınırında verdiği şeydir** — yapılandırıldığı hâliyle sistemin gerçek bir ölçümü.
-Daha büyük bir sınırdaki başarımı ölçülmedi ve daha yüksek olacağı garanti değil:
-ek adımlar yanlış cevap, tekrar ya da yeni hatalar da üretebilir. Kısmen bütçe hakkında
-bir olgudur; sınırın başlıkta yer almasının nedeni de tam olarak budur. Bunu çözen ablation tek satırlık bir yapılandırma:
-bütçeyi iki katına çıkarıp yeniden koşun. Ya doğruluk yükselir ve metin
-protokolü yeteneksiz değil yavaştır, ya yükselmez ve protokol, daha çok
-bütçenin yalnızca beslediği bir döngüde sıkışmıştır — ki bu daha ilginç ve daha
-ağır sonuç. O koşu yapılmadı ve yapılana kadar aşağıdaki 5,1 kat da
-belirsizliği devralıyor, çünkü bütçe hem payını sınırlıyor hem paydasını
-biçimlendiriyor.
+Bu okumanın tablonun geri kalanı için bir sonucu var. Üç çalıştırmadan ikisinin
+bütçesi bittiyse, **%36,7 bu protokolün bu adım bütçesinde verdiği şeydir** —
+yapılandırıldığı hâliyle sistemin gerçek bir ölçümü, ama kısmen de bütçe
+hakkında bir olgu. Bu yüzden böyle bir sayının yanında bütçe değeri her zaman
+raporlanmalı. Daha büyük bir bütçedeki başarım ölçülmedi ve daha yüksek olacağı
+garanti değil: ek adımlar yanlış cevap, tekrar ya da yeni hatalar da üretebilir.
+
+Bunu çözen ablation tek satırlık bir yapılandırma: bütçeyi iki katına çıkarıp
+yeniden koşun. Ya doğruluk yükselir ve metin protokolü yeteneksiz değil
+yavaştır. Ya da yükselmez ve protokol, daha çok bütçenin yalnızca beslediği bir
+döngüde sıkışmıştır — ki bu daha ilginç ve daha ağır sonuç. O koşu yapılmadı.
+Yapılana kadar aşağıdaki 5,1 kat da aynı belirsizliği devralıyor, çünkü bütçe
+bir çalıştırmanın harcayabileceği token'ı (pay) sınırlıyor ve doğruluğu
+(payda) biçimlendiriyor.
 
 **Maliyet karşılaştırmasını değiştirir.** Ham token'da metin protokolü 1,9 kat
 pahalı görünüyor. *Doğru cevap* başına **5,1 kat** — 829'a karşı 4.246 token.
@@ -165,8 +229,8 @@ konmaya değer tek maliyet sayısı olmasının nedeni.
 Küçük ölçüm: otuz görev, tek model, görev başına tek çalıştırma. Wilson %95
 aralıkları — çünkü bir sınıra yakın bir oran onları gerektirir ve
 @sec-llm-degerlendirme-raporlama bunu söylüyor: sonuç %100 → [88,6, 100]; sonuç
-%36,7 → [21,9, 54,5]; sınıra çarpma %63,3 → [45,5, 78,1]; tek sonuç-only
-uyuşmazlığı → otuz çalıştırmada [0,6, 16,7], olabileceği on birde
+%36,7 → [21,9, 54,5]; sınıra çarpma %63,3 → [45,5, 78,1]; "yalnızca sonuçta
+geçti" türündeki tek uyuşmazlık → otuz çalıştırmada [0,6, 16,7], olabileceği on birde
 [1,6, 37,7]. Tablonun sağlam biçimde ortaya koyduğu şey, sonuç metriğinin
 gizlediği israfın büyüklüğü — 2'ye karşı 7,10 çağrı ve %70'i tekrar — ve maliyet
 düzeltmesinin yönüdür. Sonuç farkının kendisi şüpheli değil: iki sistem aynı otuz
@@ -205,7 +269,7 @@ görevi koştu, dolayısıyla karşılaştırma eşleştirilmiş ve hepsi tek y�
   <text x="660" y="112" class="t-xs t-muted t-mid">8</text>
 
   <rect x="180" y="126" width="12" height="10" class="chip"/>
-  <text x="198" y="135" class="t-xs t-muted">GÖREVİN GEREKTİRDİĞİ ÇAĞRILAR</text>
+  <text x="198" y="135" class="t-xs t-muted">TEKRAR OLMAYAN ÇAĞRILAR</text>
   <rect x="360" y="126" width="12" height="10" class="box-rose"/>
   <text x="378" y="135" class="t-xs t-muted">TEKRARLAR — YAPTIĞI ÇAĞRILARIN %70'İ</text>
 
@@ -264,18 +328,23 @@ için alet @sec-llm-degerlendirme'nin hakemidir; o bölümdeki her uyarı taşı
 hâlde, artı trajectory'lere özgü bir tanesi.
 
 @sec-llm-degerlendirme, iki aday yer değiştirdiğinde hükmünü **maddelerin
-%38'inde** çeviren bir hakem ölçtü. Bir trajectory bir *dizidir*, dolayısıyla
-yanlı olabileceği daha az değil daha çok konum vardır. Herhangi bir rubrik
-puanına güvenmeden önce:
+%38'inde** çeviren bir hakem ölçtü. Bir trajectory çok adımlı bir *dizidir*;
+dolayısıyla konum etkilerinin devreye girebileceği muhtemelen daha çok yer
+vardır — örneğin ilk adımlar son adımlardan daha ağır basabilir — ama bu burada
+ölçülmedi. Herhangi bir rubrik puanına güvenmeden önce:
 
 - **Birebir aynı trajectory kontrolünü çalıştırın.** Bir trajectory'yi kendisine karşı
   puanlayın. @sec-llm-degerlendirme'deki iki hakem de bunu geçti ve sonra önemli
   olan probe'larda keskin biçimde ayrıştı; dolayısıyla bunu geçmek yalnızca aletin
   bozuk olmadığını ortaya koyar.
+- **İki trajectory'yi karşılaştırırken iki sırayı da çalıştırın.** Hakem önce A
+  sonra B'yi gördüyse ona B'yi sonra A'yı da gösterin ve yalnızca birbiriyle
+  uyuşan hükümleri tutun. Bu, @sec-llm-degerlendirme'nin konum probe'udur ve
+  %38'lik çevirme oranını yakalayan da oydu.
 - **Ölçütleri bütünsel değil ayrı puanlayın.** *Doğru araçları çağırdı mı*,
   *gereksiz işten kaçındı mı*, *hatalardan toparlandı mı* — üzerine hareket
   edebileceğiniz üç puan; kimsenin nedenini adlandıramadığı sebeplerle oynayan
-  beş üzerinden tek bir sayı yerine.
+  1–5 arası tek bir puan yerine.
 - **Kesin metriklerin yapabileceği işi onlara bırakın.** Bir hakemden araç
   çağrılarını saymasını istemeyin. Onları sayın.
 
@@ -295,7 +364,8 @@ olması gerektiğine dair bir assertion (test koşulu). Zor kısım ortamdır ve
 çünkü diğer her şey ona bağlıdır.
 
 - **Yalnızca prompt'u değil, bütün dünyayı fixture'larla sabitleyin.** Bir senaryo bilinen bir
-  durumda bir veritabanı, belirlenimci araç yanıtları ve bir saat ister. Aksi
+  durumda bir veritabanı, belirlenimci araç yanıtları ve sabitlenmiş bir saat
+  ister; böylece "bugün" her çalıştırmada aynı tarih olur. Aksi
   hâlde dünkü geçme ile bugünkü kalma, ajanınızla ilgisiz nedenlerle ayrışır.
 - **Gerçek izleri kaydedin ve tekrar oynatın.** Üretimdeki araç yanıtlarını
   yakalayın ve tekrar oynatın. Bu, bir olaydan bir regresyon testi çıkarır ve
@@ -307,6 +377,12 @@ olması gerektiğine dair bir assertion (test koşulu). Zor kısım ortamdır ve
   *`place_order`'dan önce `check_inventory` çağırmalı*, gerçek bir regresyonu
   yakalayan türde bir assertion'dır ve yalnızca sonuca bakan bir test bunu ifade
   edemez.
+- **Yalnızca metni değil, dünyanın son durumunu da kontrol edin.** *Eylemde
+  bulunan* bir ajan için sonuç, değişen şeydir: sipariş satırı, iade,
+  rezervasyon. τ-bench bir çalıştırmayı, konuşmanın sonundaki veritabanını
+  etiketlenmiş bir hedef durumla karşılaştırarak puanlar [@yao2024taubench].
+  Değişmemesi gerekenler için de assertion yazın — yolda yanlış rezervasyonu
+  iptal eden doğru bir yanıt, bir başarısızlıktır.
 
 ## Ölçütler ve bir sıralama tablosunun söyledikleri {#sec-ajan-degerlendirme-olcutler}
 
@@ -316,20 +392,25 @@ sizin ürününüz olmayan bir yerde ölçüyor.
 
 | ölçüt | ne ölçer | neyi ölçmez |
 |:--|:--|:--|
-| [**τ-bench**](https://github.com/sierra-research/tau-bench) | perakende ve havayolu alanlarında araç-ajan-kullanıcı etkileşimi; kural izleme ve benzetimli bir kullanıcıyla | sizin alanınızı, araçlarınızı, kurallarınızı |
-| [**SWE-bench**](https://www.swebench.com/) | gerçek GitHub sorunlarını çözme, deponun kendi testleriyle doğrulanmış | iyi testleri olan bir Python deposu olmayan her şeyi |
+| [**τ-bench**](https://github.com/sierra-research/tau-bench) | perakende ve havayolu alanlarında araç-ajan-kullanıcı etkileşimi; kural izleme ve benzetimli bir kullanıcıyla; başarı son veritabanı durumudur, güvenilirlik `pass^k` ile ölçülür | sizin alanınızı, araçlarınızı, kurallarınızı |
+| [**SWE-bench**](https://www.swebench.com/) | gerçek GitHub sorunlarını çözme, deponun kendi testleriyle doğrulanmış | depolarının dışındaki işi (özgün küme on iki Python projesidir) ve o testlerin denetlemediği her davranışı |
 | [**GAIA**](https://huggingface.co/spaces/gaia-benchmark/leaderboard) | web ve dosya araçlarıyla çok adımlı akıl yürütme; insanlar için kolay, modeller için zor sorularda | yeteneğin sizin görevinize aktarılıp aktarılmadığını |
 | [**WebArena**](https://github.com/web-arena-x/webarena) | gerçekçi, kendi barındırılan web sitelerini uçtan uca kullanan ajanlar | API tabanlı işi ve süitte olmayan her siteyi |
 | [**BFCL**](https://github.com/ShishirPatil/gorilla) | pek çok şema genelinde işlev çağırma doğruluğu; paralel ve çok adımlı çağrılar dâhil | modelin *sizin* araçlarınızı iyi kullanıp kullanmadığını — @sec-arac-tasarimi şemanın buna ne kadar karar verdiğini ölçtü |
-| [**AgentDojo**](https://github.com/ethz-spylab/agentdojo) | ajan ortamlarında prompt enjeksiyon saldırılarına gürbüzlük | sıradan yeteneği |
+| [**AgentDojo**](https://github.com/ethz-spylab/agentdojo) | ajan ortamlarında prompt enjeksiyon saldırılarına gürbüzlük; aynı görevlerde saldırılı ve saldırısız yararlılıkla birlikte raporlanır | birkaç benzetimli ortamının (e-posta, bankacılık, seyahat, mesajlaşma) dışındaki yeteneği |
 
 : Altı ölçüt {tbl-colwidths="[16,46,38]"}
 
 Bunlar bilinmeye değer ve sisteminiz hakkında zayıf kanıttırlar;
 @sec-llm-degerlendirme'nin nedenleriyle: kontrol edemeyeceğiniz bulaşma, tablonun
 tepesinde doyum ve yapı uyumsuzluğu — bir ölçüt bir görevi ölçer ve sizde bir
-*sistem* var. Onları aday modelleri iki üçe indirmek için kullanın. Aralarında
-kendi süitinizle karar verin.
+*sistem* var. Sonuç denetimleri bile sızdırabilir: bir ajanın başarılı
+sayılan SWE-bench yamalarını inceleyen 2024 tarihli bir denetim, bunların
+yaklaşık üçte birinde çözümün sorun kaydında ya da yorumlarında zaten yazılı
+olduğunu, yaklaşık üçte birinin de yalnızca testler yanlış bir yamayı
+yakalayamayacak kadar zayıf olduğu için geçtiğini buldu
+([SWE-Bench+](https://arxiv.org/abs/2410.06992)). Ölçütleri aday modelleri
+iki üçe indirmek için kullanın. Aralarında kendi süitinizle karar verin.
 
 ## Olaydan regresyon testine {#sec-ajan-degerlendirme-regresyon}
 
@@ -352,8 +433,11 @@ koşturun ya da kusuru bilerek geri getirin. Hiç başarısız olduğu görülme
 regresyon testinin duyarlılığı bilinmiyordur ve yaygın durum, o yolu hiç
 işletmediği için geçmesidir.
 
-2\. adım önceden tasarlanması gereken adımdır: korelasyon kimlikleriyle tam
-trajectory'leri kalıcılaştırmıyorsanız bir olay size bir test değil bir şikâyet
+2\. adım önceden tasarlanması gereken adımdır. *İz kimliği* (trace id; ya da
+*korelasyon kimliği*), tek bir isteğe ait her model çağrısına, araç çağrısına
+ve kayıt satırına eklenen bir tanımlayıcıdır; böylece hepsi sonradan bir araya
+getirilebilir. Korelasyon kimlikleriyle tam trajectory'leri
+kalıcılaştırmıyorsanız bir olay size bir test değil bir şikâyet
 verir. @sec-cok-ajanli dağıtık izler hakkında aynı şeyi söyledi ve aynı ölçüm
 altyapısıdır.
 
@@ -425,10 +509,11 @@ onu ortaya çıkarmaz.
 
 Kesin cevabı olmayan kısmı için — bu denenmeye değer makul bir şey miydi —
 @sec-llm-degerlendirme'nin her uyarısıyla ve bir tane daha. Bir trajectory bir
-dizidir, dolayısıyla bir hakemin yanlı olabileceği *daha çok* konum sunar ve o
+dizidir, dolayısıyla konum etkileri için muhtemelen *daha çok* yer sunar ve o
 bölüm yalnızca bir yer değiştirmeden maddelerin %38'inde çeviren bir hakem ölçtü.
 Ölçütleri bütünsel değil ayrı puanlayın, önce birebir aynı trajectory kontrolünü
-çalıştırın ve bir hakemden sayabileceğiniz bir şeyi saymasını asla istemeyin.
+çalıştırın, iki trajectory'yi karşılaştırırken iki sırayı da deneyin ve bir
+hakemden sayabileceğiniz bir şeyi saymasını asla istemeyin.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -457,7 +542,9 @@ cevaplanabilir kıldığı sorular vardır.
 cevapladı mı. Trajectory: tool-call precision ve recall, tekrarlar, araç ve
 model çağrılarına ayrılmış adım sayısı ve sonlanma oranı. Sonra onları
 birbirine bağlayan maliyet metriği — *doğru* cevap başına token, çünkü istek
-başına rakam sıklıkla yanlış olan bir sistemi olduğundan iyi gösterir. Deneyimi
+başına rakam sıklıkla yanlış olan bir sistemi olduğundan iyi gösterir. Her
+görevi birkaç kez çalıştırın ve doğruluğun yanında `pass^k`'yı raporlayın,
+çünkü yeniden deneyen bir kullanıcı yeniden örneklem çekiyor demektir. Deneyimi
 gösteren ayrıntı: düşük bir sonlanma oranı, çalıştırmaların bir sınırda bittiği
 anlamına gelir; ki bu bir akıl yürütme hatasından farklı bir onarımdır ve
 doğrulukta görünmez.
@@ -538,11 +625,14 @@ Doğruluk. Zaten elinizde olan sayı budur.
 
 Her görevin gerektirdiği çağrılara karşı tool-call precision ve recall,
 tekrarlar, adım sayısı, sonlanma oranı. Toplu değil çalıştırma başına kaydedin.
+Doğruluğun yanında `pass^k`'yı da raporlayabilmek için her senaryoyu en az beş
+kez çalıştırın.
 
 ### Adım 4 — doğru cevap başına maliyeti hesaplayın
 
-İstek başına değil. Ham token rakamıyla karşılaştırın; burada ikisi 2,7 kat
-ayrışıyordu.
+İstek başına değil. Ham token rakamıyla karşılaştırın. Burada iki sistem
+arasındaki fark ham token'da 1,9 kattan doğru cevap başına 5,1 kata çıktı; yani
+2,7 kat büyüdü.
 
 ### Adım 5 — ajanı bilerek bozun
 
@@ -586,6 +676,9 @@ hangi metriğin hangi bozulmayı saptadığını gösteren tabloyu.
 7. **Bir kullanıcı benzetin.** İki modelli çok turlu bir senaryo kurun, sonra
    @sec-llm-degerlendirme'nin konum probe'unu benzetimli kullanıcının kendisinde
    çalıştırın. O rubrikli bir modeldir ve aynı yanlılıklara sahiptir.
+8. **`pass@k`'ya karşı `pass^k`.** On görevi beşer kez çalıştırın. Bu bölümdeki
+   kestirimlerle $k = 1$'den $5$'e kadar ikisini de hesaplayın ve iki eğriyi
+   çizin. Önce tahmin edin: $k = 5$'te aralarında ne kadar fark olacak?
 
 ## Daha derine {#sec-ajan-degerlendirme-derinlesme}
 
@@ -594,9 +687,9 @@ gereken araç çağrılarına karşı sayın. O oran genellikle ilk sürprizdir.
 
 | kaynak | ne olduğu |
 |:--|:--|
-| [τ-bench](https://github.com/sierra-research/tau-bench) | gerçek bir araç-ve-kullanıcı ajan görevine en yakın açık ölçüt; hiç çalıştırmasanız bile rubrik tasarımını okuyun |
+| [τ-bench](https://github.com/sierra-research/tau-bench) | gerçek bir araç-ve-kullanıcı ajan görevine en yakın açık ölçüt; hiç çalıştırmasanız bile bir çalıştırmayı nasıl puanladığını okuyun — son veritabanı durumu bir hedef duruma karşı, `pass^k` olarak tekrarlanarak |
 | [AgentDojo](https://github.com/ethz-spylab/agentdojo) | ölçülebilir bir özellik olarak prompt enjeksiyon gürbüzlüğü; çoğu süitin tümüyle atladığı şey |
-| [SWE-bench](https://www.swebench.com/) | deponun kendi testleriyle doğrulama — akıcılıkla kandırılamayan bir sonuç metriğinin en temiz örneği |
+| [SWE-bench](https://www.swebench.com/) | deponun kendi testleriyle doğrulama — tek başına akıcı düzyazıyla geçilemeyen bir sonuç metriği; yine de zayıf testler yanlış bir yamayı geçirebilir |
 | [Hamel Husain — değerlendirme üzerine](https://hamel.dev/blog/posts/evals/) | süiti hayalî değil gerçek kusurlardan kurmanın uygulamalı gerekçesi |
 | [`langsmith`](https://github.com/langchain-ai/langsmith-sdk) / [`arize-phoenix`](https://github.com/Arize-ai/phoenix) | iz yakalama ve trajectory inceleme; regresyon döngüsünün dayandığı ölçüm altyapısı |
 | [`ragas`](https://github.com/explodinggradients/ragas) | erişim yarısı için, ayrı puanlanmış; @sec-rag-kusurlar'a göre |
@@ -610,6 +703,8 @@ gereken araç çağrılarına karşı sayın. O oran genellikle ilk sürprizdir.
 | ölçüt bulaşması, ölçülmüş hâliyle | @sainz2023nlp |
 | bir yöntem olarak bütünsel ölçütleme | @liang2023holistic |
 | ölçekte araç kullanımı ölçütleri | @qin2024toolllm |
+| `pass^k` ve son veritabanı durumuyla puanlama | @yao2024taubench |
+| yararlılık ile saldırı başarısının birlikte ölçülmesi | @debenedetti2024agentdojo |
 | değerlendirilen döngü | @yao2023react |
 
 : Birincil kaynaklar {tbl-colwidths="[46,54]"}
@@ -642,12 +737,19 @@ gereken araç çağrılarına karşı sayın. O oran genellikle ilk sürprizdir.
 - **Bir hakem sayılamayan geri kalan kısmı puanlayabilir; sayılabilir kısmı
   değil.** Ondan asla araç çağrısı saymasını istemeyin, ölçütleri bütünsel değil
   ayrı puanlayın ve
-  önce birebir aynı trajectory kontrolünü çalıştırın — bir trajectory bir dizidir,
-  dolayısıyla @sec-llm-degerlendirme'nin %38 olarak ölçtüğü konum yanlılığı için
-  daha çok konum sunar.
+  önce birebir aynı trajectory kontrolünü, karşılaştırırken de iki sırayı
+  çalıştırın — bir trajectory bir dizidir, dolayısıyla
+  @sec-llm-degerlendirme'nin %38 olarak ölçtüğü konum yanlılığı için muhtemelen
+  daha çok yer sunar.
+- **Görev başına tek çalıştırma yalnızca `pass^1`'i ölçer.** Her görevi birkaç
+  kez çalıştırın. `pass@k` (k denemeden en az biri başarılı) olduğundan iyi
+  gösterir; `pass^k` (k denemenin hepsi başarılı) yayındaki bir ajanın
+  karşılaştığı şeydir — çalıştırma başına 0,8 başarıda dört deneme %99,8'e
+  karşı %41 verir.
 - **Ölçütler eler; senaryolarınız karar verir.** Bulaşma, doyum ve yapı
   uyumsuzluğu geçerlidir ve bir ölçüt bir görevi ölçerken sizde bir sistem
-  vardır.
+  vardır. Eylemde bulunan bir ajan için yalnızca yanıtı değil, dünyanın son
+  durumunu da kontrol edin.
 - **Her olay aynı gün bir teste dönüşür** — ve bir şey düzeltmeden önce başarısız
   olduğunu teyit edin, çünkü birinci günde geçen bir regresyon testi, hatayı
   yakalayabildiğini henüz göstermemiştir. Bu, ilk olaydan önce tasarlanmış, korelasyon kimlikleriyle
