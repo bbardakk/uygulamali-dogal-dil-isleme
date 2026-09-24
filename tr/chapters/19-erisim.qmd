@@ -35,7 +35,8 @@ Erişimin iki ailesi var ve zıt yönlerde hata yapıyorlar.
 düzeltmeyle donatılmış hâlidir: terim frekansı **doyuma ulaşır**, dolayısıyla
 bir kelimenin onuncu geçişi ikincisinden çok daha az katkı verir. Belge
 uzunluğu da normalize edilir; böylece uzun bir belge, her şeyi daha bol
-içerdiği için kazanmaz.
+içerdiği için kazanmaz. (Formülü ve iki ayarı $k_1$ ile $b$'nin ne yaptığını
+@sec-erisim-mulakat açıkça yazıyor.)
 
 Hızlıdır, kesindir, yorumlanabilirdir, eğitim gerektirmez ve hiç görmediği bir
 kelimeyi eşleştiremez.
@@ -43,7 +44,8 @@ kelimeyi eşleştiremez.
 **Yoğun erişim** anlamı eşleştirir. Bir
 [bi-encoder](#gloss-bi-encoder){#term-bi-encoder .term-ref} (çift kodlayıcı)
 [@karpukhin2020dense] sorguları ve belgeleri ayrı ayrı aynı uzaya gömer;
-böylece belgeler bir kez kodlanıp vektör benzerliğiyle aranabilir. Başka
+böylece belgeler bir kez kodlanıp vektör benzerliğiyle (genellikle
+@sec-gommeler'deki kosinüs benzerliğiyle) aranabilir. Başka
 anlatımı, eşanlamlılığı ve — bu bölümün göstereceği gibi — farklı dilleri
 ele alır.
 
@@ -119,6 +121,15 @@ da bu bölümün öne çıkardığı iki farkın da küçüleceğinin garantisi 
 satırlarını o kontrolü bekleyen satırlar sayın ve bu deneyi kendiniz
 çalıştırdığınızda ön ekleri model adının yanına yazın.
 
+Bu deneyin bilerek kenara bıraktığı, ama kendi sisteminizde atlamamanız
+gereken iki üst akış kararı var. Birincisi, neyin "belge" sayılacağı: burada her
+belge tek bir cümle; gerçek belgeler ise daha uzundur ve gömülmeden önce
+parçalara bölünmeleri gerekir. En iyi parça boyutu sorunun türüne bağlıdır ve
+bunu @sec-rag-parcalama ölçüyor. İkincisi, Türkçe BM25 için küçük harfe
+çevirmeyi Türkçe kurallarıyla yapmak: Python'un varsayılan `lower()`'ı `I`'yı
+`ı` yerine `i`'ye, `İ`'yi de `i` artı birleşen bir noktaya çevirir ve kelimeler
+daha gövdeleme başlamadan bozulur (@sec-turkce-nlp-normalizasyon).
+
 ## Ölçümler ne diyor {#sec-erisim-sonuclar}
 
 İki koşul da aynı derlem üzerinde çalışıyor, dolayısıyla aşağıdaki iki tablo
@@ -130,11 +141,32 @@ sayılıyor.
 Bu son varsayım doğrulanmadı ve simetrik değil. 7.165 haber cümlesinde üç içerik
 kelimesi çoğu zaman birden fazla cümleyi tarif eder ve yakın bir başka anlatımı
 bulup getiren sistem tam da yoğun olandır — yani etiketlenmemiş ilgili
-belgeler yoğun recall@1'i aşağı çekiyor, BM25'inkine dokunmuyor. Çözümü bu
+belgeler yoğun recall@1'i BM25'inkinden daha çok aşağı çekiyor. Çözümü bu
 bölümün kendi mülakat kısmı veriyor: bir alt örneklemde her sistemin ilk 10
 sonucunu bir havuzda toplayın ve bu birleşimi elle etiketleyin. Biz yapmadık.
 Biri yapana kadar A koşulundaki yoğun sayıları bir kestirim değil, bir taban
 olarak okuyun.
+
+Tabloları okumadan önce bilinmesi gereken iki şey var. Birincisi sütunlar.
+**R@1** ve **R@10**, recall@1 ve recall@10'dur; sorgu başına tek ilgili belge
+varken bunlar yalnızca "doğru belge birinci mi?" ve "ilk onun içinde bir
+yerde mi?" diye sorar. MRR@10 ve nDCG@10 de üst sıraları ödüllendirir; dördü
+de @sec-erisim-metrikler'de düzgünce tanımlanıyor. İkincisi *melez* satırlar.
+Bunlar bir BM25 sıralamasını ve bir yoğun sıralamayı
+[sıra tersine dayalı birleştirme](#gloss-rrf){#term-rrf .term-ref} (reciprocal
+rank fusion, RRF) [@cormack2009reciprocal] ile birleştirir. Her belge, onu
+döndüren sistemler $s$ üzerinden toplanan $\sum_s 1/(k + \text{sıra}_s(d))$
+puanını alır ve birleşik liste bu puana göre sıralanır. Bir sistemin
+döndürmediği belge o sistemden hiç puan almaz. $k$ bir yumuşatma sabitidir;
+özgün makale $k = 60$ kullandı ve bu hâlâ yaygın varsayılan değer.
+
+::: {#gloss-rrf .column-margin .term-gloss}
+**sıra tersine dayalı birleştirme (RRF)** — birkaç sıralı listeyi, her belgeye
+listeler boyunca $\sum 1/(k + \text{sıra})$ puanı verip yeniden sıralayarak
+birleştirmek. Skorları değil yalnızca sıraları kullanır; bu yüzden kalibrasyon
+gerektirmez — ama güçlü bir sistemin birinciliğini zayıf bir sistemin
+birinciliğinden ayıramaz. [↩](#term-rrf){.term-back}
+:::
 
 ### Koşul A — anahtar kelime sorguları, çekimli
 
@@ -151,8 +183,8 @@ hybrid RRF (unweighted), surface + e5       37.6%   71.6%     47.6     53.3
 hybrid RRF (unweighted), stemmed + e5       63.2%   96.5%     73.7     79.2
 ```
 
-[Gövdelenmiş BM25 altmış puan farkla kazanıyor.]{.hl} Yüz satırlık ek soyma
-kuralları, eğitilmiş çok dilli bir retriever'ı %96,0'a %35,9 yeniyor — çoğu
+[Gövdelenmiş BM25 altmış puan farkla kazanıyor.]{.hl} Elle yazılmış birkaç
+yüz satırlık ek soyma kuralı, eğitilmiş çok dilli bir retriever'ı %96,0'a %35,9 yeniyor — çoğu
 kişinin ilk tercih ettiği benzerlik modelini ise %96,0'a %10,6.
 
 Yüzey biçimi ve gövdelenmiş satırlar @sec-turkce-nlp'nin %28,0 ve %95,3'ünü
@@ -184,7 +216,8 @@ erişimin en kötü olduğu durumlar.
 söyleyelim.** Buradaki sorgu *belgenin eksiksiz, profesyonel bir çevirisi*; bu
 da çok dilli bir bi-encoder'ın alabileceği, eğitim dağılımına en çok uyan
 girdi: bu iki model de paralel cümle çiftleri üzerinde eğitildi, yani görev
-aramadan çok bitext madenciliğine yakın. Gerçek diller arası sorgular kısadır,
+aramadan çok bitext madenciliğine (verilen bir cümlenin çevirisi olan cümleyi
+bulmaya) yakın. Gerçek diller arası sorgular kısadır,
 soru biçimlidir ve belgenin tamamını kapsamaz. Dolayısıyla %96,2'yi "yoğun
 erişim diller arası aramayı çözüyor" diye değil "yoğun erişim çeviri
 eşleştirmesini çözüyor" diye okuyun; yetmiş iki puanlık farkı da yoğun
@@ -204,8 +237,8 @@ düzeltecek bir şey yok.
 
 ### Yaygın kanıyla çelişen bulgu
 
-Her tablodaki iki melez satırı, birleştirdikleri sistemlerden daha iyi olanla
-karşılaştırın:
+Her tablodaki iki melez satırdan daha iyi olanını (A koşulunda gövdelenmiş +
+e5, B koşulunda yüzey + e5) en iyi tek sistemle karşılaştırın:
 
 ```text
 condition A     stemmed BM25 alone         96.0%  R@1
@@ -215,8 +248,7 @@ condition B     dense e5 alone             96.2%  R@1
                 hybrid surface + e5        49.4%  R@1      -46.8
 ```
 
-**Ağırlıksız reciprocal rank fusion (RRF; sıraların tersine dayalı
-birleştirme) iki koşulda da işleri kötüleştirdi**, hem de fena hâlde. Bu, melez
+**Ağırlıksız RRF iki koşulda da işleri kötüleştirdi**, hem de fena hâlde. Bu, melez
 erişimin birleştirdiği iki sistemi de yendiği yolundaki standart iddianın tersi
 [@cormack2009reciprocal]. Nedeni de mekanizmada görülüyor.
 
@@ -300,18 +332,24 @@ Inputs.table(rrfRows, {
 //| echo: false
 md`**${rrfRows[0].rank === 1
   ? "Doğru belge 1. sırada hayatta kalıyor."
-  : `Doğru belge ${rrfRows[0].rank}. sıraya düşüyor.`}** Güçlü sistemin
-${rrfGoldStrong === 1 ? "birinci" : `${rrfGoldStrong}.`} sıraya koyduğu bir
-belge, yanlış olan bir sistem eşit oy sahibi olduğunda
-${rrfRows[0].rank === 1 ? "hâlâ birinci" : "artık birinci değil"}.`
+  : `Doğru belge ${rrfRows[0].rank}. sıraya düşüyor.`}** Güçlü sistem
+onu ${rrfGoldStrong === 1 ? "birinci" : `${rrfGoldStrong}.`} sıraya, üç
+tuzağın da üstüne koymuştu; yanlış olan bir sistem eşit oy sahibi
+${rrfRows[0].rank === 1
+  ? "olsa da bu dört belge arasında hâlâ birinci."
+  : "olunca bu dört belge arasında artık birinci değil."}`
 ```
 :::
 
 İkinci kaydırıcıyı hareket ettirin, mekanizma belirginleşir: zayıf sistemin
-sonucu değiştirmek için *haklı* olması gerekmiyor, yalnızca kendinden emin
-olması. Ve `k`'nin ne yaptığına dikkat edin — onu yükseltmek sıralar arasındaki
-farkları düzleştirir, bu da birleştirmeyi yumuşatır ve limitte döndürülen her
-belgeyi birbirinin yerine geçebilir kılar.
+sonucu değiştirmek için *haklı* olması gerekmiyor, yanlış belgeyi listesinin
+tepesine koyması yetiyor. Ve `k`'nin ne yaptığına dikkat edin. Küçük bir `k`
+birinci sırayı onuncudan çok daha değerli kılar; her sistemin en üstteki
+sonucu belirleyici olur. `k`'yi yükseltmek sıralar arasındaki farkları
+düzleştirir ve limitte birleşik sıra, sıraların *toplamına* göre sıralamaya
+dönüşür: iki listenin de ortalarında duran bir belge, bir listede birinci ama
+diğerinde çok aşağıda olan bir belgeyi geçebilir. İki ayar da hangi sisteme
+güvenileceğini bilmez.
 
 Hasarın biçimine bakmaya değer, çünkü birleştirmenin size ne zaman zarar
 vermeyeceğini söylüyor:
@@ -400,7 +438,10 @@ gizleyen metrik:
 ::: {.fig-cap}
 İki panel de aynı ölçekte çizildi, dolayısıyla aynı uzunluktaki bir çubuk aynı
 recall@1 demek. İki aile, tek bir derlemde ve tek bir belge kümesinde koşullar
-arasında tümüyle yer değiştiriyor. Her panelde kesikli çizgi iki sistemden daha
+arasında tümüyle yer değiştiriyor. Her birleştirme çubuğu kendi tablosundaki
+iki melezden daha iyisidir; B koşulunda bu, üstte çizilen gövdelenmiş BM25 ile
+değil *yüzey biçimli* BM25 (tek başına %23,2) ile yapılan birleştirmedir. Her
+panelde kesikli çizgi iki sistemden daha
 iyisini işaretliyor; gül rengi ayraç da birleştirmenin bu sisteme göre ne kadar
 kaybettirdiğini gösteriyor. Alt bant aynı B koşulu birleştirmesini ilk on sonuç
 düzeyinde gösteriyor; burada iki çubuk ayırt edilemiyor — doğru belge hiç
@@ -447,9 +488,10 @@ multilingual-e5-base (retrieval)    35.9%         96.2%
                                    +25.3          +2.4
 ```
 
-Kolay koşulda ikisi arasında iki puan kadar fark var; dolayısıyla üstünkörü bir
-kıyaslama, model seçiminin önemli olmadığı sonucuna varırdı. Zor koşulda
-erişime eğitilmiş model **üç buçuk kat daha iyi**.
+Kolay koşulda (yoğun bir model için B) ikisi arasındaki fark 2,4 puan;
+dolayısıyla üstünkörü bir kıyaslama, model seçiminin önemli olmadığı sonucuna
+varırdı. Zor koşulda (A) erişime eğitilmiş model **üç kattan fazla daha iyi**
+(%10,6'ya karşı %35,9).
 
 [İyi bir bileşenle vasat bir bileşen arasındaki fark yalnızca o bileşen için zor
 olan girdilerde ortaya çıkar]{.hl}; bu da kolay bir koşulun ortalamasını
@@ -463,8 +505,11 @@ diğerlerinden çok daha önemlidir.
 
 Bir çift kodlayıcı **karşıtsal** olarak eğitilir: sorgunun embedding'i ilgili
 belgesine doğru çekilir, ilgisiz belgelerden uzaklaştırılır. Kayıp genellikle
-bir yığın (batch) üzerinde hesaplanan InfoNCE'dir ve bütün zorluk *ilgisiz*
-kelimesindedir.
+bir yığın (batch) üzerinde hesaplanan InfoNCE'dir. Bu, "sınıfların" aday
+belgeler olduğu sıradan bir softmax çapraz entropisidir: sorgu, ilgili belgeyle
+ve birkaç ilgisiz belgeyle puanlanır ve softmax'tan olasılığı ilgili belgeye
+vermesi istenir. Bütün zorluk *ilgisiz* kelimesindedir — yanlış cevap olarak
+hangi belgeleri kullandığınızda.
 
 **Yığın içi negatifler** (in-batch negatives) kendiliğinden elde edilir:
 sorgu-belge çiftlerinden oluşan bir yığında, yığındaki diğer her belge bir
@@ -473,9 +518,17 @@ ilgili rastgele bir belge, faturayla ilgili bir sorgunun makul bir cevabı
 olamaz. Dolayısıyla model konuları birbirinden ayırmayı öğrenir ve bunun
 ötesine geçmez.
 
-**Zor negatifler** (hard negatives) doğru görünen ama doğru olmayan
-belgelerdir. Bunları, mevcut modelinizle erişim yapıp en üst sıralara gelen
-yanlış cevapları alarak çıkarın.
+[**Zor negatifler**](#gloss-hard-negative){#term-hard-negative .term-ref}
+(hard negatives) doğru görünen ama doğru olmayan belgelerdir. Bunları, mevcut
+modelinizle erişim yapıp en üst sıralara gelen yanlış cevapları alarak
+çıkarın.
+
+::: {#gloss-hard-negative .column-margin .term-gloss}
+**zor negatif** — mevcut modele doğru görünen yanlış bir belge; modelle erişim
+yapıp en üst sıralardaki yanlış cevaplar alınarak bulunur. Rastgele belgeler
+yerine bunlara karşı eğitmek, yoğun bir retriever'ı isabetli kılan şeyin
+büyük kısmıdır. [↩](#term-hard-negative){.term-back}
+:::
 
 [Her şey buna bağlıdır.]{.hl} Yalnızca rastgele negatiflerle eğitilmiş bir
 retriever konu benzerliğini öğrenir. Zor negatiflerle eğitilmiş bir retriever
@@ -508,13 +561,16 @@ yolu derlem ölçeğinde kullanmamasının da bir nedeni var.
 Bir [cross-encoder](#gloss-cross-encoder){#term-cross-encoder .term-ref} (çapraz kodlayıcı)
 [@nogueira2019passage] sorguyu ve belgeyi tek bir ileri geçişte **birlikte**
 okur; attention ikisinin üzerinde birden çalışır. Bu, bağımsız hesaplanmış iki
-vektörü karşılaştırmaktan kesinlikle daha bilgilendiricidir; çapraz
-kodlayıcının her çift kodlayıcıdan daha doğru olmasının nedeni de budur.
+vektörü karşılaştırmaktan kesinlikle daha bilgilendiricidir; benzer boyutta ve
+benzer eğitimle bir çapraz kodlayıcının çift kodlayıcıdan genellikle daha
+doğru olmasının nedeni de budur. Genellikle, her zaman değil: başka bir alanda
+eğitilmiş bir çapraz kodlayıcı, sizin alanınızda iyi eğitilmiş bir çift
+kodlayıcıya yine de yenilebilir.
 
 ::: {#gloss-cross-encoder .column-margin .term-gloss}
 **cross-encoder** (çapraz kodlayıcı) — sorgu ve belge birleştirilip tek bir
 ileri geçişte okunur, böylece attention ikisini birden kapsar. Çift
-kodlayıcıdan daha doğrudur ve önceden hesaplanamaz; bu yüzden bir derlemi
+kodlayıcıdan genellikle daha doğrudur ve önceden hesaplanamaz; bu yüzden bir derlemi
 aramak yerine bir kısa listeyi yeniden sıralar.
 [↩](#term-cross-encoder){.term-back}
 :::
@@ -611,11 +667,15 @@ Akılda tutulmaya değer üç sonuç:
   olduğunu savunur.
 - **Bedel, kısa listenin uzunluğuyla doğrusal olarak artar**; dolayısıyla
   kalite ile gecikme arasındaki dengeyi kısa liste boyutuyla ayarlarsınız. Kısa
-  liste boyutu ANN parametresinden daha iyi bir ayardır, çünkü etkisi
-  monotondur ve kolayca öngörülebilir.
+  liste boyutu ANN parametresinden daha kolay bir ayardır: maliyeti
+  öngörülebilir ve yeniden sıralayıcıya verdiği recall, liste büyüdükçe
+  yalnızca artabilir. Son doğruluk ise başka bir konu — genellikle bir platoya
+  ulaşır, hatta düşebilir; nedenini lab'ın 6. adımı açıklıyor
+  (@sec-erisim-lab).
 - **Geç etkileşim (late interaction) orta yoldur.** ColBERT
   [@khattab2020colbert] token başına bir vektör tutar ve en yüksek
-  benzerliklerin toplamıyla puanlar. Böylece önceden hesaplanabilir kalırken
+  benzerliklerin toplamıyla puanlar (her sorgu token'ı kendisine en çok
+  benzeyen belge token'ını bulur ve bu en iyi eşleşmeler toplanır). Böylece önceden hesaplanabilir kalırken
   çapraz kodlayıcının doğruluğunun büyük kısmını geri kazanır. Bedeli, bir
   büyüklük mertebesi daha fazla depolamadır; takas budur.
 
@@ -625,26 +685,33 @@ Birkaç bin vektör üzerinde tam arama bir matris çarpımıdır ve hiç zaman 
 yukarıdaki yoğun erişim sayıları böyle hesaplandı. Milyonlarca vektörde bu
 arama artık maliyetsiz olmaz ve yaklaşık bir indekse geçersiniz.
 
-İki aile:
+"Yaklaşık", indeksin hız karşılığında gerçek en yakın komşuların bir kısmını
+kaçırabileceği anlamına gelir. Pratikte iki aile öne çıkıyor:
 
 **HNSW** [@malkov2018hnsw] gezilebilir bir çizge kurar ve bu çizgede kaba bir
 katmandan ince bir katmana doğru açgözlü biçimde ilerler. Hızlı ve doğrudur ama
 çok bellek ister: çizge ve vektörlerin tam hâli RAM'de tutulur.
 
-**IVF-PQ** [@johnson2019billion] uzayı hücrelere böler, yalnızca en yakın
-birkaç hücrede arar ve vektörleri product quantization ile (vektörü parçalara
-bölüp her parçayı ayrı bir kod kitabıyla kodlama) *sıkıştırılmış* olarak
-saklar. Çok daha küçüktür, ancak sıkıştırma kayıplıdır ve bu kayıp doğruluktan
-götürür.
+**IVF-PQ** [@johnson2019billion] uzayı hücrelere böler (ters dosya, IVF:
+k-means kümeleri ve her kümenin içindeki vektörlerin listesi), yalnızca en
+yakın birkaç hücrede arar ve vektörleri product quantization (PQ) ile
+*sıkıştırılmış* olarak saklar. PQ her vektörü kısa parçalara böler ve her
+parçanın yerine, küçük ve öğrenilmiş bir kod kitabındaki en yakın girdinin
+numarasını yazar. 768 boyutlu bir float32 vektör 3.072 bayt tutar; 256
+girdilik kod kitaplarıyla 96 parçaya bölündüğünde parça başına bir bayt, yani
+96 bayt tutar — 32 kat daha küçük. Sıkıştırma kayıplıdır ve bu kayıp
+doğruluktan götürür.
 
 İkisi de recall ile gecikme arasındaki dengeyi ayarlayan bir düğme sunar: HNSW
-için `efSearch`, IVF için `nprobe`. [Aklınızda tutmanız gereken şu: varsayılan
-değer başka birinin çalışma noktasıdır]{.hl} ve sizin derleminiz olmayan bir
-ölçüt için seçilmiştir.
+için `efSearch` (çizgede ilerlerken kaç adayın tutulduğu), IVF için `nprobe`
+(kaç hücrenin arandığı). [Aklınızda tutmanız gereken şu: varsayılan değer
+başka birinin çalışma noktasıdır]{.hl} ve sizin derleminiz olmayan bir ölçüt
+için seçilmiştir.
 
 Burada da @sec-siniflandirma'nın karar eşiğine uyguladığı disiplin geçerlidir:
-düğmeyi tarayın, recall'ü p95 gecikmeye göre çizin, gecikme SLO'nuzu belirtin ve
-bu SLO'yu karşılayan noktayı seçin.
+düğmeyi tarayın, recall'ü p95 gecikmeye (sorguların %95'inin altında kaldığı
+gecikme) göre çizin, gecikme SLO'nuzu (hizmet düzeyi hedefi, yani taahhüt
+ettiğiniz gecikme sınırı) belirtin ve bu SLO'yu karşılayan noktayı seçin.
 
 Recall'ü de kütüphanenin yayımladığı eğriye göre değil, **kendi verinizde tam
 aramaya göre** ölçün. Kayıp, vektörlerinizin nasıl dağıldığına bağlıdır; bu
@@ -660,8 +727,10 @@ bilmek istersiniz. Tam arama bu ikisini ayıran kontroldür; onu bir örneklem
 
 ## Erişimi ölçmek {#sec-erisim-metrikler}
 
-Yukarıdakilerin hepsi dört sayıyla raporlandı ve ne anlama geldikleri
-söylenmedi. Her biri farklı bir soruya cevap verir ve yanlış olanı seçmek,
+Yukarıdakilerin hepsi dört sütunla — iki derinlikte recall, MRR ve nDCG —
+raporlandı ve her biri için yalnızca tek satırlık bir açıklama verildi. Aşağıdaki
+tablo, tabloların kullanmadığı precision@k'yı da ekliyor. Bu metriklerin her
+biri farklı bir soruya cevap verir ve yanlış olanı seçmek,
 erişimdeki bir gerilemenin fark edilmeden kalmasına yol açar.
 
 | metrik | sorduğu | ne zaman kullanılır |
@@ -682,12 +751,40 @@ döndürmediği bir belgeye cevap dayandıramaz.
 [↩](#term-recall-k){.term-back}
 :::
 
+Sıraya duyarlı iki metrik, yazıya dökülecek kadar kısa. Bir sorgu kümesi $Q$
+için $\text{sıra}_q$, $q$ sorgusunun ilk ilgili belgesinin konumu olsun:
+
+$$
+\text{MRR@}k = \frac{1}{|Q|}\sum_{q \in Q} \frac{1}{\text{sıra}_q}
+\quad (\text{sıra}_q > k \text{ ise terim } 0 \text{ sayılır})
+$$
+
+$$
+\text{DCG@}k = \sum_{i=1}^{k} \frac{\text{rel}_i}{\log_2(i+1)}, \qquad
+\text{nDCG@}k = \frac{\text{DCG@}k}{\text{IDCG@}k}
+$$
+
+Burada $\text{rel}_i$, $i$. konumdaki belgenin ilgililik derecesidir (bu
+bölümde 0 ya da 1); IDCG@$k$ ise mümkün olan en iyi sıralamanın DCG'sidir,
+dolayısıyla nDCG 0 ile 1 arasında kalır. Bazı araçlar kazanç olarak
+$\text{rel}_i$ yerine $2^{\text{rel}_i}-1$ kullanır; 0/1 etiketlerde ikisi
+aynı sonucu verir.
+
+Bu bölümün tablolarındaki gibi tek ilgili belgeyle işlenmiş bir örnek.
+Belgenin 3. sırada geldiğini varsayın. O zaman recall@1 = 0, recall@10 = 1, ters sıra
+(reciprocal rank) $1/3 \approx 0{,}33$ ve nDCG@10 $1/\log_2 4 = 0{,}5$ olur
+(ideal liste onu 1. sıraya koyar, dolayısıyla IDCG = 1). İki metrik de 3.
+sırayı cezalandırır, ama nDCG daha yumuşak cezalandırır. Yukarıdaki tabloların
+her satırında nDCG@10'un MRR@10 ile recall@10 arasında durmasının nedeni budur.
+
 [Bir RAG sisteminin erişim aşaması için tek bir sayı raporlayacaksanız, modele
 gerçekten verdiğiniz *k* için recall@k raporlayın.]{.hl} Bu sayı,
 *dayanaklandırmanın* sağlayabileceğinin tavanıdır: üretici (@sec-rag) cevabı
-yalnızca kendisine ulaşan belgelere dayandırabilir. Dolayısıyla erişimde
-recall@10 %80 ise, cevapların %20'si daha üretim başlamadan dayanaklandırılamaz
-durumdadır — ve prompt üzerinde ne kadar uğraşırsanız uğraşın bunlar düzelmez.
+yalnızca kendisine ulaşan belgelere dayandırabilir. Dolayısıyla soru başına
+tek ilgili belge varken erişimde recall@10 %80 ise, cevapların %20'si daha
+üretim başlamadan getirilen kanıta dayandırılamaz durumdadır — ve prompt
+üzerinde ne kadar uğraşırsanız uğraşın bunlar düzelmez. (Bu tavanın tam
+olarak ne zaman geçerli olduğunu aşağıdaki 5. sezgi kontrolü açıklıyor.)
 
 Sonuç olarak **iki aşama farklı metrikler gerektirir.** Birinci aşama recall
 üzerinden değerlendirilir, çünkü işi hiçbir şeyi kaçırmamaktır. İkinci aşama —
@@ -716,7 +813,7 @@ Son karar vektörlerin nerede tutulacağıdır ve bu karar genellikle çok erken
 |:--|:--|:--|
 | ~100 binin altı | NumPy dizisi artı tam arama | bir matris çarpımı; bu bölümdeki yoğun erişim sayıları böyle hesaplandı ve sonuç kesindir |
 | ~100 bin–10M | zaten çalıştırdığınız Postgres'te `pgvector` ya da süreç içi FAISS | transaction'lar, yedekleme, join'ler ve erişim kontrolü hazır gelir; işletmeniz gereken yeni bir servis de olmaz |
-| 10M+ ya da çok kiracılı | özel bir vektör deposu | parçalama, çoğaltma ve süzgeçli arama sizin çözeceğiniz problem olmaktan çıktığında |
+| 10M+ ya da çok kiracılı | özel bir vektör deposu | sharding (veriyi makinelere bölme), çoğaltma ve süzgeçli arama sizin çözeceğiniz problem olmaktan çıktığında |
 
 : Vektörler nereye konur {tbl-colwidths="[18,38,44]"}
 
@@ -763,8 +860,8 @@ daha iyi sisteme göre bir koşulda **32,8 puan**, diğerinde **46,8 puan**
 kaybettirdi.
 
 RRF, zayıf bir sistemden gelen 1. sıra isabetine güçlü bir sistemden gelenle
-birebir aynı ağırlığı verir. Bu yüzden zayıf sistemin kendinden emin yanlış
-cevapları, güçlü sistemin doğru cevaplarını yerinden eder. Birleştirme
+birebir aynı ağırlığı verir. Bu yüzden zayıf sistemin üst sıralara koyduğu
+yanlış cevaplar, güçlü sistemin doğru cevaplarını yerinden eder. Birleştirme
 *karşılaştırılabilir* sistemler için bir varyans azaltma tekniğidir.
 Birleştirmeden önce sizinkilerin karşılaştırılabilir olduğunu kontrol edin; bunun
 bedeli tek bir değerlendirme çalıştırmasıdır.
@@ -824,7 +921,7 @@ ikinci aşamanın ihtiyaç duyduğu recall'ü çöpe atar.
 ## 6. Vektör veritabanına ihtiyacınız var mı?
 
 Yaklaşık 100 bin belgenin altında hayır — bir NumPy dizisi üzerinde tam arama
-bir matris çarpımıdır ve kesindir. Birkaç milyona kadar, zaten çalıştırdığınız
+bir matris çarpımıdır ve kesindir. Yaklaşık on milyona kadar, zaten çalıştırdığınız
 Postgres'teki `pgvector` size işlemleri, yedekleri, join'leri ve erişim
 kontrolünü ek bir maliyet olmadan sunar.
 
@@ -855,11 +952,20 @@ $$
 \frac{f_{t,d}\,(k_1+1)}{f_{t,d} + k_1\left(1 - b + b\,\frac{|d|}{\text{avgdl}}\right)}
 $$
 
+Burada $f_{t,d}$, $t$ teriminin $d$ belgesinde kaç kez geçtiği; $|d|$ belgenin
+uzunluğu, avgdl ise derlemdeki ortalama uzunluktur. IDF genellikle, $N$
+belgenin $n_t$ tanesinde $t$ geçiyorsa $\log\frac{N - n_t + 0{,}5}{n_t + 0{,}5}$
+olarak alınır (Lucene, negatife düşmesin diye logaritmanın içine 1 ekler).
+Yaygın varsayılanlar $k_1 \approx 1{,}2$–$2{,}0$ ve $b = 0{,}75$'tir.
+
 Açıkça söylemeye değer kısım, formülün *neden* doyuma ulaştığıdır.
-@sec-metin-veri'nin TF-IDF'inde bir terimin onuncu geçişi birincisi kadar
-sayılır; burada $k_1$ katkıyı sınırlar, dolayısıyla bir kelimeyi yirmi kez
-tekrarlayan bir belge onu daha iyi bir bağlamda üç kez kullanandan üste
-çıkamaz. $b$ ise uzunluk normalizasyonunu iki uç arasında
+@sec-metin-veri'nin ham sayımlı TF-IDF'inde bir terimin onuncu geçişi
+birincisi kadar sayılır; burada ise terim frekansı çarpanı hiçbir zaman
+$k_1+1$'i aşamaz ve $k_1$ bu tavana ne kadar hızlı yaklaşılacağını belirler.
+$k_1 = 1{,}2$ ile (uzunluğu yok sayarsak) üç kez geçen bir kelime 1,57 × IDF,
+yirmi kez geçen bir kelime ise yalnızca 2,08 × IDF katkı verir — yedi kat
+değil, üçte bir fazla. Dolayısıyla tekrar, sorgunun diğer terimlerinden daha
+fazlasını eşleştiren bir belgeyi ezip geçemez. $b$ ise uzunluk normalizasyonunu iki uç arasında
 ayarlar: $b=0$ belge uzunluğunu yok sayar, $b=1$ uzunluğun etkisini tümüyle
 giderir. `scikit-learn`'deki `sublinear_tf`'in aynı
 fikrin kaba hâli olduğunu eklerseniz iki bölümü birbirine bağlamış olursunuz.
@@ -882,8 +988,8 @@ HNSW'de `efSearch`, IVF'de `nprobe` — çizgenin ne kadarının ya da kaç küm
 ziyaret edileceği. Sorunun asıl amacı ikinci yarısıdır: bu ayarın bir
 varsayılan değeri vardır; o değeri siz değil, kütüphanenin yazarı seçmiştir ve
 bu, performans kılığına girmiş bir *recall* ayarıdır. Gerçek komşuların
-%92'sini sessizce döndüren bir ANN indeksi, model daha hiçbir şey görmeden
-sisteminize %92'lik bir tavan koymuştur. Yaklaşık aramayı bir örneklemde tam
+%92'sini sessizce döndüren bir ANN indeksi, model daha hiçbir şey görmeden tam
+aramanın bulacağı şeylerin %8'ini çöpe atmıştır. Yaklaşık aramayı bir örneklemde tam
 aramayla karşılaştırın; böylece sayıyı varsaymak yerine bilirsiniz.
 
 ### Bir tane yayına alıp almadığınızı sınayanlar
@@ -973,7 +1079,7 @@ kaç karşılaştırma yapmayı planladığınıza bağlıdır. Önemsediğiniz 
 beş puansa ya da sistemler neredeyse her sorguda aynı sonucu veriyorsa, birkaç
 yüz sorguluk bütçe ayırın. Sonra BM25 kurun — ve diliniz morfolojik olarak
 zenginse iki kez kurun, gövdelemeli ve gövdelemesiz, çünkü @sec-turkce-nlp o tek
-adımın altmış puan edebileceğini söylüyor.
+adımın altmış puandan fazla edebileceğini söylüyor.
 
 ### Adım 3 — bir erişim modeliyle yoğun erişim ekleyin
 
@@ -985,7 +1091,9 @@ raporlayın.
 
 RRF'i çalıştırın ve sonucu zayıf olanla değil, **daha iyi sistemle**
 karşılaştırın. Sistemler yaklaşık yirmi puandan fazla ayrışıyorsa birleştirmenin
-zarar vermesini bekleyin ve doğrulayın. Bu on beş dakikalık bir kontroldür; bu
+zarar vermesini bekleyin ve doğrulayın. Buradaki yirmi, ölçülmüş bir eşik değil
+kaba bir kural: bu bölümde ölçülen farklar altmış puan ve üzeriydi. Bu on beş
+dakikalık bir kontroldür; bu
 bölümün ölçümleri ise onun rutin olarak atlandığını düşündürüyor.
 
 ### Adım 5 — sorgularınız karışıksa birleştirmek yerine yönlendirin
@@ -1112,15 +1220,17 @@ ekip onu hiç ölçmemiştir.
   negatifleri yeniden çıkarın. Etiketlenmemiş ilgili belgeleri modele yanlış
   diye öğretmemek için de negatifleri listenin tepesinin biraz altından çıkarın.
 
-- **Geniş erişin, hassas yeniden sıralayın.** Bir çapraz kodlayıcı daha doğrudur
+- **Geniş erişin, hassas yeniden sıralayın.** Bir çapraz kodlayıcı genellikle daha doğrudur
   ve önceden hesaplanamaz, dolayısıyla bir kısa listeyi yeniden sıralar.
   Yalnızca birinci aşamanın döndürdüğünü sıralayabilir — **birinci aşama,
   ikincinin yükseltemeyeceği bir tavan koyar**.
 
-- **Aşağı akışa gerçekten geçirdiğiniz k için recall@k raporlayın.** Bu, her RAG
-  sisteminin katı sınırıdır: bir üretici hiç almadığı bir belgeye cevap
-  dayandıramaz ve %80 recall@10, soruların %20'sinin üretim başlamadan
-  cevaplanamaz olduğu anlamına gelir.
+- **Aşağı akışa gerçekten geçirdiğiniz k için recall@k raporlayın.** Herhangi
+  bir RAG sisteminin neyi kanıta dayandırabileceğini bu sınırlar: bir üretici
+  hiç almadığı bir belgeye cevap dayandıramaz. Soru başına tek ilgili belge
+  varken %80 recall@10, soruların %20'sinin üretim başlamadan getirilen kanıta
+  dayandırılamayacağı anlamına gelir (model bir kısmını yine de bellekten,
+  dayanaksız olarak cevaplayabilir).
 
 - **Ölçek zorlayana kadar vektörleri verinin yanında tutun.** 100 binin altında
   belgede tam arama kesin ve anlıktır. Sonunda özel bir depoyu zorunlu kılan

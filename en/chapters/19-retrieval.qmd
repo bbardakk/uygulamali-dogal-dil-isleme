@@ -28,7 +28,9 @@ Retrieval has two families and they fail in opposite directions.
 [@robertson2009probabilistic] — is @sec-text-as-data's TF-IDF with two
 corrections that matter: term frequency **saturates**, so the tenth occurrence
 of a word adds far less than the second, and document length is normalised, so
-a long document does not win by containing more of everything.
+a long document does not win by containing more of everything. (The formula,
+and what its two knobs $k_1$ and $b$ do, is written out in
+@sec-retrieval-interview.)
 
 It is fast, exact, interpretable, needs no training, and it cannot match a word
 it has never seen.
@@ -36,8 +38,8 @@ it has never seen.
 **Dense retrieval** matches meaning. A
 [bi-encoder](#gloss-bi-encoder){#term-bi-encoder .term-ref}
 [@karpukhin2020dense] embeds queries and documents separately into the same
-space, so documents can be encoded once and searched by vector similarity. It
-handles paraphrase, synonymy and — as this chapter will show — different
+space, so documents can be encoded once and searched by vector similarity
+(usually the cosine similarity of @sec-embeddings). It handles paraphrase, synonymy and — as this chapter will show — different
 languages.
 
 It needs a trained model, it cannot guarantee an exact match on a part number,
@@ -88,7 +90,7 @@ So the experiment runs **two query conditions** against the same documents:
 | **A. keyword, inflected** | three content words, in a different inflection than the document uses | lexical matching, if it can handle morphology |
 | **B. cross-lingual** | the document's professional English translation | dense only — there is no shared vocabulary at all |
 
-: Two conditions, chosen so neither family gets a home fixture
+: Two conditions, chosen so neither family gets a home advantage
 {tbl-colwidths="[24,44,32]"}
 
 And **two dense models**, for the same reason:
@@ -113,6 +115,15 @@ or that both of this chapter's headline margins would shrink. Treat the E5 rows
 as pending that check, and record the prefixes beside the model name when you
 run this.
 
+Two upstream decisions this experiment sidesteps, so that you do not miss
+them in your own system. First, what counts as a "document": here every
+document is a single sentence, but real documents are longer and have to be
+cut into chunks before they are embedded, and the best chunk size depends on
+the kind of question (@sec-rag-chunking measures it). Second, for Turkish
+BM25, lowercase with Turkish rules: Python's default `lower()` turns `I` into
+`i` instead of `ı` and `İ` into `i` plus a combining dot, which mangles words
+before stemming ever runs (@sec-turkish-nlp-normalization).
+
 ## What the measurements say {#sec-retrieval-results}
 
 Both conditions run against the same corpus, so the two tables below are
@@ -124,11 +135,32 @@ document is treated as the only correct answer.
 That last assumption is not verified, and it is not symmetric. On 7,165
 sentences of news text, three content words will often describe more than one
 sentence, and the system that surfaces a near-paraphrase is precisely the dense
-one — so unlabelled relevant documents push dense recall@1 down and leave BM25's
-alone. The fix is the one this chapter's own interview section prescribes: pool
+one — so unlabelled relevant documents push dense recall@1 down more than
+BM25's. The fix is the one this chapter's own interview section prescribes: pool
 the top-10 of every system on a subsample and label the union by hand. We did
 not do it. Until someone does, read condition A's dense numbers as a floor
 rather than an estimate.
+
+Two things to know before reading the tables. First, the columns. **R@1** and
+**R@10** are recall@1 and recall@10; with one relevant document per query they
+simply ask "is the right document first?" and "is it anywhere in the top
+ten?". MRR@10 and nDCG@10 also reward a high position, and all four are defined
+properly in @sec-retrieval-metrics. Second, the *hybrid* rows. They combine a
+BM25 ranking and a dense ranking with
+[reciprocal rank fusion](#gloss-rrf){#term-rrf .term-ref} (RRF)
+[@cormack2009reciprocal]. Every document gets the score
+$\sum_s 1/(k + \text{rank}_s(d))$, summed over the systems $s$ that returned
+it, and the fused list is sorted by that score. A document a system did not
+return adds nothing from that system. $k$ is a smoothing constant; the original
+paper used $k = 60$, and it remains the common default.
+
+::: {#gloss-rrf .column-margin .term-gloss}
+**reciprocal rank fusion (RRF)** — merge several ranked lists by giving each
+document $\sum 1/(k + \text{rank})$ over the lists and re-sorting. It uses
+only ranks, never scores, so it needs no calibration — and it cannot tell a
+strong system's first place from a weak system's.
+[↩](#term-rrf){.term-back}
+:::
 
 ### Condition A — keyword queries, inflected
 
@@ -145,8 +177,8 @@ hybrid RRF (unweighted), surface + e5       37.6%   71.6%     47.6     53.3
 hybrid RRF (unweighted), stemmed + e5       63.2%   96.5%     73.7     79.2
 ```
 
-[Stemmed BM25 wins by sixty points.]{.hl} A hundred lines of suffix-stripping
-rules beat a trained multilingual retriever 96.0% to 35.9% — and beat the
+[Stemmed BM25 wins by sixty points.]{.hl} A few hundred lines of hand-written
+suffix-stripping rules beat a trained multilingual retriever 96.0% to 35.9% — and beat the
 similarity model, the one most people reach for first, 96.0% to 10.6%.
 
 The surface-form and stemmed rows reproduce @sec-turkish-nlp's 28.0% and 95.3%
@@ -178,7 +210,8 @@ retrieval is worst at.
 A.** The query here is a *full professional translation of the document*, and
 that is the most in-distribution input a multilingual bi-encoder can receive:
 both of these models were trained on parallel sentence pairs, so this task is
-closer to bitext mining than to search. Real cross-lingual queries are short and
+closer to bitext mining (finding the sentence that is the translation of a
+given sentence) than to search. Real cross-lingual queries are short and
 question-shaped and do not cover the whole document. So read 96.2% as "dense
 retrieval solves translation matching" rather than "dense retrieval solves
 cross-lingual search", and read the seventy-two-point margin as an upper bound
@@ -198,7 +231,9 @@ total, so there is nothing for it to fix.
 
 ### The finding that contradicts the received wisdom
 
-Read the two hybrid rows in each table against their best parent:
+Take the better of the two hybrid rows in each table (stemmed + e5 in
+condition A, surface + e5 in condition B) and read it against the best single
+system:
 
 ```text
 condition A     stemmed BM25 alone         96.0%  R@1
@@ -216,8 +251,9 @@ mechanism.
 Be precise about what was measured, because the claim is narrower than "hybrid
 retrieval is oversold". These rows are *unweighted*, *rank-based* fusion at a
 constant $k$ this chapter does not report — and the widget below exists to show
-you that $k$ changes the answer, which makes not reporting it a real gap. Two
-standard repairs went untried. **Weighted RRF** — $\sum w_s/(k + \text{rank}_s)$
+you that $k$ changes the answer, which makes not reporting it a real gap.
+
+Two standard repairs went untried. **Weighted RRF** — $\sum w_s/(k + \text{rank}_s)$
 with a per-system weight fitted on held-out queries — is the obvious one, and
 this chapter defers it to an exercise rather than running it. **Score-based
 fusion** is the better one: @bruch2024fusion analyses exactly this question and
@@ -292,18 +328,24 @@ Inputs.table(rrfRows, {
 //| echo: false
 md`**${rrfRows[0].rank === 1
   ? "The right document survives at rank 1."
-  : `The right document lands at rank ${rrfRows[0].rank}.`}** A document the
-strong system ranked ${rrfGoldStrong === 1 ? "first" : `${rrfGoldStrong}th`} is
-${rrfRows[0].rank === 1 ? "still first" : "no longer first"} once a system that
-is wrong ${rrfRows[0].rank === 1 ? "is" : "gets"} an equal vote.`
+  : `The right document lands at rank ${rrfRows[0].rank}.`}** The strong
+system ranked it ${rrfGoldStrong === 1 ? "first" : `${rrfGoldStrong}${
+  rrfGoldStrong === 2 ? "nd" : rrfGoldStrong === 3 ? "rd" : "th"}`}, above
+all three decoys, and it is ${rrfRows[0].rank === 1
+  ? "still first among these four, even though"
+  : "no longer first among these four once"} a system that is wrong gets an
+equal vote.`
 ```
 :::
 
 Move the second slider and the mechanism becomes obvious: the weak system does
-not need to be *right* to change the outcome, only confident. And notice what
-`k` does — raising it flattens the differences between ranks, which makes
-fusion gentler and, at the limit, makes every returned document
-interchangeable.
+not need to be *right* to change the outcome, only to put the wrong document
+at the top of its list. And notice what `k` does. A small `k` makes first
+place worth far more than tenth, so each system's top hit dominates. Raising it
+flattens the differences between ranks, and at the limit the fused order is
+simply the order of the *summed* ranks — a document that sits in the middle of
+both lists can then beat one that is first in one list and deep in the other.
+Neither setting knows which system to trust.
 
 The damage has a shape worth seeing, because it tells you when you can get
 away with it:
@@ -392,7 +434,9 @@ metric that hides it:
 ::: {.fig-cap}
 Both panels are drawn at the same scale, so a bar of the same length means the
 same recall@1. The two families change places completely between the
-conditions, on one corpus with one set of documents. In each panel the dashed
+conditions, on one corpus with one set of documents. Each fusion bar is the
+better of the two hybrids in its table; in condition B that is the fusion with
+*surface-form* BM25 (23.2% alone), not the stemmed BM25 drawn above it. In each panel the dashed
 line marks the better parent and the rose bracket is what fusing cost against
 it. The bottom band is the same condition-B fusion seen at depth ten, where
 the two bars are indistinguishable — the right document was never lost, only
@@ -435,9 +479,10 @@ multilingual-e5-base (retrieval)    35.9%         96.2%
                                    +25.3          +2.4
 ```
 
-On the easy condition the two are within two points, so a casual benchmark
-would conclude the model choice does not matter. On the hard condition the
-retrieval-trained model is **three and a half times better**.
+On the easy condition (B, for a dense model) the two are 2.4 points apart, so
+a casual benchmark would conclude the model choice does not matter. On the hard
+condition (A) the retrieval-trained model is **more than three times better**
+(35.9% against 10.6%).
 
 [The gap between a good and a mediocre component only appears on the inputs
 that are hard for it]{.hl}, which is an argument for building the difficult
@@ -452,8 +497,11 @@ matters far more than the rest.
 
 A bi-encoder is trained **contrastively**: pull the embedding of a query
 toward its relevant document and push it away from irrelevant ones. The loss
-is usually InfoNCE over a batch, and the whole difficulty is in the word
-*irrelevant*.
+is usually InfoNCE over a batch. It is ordinary softmax cross-entropy in
+which the "classes" are the candidate documents: score the query against the
+relevant document and against several irrelevant ones, and ask the softmax to
+put its probability on the relevant one. The whole difficulty is in the word
+*irrelevant* — which documents you use as the wrong answers.
 
 **In-batch negatives** are free: for a batch of query-document pairs, every
 other document in the batch is a negative. They cost nothing and they are
@@ -461,8 +509,16 @@ mostly *easy* — a random document about football is not a plausible answer to
 a query about invoices, so the model learns to separate topics and stops
 there.
 
-**Hard negatives** are documents that look right and are not. Mine them by
-retrieving with your current model and taking the top-ranked wrong answers.
+[**Hard negatives**](#gloss-hard-negative){#term-hard-negative .term-ref} are
+documents that look right and are not. Mine them by retrieving with your
+current model and taking the top-ranked wrong answers.
+
+::: {#gloss-hard-negative .column-margin .term-gloss}
+**hard negative** — a wrong document that looks right to the current model,
+found by retrieving with it and keeping the top-ranked wrong answers. Training
+against these, rather than random documents, is most of what makes a dense
+retriever precise. [↩](#term-hard-negative){.term-back}
+:::
 
 [This is the whole game.]{.hl} A retriever trained only on random negatives
 learns topical similarity; a retriever trained on hard negatives learns the
@@ -494,13 +550,15 @@ and a reason nobody does it at corpus scale.
 A [cross-encoder](#gloss-cross-encoder){#term-cross-encoder .term-ref}
 [@nogueira2019passage] reads the query and the document **together**, in one
 forward pass with attention across both. That is strictly more informative
-than comparing two independently-computed vectors, and it is why a
-cross-encoder is more accurate than any bi-encoder.
+than comparing two independently computed vectors, and it is why a
+cross-encoder is usually more accurate than a bi-encoder of similar size and
+training — usually, not always: a cross-encoder trained on another domain can
+still lose to a well-trained bi-encoder on yours.
 
 ::: {#gloss-cross-encoder .column-margin .term-gloss}
 **cross-encoder** — query and document concatenated and read in a single
-forward pass, so attention runs across both. More accurate than a bi-encoder
-and impossible to precompute, which is why it reranks a shortlist instead of
+forward pass, so attention runs across both. Usually more accurate than a
+bi-encoder and impossible to precompute, which is why it reranks a shortlist instead of
 searching a corpus. [↩](#term-cross-encoder){.term-back}
 :::
 
@@ -593,10 +651,14 @@ Three consequences worth internalising:
   past 80% — which is why @sec-retrieval-metrics argues recall@k is the metric
   to watch on stage one.
 - **The cost is linear in the shortlist**, so the shortlist size is your
-  quality/latency dial, and it is a better dial than the ANN parameter because
-  its effect is monotone and easy to reason about.
+  quality/latency dial, and it is an easier dial than the ANN parameter: its
+  cost is predictable, and the recall it hands the reranker can only grow as
+  the shortlist grows. Final accuracy is another matter — it usually
+  plateaus and can even dip, as step 6 of @sec-retrieval-lab explains.
 - **Late interaction is the middle path.** ColBERT [@khattab2020colbert] keeps
-  a vector per token and scores by summed maximum similarity, which recovers
+  a vector per token and scores by summed maximum similarity (each query
+  token finds its most similar document token, and those best matches are
+  added up), which recovers
   much of the cross-encoder's accuracy while remaining precomputable. It costs
   an order of magnitude more storage, which is the trade.
 
@@ -606,25 +668,31 @@ Exhaustive search over a few thousand vectors is a matrix multiply and takes
 no time at all — the dense numbers above were computed that way. At millions
 of vectors it stops being free, and you move to an approximate index.
 
-Two families:
+"Approximate" means the index may miss some of the true nearest neighbours in
+exchange for speed. Two families dominate in practice:
 
 **HNSW** [@malkov2018hnsw] builds a navigable graph and walks it greedily from
 a coarse layer down to a fine one. Fast and accurate, memory-hungry — the
 graph plus the full vectors sit in RAM.
 
-**IVF-PQ** [@johnson2019billion] partitions the space into cells, searches
-only the nearest few, and stores *compressed* vectors via product
-quantisation. Far smaller, and the compression is lossy in a way that costs
-accuracy.
+**IVF-PQ** [@johnson2019billion] partitions the space into cells (an inverted
+file, IVF: k-means clusters, each with a list of the vectors inside it),
+searches only the nearest few cells, and stores *compressed* vectors via
+product quantisation (PQ). PQ cuts each vector into short pieces and replaces
+every piece by the index of its nearest entry in a small learned codebook. A
+768-dimensional float32 vector takes 3,072 bytes; cut into 96 pieces with 256
+codebook entries each, it takes 96 bytes, one per piece — 32 times smaller.
+The compression is lossy in a way that costs accuracy.
 
-Both expose a knob — `efSearch` for HNSW, `nprobe` for IVF — that trades
-recall against latency. [The number to fix in your head is that the default is
-somebody else's operating point]{.hl}, chosen for a benchmark that is not your
-corpus.
+Both expose a knob — `efSearch` for HNSW (how many candidates the graph walk
+keeps), `nprobe` for IVF (how many cells it searches) — that trades recall
+against latency. [The thing to remember is that the default is somebody
+else's operating point]{.hl}, chosen for a benchmark that is not your corpus.
 
 The discipline is the same one @sec-classification applied to a decision
-threshold: sweep it, plot recall against p95 latency, state your latency SLO,
-and pick the point that meets it.
+threshold: sweep it, plot recall against p95 latency (the latency that 95% of
+queries stay under), state your latency SLO (the service-level objective, the
+latency target you have committed to), and pick the point that meets it.
 
 And measure recall against **exhaustive search on your own data**, not against
 the library's published curve — the loss depends on how your vectors are
@@ -640,8 +708,9 @@ separates the two, and it is cheap to run once on a sample.
 
 ## Measuring retrieval {#sec-retrieval-metrics}
 
-Everything above was reported in four numbers without saying what they mean.
-They answer different questions, and picking the wrong one is how a retrieval
+Everything above was reported in four columns — recall at two depths, MRR and
+nDCG — with only a one-line gloss of each. The table below adds precision@k,
+which the tables did not use. These metrics answer different questions, and picking the wrong one is how a retrieval
 regression stays invisible.
 
 | metric | asks | use it when |
@@ -662,12 +731,39 @@ ground an answer in a document the retriever never returned.
 [↩](#term-recall-k){.term-back}
 :::
 
+The two rank-sensitive metrics are short enough to write down. For a set of
+queries $Q$, let $\text{rank}_q$ be the position of the first relevant
+document for query $q$:
+
+$$
+\text{MRR@}k = \frac{1}{|Q|}\sum_{q \in Q} \frac{1}{\text{rank}_q}
+\quad (\text{a term counts as } 0 \text{ if } \text{rank}_q > k)
+$$
+
+$$
+\text{DCG@}k = \sum_{i=1}^{k} \frac{\text{rel}_i}{\log_2(i+1)}, \qquad
+\text{nDCG@}k = \frac{\text{DCG@}k}{\text{IDCG@}k}
+$$
+
+Here $\text{rel}_i$ is the relevance grade of the document at position $i$
+(0 or 1 in this chapter), and IDCG@$k$ is the DCG of the best possible
+ordering, so nDCG lies between 0 and 1. Some tools use the gain
+$2^{\text{rel}_i}-1$ instead of $\text{rel}_i$; with 0/1 labels the two agree.
+
+A worked example with one relevant document, as in this chapter's tables.
+Suppose it comes back at rank 3. Then recall@1 = 0, recall@10 = 1, the
+reciprocal rank is $1/3 \approx 0.33$, and nDCG@10 is
+$1/\log_2 4 = 0.5$ (the ideal list puts it at rank 1, so IDCG = 1). Both
+metrics punish rank 3, but nDCG punishes it more gently. That is why, in every
+row of the tables above, nDCG@10 sits between MRR@10 and recall@10.
+
 [If you report one number for the retrieval stage of a RAG system, report
 recall@k for the *k* you actually pass to the model.]{.hl} It is a ceiling on
 what *grounding* can deliver: @sec-rag's generator can only ground in what
-arrives, so a retrieval
-recall@10 of 80% means 20% of answers are ungroundable before generation
-begins — and no amount of prompting fixes them.
+arrives, so with one relevant document per question a retrieval recall@10 of
+80% means 20% of answers cannot be grounded in retrieved evidence before
+generation begins — and no amount of prompting fixes them. (Intuition check 5
+below states exactly when this ceiling holds.)
 
 The corollary is that **the two stages want different metrics**. Stage one is
 judged on recall, because its job is not to miss. Stage two — a reranker, or
@@ -741,7 +837,7 @@ Not when the parents are unequal. Measured here, reciprocal rank fusion **cost
 parent each time.
 
 RRF weights a rank-1 hit from a weak system exactly like a rank-1 hit from a
-strong one, so the weak parent's confident wrong answers displace the strong
+strong one, so the weak parent's top-ranked wrong answers displace the strong
 parent's right ones. Fusion is a variance-reduction trick for *comparable*
 systems. Check that yours are comparable before fusing, which costs one
 evaluation run.
@@ -803,7 +899,7 @@ recall the second stage needed.
 ## 6. Do you need a vector database?
 
 Under about 100k documents, no — exhaustive search over a NumPy array is a
-matrix multiply and it is exact. Up to a few million, `pgvector` in the
+matrix multiply and it is exact. Up to roughly ten million, `pgvector` in the
 Postgres you already run gives you transactions, backups, joins and access
 control for free.
 
@@ -834,11 +930,20 @@ $$
 \frac{f_{t,d}\,(k_1+1)}{f_{t,d} + k_1\left(1 - b + b\,\frac{|d|}{\text{avgdl}}\right)}
 $$
 
+Here $f_{t,d}$ is how often term $t$ occurs in document $d$, $|d|$ is the
+document's length and avgdl the average length in the collection. The IDF is
+usually $\log\frac{N - n_t + 0.5}{n_t + 0.5}$ for $N$ documents of which $n_t$
+contain $t$ (Lucene adds 1 inside the log so it never goes negative). Common
+defaults are $k_1 \approx 1.2$–$2.0$ and $b = 0.75$.
+
 The part worth saying out loud is *why* it saturates. In @sec-text-as-data's
-TF-IDF the tenth occurrence of a term counts exactly as much as the first;
-here $k_1$ bounds the contribution, so a document that repeats a word twenty
-times cannot outrank one that uses it three times in a better context. And $b$
-interpolates length normalization: $b=0$ ignores document length, $b=1$
+TF-IDF with raw counts the tenth occurrence of a term counts exactly as much as
+the first; here the term-frequency factor can never exceed $k_1+1$, and $k_1$
+sets how fast it approaches that ceiling. With $k_1 = 1.2$ (and ignoring
+length), a word used three times contributes 1.57 × IDF and a word used twenty
+times only 2.08 × IDF — a third more, not seven times more — so repetition
+cannot swamp a document that matches more of the query's other terms. And $b$
+interpolates length normalisation: $b=0$ ignores document length, $b=1$
 divides it out fully. If you add that `sublinear_tf` in `scikit-learn` is the
 crude version of the same idea, you have connected the two chapters.
 
@@ -860,8 +965,8 @@ right now?**
 clusters get visited. The point of the question is the second half: it has a
 default, the default was chosen by the library author and not by you, and it
 is a *recall* setting wearing a performance costume. An ANN index that silently
-returns 92% of the true neighbours has capped your system at 92% before the
-model sees anything. Measure approximate against exhaustive on a sample and
+returns 92% of the true neighbours has thrown away 8% of what exact search
+would have found, before the model sees anything. Measure approximate against exhaustive on a sample and
 you will know the number instead of assuming it.
 
 ### Testing whether you have shipped one
@@ -950,8 +1055,8 @@ queries needs far fewer than an unpaired one), and on how many comparisons you
 plan to make. If the gap you care about is five points rather than ten, or the
 systems agree on almost everything, budget for several hundred. Then build BM25 — and
 if your language is morphologically rich, build it twice, with and without
-stemming, because @sec-turkish-nlp says that one step can be worth sixty
-points.
+stemming, because @sec-turkish-nlp says that one step can be worth more than
+sixty points.
 
 ### Step 3 — add dense retrieval, with a retrieval model
 
@@ -962,7 +1067,8 @@ do not need an index yet — and report recall@1 and recall@10 next to BM25.
 
 Run RRF and compare against **the better parent**, not against the weaker one.
 If the parents differ by more than about twenty points, expect fusion to hurt
-and verify. This is a fifteen-minute check that this chapter's measurements
+and verify. The twenty is a rule of thumb, not a measured threshold: the gaps
+measured in this chapter were sixty points and more. This is a fifteen-minute check that this chapter's measurements
 suggest is skipped routinely.
 
 ### Step 5 — route instead, if your query mix is mixed
@@ -1086,15 +1192,16 @@ afterwards, and most teams have never measured it.
   users need. Re-mine as the model improves, and mine slightly below the top
   of the list to avoid training against unlabelled relevant documents.
 
-- **Retrieve broadly, rerank precisely.** A cross-encoder is more accurate and
+- **Retrieve broadly, rerank precisely.** A cross-encoder is usually more accurate and
   cannot be precomputed, so it reorders a shortlist. It can only reorder what
   stage one returned — **the first stage sets a ceiling the second cannot
   raise**.
 
-- **Report recall@k for the k you actually pass downstream.** It is the hard
-  bound on any RAG system: a generator cannot ground an answer in a document
-  it never received, and 80% recall@10 means 20% of questions are unanswerable
-  before generation starts.
+- **Report recall@k for the k you actually pass downstream.** It bounds what
+  any RAG system can ground: a generator cannot ground an answer in a document
+  it never received. With one relevant document per question, 80% recall@10
+  means 20% of questions cannot be grounded in retrieved evidence before
+  generation starts (the model may still answer some from memory, ungrounded).
 
 - **Keep the vectors where the data is until scale forces otherwise.** Under
   100k documents, exhaustive search is exact and instant. What eventually
