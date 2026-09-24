@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate cross-references, citations and hard-coded chapter links.
 
-Quarto is silent about three failure modes that this book is exposed to,
+Quarto is silent about four failure modes that this book is exposed to,
 because chapters get renumbered as the outline changes:
 
   1. A hard-coded "14-prompting.html" href inside an OJS/HTML block. Quarto
@@ -9,6 +9,11 @@ because chapters get renumbered as the outline changes:
      a reader discovers.
   2. An @sec- cross-reference to an anchor nobody defines.
   3. An @citation key that is not in references.bib.
+  4. An @sec- cross-reference *inside* a fenced block — a code comment, a
+     ```text listing, an SVG label. The anchor exists, so check (2) passes,
+     but Quarto does not resolve references inside code and the reader is
+     shown the raw "@sec-bake-off" marker. Write the chapter or section out
+     in prose there instead.
 
     python3 scripts/check-links.py          # report problems, exit 1 if any
     python3 scripts/check-links.py --strict # also fail on uncited bib entries
@@ -56,6 +61,28 @@ def strip_code(text):
             continue
         out.append(re.sub(r"`[^`]*`", "", line))
     return "\n".join(out)
+
+
+def crossrefs_in_code(text):
+    """Yield (line number, key) for crossrefs inside fenced blocks.
+
+    The inverse of strip_code: everything it blanks out is what this looks
+    at. Inline code spans are left alone — the only ones in this book are
+    table cells whose backticks belong to a neighbouring column.
+    """
+    fence = None
+    for num, line in enumerate(text.split("\n"), 1):
+        marker = re.match(r"\s*(`{3,}|~{3,})", line)
+        if fence is None:
+            if marker:
+                fence = marker.group(1)[0] * len(marker.group(1))
+            continue
+        if marker and marker.group(1).startswith(fence):
+            fence = None
+            continue
+        for key in CITE_RE.findall(line):
+            if key.startswith(CROSSREF_PREFIXES):
+                yield num, key
 
 
 def qmd_files(edition):
@@ -107,6 +134,11 @@ def main():
                     if key not in known_bib:
                         problems.append(
                             f"{rel}:{num}: @{key} — not in references.bib")
+
+            for num, key in crossrefs_in_code(raw):
+                problems.append(
+                    f"{rel}:{num}: @{key} inside a fenced block — Quarto "
+                    f"leaves it unresolved; write it out in prose")
 
             # Hard-coded .html links are checked against the raw text, since
             # the ones this book actually has live inside OJS blocks.
