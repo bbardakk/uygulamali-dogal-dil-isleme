@@ -39,6 +39,16 @@ France, how to close a Python bracket, the fact that coffee can be ready and
 robots take instructions — all of it is a side effect of getting better at
 that one prediction, over enough text.
 
+::: {.column-margin}
+Next-token prediction is the objective of *decoder-only* models such as GPT
+and Llama, the family this chapter follows. The encoder models of
+@sec-model-families use variants of the same idea. BERT (and BERTurk, which
+appears in the tokenizer table below) hides about 15% of the tokens and
+predicts them from both sides: *masked language modelling*. T5 hides whole
+spans of text and generates them: *span corruption*. The recipe is the same —
+hide some text, predict it, measure the error.
+:::
+
 [This chapter is about what happens when you run that loop at industrial
 scale.]{.hl} Where the text comes from, what has to be thrown away before it
 is usable, what the run costs in hardware and hours and money, why a Turkish
@@ -152,13 +162,15 @@ and 31,000 for the reinforcement-learning stage [@ouyang2022training].
 fine-tuning did.]{.hl} Read the denominator carefully: those five million tokens
 are prompts only, and an SFT example is a prompt plus a response, with the loss
 usually taken on the response. The ratio against the complete training text is
-smaller, and neither paper reports it. Even so the order of magnitude is the most useful single fact about this pipeline,
-because it explains a pattern you would otherwise find baffling: a fine-tune
-reliably changes *how* a model answers, and moves *what it knows* only at the
-margins. @sec-post-training measures both, and facts can be taught later — it is
-just that a few million tokens against three hundred billion is not the place to
-install a worldview, and retrieval is usually the easier way to keep facts
-current. The bulk of the knowledge was installed in stage 1. Stages 2 and 3 are a coat of
+smaller, and neither paper reports it.
+
+Even so, the order of magnitude is the most useful single fact about this
+pipeline, because it explains a pattern you would otherwise find baffling: a
+fine-tune reliably changes *how* a model answers, and moves *what it knows*
+only at the margins. Facts *can* be taught later, and @sec-post-training
+measures both effects. But a few million tokens against three hundred billion
+is not the place to install a worldview, and retrieval is usually the easier
+way to keep facts current. The bulk of the knowledge was installed in stage 1. Stages 2 and 3 are a coat of
 paint — an important one, applied by skilled people, on a building someone
 else spent tens of millions of dollars constructing.
 
@@ -198,7 +210,9 @@ prefer one arrangement over another.
 **base model** — what pretraining produces on its own: something that continues text plausibly, with no particular reason to answer a question rather than ask another one. [↩](#term-base-model){.term-back}
 :::
 
-That is the cause and effect worth carrying:
+That is the cause and effect worth carrying. The table has a fourth row that
+the three-stage picture above leaves out; the paragraph after the table
+explains it.
 
 | stage | supplies | costs | can it be redone? |
 |:--|:--|:--|:--|
@@ -341,7 +355,7 @@ A list of filters is boring. The reason each one exists is not.
 | repetition filters | pages that repeat one line 400 times | degenerate loops at generation time |
 | quality heuristics | no terminal punctuation, absurd symbol ratios | keyword-stuffed spam no human ever read |
 | MinHash deduplication | near-identical documents | memorisation, and compute spent twice on one text |
-| PII reformatting | e-mail addresses, phone numbers | a model that can be prompted into leaking a real person's details |
+| PII reformatting | e-mail addresses, public IP addresses | a model that can be prompted into leaking a real person's details |
 
 Two of those rows deserve more than a table cell.
 
@@ -495,11 +509,15 @@ startling [@grattafiori2024llama3]:
    high-quality sources. The released weights are then a Polyak average of
    checkpoints from this phase.
 
-Forty million tokens is $0.00026\%$ of 15.6 trillion. And it matters: on the
-8B model, [annealing](#gloss-annealing){#term-annealing .term-ref} on high-quality code and mathematics improved GSM8k by
-24.0% and MATH by 6.4%. On the 405B model the same treatment was negligible,
-which the authors read as the larger model already having the capability and
-not needing the reminder.
+Forty million tokens is $0.00026\%$ of 15.6 trillion. Can so little matter?
+The paper tested this in a separate experiment, not on the final 40M-token
+stage itself. Taking a pre-trained 8B model through an
+[annealing](#gloss-annealing){#term-annealing .term-ref} phase on a mix that
+upweighted high-quality code and mathematics (including the GSM8k and MATH
+*training* sets) improved its GSM8k score by 24.0% and MATH by 6.4%. On the
+405B model the same treatment made a negligible difference, which the authors
+read as the larger model already having the capability and not needing the
+reminder.
 
 ::: {#gloss-annealing .column-margin .term-gloss}
 **annealing** — taking the learning rate down to zero at the end of a run, usually while shifting the data mix toward the best material available. Borrowed from metallurgy, where slow cooling settles a structure. [↩](#term-annealing){.term-back}
@@ -507,7 +525,7 @@ not needing the reminder.
 
 [Where a token sits in the schedule changes what it teaches.]{.hl} A token
 seen at step 400,000 under a large learning rate contributes to a broad
-capability that a million later gradients will partly overwrite. A token seen
+capability that the remaining 800,000 updates will partly overwrite. A token seen
 in the last 0.0003% of the run, as the learning rate goes to zero, lands in
 weights that will never move again. That mechanism is behind an otherwise
 mysterious industrial habit: save the best data for last.
@@ -534,7 +552,7 @@ The practical shape of the advice:
 
 | your situation | what the evidence supports |
 |:--|:--|
-| more unique tokens available than compute | use unique data; never repeat |
+| more unique tokens than your compute can use | use unique data; never repeat |
 | data-limited, modest compute overrun | repeat up to about 4 epochs, nearly free |
 | data-limited, large compute overrun | split it between parameters *and* epochs, tilting toward epochs |
 | far past both limits | stop; the extra compute is buying nothing |
@@ -585,8 +603,8 @@ The standard measure is [fertility](#gloss-fertility){#term-fertility .term-ref}
 
 For Turkish, fertility is the wrong number, and getting this wrong will make
 you draw a conclusion that is exactly backwards. Turkish is agglutinative: it
-stacks suffixes onto a stem, so one Turkish word routinely carries what
-English needs four or five words to say. *Evlerinizden* is one word and means
+stacks suffixes onto a stem, so one Turkish word often carries what
+English needs several words to say. *Evlerinizden* is one word and means
 "from your houses". Comparing tokens-per-word across the two languages
 compares units of different size.
 
@@ -627,7 +645,8 @@ computed separately so that one long outlier cannot drive the headline. For
 five of the six tokenizers the two agree to within 0.02, which is the sanity
 check that the aggregate is not an artefact. GPT-2 is the exception, at 1.98
 against 1.92. Resist reading a length effect into that gap. The aggregate is a
-length-weighted mean of the per-sentence ratios, and a weighted mean can sit
+length-weighted mean of the per-sentence ratios (each sentence weighted by its
+English token count), and a weighted mean can sit
 above a median without any relationship to length at all: three equal-length
 sentences with ratios 1, 1 and 2 give an aggregate of 1.33 against a median of
 1. The two figures also come from different samples here — 1,157 pairs against
@@ -744,10 +763,10 @@ as many tokens. Llama 3 charges 23%. Nothing about Turkish changed between
 2019 and 2024. What changed is that tokenizer training data stopped being
 overwhelmingly English.
 
-**2. Vocabulary size is not the lever.** This is the finding that surprises
+**2. Vocabulary size alone is not the lever.** This is the finding that surprises
 people, and it falls straight out of the table. Qwen 2.5 has a *larger*
 vocabulary than Llama 3 — 151,643 against 128,000 — and is *worse* on Turkish:
-1.40× against 1.23×. A bigger vocabulary spent on other languages does nothing
+1.40× against 1.23×. A bigger vocabulary spent on other languages does little
 for yours. [What matters is not how many slots the vocabulary has but what the
 corpus that trained it contained.]{.hl}
 
@@ -768,7 +787,7 @@ computerise" — cut three ways.
 ```{=html}
 <div class="fig-title">One Turkish word, segmented three ways</div>
 <svg viewBox="0 0 764 288" style="max-width:744px" role="img"
-     aria-label="The Turkish word bilgisayarlaştırabildiklerimizden shown as three horizontal strips of equal total length. The top strip shows the eight morphemes a linguist would identify: bilgisayar, laş, tır, abil, dik, ler, imiz, den. The middle strip shows Llama 3's nine tokens: bil, gis, ayar, laştır, ab, ild, ik, lerimiz, den, which cut through the stem bilgisayar in the middle and split the ability suffix across three pieces. The bottom strip shows the Turkish-native Cosmos tokenizer's four tokens: bilgisayar, laştır, abildik, lerimizden, which keep the stem whole. Fewer tokens is cheaper, but the bottom segmentation is not more morphologically faithful than the top one either.">
+     aria-label="The Turkish word bilgisayarlaştırabildiklerimizden shown as three horizontal strips of equal total length. The top strip shows the eight morphemes a linguist would identify: bilgisayar, laş, tır, abil, dik, ler, imiz, den. The middle strip shows Llama 3's nine tokens: bil, gis, ayar, laştır, ab, ild, ik, lerimiz, den, which cut through the stem bilgisayar in the middle and split the ability suffix across three pieces. The bottom strip shows the Turkish-native Cosmos tokenizer's four tokens: bilgisayar, laştır, abildik, lerimizden, which keep the stem whole. Fewer tokens is cheaper, but neither tokenizer reproduces the morpheme boundaries of the top strip.">
   <text x="60" y="30" class="t-sm t-b">bilgisayarlaştırabildiklerimizden</text>
   <text x="352" y="30" class="t-xs t-muted">— "from the ones we were able to computerise"</text>
 
@@ -832,8 +851,9 @@ word, in every forward pass, forever.
 ::::
 
 Look at where Llama 3 cuts. It splits *bilgisayar* — an ordinary everyday
-noun, "computer" — into `bil | gis | ayar`, three fragments, none of which is
-a Turkish morpheme and one of which (`ayar`, "setting, adjustment") is an
+noun, "computer" — into `bil | gis | ayar`. The word's own parts are *bilgi*
+("information") and *sayar* ("counter"), and the cuts ignore that boundary:
+`gis` is not a Turkish unit at all, and `ayar` ("setting, adjustment") is an
 unrelated real word. The model must reassemble the concept from pieces every
 single time it appears.
 
@@ -897,10 +917,12 @@ full decision, including when a Turkish-native model wins outright, is
 
 You can estimate the compute of any pretraining run — how many
 [FLOPs](#gloss-flop){#term-flop .term-ref} it consumed — from two numbers, the
-parameter count $N$ and the token count $D$. For the matrix multiplies that
-dominate, the estimate is good to well under a percent — attention is the term
-it leaves out, and this section comes back to when that matters. That is unusual enough in systems work to be worth taking seriously,
-and it is the tool that lets you sanity-check a press release.
+parameter count $N$ and the token count $D$. The estimate counts the weight
+matrix multiplies, which dominate the cost of a typical run. The main term it
+leaves out is attention; at the short contexts used for most of pretraining
+that adds a few to about fifteen percent, and this section comes back to when
+it matters more. An estimate this good from two numbers is unusual in systems
+work, and it is the tool that lets you sanity-check a press release.
 
 **One caveat first, because it decides which number you put in $N$.** The $6ND$
 rule counts operations per parameter *used*, and in a mixture-of-experts model (@sec-transformers)
@@ -917,7 +939,7 @@ release quotes two parameter counts, the smaller one is the one this
 arithmetic wants.
 
 ::: {#gloss-flop .column-margin .term-gloss}
-**FLOP** — one floating-point operation: a single multiply or a single add on decimal numbers. Training compute is counted in FLOPs; chips are rated in FLOP/s, operations per second. The two are easy to confuse and differ by a factor of however long you ran. [↩](#term-flop){.term-back}
+**FLOP** — one floating-point operation: a single multiply or a single add on numbers stored in floating-point (non-integer) format. Training compute is counted in FLOPs; chips are rated in FLOP/s, operations per second. The two are easy to confuse and differ by a factor of however long you ran. [↩](#term-flop){.term-back}
 :::
 
 ### Where the 6 comes from
@@ -1085,7 +1107,8 @@ have read about one.
 
 An H100 SXM is rated at **989 TFLOP/s** for dense BF16. (You will also see
 1,979, which is the same chip with 2:4 structured sparsity — a different
-operation that pretraining does not use. The PCIe card is a third slower again.
+operation that pretraining does not use. The PCIe card is about a quarter
+slower again, at 756 TFLOP/s dense.
 Check which number you are being quoted before comparing anything.) Divide the
 FLOPs a run needed by the FLOPs its GPUs could have
 produced in the hours it was allocated, and you get [model FLOPs
@@ -1137,8 +1160,11 @@ weeks, something breaking every three hours is not a crisis — it is the
 weather.
 
 **The rest looks like our own accounting, not the cluster's.** We estimated the
-numerator as $6ND$, and $6ND$ omits attention. The paper's MFU counts every FLOP the run
-actually issued, including the attention matrices; our numerator does not. We
+numerator as $6ND$, and $6ND$ omits attention. Standard MFU accounting counts
+the model's attention matrix multiplies as useful work (it leaves out only
+extra work such as recomputing activations to save memory), and the paper's
+MFU presumably follows that convention; our numerator does not include
+attention at all. We
 are comparing two different measurements and calling the difference waste.
 Add attention back, using the $6Lnd$-per-token correction we derived above and
 the paper's own schedule — 8K context for the bulk of the run, then
@@ -1156,9 +1182,9 @@ The ranges bracket the long-context tail: the low end assumes it all ran at
 the context grew in stages. Only the 405B has a published MFU to check
 against — the paper's Table 4 covers "each stage of Llama 3 405B
 pre-training" and says nothing about the smaller runs. [For that one model the
-corrected figure lands on the paper's number from either end of the
-range]{.hl}: a bracket of 36.0–37.1% around a predicted 36.9%, which is as
-close as this kind of reconstruction gets. The brochure, the paper, and the
+corrected range brackets the figure predicted from the paper's own
+numbers]{.hl}: 36.0–37.1% around a predicted 36.9%, which is as close as this
+kind of reconstruction gets. The brochure, the paper, and the
 invoice agree once you stop comparing apples to oranges.
 
 ::: {.column-margin}
@@ -1204,7 +1230,7 @@ viewof preD = Inputs.range([1, 20000], { value: 300, step: 1, label: "Training t
 
 ```{ojs}
 //| echo: false
-viewof preMfu = Inputs.range([5, 60], { value: 35, step: 1, label: "Effective MFU (%)" })
+viewof preMfu = Inputs.range([5, 60], { value: 35, step: 0.5, label: "Effective MFU (%)" })
 ```
 
 ```{ojs}
@@ -1275,7 +1301,7 @@ Three settings worth typing in.
 
 **8B parameters, 15,000B tokens, 14% MFU** reproduces Llama 3.1 8B. The table
 reads **1.44M GPU-hours** against the **1.46M** Meta published — the last 1.4%
-is the slider's integer step (13.9% would land on the nose) and the fact that
+is the slider's half-point step (13.9% would land on the nose) and the fact that
 the real model has 8.03B parameters, not 8.00B. Close enough that you can
 trust the tool.
 
@@ -1354,9 +1380,10 @@ its lifetime inference has cost as much arithmetic as its training. It is not
 the point at which extra pretraining pays for itself, because training the same
 model on more tokens does not lower its inference cost per token — the parameter
 count does that. The break-even that answers "should we have trained longer" is
-between two models $A$ and $B$ of *equal quality*:
+between two models of *equal quality*: $A$, the smaller one trained longer, and
+$B$, the larger one trained to the compute-optimal point. It is
 $T_{\text{break}} = (\text{Train}_A - \text{Train}_B)/(\text{Serve}_B - \text{Serve}_A)$
-per token, which is the calculation that makes a smaller, longer-trained model
+generated tokens, where Serve is the cost per token, which is the calculation that makes a smaller, longer-trained model
 worth its extra training run. And the build-versus-buy question is a third
 thing again, comparing training plus deployment plus operations against an API
 invoice.
@@ -1395,7 +1422,7 @@ untenable — the whole point of decode is that it cannot batch the way training
 does.
 
 So 45 trillion is an upper bound, and the real crossover is somewhere between
-a month and a year of serious traffic. Which only sharpens the argument:
+about two months and just over a year of serious traffic. Which only sharpens the argument:
 overtraining pays back faster than the clean formula suggests, not slower.
 
 That is the whole justification for training an 8B model on 15 trillion
@@ -1425,7 +1452,7 @@ independent decisions]{.hl}, and vendors mix them freely.
 ```{=html}
 <div class="fig-title">Four things a release can open, decided separately</div>
 <svg viewBox="0 0 764 336" style="max-width:744px" role="img"
-     aria-label="A grid with three rows of release type and four columns of what is disclosed. The columns are weights, training data, training code, and whether the licence is a standard open-source licence. API-only releases such as GPT-4, Claude and Gemini disclose none of the four. Open-weights releases such as Llama 3.1, Qwen 2.5 and Mistral publish the weights but not the training data or the training code, and their licences vary: Qwen 2.5 and Mistral 7B ship under Apache 2.0, while Llama 3.1 uses custom terms with conditions. Fully open releases such as OLMo 2 and Pythia publish all four, including the training corpus and an Apache 2.0 licence. The caption notes that the middle row is where almost every practical decision is made.">
+     aria-label="A grid with three rows of release type and four columns of what is disclosed. The columns are weights, training data, training code, and whether the licence is a standard open-source licence. API-only releases such as GPT-4, Claude and Gemini disclose none of the four. Open-weights releases such as Llama 3.1, Qwen 2.5 and Mistral publish the weights but not the training data or the training code, and their licences vary: Mistral 7B and most Qwen 2.5 sizes ship under Apache 2.0, while Llama 3.1 uses custom terms with conditions. Fully open releases such as OLMo 2 and Pythia publish all four, including the training corpus and an Apache 2.0 licence. The caption notes that the middle row is where almost every practical decision is made.">
   <text x="268" y="44" class="t-xs t-mid t-b t-muted">WEIGHTS</text>
   <text x="392" y="44" class="t-xs t-mid t-b t-muted">TRAINING DATA</text>
   <text x="516" y="44" class="t-xs t-mid t-b t-muted">TRAINING CODE</text>
@@ -1495,7 +1522,10 @@ fine-tune, quantize, and inspect activations.
 :::
 
 **Training data** buys you audit. Without it you cannot check whether your
-evaluation set leaked into training [@oren2024proving; @magar2022data], cannot
+evaluation set leaked into training [@oren2024proving; @magar2022data] — the
+problem called *benchmark contamination*: if the test items were in the
+training data, a high score may measure memorisation rather than
+capability. Without the data you also cannot
 tell whether your language was represented, cannot answer a lawyer asking
 where the text came from [@longpre2024audit], and cannot investigate a
 memorised passage that turns up in production.
@@ -1510,11 +1540,13 @@ is the column that most often surprises people, because "open weights" and
 
 It is also the column that varies *within* a row, which is why the diagram
 says "varies" rather than picking a symbol. All three models named in the
-middle row publish weights and withhold data and code — but Qwen 2.5 and
-Mistral 7B are released under plain **Apache 2.0**, the same licence the fully
-open models use, while Llama 3.1 carries **custom terms**. [Two releases can
-be identical on three columns and differ completely on the fourth]{.hl}, so
-there is no shortcut here: you have to check the specific model.
+middle row publish weights and withhold data and code — but Mistral 7B and
+most Qwen 2.5 sizes are released under plain **Apache 2.0**, the same licence
+the fully open models use, while Llama 3.1 carries **custom terms**. [Two
+releases can be identical on three columns and differ completely on the
+fourth]{.hl}, so there is no shortcut here: you have to check the specific
+model. Sometimes you must check the specific *size*: Qwen 2.5's 3B and 72B
+models ship under Qwen's own licences rather than Apache 2.0.
 
 ::: {.callout-warning appearance="simple" icon="false"}
 **Read the licence before the benchmark table.** The Llama 3.1 Community
@@ -1525,8 +1557,9 @@ Three concrete conditions, from the licence text itself:
   month before the release date, you must request a separate licence from
   Meta, which Meta "may grant … in its sole discretion";
 - you must display **"Built with Llama"** and ship a copy of the agreement;
-- any model you train or improve using Llama outputs must have a name that
-  **begins with "Llama"**.
+- any model you train or improve using Llama or its outputs, and then
+  distribute or make available, must have a name that **begins with
+  "Llama"**.
 
 None of those will stop a university project or most companies. All of them
 are conditions that an OSI-approved licence such as Apache 2.0 does not
@@ -1535,6 +1568,15 @@ releases code and weights under Apache 2.0 along with its pretraining corpus
 Dolma [@groeneveld2024olmo; @soldaini2024dolma] — and its successors have kept
 that commitment.
 :::
+
+**The names in the grid go out of date quickly; the grid does not.** The
+examples above are 2024 releases. Since then the open-weights row has filled
+with large mixture-of-experts models under different licences — DeepSeek-R1
+under MIT, Qwen3 under Apache 2.0, Llama 4 under another custom community
+licence — and OpenAI, the best-known API-only lab, released open-weights
+models of its own (gpt-oss, August 2025, Apache 2.0). So a row describes a
+*release*, not a company: one lab can sit in two rows at once. Check each
+release on all four columns, on the day you choose it.
 
 The fully-open row exists for a reason that matters more to a university than
 to a startup: [it is the row on which controlled replication and ablation are
@@ -1569,10 +1611,11 @@ becomes clear.
 | "11,390 tons CO2eq" location-based, "0 tons" market-based | one run, two accounting standards, both true |
 | benchmark tables | the model was tuned while these were visible; treat as an upper bound |
 
-The language row is the one to sit with. The card puts use "in languages
-beyond those explicitly referenced" **out of scope** — and yet our own
-measurement two sections ago found Llama 3's tokenizer handling Turkish at
-1.23× English, better than any other multilingual tokenizer tested. Both
+The language row is the one to think hardest about. The card puts use "in
+languages beyond those explicitly referenced" **out of scope** — and yet our
+own measurement two sections ago found Llama 3's tokenizer handling Turkish at
+1.23× English, tied with multilingual BERT for the best of the multilingual
+tokenizers tested. Both
 statements are accurate. The card is telling you what Meta will stand behind,
 not what the model can do.
 
@@ -1695,9 +1738,9 @@ a direction that costs money — which is the recurring theme of pretraining
 decisions you inherit and cannot undo.
 
 ::: {.callout-note collapse="true"}
-## 1. Turkish needs 1.59 tokens per word and English needs 1.28. Does Turkish cost more?
+## 1. With Llama 3's tokenizer, Turkish needs 2.12 tokens per word and English needs 1.28. Does Turkish cost 66% more?
 
-Not with that tokenizer, and the comparison is invalid as posed.
+No. It costs about 23% more, and the comparison is invalid as posed.
 
 Tokens-per-word compares units of different size. Turkish is agglutinative:
 *evlerinizden* is one word meaning "from your houses". [The honest measurement
@@ -1751,7 +1794,7 @@ The same GPU has a dense peak and a sparsity peak twice as large, and the
 denominator decides the answer: dividing by the larger one *halves* the
 reported MFU. Llama 3's Table 4 reports 430 TFLOP/s per GPU; against the H100's
 dense BF16 peak that is $430/989 = 43.5\%$, and against the 2:4-sparsity peak
-the same run reports $430/1{,}979 = 21.7\%$. The 43.5% confirms they used the
+the same run would report $430/1{,}979 = 21.7\%$. The 43.5% confirms they used the
 dense figure. Two MFUs are comparable only when they used the same peak, and
 nobody is obliged to tell you which they used.
 
@@ -1807,9 +1850,10 @@ compute-optimal.
 Up to a point that is measurable and then not.
 
 Muennighoff et al. found repeated data "yields negligible changes to loss
-compared to having unique data" for the first few epochs, and degrades sharply
-after. Roughly four epochs is the region where a repeated token is still worth
-close to a fresh one; past that you are spending compute to memorise.
+compared to having unique data" for up to about four epochs. Past that, each
+further epoch is worth less; the paper still finds meaningful gains up to
+around 16 epochs, after which returns fall off very fast and you are mostly
+spending compute to memorise.
 
 The practical reading for a language like Turkish: [the constraint on a
 Turkish pretraining run is the corpus, not the GPUs]{.hl}, and repetition buys
@@ -1836,8 +1880,8 @@ decisions you are stuck with afterwards.
    FLOPs. Then convert to something a budget-holder understands: divide by the
    per-GPU throughput you actually expect — not peak, roughly 40% of dense peak
    — times 3,600 seconds, and you have GPU-hours. Say out loud that $6ND$
-   ignores attention, which is a few percent at short context and much more at
-   long, and that [the thing that actually blows up a pretraining schedule is
+   ignores attention, which for a 7B model adds roughly 4% at 2K context, 8% at
+   4K and 15% at 8K, and much more at long context, and that [the thing that actually blows up a pretraining schedule is
    almost never the FLOPs, it is the calendar]{.hl}: interruptions, restarts and
    checkpoint reloads.
 
@@ -1859,8 +1903,9 @@ decisions you are stuck with afterwards.
    The $6ND$ budget for the smallest model that could work, which is almost
    always large enough to end the conversation. And the break-even month: the
    point where API spend at your projected traffic exceeds training plus
-   serving. If break-even is under a year, you have discovered that
-   inference-optimal and compute-optimal are different objectives. The answer
+   serving. If that month is years away, buy. (This is the build-versus-buy
+   break-even, not the inference-optimal one from @sec-pretraining-compute;
+   keep the two apart.) The answer
    for nearly every product is *fine-tune or buy* — being able to show *why*
    with arithmetic is the skill.
 
@@ -1882,8 +1927,8 @@ decisions you are stuck with afterwards.
    far less training than the first 8K. On cost, take @sec-attention-cost's
    arithmetic: with plain multi-head attention a 7B model's KV cache at 100,000 tokens is
    52.4 GB per concurrent request, against 14 GB of weights — but with the
-   grouped-query attention every current 8B model uses (8 KV heads instead of
-   32) the same cache is 13.1 GB. A 4× difference out of one line of config. The window being *advertised*
+   grouped-query attention that Llama 3 8B uses (8 KV heads instead of 32)
+   the same cache is 13.1 GB. A 4× difference out of one line of config. The window being *advertised*
    and the window being *usable at your budget* are different numbers.
 
 6. **Why do small pretraining runs look so much less efficient than large
@@ -1947,11 +1992,13 @@ roughly this order:
    is what makes it a clean test. Then name one filter elsewhere in the funnel
    that could fail in exactly the same way, and say what you would measure to
    catch it.
-3. Llama 3's final annealing stage covers 40M tokens: 0.00026% of the run. It
-   improved GSM8k by **24.0%** on the 8B model — the paper's figure is a
-   relative improvement, not a gain in percentage points, and the difference
-   matters for how impressed you should be — and by essentially nothing on the
-   405B. Give an explanation consistent with both results. Your explanation
+3. Llama 3's final annealing stage covers 40M tokens: 0.00026% of the run. In
+   a separate annealing experiment on a mix that upweighted high-quality code
+   and maths, the paper reports a **24.0%** GSM8k improvement on the 8B model
+   and essentially nothing on the 405B. The paper does not say whether 24.0%
+   is relative or in percentage points; say how each reading would change how
+   impressed you should be. Then give an explanation consistent with both
+   results. Your explanation
    should predict something — say what.
 4. A vendor advertises 1,979 TFLOP/s for their accelerator. You measure a
    sustained 310 TFLOP/s on your own training job. Work through the gap in
