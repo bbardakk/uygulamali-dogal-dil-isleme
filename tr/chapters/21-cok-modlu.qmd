@@ -7,7 +7,7 @@ GPU'da `ollama` 0.24.0 üzerinden `gemma3:27b` kullanıyor ve sayfalar
 WMT16/17/18 tr-en test kümelerinden `Pillow` 12.3.0 ile üretildi —
 @sec-makine-cevirisi ve @sec-turkce-nlp'nin kullandığı aynı hizalı derlem;
 böylece Türkçe ve İngilizce sayfalar aynı şeyi söylüyor ve aralarındaki bir fark
-içerik farkı olamaz. Yazılım: `Pillow` 12.3.0, NumPy 2.5.2, Python 3.14.5.
+içerik farkı olamaz. Puanlama Python 3.14.5 üzerinde NumPy 2.5.2 ile yapıldı.
 :::
 
 **Öğrenme hedefleri.** Bu bölümün sonunda:
@@ -24,6 +24,13 @@ içerik farkı olamaz. Yazılım: `Pillow` 12.3.0, NumPy 2.5.2, Python 3.14.5.
   olduğuna karar verebilirsiniz.
 
 Kapsam, belge görüntüleri ve görme–dil modelleri; ses ve video bu bölümün dışında.
+Konuşma için yine de kısa bir not, çünkü aynı kalıbı izliyor:
+[Whisper](https://arxiv.org/abs/2212.04356) gibi bir konuşma tanıyıcı sesi bir
+spektrograma (her an hangi frekansların güçlü olduğunu gösteren, her 10 ms'de bir
+sütun eklenen bir resim) çevirir ve bunu bir transformer kodlayıcıya verir; ardından
+bir decoder transkripti yazar. Ses 30 saniyelik pencerelerle işlenir, kısa
+kalanlar doldurulur; dolayısıyla kodlayıcı her pencere için hep aynı 1.500
+vektörü üretir — aşağıdaki görüntü kodlayıcıdaki sabit bütçeyle aynı fikir.
 
 ## Bir görüntü sabit sayıda token'dır {#sec-cok-modlu-tokenlar}
 
@@ -33,6 +40,10 @@ nereden geldiğini hiç umursamadı ve bütün numara bu. Bir görüntüyü patc
 hidden size'ına (içeride kullandığı vektör boyutuna) yansıtın
 ([**yama gömmesi**](#gloss-patch-embedding){#term-patch-embedding .term-ref}).
 Böylece aynı makinenin okuyabileceği bir diziniz olur [@dosovitskiy2021image].
+O makalenin modeli **Vision Transformer (ViT)**, bu bölümdeki görme
+kodlayıcıların şablonudur. Her yamaya ayrıca, @sec-transformerlar'daki
+kelimelerde olduğu gibi bir konum gömmesi eklenir; böylece model bir yamanın
+görüntünün *neresinden* geldiğini bilir.
 
 ::: {#gloss-patch-embedding .column-margin .term-gloss}
 **Yama gömmesi** (patch embedding) — bir görüntünün sabit karelere bölünüp her
@@ -41,14 +52,17 @@ transformer'ın metnin yanında okuyabileceği bir vektör dizisine dönüşür.
 [↩](#term-patch-embedding){.term-back}
 :::
 
-Metin token'ları ve görüntü yamaları tek bir akışta durur ve birbirlerine
-attention uygular.
+Metin token'ları ve görüntü yamaları tek bir akışta durur ve dikkat ikisinin
+üzerinde de çalışır. Olağan nedensel maske yine geçerlidir: bir metin token'ı
+kendinden önceki her görüntü vektörüne dikkat edebilir, ama bir görüntü vektörü
+sonra gelen metne ileriye doğru bakamaz. (Bu bölümün modeli Gemma 3, ayrıca bir
+görüntünün vektörlerinin birbirine iki yönde de dikkat etmesine izin verir.)
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">Bir sayfa soruyla aynı diziye nasıl katılır</div>
 <svg viewBox="0 0 764 250" style="max-width:744px" role="img"
-     aria-label="Bir görüntünün ve bir sorunun tek bir token dizisine girişini gösteren şema. Solda bir metin sayfası yamalardan oluşan bir ızgaraya bölünüyor. Görme kodlayıcı etiketli bir ok bütün ızgarayı 256 vektörlük sabit bir bloğa eşliyor; bir not sayının sayfada ne olduğuna bağlı olmadığını söylüyor. Altta soru metni değişken sayıda vektöre token'lanıyor. İki blok da tek bir diziye besleniyor; tek bir vektör satırı olarak çizilmiş ve transformer'a giriyor. Bir etiket, attention'ın bütün satır boyunca çalıştığını, dolayısıyla görüntü vektörleriyle metin vektörlerinin birbirlerine attention uygulayabildiğini ve tek mekanizmanın bu olduğunu belirtiyor. İkinci bir etiket, sayfa ister tek cümle ister on dört satır tutsun görüntü bloğunun düz 256 vektör olduğunu not ediyor.">
+     aria-label="Bir görüntünün ve bir sorunun tek bir token dizisine girişini gösteren şema. Solda bir metin sayfası yamalardan oluşan bir ızgaraya bölünüyor. Görme kodlayıcı etiketli bir ok bütün ızgarayı 256 vektörlük sabit bir bloğa eşliyor; bir not sayının sayfada ne olduğuna bağlı olmadığını söylüyor. Altta soru metni değişken sayıda vektöre token'lanıyor. İki blok da tek bir diziye besleniyor; tek bir vektör satırı olarak çizilmiş ve transformer'a giriyor. Bir etiket, bunun aynı, değiştirilmemiş transformer yığını olduğunu ve metin token'larının satırda kendilerinden önce gelen görüntü vektörlerine dikkat ettiğini belirtiyor. İkinci bir etiket, sayfa ister tek cümle ister on dört satır tutsun görüntü bloğunun düz 256 vektör olduğunu not ediyor.">
 
   <text x="10" y="16" class="t-xs t-b t-muted">SAYFA</text>
   <rect x="10" y="26" width="150" height="104" rx="4" class="box"/>
@@ -94,7 +108,7 @@ attention uygular.
 
   <path d="M466 166 L 466 176 L 706 176 L 706 166" class="ln"/>
   <text x="586" y="194" class="t-xs t-mid t-b">aynı transformer yığını, değiştirilmemiş</text>
-  <text x="586" y="210" class="t-xs t-mid t-muted">attention bütün satır boyunca, iki yönde de çalışır</text>
+  <text x="586" y="210" class="t-xs t-mid t-muted">metin, önündeki görüntü vektörlerine dikkat eder</text>
 </svg>
 ```
 
@@ -109,10 +123,10 @@ sayfa okumanın öğretilebilmesinin nedeni bu.
 
 İnsanların atladığı sonuç bunun faturanıza ne yaptığıdır ve tek satırda
 ölçülebilir. Bu bölümün deneyindeki her görüntü — 320 tane, dört punto, iki dil,
-seyrek ve yoğun sayfalar — **tam olarak aynı 290 prompt token'ına** mal oldu:
+büyük ve minik puntolar — **tam olarak aynı 290 prompt token'ına** mal oldu:
 
 ```text
-  font size   image tokens   lines the page can hold at this size
+  font size  prompt tokens   lines the page can hold at this size
        34 px           290   ~5, comfortable
        22 px           290   ~7
        15 px           290   ~10
@@ -123,20 +137,30 @@ O merdivendeki her sayfa *aynı* cümleyi taşıyor; son sütun sayfanın içeri
 değil kapasitesi. İçeriği sabit tutmak tasarımın amacı, yani değişen tek şey her
 karakterin kaç kodlayıcı pikseli aldığı.
 
-Bu bölümde iki ayrı muhasebe var ve onları burada ayırmakta fayda var. **290**,
-sunucunun transkripsiyon sayfaları için raporladığı hâliyle prompt'un tamamı.
-**260** ise aşağıdaki metne-karşı-görüntü karşılaştırmasında görüntünün eklediği
-miktar; orada talimat iki kolda da aynı ve sadeleşiyor. İkisini de parçalardan
-yeniden kurmaya çalışmayın: 256 vektör artı ayraçlar artı 34 token'lık bir
-talimat 290 değil 294 eder; yani iki sayım ayraçları ya da talimatı farklı
-ele alıyor ve bu koşu hangisi olduğunu söyleyecek ham tokenizer çıktısını
-saklamadı. Her rakam, kendi ölçümünün raporladığı şey. Bu bölüm "görüntü olarak
-260" dediğinde, resmi eklemenin *marjinal* maliyetini kastediyor.
+Bu bölümde iki token sayısı geçiyor ve farklı şeyleri ölçüyorlar.
 
-[Bu model için bir görüntü sabit ücretlidir.]{.hl} Görme kodlayıcı sabit bir
-896×896 ızgaraya yeniden boyutlandırıyor ve yama ızgarasını 256 soft token'a (sözlükten gelmeyen, sürekli değerli
-girdi vektörlerine) havuzluyor; dolayısıyla sayfa ister bir cümle ister bir hesap tablosu tutsun
-ödediğiniz şey 256 görüntü token'ı artı prompt — yeter ki görüntü kabaca karesel
+- **290**, sunucunun transkripsiyon sayfaları için raporladığı hâliyle
+  *prompt'un tamamı* — görüntü artı talimat.
+- **260** ise aşağıdaki metne-karşı-görüntü karşılaştırmasında görüntünün
+  *eklediği* miktar. Orada talimat iki kolda da aynı olduğu için sadeleşiyor.
+
+Bu bölüm "görüntü olarak 260" dediğinde, resmi eklemenin bu *marjinal*
+maliyetini kastediyor. Sayı, Gemma 3'ün yayımlanmış prompt biçimiyle örtüşüyor:
+256 görüntü vektörü artı çevrelerindeki dört işaret token'ı (ayraçlar — birer
+satır sonuyla birlikte bir görüntü-başı ve bir görüntü-sonu token'ı). 290'ı
+parçalardan yeniden kurmaya çalışmayın: 260 artı 34 token'lık talimat 290 değil
+294 eder; yani iki ölçüm ayraçları ya da talimatı farklı sayıyor ve bu koşu
+hangisi olduğunu söyleyecek ham tokenizer çıktısını saklamadı. Her rakam, kendi
+ölçümünün raporladığı şey.
+
+[Bu model için bir görüntü sabit ücretlidir.]{.hl} Görme kodlayıcı her
+görüntüyü 896×896 piksele yeniden boyutlandırıp 14×14 piksellik yamalara
+kesiyor: kenar başına 896 / 14 = 64 yama, yani 64 × 64 = 4.096 yama. Ardından
+her 4×4'lük yama bloğu üzerinde ortalama havuzlama bu 64×64 ızgarayı 16×16 = 256
+vektöre indiriyor. Bunlar soft token'lar (sözlükten gelmeyen, sürekli değerli
+girdi vektörleri): dil modeline doğrudan veriliyorlar, ama dizide yer kaplıyor
+ve token gibi ücretlendiriliyorlar. Dolayısıyla sayfa ister bir cümle ister bir
+hesap tablosu tutsun ödediğiniz şey 256 görüntü token'ı artı prompt — yeter ki görüntü kabaca karesel
 olsun ve modelin kırp-ve-döşe yolu devreye girmesin. Kırpımlara bölünen geniş bir
 ekran görüntüsü her kırpımı kodlayıcıdan ayrı geçirir ve bunun katı kadar tutar.
 
@@ -168,8 +192,8 @@ Yine de iki satıra birlikte bakın, çünkü daha az bariz bir şey söylüyorl
 Görüntü ücreti sabit, dolayısıyla **prim Türkçe için daha küçük** — pikseller
 orada daha ucuz olduğu için değil, @sec-turkce-nlp'nin tokenizer cezası
 *metni* pahalılaştırdığı için: aynı cümle için İngilizcenin 46,6'sına karşı
-62,4 token; o bölümün çok daha büyük bir örneklemde ölçtüğüyle tutarlı 1,34
-katlık bir oran.
+62,4 token; o bölümün eşlenik içerik için tahmin ettiği 1,2–1,6 kat aralığına
+düşen 1,34 katlık bir oran.
 
 Sabit ücretli bir kodlayıcı, eklemeli bir dilin token vergisini kısmen emiyor.
 Bu düşünceyi @sec-cok-modlu-ocr'a kadar aklınızda tutun; orada onu toplamak için
@@ -183,16 +207,22 @@ kesiyor ve belli bir glif yüksekliğinin altında bir karakter, komşularından
 ayırt edilmeye yetecek pikselle o yeniden boyutlandırmadan sağ çıkmıyor. Yani
 transkripsiyon doğruluğu puntoyla düşüyorsa bu, modelin kafasının karışması
 değil; tuval boyutunuzdan ve kodlayıcının giriş çözünürlüğünden önceden
-hesaplayabileceğiniz bir örnekleme sınırıdır.
+hesaplayabileceğiniz bir örnekleme sınırıdır. Bir örnek: 1.792 piksel
+genişliğindeki bir sayfa 896'ya sığmak için yarıya küçültülür; dolayısıyla 11
+piksellik yazı kodlayıcıya yaklaşık 5,5 piksel yüksekliğinde ulaşır — tek bir
+14 piksellik yamanın yarısından da az.
 
 Sabit token bütçesi bunu ikinci ve ayrı bir biçimde kötüleştiriyor: kodlayıcı ne
-olursa olsun aynı 256 vektörü ürettiği için daha fazla token ödeyerek bundan
-kurtulamazsınız. Tek kaldıraç kırpmak ve yeniden render etmek — ki
-@sec-cok-modlu-ocr aynı reçeteye öteki uçtan varıyor.
+olursa olsun görüntü başına aynı 256 vektörü ürettiği için, tek bir görüntünün
+içinden daha fazla ayrıntı isteyemezsiniz. Kaldıraçlar şunlar: sayfayı parçalara
+kırpıp her parçayı ayrı bir görüntü olarak göndermek (her biri için 256 vektör
+ödeyerek) ya da daha büyük boyutta render etmek veya taramak — bölümün geri
+kalanının dönüp dolaşıp vardığı çözüm.
 
 **Neye bakacağız.** Önce hizalamanın nereden geldiği, çünkü yansıtılmış bir yama
 bir dil modeli için, iki uzayın anlaşmasını bir şey öğretene kadar hiçbir şey
-ifade etmez — ve cevap aynı zamanda görüntü maliyetinin neden sabit olduğu.
+ifade etmez — yol üstünde, sabit ve havuzlanmış çıktısı görüntü maliyetini sabit
+kılan kodlayıcı türüyle de tanışacağız.
 Sonra bölümün asıl deneyi: aynı cümleler iki dilde dört puntoda üretilmiş; bu da
 o darboğazı bir eşiğe dönüştürüyor ve eşiği Türkçe için İngilizceden farklı bir
 yere koyuyor. Sonra modelin görüntüyü gerçekten okuyup okumadığını soran bir
@@ -228,11 +258,27 @@ ortalıkta duruyordu ve numara onun denetim sayıldığını fark etmekti. Bu
 kitaptaki her ölçekleme hikâyesi bu biçimde.
 :::
 
+**"Yakın" ve "uzak" nasıl bir kayba dönüşür.** *N* görüntü–caption çiftinden
+oluşan bir yığın alın. Hepsini kodlayın, vektörleri normalleştirin ve her
+görüntünün her caption'la kosinüs benzerliğini hesaplayın: köşegeninde gerçek
+çiftlerin, geri kalan *N*² − *N* hücresinde eşleşmeyenlerin durduğu *N* × *N*
+bir tablo. CLIP her satırı bir sınıflandırma problemi olarak ele alır — "bu *N*
+caption'dan hangisi bu görüntüye ait?" — ve köşegen hücresini doğru cevap sayarak
+softmax çapraz entropi uygular; aynısını her sütun için de yapar: "bu caption'a
+hangi görüntü ait?". Öğrenilen bir sıcaklık, benzerlikleri softmax'tan önce
+ölçekler. Bu, @sec-erisim'in yoğun erişim modellerini eğitmek için kullandığı yığın içi
+negatiflerli InfoNCE kaybının ta kendisi; yalnızca sorguların yerinde görüntüler
+var. Bu bölümün modelinin arkasındaki çeşit olan SigLIP [@zhai2023sigmoid],
+softmax'ın yerine tablonun her hücresi için bağımsız bir evet/hayır (sigmoid)
+kararı koyar; böylece hiçbir hücrenin bütün yığına göre normalleştirilmesi
+gerekmez.
+
 İleri taşımaya değer iki sonuç var.
 
 **Zero-shot sınıflandırma kazandırır.** Caption'lar metin olduğu için etiket
-uzayı açıktır: *bu kaynak dikişi kusurlu mu* diye sormak için o cümleyi kodlayıp
-karşılaştırırsınız. Artık eğitim anında birinin saydığı kategorilerle sınırlı
+uzayı açıktır: *bu kaynak dikişi kusurlu mu* diye sormak için her aday cevap
+için bir caption kodlarsınız — "kusurlu bir kaynak dikişinin fotoğrafı",
+"sağlam bir kaynak dikişinin fotoğrafı" — ve görüntüye en yakın olanı seçersiniz. Artık eğitim anında birinin saydığı kategorilerle sınırlı
 değilsiniz; görme modellerini kimsenin veri kümesi etiketlemediği yerlerde
 kullanışlı kılan da buydu.
 
@@ -248,11 +294,13 @@ fayda var, çünkü mimari olarak zıtlar ve farklı şeylere mal oluyorlar.
 **donduruyor**, değişken sayıdaki yamayı bir resampler ile sabit sayıda latente
 indiriyor ve donmuş katmanların arasına kapılı çapraz dikkat blokları
 yerleştiriyor. Görüntü metin dizisine hiç girmiyor; metnin *içine* dikkat ettiği
-ikinci bir yol oluyor. Eğitmesi ucuz ve dil modelinin metin davranışına
+ikinci bir yol oluyor. Dil modelinin ağırlıkları hiç değişmediği için bütün
+modeli güncellemekten daha ucuza eğitiliyor ve dil modelinin metin davranışına
 dokunmuyor.
 
 *Tek diziye yansıtma.* LLaVA [@liu2023visual] daha basit olanı yapıyor: küçük
-bir MLP her yama vektörünü dil modelinin hidden size'ına yansıtıyor, o vektörler
+bir izdüşüm katmanı — ilk LLaVA'da tek bir doğrusal katman, ardılı LLaVA-1.5'te
+iki katmanlı bir MLP — her yama vektörünü dil modelinin hidden size'ına yansıtıyor, o vektörler
 metin token'larıyla birleştiriliyor ve bütün yapı talimatla ince ayarlanıyor.
 Tek akış, tek dikkat, yeni modül yok — yukarıdaki şekildeki tasarım ve açık
 VLM'lerin çoğunun izlediği tasarım bu.
@@ -267,8 +315,8 @@ yaptığını değiştirirler. Tek akışlı bir modelde ise decoder'ın içinde
 edilecek ayrı bir çapraz dikkat yolu yoktur — oradaki ayrı modüller, önündeki
 görme kodlayıcı ve izdüşüm katmanıdır.
 
-Bu bölümün modelindeki görme kodlayıcı, farklı bir kayıpla CLIP'in bir torunudur
-[@zhai2023sigmoid] ve sabit havuzlanmış çıktı boyutu, burada bir görüntünün neden
+Bu bölümün modelindeki görme kodlayıcı, yukarıda anlatılan sigmoid kaybıyla
+eğitilmiş bir CLIP torunudur [@zhai2023sigmoid] ve sabit havuzlanmış çıktı boyutu, burada bir görüntünün neden
 sabit ücretli olduğudur.
 
 Karşıtsal ön-eğitimin kazandırmadığı şey, ayrıntı hakkında herhangi bir
@@ -289,21 +337,23 @@ olmadığıdır.
 
 @sec-turkce-nlp'nin yöntemi doğrudan aktarılıyor ve burada kullanmanın nedeni de
 bu. WMT16/17/18 Türkçe–İngilizce test kümelerini alın; profesyonel çeviriler,
-dolayısıyla iki dil aynı şeyi söylüyor.
-
-**Bu tasarımın cevaplaması gereken ve cevaplamadığı bir itiraz.** WMT test
-kümeleri on yıllık ve herkese açık, dolayısıyla model bu cümlelerin bir kısmını
-ezberlemiş olabilir — ezberlenmiş bir cümle *okunmadan* da "aktarılabilir" ve bu
-CER'i aşağı çeker. Yanlılığın simetrik olması da beklenmez: WMT'nin İngilizce
-tarafı web'de Türkçe tarafından çok daha fazla kopyalanmıştır, yani bulaşma tam
-da bu bölümün raporladığı oranı şişirir. Kontrol, modelin kesim tarihinden sonra
-yayımlanmış cümlelerle kurulmuş bir merdiven ve koşulmadı. Koşulana kadar 5 katı
-aradaki farkın **üst sınırı** olarak okuyun. Her cümleyi aynı yazı tipinde, rahat
+dolayısıyla iki dil aynı şeyi söylüyor. Her cümleyi aynı yazı tipinde, rahat
 bir taramadan kötü bir telefon fotoğrafına dört puntoda bir sayfa görüntüsü
 olarak üretin. İki dil arasındaki herhangi bir fark içerik farkı olamaz.
 
-İki puan. Genel hasar için **karakter hata oranı** (CER), referans uzunluğu
-üzerinden düzenleme mesafesi. Ve **diacritic preservation** (aksan korunumu) —
+**Bu tasarımın cevaplaması gereken ve cevaplamadığı bir itiraz.** WMT test
+kümeleri aşağı yukarı on yıllık ve herkese açık, dolayısıyla model bu cümlelerin bir kısmını
+ezberlemiş olabilir — ezberlenmiş bir cümle *okunmadan* da "aktarılabilir" ve bu
+CER'i aşağı çeker. Yanlılığın simetrik olması da beklenmez: WMT'nin İngilizce
+tarafı web'de Türkçe tarafından çok daha fazla kopyalanmıştır, yani bulaşma tam
+da bu bölümün raporladığı oranı şişirir. Kontrol, modelin eğitim kesim
+tarihinden sonra yayımlanmış cümlelerle kurulmuş bir merdiven ve koşulmadı.
+Koşulana kadar aşağıda raporlanan yaklaşık 5 katlık farkı bir **üst sınır**
+olarak okuyun.
+
+İki puan. Genel hasar için **karakter hata oranı** (CER): modelin çıktısıyla
+referans arasındaki düzenleme mesafesi (birini ötekine çeviren en az sayıda
+karakter ekleme, silme ve değiştirme), referans uzunluğuna bölünmüş hâliyle. Ve **diacritic preservation** (aksan korunumu) —
 sayfada olması gereken `ç ğ ı ö ş ü İ` karakterlerinin kaçının sağ çıktığı — çünkü Türkçeyi sessizce
 aksansızlaştıran bir model belirli bir şey yapıyordur ve tek başına CER bunu
 genel bir hata oranının içinde gizlerdi.
@@ -311,7 +361,7 @@ genel bir hata oranının içinde gizlerdi.
 ```text
 gemma3:27b, 40 aligned sentence pairs, one font, four sizes
 
- language   font px    CER    diacritics kept   image tokens
+ language   font px    CER    diacritics kept  prompt tokens
   English       34   0.04%                  —            290
   English       22   0.05%                  —            290
   English       15   0.22%                  —            290
@@ -384,8 +434,8 @@ hata oranına mal oluyor.]{.hl} 34 pikselde 6,5 kat, 22'de 5,0, 15'te 5,9, 11'de
 
 Bunu dört ayrı doğrulama diye okumadan önce yüzdeleri olaya geri çevirin. Kırk
 cümle yaklaşık 8.880 İngilizce ve 9.320 Türkçe karakter, yani üstteki iki
-İngilizce basamak **dört ve beş yanlış karakter**, Türkçe olanlar ise yirmi dört
-ve yirmi üç. Bu kadar küçük iki sayının oranı devasa bir aralık taşır — 34
+İngilizce basamak **her biri yaklaşık dört yanlış karakter** (ortalama 3,6 ve
+4,4), Türkçe olanlar ise yaklaşık yirmi dört ve yirmi üç. Bu kadar küçük iki sayının oranı devasa bir aralık taşır — 34
 pikseldeki 6,5 kat, 3,6'ya karşı 24 düzenleme demek — dolayısıyla "dikkat çekici
 biçimde kararlı" yanlış bir tanım. İstatistiksel olarak sağlam olan basamak en
 alttaki: orada sayılar 118'e karşı 622 ve dürüst okuma, **11 pikselde sağlam
@@ -394,18 +444,28 @@ boyunca değişen şey mutlak hasar ve 11 pikselde gerçek bir sayıya dönüş�
 karakterlerin %6,67'si yanlış; İngilizcenin %1,33'üne karşı.
 
 Bu, @sec-turkce-nlp'nin örüntüsünün o bölümün hiç açmadığı bir kapıdan gelişi.
-Burada tokenizer yok, gövdeleyici yok, küçük harfe çevirme yok — yalnızca
-pikseller ve bir görme kodlayıcı. Ve araç yine de Türkçede ölçülebilir biçimde
-daha kötü çalışıyor. Bunu yaparken de kayıtlarda yakalayabileceğiniz hiçbir hata
-ya da uyarı vermiyor.
+*Girdi* tarafında tokenizer yok, gövdeleyici yok, küçük harfe çevirme yok —
+yalnızca pikseller ve bir görme kodlayıcı. Ve araç yine de Türkçede ölçülebilir
+biçimde daha kötü çalışıyor. Bunu yaparken de kayıtlarda yakalayabileceğiniz
+hiçbir hata ya da uyarı vermiyor. Çıktı tarafı ise başka: transkripti yine aynı
+dil modeli, aynı tokenizer üzerinden token token yazıyor ve bir sonraki alt
+bölüm, hataların dil modelinin tahminlerine benzediğini gösteriyor. Yani fark
+"dilsiz görme" değil; Türkçede kendisi de daha zayıf olabilecek bir dil
+modelini besleyen bir görme girdisi — ve bu deney farkın ne kadarının hangi
+taraftan geldiğini söyleyemez.
 
 **Uçurumun nerede olduğuna** da dikkat edin. 22 pikselle 15 piksel arasında
 İngilizce küçük bir sayıdan dört kat bozuluyor; Türkçe fark edeceğiniz bir sayıya
-beş kat bozuluyor. 15 pikselle 11 piksel arasında Türkçe bir beş kat daha
-bozuluyor.
+beş kat bozuluyor. 15 pikselle 11 piksel arasında ikisi de yeniden bozuluyor —
+İngilizce altı kat, Türkçe beş kat.
 
-Çözünürlük düzgün bir kadran değil, bir eşiktir ve eşik iki dil için farklı bir
-yerde duruyor — yani İngilizce belgelerde doğrulanmış bir tarama ayarı Türkçe
+Yani iki eğrinin biçimi aynı; Türkçe eğrisi, İngilizce eğrisinin kabaca sabit bir
+katsayıyla yukarı kaydırılmış hâli. Bu kaymanın pratikteki etkisi *eşiği*
+taşımak. Katlanabileceğiniz herhangi bir hata oranı seçin — diyelim
+karakterlerin %1'i — Türkçe onu İngilizceden daha büyük bir puntoda aşıyor
+(burada 22 ile 15 piksel arasında; İngilizce ise 15 ile 11 piksel arasında).
+Çözünürlük düzgün bir kadran değil, bir eşiktir ve sabit bir tolerans için eşik
+iki dil için farklı bir yerde duruyor — yani İngilizce belgelerde doğrulanmış bir tarama ayarı Türkçe
 belgeler için doğrulanmış değildir.
 
 ### Kusur, öngöreceğiniz kusur değil
@@ -504,14 +564,18 @@ diyor*, karşılaştırılacak böyle bir kanıta sahip değil: bölge belirsiz,
 her adımdaki işi olası bir devam üretmek ve olası bir devam da tam olarak
 ürettiği şey.
 
-"Bunu okudum" ile "bunu çıkarsadım"ı ayıran içsel bir sinyal yok, çünkü ikisi de
-aynı ileri geçişten çıkıyor.
+"Bunu okudum" ile "bunu çıkarsadım"ı güvenilir biçimde ayıran içsel bir sinyal
+yok, çünkü ikisi de aynı ileri geçişten çıkıyor. Her çıktı token'ının bir
+olasılığı vardır, ama dil modelinin olası bulduğu bir tahmin, net basılmış bir
+kelime kadar yüksek puan alabilir; yani yüksek olasılık, token'ı piksellerin
+desteklediği anlamına gelmez.
 
 ::: {.column-margin}
-Bu, @sec-cozumleme'nin kalibrasyon sonucunun farklı bir modalitede gelişi: bir
-modelin güveni, hakkında *sorulan* şeyler arasında iyi, *ürettiği* şeyler
-arasında kötü ayırt eder. Çekimserlik, çekimser kalınacak bir şey olduğunda
-işler. Üretilmiş bir dizginin içinde işlemez.
+@sec-cozumleme'nin log olasılık sonucuyla karşılaştırın: token olasılıkları
+cevapları iyi sıraladı ama kötü kalibre edilmişti ve en çok, ayrık bir soruda
+çekimser kalmak için işe yaradı. Çekimserlik, çekimser kalınacak bir soru
+olduğunda işler. Uzun bir üretilmiş dizginin içinde, hiçbir token kendini tahmin
+diye ilan etmediği için üzerinde çalışacağı bir şey yoktur.
 :::
 
 İki soruyu yan yana koyun; asimetri modelde değil kanıtta:
@@ -566,18 +630,18 @@ işler. Üretilmiş bir dizginin içinde işlemez.
 
 ::: {.fig-cap}
 Soldaki soru modelin görebildiği bir şeye karşı çözülebilir; sağdaki
-çözülemez. Solda daha dürüst değil — orada kanıtı var, sağda bir olasılık
-dağılımı var ve ikisi de aynı kapıdan çıkıyor.
+çözülemez. Solda daha dürüst değil — orada kanıtı var, sağda yalnızca bir
+olasılık dağılımı var ve iki cevap da aynı üretim adımından çıkıyor.
 :::
 ::::
 
 Bu size tutunabileceğiniz bir kural veriyor. **Bir VLM'e soru sorun.** Ondan OCR
 motoru olmasını isteyip çıktısına transkript olarak güvenmeyin, çünkü kusur
 biçimi akıcıdır. Alternatifin gürültülü biçimde bozulacağını da varsaymayın:
-özel bir motor size karakter başına confidence score'lar (modelin her karaktere
-atadığı güven puanları) verir. Bunlarla confidence gating (güven eşiğine göre
-kabul etme ya da incelemeye yönlendirme) yapabilirsiniz: eşiğin altında kalan
-karakterleri işaretleyip insan incelemesine gönderirsiniz. Bu yardımcı olur, ama
+özel bir motor size confidence score'lar (motora göre karakter, kelime ya da
+satır başına atanan güven puanları) verir. Bunlarla confidence gating (güven
+eşiğine göre kabul etme ya da incelemeye yönlendirme) yapabilirsiniz: eşiğin
+altında kalan parçaları işaretleyip insan incelemesine gönderirsiniz. Bu yardımcı olur, ama
 o motor da makul bir kelimeyi ya da rakamı makul bir başkasına çevirebilir.
 Transkripti hangi araç üretirse üretsin, aşağı akıştaki sistemlerin olgu kabul
 edeceği alanları doğrulayın.
@@ -602,7 +666,8 @@ okur ve onlar hakkındaki soruları cevaplar.
 
 ::: {#gloss-optical-character-recognition-ocr .column-margin .term-gloss}
 **Optik karakter tanıma** (optical character recognition, OCR) — bir metin görüntüsünü metne çevirmek.
-Özel bir motor, eşik uygulayabileceğiniz karakter başına güven puanları sunar;
+Özel bir motor, eşik uygulayabileceğiniz güven puanları (motora göre karakter,
+kelime ya da satır başına) sunar;
 böyle bir sinyali olmayan bir modele karşı başlıca üstünlüğü budur. İkisi de makul hatalar
 yapabilir.
 [↩](#term-optical-character-recognition-ocr){.term-back}
@@ -610,7 +675,7 @@ yapabilir.
 
 | | Özel OCR | Görme–dil modeli |
 |:--|:--|:--|
-| Emin olduğunda çıktı | metin, karakter başına güven puanlarıyla | metin, kullanılabilir karakter başına sinyal yok |
+| Emin olduğunda çıktı | metin, kelime ya da satır başına güven puanlarıyla (bazı motorlarda karakter başına) | metin; token olasılıkları var ama token'ı piksellerin destekleyip desteklemediğini söylemiyor |
 | Bozulduğunda çıktı | [çoğu zaman görünür biçimde yanlış, eşik uygulanabilir güven puanlarıyla — makul değiştirmeler de olur]{.pro} | [akıcı, makul, yanlış]{.con} |
 | Düzen ve okuma sırası | kendi modelini ya da sezgisel kurallarını ister | [halledilir, çoğu zaman iyi]{.pro} |
 | Bir belge *hakkında* cevap vermek | [onun işi değil — üstüne siz kurarsınız]{.con} | [tam da bunun için var]{.pro} |
@@ -636,8 +701,10 @@ Her birini açmadan önce cevaplayın. Altısı da bu bölümün tartışmayla d
 
 Hayır ve yakın bile değil. Aynı cümle iki biçimde de ölçüldü: **İngilizce metin
 olarak 46,6 token, görüntü olarak 260** — 5,57 katlık bir prim, Türkçede 4,17
-kat. Bu kodlayıcı için görüntü ücreti *sabittir* ve insanları şaşırtan kısım da bu: bir satır
-tutan bir sayfayla on dört satır tutan bir sayfa tam olarak aynıya mal oluyor.
+kat. Bu kodlayıcı için görüntü ücreti *sabittir* ve insanları şaşırtan kısım da bu:
+kodlayıcı hep 256 vektör ürettiği için bir satır tutan bir sayfayla on dört
+satır tutan bir sayfa aynıya mal olur — ve bu bölümün 34 pikselden 11 piksele
+320 sayfasının her biri tam olarak 290 prompt token'ına mal oldu.
 Yani zaten sahip olduğunuz metni fotoğraflamak saf israftır ve sayfa ne kadar az
 şey içeriyorsa israf o kadar büyüktür.
 :::
@@ -663,9 +730,9 @@ aynı koşullarda basılmış, anlamca eşlenmiş İngilizce ve Türkçe metinde
 Kontrolün "içerik aynı" demekten öteye gitmediğine dikkat: ikisi de Latin
 alfabesi ve Türkçe yalnızca harfleriyle değil, aksanları, kelime biçimleri ve
 biçimbilimiyle de farklı; yani deney *dili* yalıtıyor, dilin tek bir özelliğini
-değil. Genel ders @sec-turkce-nlp'ninki, işin içinde hiç
-tokenizer olmadan geliyor: İngilizcede doğrulanmış bir hat, bileşende dilsel
-hiçbir şey olmasa bile başka bir dil için doğrulanmış değildir.
+değil. Genel ders @sec-turkce-nlp'ninki, girdi tarafında hiç
+tokenizer olmadan geliyor: İngilizcede doğrulanmış bir hat, girdisi metin değil
+piksel olsa bile başka bir dil için doğrulanmış değildir.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -687,7 +754,7 @@ Sınaması kolay olan durumda ününden az: tabloda olmayan bir değer 90 kez
 soruldu ve bu model **90 kez** reddetti. Yaptığı şey, *ürettiği* şeylerin
 içinde uydurmaktır; okunamayan bir bölgenin transkripti gibi. Yokluğu saptayabilir;
 okunamazlığı saptayamaz, çünkü bir ileri geçişte hiçbir şey okumayı
-çıkarsamadan ayırmaz.
+çıkarsamadan güvenilir biçimde ayırmaz.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -715,11 +782,13 @@ kullandığı iki güvenilir açık kaynakta tekrar eder; ayrıca bu bölümün
 
 Yamalara bölünür, her yama bir görme kodlayıcıyla modelin hidden size'ına
 yansıtılır ve ortaya çıkan vektörler metin token'larıyla tek bir dizide
-birleştirilir. Sonra attention bütün dizi boyunca, iki yönde de çalışır.
-Eklemeye değer sonuç — bir tane kullandığınızı gösterdiği için: kodlayıcı
+birleştirilir. Sonra dikkat bu dizi üzerinde her zamanki gibi çalışır; nedensel
+maske metnin kendinden önceki görüntü vektörlerine dikkat etmesine izin verir.
+Eklemeye değer sonuç — bir tane kullandığınızı gösterdiği için: bu kodlayıcı
 *sabit* sayıda vektör üretir, dolayısıyla görüntü maliyeti sayfada ne olduğuyla
-ölçeklenmez — burada sayfa ister bir satır ister on dört satır tutsun sabit 260
-token olarak ölçüldü.
+ölçeklenmez — burada 34 pikselden 11 piksele her sayfa için sabit 290 prompt
+token'ı olarak ölçüldü ve bunun 260'ı görüntünün kendisi. Ardından döşemeli ve
+dinamik çözünürlüklü kodlayıcıların görüntüyle ölçeklendiğini ekleyin.
 
 **S: Bir model testte belgelerinizi iyi, üretimde kötü okuyor. Nereye
 bakarsınız?**
@@ -883,7 +952,8 @@ sürer.
 
 - **Bir görüntü sabit ücretlidir — bu kodlayıcı için.** Bu bölümdeki 320
   sayfanın her biri, punto ya da içerik ne olursa olsun aynı **290 prompt
-  token'ına** mal oldu — 256 görüntü vektörü artı prompt — çünkü bu model sabit
+  token'ına** mal oldu — 256 görüntü vektörü, birkaç işaret token'ı ve prompt —
+  çünkü bu model sabit
   bir ızgaraya yeniden boyutlandırıp sabit 256 vektöre havuzluyor. 2025–2026
   ailelerinin çoğunun kullandığı dinamik çözünürlüklü ve döşemeli kodlayıcılar
   bunun yerine değişken sayıda ücretlendirir. Bütçelemeden önce kendi
@@ -898,10 +968,10 @@ sürer.
   Türkçe %0,26 → **%6,67**.
 - **Türkçe her çözünürlükte İngilizcenin yaklaşık 5 katı hata oranına mal
   oldu**; içeriğin birebir aynı olduğu profesyonelce çevrilmiş çiftlerde.
-  Tokenizer yok, gövdeleyici yok, `lower()` yok — yalnızca pikseller, ve araç
-  yine de İngilizce dışında ölçülebilir biçimde daha kötü çalıştı.
-  @sec-turkce-nlp'nin örüntüsünün ortaya çıkması için bir metin hattına ihtiyacı
-  yok.
+  Girdi tarafında tokenizer, gövdeleyici ya da `lower()` yok — yalnızca
+  pikseller, ve araç yine de İngilizce dışında ölçülebilir biçimde daha kötü
+  çalıştı. @sec-turkce-nlp'nin örüntüsünün ortaya çıkması için metin *girdisine*
+  ihtiyacı yok; çıktıyı yine bir dil modeli yazıyor.
 - **Kusur biçimi çöp değil akıcılıktır.** Aksan kaybı hasarın azınlığıydı (en
   kötü ayarda %95,1 korundu). Çoğunluk, modelin çözemediği bir kelimenin daha
   kısa, dilbilgisel ve makul biriyle değiştirilmesiydi. Bir VLM doğru
@@ -912,7 +982,8 @@ sürer.
   ıskalama oranına izin verir ve 30 tablodan çekilen 90 soru tam olarak bağımsız
   da değildir; mevcut değerleri
   %98,9 ile okudu. Yokluk kanıta karşı kontrol edilebilir; okunamazlık edilemez,
-  çünkü bir ileri geçişte hiçbir şey okumayı çıkarsamadan ayırmaz.
+  çünkü bir ileri geçişte hiçbir şey okumayı çıkarsamadan güvenilir biçimde
+  ayırmaz.
 - **Yani iki aracı da kullanın.** Transkript için özel OCR; kusurları eşik
   uygulanabilir güven puanlarıyla gelir. VLM ise düzen, alan bulma, grafikler ve
   sayfa hakkındaki sorular için. Güven eşiğiyle işaretlenebilen bir kusur

@@ -5,8 +5,8 @@
 `ollama` 0.24.0 on a local GPU, and pages rendered with `Pillow` 12.3.0 from
 the WMT16/17/18 tr-en test sets — the same aligned corpus @sec-machine-translation
 and @sec-turkish-nlp used, so the Turkish and English pages say the same thing
-and a gap between them cannot be a content gap. Software: `Pillow` 12.3.0,
-NumPy 2.5.2 on Python 3.14.5.
+and a gap between them cannot be a content gap. Scoring used NumPy 2.5.2 on
+Python 3.14.5.
 :::
 
 **Learning objectives.** After this chapter you can:
@@ -23,7 +23,14 @@ NumPy 2.5.2 on Python 3.14.5.
   document task.
 
 The scope is document images and vision–language models; audio and video are
-outside this chapter.
+outside this chapter. One pointer for speech, because it follows the same
+pattern: a speech recogniser such as
+[Whisper](https://arxiv.org/abs/2212.04356) turns audio into a spectrogram (a
+picture of which frequencies are loud at each moment, one column every 10 ms)
+and feeds it to a transformer encoder; a decoder then writes the transcript.
+Audio is processed in 30-second windows, padded if shorter, so the encoder
+always produces the same 1,500 vectors per window — the same fixed-budget idea
+as the image encoder below.
 
 ## An image is a fixed number of tokens {#sec-multimodal-tokens}
 
@@ -32,6 +39,10 @@ those vectors came from, and that is the whole trick: cut an image into
 patches, project each patch to the model's hidden size
 ([**patch embedding**](#gloss-patch-embedding){#term-patch-embedding .term-ref}),
 and you have a sequence the same machinery can read [@dosovitskiy2021image].
+That paper's model, the **Vision Transformer (ViT)**, is the template for
+the vision encoders in this chapter. Each patch also gets a position
+embedding, as words do in @sec-transformers, so the model knows *where* on the
+image a patch came from.
 
 ::: {#gloss-patch-embedding .column-margin .term-gloss}
 **Patch embedding** — an image cut into fixed squares, each projected to the
@@ -39,13 +50,17 @@ model's hidden size, so a picture becomes a sequence of vectors a transformer
 can read alongside text. [↩](#term-patch-embedding){.term-back}
 :::
 
-Text tokens and image patches sit in one stream and attend to each other.
+Text tokens and image patches sit in one stream, and attention runs over both.
+The usual causal mask still applies: a text token can attend to every image
+vector before it, but an image vector cannot look ahead at text that comes
+later. (Gemma 3, this chapter's model, additionally lets the vectors of one
+image attend to each other in both directions.)
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">How a page joins the same sequence as the question</div>
 <svg viewBox="0 0 764 250" style="max-width:744px" role="img"
-     aria-label="A diagram showing an image and a question entering one token sequence. On the left, a page of text is cut into a grid of patches. An arrow labelled vision encoder maps the whole grid to a fixed block of 256 vectors, with a note that the count does not depend on what is on the page. Below, the question text is tokenized into a variable number of vectors. Both blocks feed into a single sequence, drawn as one row of vectors, which enters the transformer. A label states that attention runs across the whole row, so image vectors and text vectors can attend to each other, and that this is the only mechanism involved. A second label notes that the image block is a flat 256 vectors whether the page holds one sentence or fourteen lines.">
+     aria-label="A diagram showing an image and a question entering one token sequence. On the left, a page of text is cut into a grid of patches. An arrow labelled vision encoder maps the whole grid to a fixed block of 256 vectors, with a note that the count does not depend on what is on the page. Below, the question text is tokenized into a variable number of vectors. Both blocks feed into a single sequence, drawn as one row of vectors, which enters the transformer. A label states that this is the same transformer stack, unmodified, and that the text tokens attend to the image vectors that come before them in the row. A second label notes that the image block is a flat 256 vectors whether the page holds one sentence or fourteen lines.">
 
   <text x="10" y="16" class="t-xs t-b t-muted">THE PAGE</text>
   <rect x="10" y="26" width="150" height="104" rx="4" class="box"/>
@@ -91,7 +106,7 @@ Text tokens and image patches sit in one stream and attend to each other.
 
   <path d="M466 166 L 466 176 L 706 176 L 706 166" class="ln"/>
   <text x="586" y="194" class="t-xs t-mid t-b">the same transformer stack, unmodified</text>
-  <text x="586" y="210" class="t-xs t-mid t-muted">attention runs across the whole row, both ways</text>
+  <text x="586" y="210" class="t-xs t-mid t-muted">text attends to the image vectors before it</text>
 </svg>
 ```
 
@@ -107,11 +122,11 @@ architecture.
 
 The consequence people skip is what this does to your bill, and it is
 measurable in one line. Every image in this chapter's experiment — 320 of
-them, four font sizes, two languages, sparse pages and dense ones — cost
+them, four font sizes, two languages, large type and tiny type — cost
 **exactly the same 290 prompt tokens**:
 
 ```text
-  font size   image tokens   lines the page can hold at this size
+  font size  prompt tokens   lines the page can hold at this size
        34 px           290   ~5, comfortable
        22 px           290   ~7
        15 px           290   ~10
@@ -122,22 +137,31 @@ Every page in that ladder carries the *same* sentence; the last column is page
 capacity, not content. Holding the content constant is the point of the design,
 so the only thing varying is how many encoder pixels each character gets.
 
-Two accountings appear in this chapter and it is worth separating them here.
-**290** is the whole prompt as the server reports it for the transcription
-pages. **260** is what the image adds in the text-versus-image comparison below,
-where the instruction is identical in both arms and cancels. Do not try to
-rebuild either from parts: 256 vectors plus delimiters plus a 34-token
-instruction would come to 294, not 290, so the two counts treat the delimiters
-or the instruction differently, and this run did not keep the raw tokenizer
-output that would say which. Each figure is what its own measurement
-reported. Wherever this chapter says "as an image, 260", it means the
-*marginal* cost of attaching the picture.
+Two token counts appear in this chapter, and they measure different things.
 
-[For this model, an image costs a flat rate.]{.hl} The vision encoder resizes to
-a fixed 896×896 grid and pools the patch grid down to 256 soft vectors, so 256
-image tokens plus the prompt is what you pay whether the page holds a sentence
-or a spreadsheet — provided the image is roughly square and the model's
-crop-and-tile path does not fire. A wide screenshot split into crops sends each
+- **290** is the *whole prompt* — image plus instruction — as the server
+  reports it for the transcription pages.
+- **260** is what the image *adds* in the text-versus-image comparison below.
+  There the instruction is identical in both arms, so it cancels out.
+
+Wherever this chapter says "as an image, 260", it means this *marginal* cost of
+attaching the picture. It matches Gemma 3's published prompt format: 256 image
+vectors plus four marker tokens around them (the delimiters — a start-of-image
+and an end-of-image token, each with a line break). Do not try to rebuild the
+290 from parts: 260 plus the 34-token instruction would come to 294, not 290,
+so the two measurements count the delimiters or the instruction differently,
+and this run did not keep the raw tokenizer output that would say which. Each
+figure is what its own measurement reported.
+
+[For this model, an image costs a flat rate.]{.hl} The vision encoder resizes
+every image to 896×896 pixels and cuts it into 14×14-pixel patches: 896 / 14 =
+64 patches per side, so 64 × 64 = 4,096 patches. Average pooling over each 4×4
+block of patches then shrinks that 64×64 grid to 16×16 = 256 vectors. These are
+*soft tokens*: vectors fed straight into the language model rather than looked
+up in its vocabulary, but they occupy sequence positions and are billed like
+tokens. So 256 image tokens plus the prompt is what you pay whether the page
+holds a sentence or a spreadsheet — provided the image is roughly square and
+the model's crop-and-tile path does not fire. A wide screenshot split into crops sends each
 crop through the encoder separately and costs a multiple of this.
 
 **Do not generalise the flat rate.** It is a property of one encoder design, not
@@ -167,8 +191,8 @@ Look at the two rows together, though, because they say something less
 obvious. The image rate is flat, so **the premium is smaller for Turkish** —
 not because pixels are cheaper there, but because @sec-turkish-nlp's tokenizer
 penalty makes the *text* expensive: 62.4 tokens against English's 46.6 for the
-same sentence, a 1.34× ratio consistent with what that chapter measured on a
-much larger sample.
+same sentence, a 1.34× ratio that falls inside the 1.2–1.6× range that chapter
+estimates for matched content.
 
 A flat-rate encoder partially absorbs an agglutinative language's token tax.
 Hold that thought until @sec-multimodal-ocr, which measures what you give up to
@@ -182,15 +206,20 @@ glyph height a character does not survive that resize with enough pixels to be
 told apart from its neighbours. So if transcription accuracy falls with font
 size, that is not the model getting confused; it is a sampling limit you can
 compute in advance from your canvas size and the encoder's input resolution.
+A worked example: a page 1,792 pixels wide is shrunk by a factor of two to fit
+896, so 11-pixel type arrives at the encoder about 5.5 pixels tall — less than
+half the height of one 14-pixel patch.
 
 The fixed token budget makes it worse in a second and separate way: because the
-encoder emits the same 256 vectors regardless, you cannot buy your way out by
-paying for more tokens. Cropping and re-rendering are the only levers, which is
-the recipe @sec-multimodal-ocr arrives at from the other end.
+encoder emits the same 256 vectors per image regardless, you cannot ask it for
+more detail within one image. The levers are to crop the page into pieces and
+send each piece as its own image (paying 256 vectors for each), or to render or
+scan at a larger size — the fix the rest of this chapter keeps returning to.
 
 **What we will look at.** First where the alignment comes from, because a
 projected patch means nothing to a language model until something teaches the
-two spaces to agree — and the answer is also why the image cost is flat. Then
+two spaces to agree — along the way we meet the kind of encoder whose fixed,
+pooled output makes the image cost flat. Then
 the chapter's real experiment: the same sentences rendered at four sizes in two
 languages, which turns that bottleneck into a threshold and puts the threshold
 in a different place for Turkish than for English. Then a control that asks
@@ -226,11 +255,26 @@ was already lying around, and the trick was noticing it counted as
 supervision. Every scaling story in this book has that shape.
 :::
 
+**How "near" and "apart" become a loss.** Take a batch of *N* image–caption
+pairs. Encode all of them, normalise the vectors, and compute the cosine
+similarity of every image with every caption: an *N* × *N* table whose diagonal
+holds the true pairs and whose other *N*² − *N* cells are mismatches. CLIP then
+treats each row as a classification problem — "which of these *N* captions
+belongs to this image?" — and applies softmax cross-entropy with the diagonal
+cell as the right answer; it does the same down each column, for "which image
+belongs to this caption?". A learned temperature scales the similarities before
+the softmax. This is the InfoNCE loss with in-batch negatives that
+@sec-retrieval uses to train dense retrievers, with images in place of
+queries. SigLIP [@zhai2023sigmoid], the variant behind this chapter's model,
+replaces the softmax with an independent yes/no (sigmoid) decision for every
+cell of the table, so no cell needs to be normalised against the whole batch.
+
 Two consequences are worth carrying forward.
 
 **It buys zero-shot classification.** Because captions are text, the label
-space is open: to ask *is this a defective weld*, encode that sentence and
-compare. You are no longer restricted to the categories someone enumerated at
+space is open: to ask *is this a defective weld*, encode one caption per
+candidate answer — "a photo of a defective weld", "a photo of a sound weld" —
+and pick the one closest to the image. You are no longer restricted to the categories someone enumerated at
 training time, which is what made vision models useful in places nobody had
 labelled a dataset for.
 
@@ -247,11 +291,13 @@ different things.
 model entirely, compresses a variable number of patches into a fixed set of
 latents with a resampler, and inserts gated cross-attention blocks between the
 frozen layers. The image never enters the text sequence at all; it is a second
-pathway the text attends *into*. Cheap to train, and it leaves the language
-model's text behaviour untouched.
+pathway the text attends *into*. Cheaper to train than updating the whole
+model, since the language model's weights never change, and it leaves the
+language model's text behaviour untouched.
 
 *Projection into one sequence.* LLaVA [@liu2023visual] does the simpler thing: a
-small MLP projects each patch vector to the language model's hidden size, those
+small projector — a single linear layer in the original LLaVA, a two-layer MLP
+in its successor LLaVA-1.5 — projects each patch vector to the language model's hidden size, those
 vectors are concatenated with the text tokens, and the whole thing is
 instruction-tuned. One stream, one attention, no new modules — which is the
 design in the figure above, and the one most open VLMs now follow.
@@ -266,9 +312,9 @@ whenever an image is present. A single-stream model, by contrast, has no
 separate cross-attention pathway inside the decoder to intervene on — its
 separate modules are the vision encoder and the projector in front of it.
 
-The vision encoder in this chapter's model is a descendant of CLIP with a
-different loss [@zhai2023sigmoid], and its fixed pooled output size is why an
-image costs a flat rate here.
+The vision encoder in this chapter's model is a descendant of CLIP trained with
+the sigmoid loss described above [@zhai2023sigmoid], and its fixed pooled output
+size is why an image costs a flat rate here.
 
 What contrastive pretraining does *not* buy is any guarantee about detail. The
 objective rewards matching an image to its caption, and a caption describes what
@@ -288,29 +334,33 @@ every language.
 
 @sec-turkish-nlp's method transfers directly, and this is the reason to use it
 here. Take the WMT16/17/18 Turkish–English test sets, which are professional
-translations, so the two languages say the same thing.
+translations, so the two languages say the same thing. Render each sentence as
+a page image in the same font at four sizes, from a comfortable scan down to a
+bad phone photo. Any gap between the two languages cannot be a content gap.
 
-**One caveat this design has to answer and does not.** WMT test sets are a
-decade old and public, so the model may well have memorised some of these
+**One caveat this design has to answer and does not.** WMT test sets are about
+a decade old and public, so the model may well have memorised some of these
 sentences — and a memorised sentence can be "transcribed" without being read,
 which pushes CER down. The bias is unlikely to be symmetric: the English side of
 WMT is copied across the web far more often than the Turkish side, so
 contamination would inflate exactly the ratio this section reports. The control
-is a ladder on sentences published after the model's cutoff, and it has not been
-run. Until it is, treat the 5× as an upper bound on the gap. Render each sentence as
-a page image in the same font at four sizes, from a comfortable scan down to a
-bad phone photo. Any gap between the two languages cannot be a content gap.
+is a ladder on sentences published after the model's training cutoff, and it
+has not been run. Until it is, treat the roughly 5× gap reported below as an
+upper bound.
 
-Two scores. **Character error rate**, edit distance over reference length, for
-overall damage. And **diacritic retention** — of the `ç ğ ı ö ş ü İ` that
-should be on the page, how many survived — because a model that quietly
-deasciifies Turkish is doing something specific, and CER alone would hide it
-inside a general error rate.
+Two scores. **Character error rate (CER)** — the edit distance between the
+model's output and the reference (the smallest number of character
+insertions, deletions and substitutions that turns one into the other), divided
+by the reference length — for overall damage. And **diacritic retention** — of
+the `ç ğ ı ö ş ü İ` that should be on the page, how many survived — because a
+model that quietly strips Turkish diacritics (the reverse of the
+deasciification @sec-turkish-nlp describes) is doing something specific, and
+CER alone would hide it inside a general error rate.
 
 ```text
 gemma3:27b, 40 aligned sentence pairs, one font, four sizes
 
- language   font px    CER    diacritics kept   image tokens
+ language   font px    CER    diacritics kept  prompt tokens
   English       34   0.04%                  —            290
   English       22   0.05%                  —            290
   English       15   0.22%                  —            290
@@ -382,8 +432,9 @@ on identical content.]{.hl} 6.5× at 34 px, 5.0× at 22, 5.9× at 15, 5.0× at 1
 
 Before reading that as four confirmations, convert the percentages back into
 events. Forty sentences is about 8,880 English characters and 9,320 Turkish
-ones, so the top two English rungs are **four and five wrong characters**, and
-the Turkish ones are twenty-four and twenty-three. A ratio of two counts that
+ones, so the top two English rungs are **about four wrong characters each**
+(3.6 and 4.4 on average), and the Turkish ones are about twenty-four and
+twenty-three. A ratio of two counts that
 small carries an enormous interval — the 6.5× at 34 px is 24 edits against 3.6 —
 so "remarkably stable" is the wrong description. The rung that is statistically
 solid is the bottom one, where the counts are 622 against 118, and the honest
@@ -393,17 +444,28 @@ pixels it becomes a real number — 6.67% of characters wrong against English's
 1.33%.
 
 This is @sec-turkish-nlp's pattern arriving through a door that chapter never
-opened. There is no tokenizer here, no stemmer, no lowercasing — just pixels
-and a vision encoder. And the tool still works measurably worse in Turkish,
-still without raising anything you could catch in a log.
+opened. On the *input* side there is no tokenizer, no stemmer, no lowercasing —
+just pixels and a vision encoder. And the tool still works measurably worse in
+Turkish, still without raising anything you could catch in a log. The output
+side is a different matter: the transcript is still written token by token by
+the same language model, through the same tokenizer, and the next subsection
+shows that its errors look like the language model's guesses. So the gap is not
+"vision without language"; it is a vision input feeding a language model that
+may itself be weaker in Turkish, and this experiment cannot say how much of the
+gap comes from each side.
 
 Note also **where the cliff is**. Between 22 px and 15 px, English degrades by
 a factor of four from a tiny number; Turkish degrades by a factor of five to a
-number you would notice. Between 15 px and 11 px, Turkish degrades by another
-factor of five.
+number you would notice. Between 15 px and 11 px, both degrade again — English
+by a factor of six, Turkish by five.
 
-Resolution is not a smooth dial, it is a threshold, and the threshold sits at a
-different place for the two languages — which means a scanning setting
+So the two curves have the same shape; Turkish is the English curve shifted up
+by a roughly constant factor. What that shift does in practice is move the
+*threshold*. Pick any error rate you can tolerate — say 1% of characters —
+and Turkish crosses it at a larger font size than English (between 22 and
+15 px here, against between 15 and 11 px for English). Resolution is not a
+smooth dial, it is a threshold, and for a fixed tolerance the threshold sits at
+a different place for the two languages — which means a scanning setting
 validated on English documents is not validated for Turkish ones.
 
 ### The failure is not the one you would predict
@@ -433,7 +495,7 @@ changes with a VLM is how much of the output can be reconstructed from priors
 and how little of it announces itself as a guess.
 
 ::: {.column-margin}
-Which gives a practical rule with teeth: if a downstream step will treat the
+Which gives a practical rule you can enforce: if a downstream step will treat the
 transcription as ground truth, prefer a tool whose failures look like
 failures. @sec-multimodal-tools names the dedicated OCR engines. Use the VLM
 where the task is understanding rather than transcription — *what is this
@@ -509,15 +571,18 @@ is not among them. *What does this smudge say* has no such evidence to check
 against: the region is uncertain, the model's job at every step is to emit a
 likely continuation, and a likely continuation is exactly what it emits.
 
-There is no internal signal that separates "I read this" from "I inferred
-this", because both come out of the same forward pass.
+There is no reliable internal signal that separates "I read this" from "I
+inferred this", because both come out of the same forward pass. Each output
+token does have a probability, but a guess the language model finds likely can
+score just as high as a clearly printed word, so a high probability does not
+mean the pixels supported the token.
 
 ::: {.column-margin}
-This is the same shape as @sec-decoding's calibration result, arriving in a
-different modality: a model's confidence discriminates well between things it
-was *asked* about and badly between things it *produced*. Abstention works when
-there is something to abstain about. It does not work inside a generated
-string.
+Compare @sec-decoding's logprob result: token probabilities ranked answers well
+but were badly calibrated, and they were most useful for abstaining on a
+discrete question. Abstention works when there is a question to abstain on. It
+has nothing to act on inside a long generated string, where no single token
+announces itself as a guess.
 :::
 
 Set the two questions side by side and the asymmetry is in the evidence, not in
@@ -574,14 +639,15 @@ the model:
 ::: {.fig-cap}
 The left question can be settled against something the model can see; the right
 one cannot. It is not more honest on the left — it simply has evidence there
-and a probability distribution on the right, and both leave by the same door.
+and only a probability distribution on the right, and both answers come out
+through the same generation step.
 :::
 ::::
 
 That gives a rule you can hold on to. **Ask a VLM questions.** Do not ask it to
 be an OCR engine and then trust the output as a transcript, because its failure
 mode is fluent. Do not assume the alternative fails loudly either: a dedicated
-engine gives you per-character confidences to gate on, which helps, and it can
+engine gives you confidence scores to gate on, which helps, and it can
 still turn one plausible word or digit into another. Whichever tool produces
 the transcript, validate the fields downstream systems will treat as facts.
 
@@ -605,7 +671,8 @@ photographs, and answers questions about them.
 
 ::: {#gloss-optical-character-recognition-ocr .column-margin .term-gloss}
 **Optical character recognition (OCR)** — turning an image of text into text.
-A dedicated engine exposes per-character confidences you can gate on, which is
+A dedicated engine exposes confidence scores (per character, word or line,
+depending on the engine) that you can gate on, which is
 its main advantage over a model with no such signal; both can make plausible
 errors.
 [↩](#term-optical-character-recognition-ocr){.term-back}
@@ -613,7 +680,7 @@ errors.
 
 | | Dedicated OCR | Vision–language model |
 |:--|:--|:--|
-| Output when confident | text, with per-character confidences | text, no usable per-character signal |
+| Output when confident | text, with confidence scores per word or line (per character in some engines) | text; token probabilities exist but do not say whether the pixels supported the token |
 | Output when it fails | [often visibly wrong, with confidences to gate on — plausible substitutions happen too]{.pro} | [fluent, plausible, wrong]{.con} |
 | Layout and reading order | needs its own model or heuristics | [handled, often well]{.pro} |
 | Answering *about* a document | [not its job — you build that on top]{.con} | [the thing it is for]{.pro} |
@@ -639,8 +706,10 @@ with a measurement rather than an argument.
 
 No, and it is not close. The same sentence measured both ways cost **46.6
 tokens as English text and 260 as an image** — a 5.57× premium, 4.17× in
-Turkish. For this encoder the image rate is *flat*, which is the part that surprises people: a
-page holding one line and a page holding fourteen cost exactly the same. So
+Turkish. For this encoder the image rate is *flat*, which is the part that surprises people: the
+encoder always emits 256 vectors, so a page holding one line and a page holding
+fourteen cost the same — and every one of this chapter's 320 pages, from 34-px
+to 11-px type, cost exactly 290 prompt tokens. So
 photographing text you already have is pure waste, and the waste is larger the
 less the page contains.
 :::
@@ -667,8 +736,8 @@ size. Note that "identical content" is as far as the control goes: both are
 Latin script, and the Turkish differs in its diacritics, its word forms and its
 morphology as well as its letters, so the experiment isolates the *language*,
 not one property of it. The general lesson is @sec-turkish-nlp's, arriving with no
-tokenizer involved: a pipeline validated on English is not validated for
-another language, even when the component has nothing linguistic in it.
+tokenizer on the input side: a pipeline validated on English is not validated
+for another language, even when its input is pixels rather than text.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -690,7 +759,7 @@ Less than their reputation, in the case that is easy to test: asked 90 times
 for a value that was not in the table, this model refused **90 times**. What it
 does do is invent inside things it *is* generating, like a transcript of an
 illegible region. Absence it can detect; illegibility it cannot, because
-nothing in a forward pass separates reading from inferring.
+nothing in a forward pass reliably separates reading from inferring.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -717,11 +786,13 @@ measurements make answerable.
 
 Cut into patches, each patch projected to the model's hidden size by a vision
 encoder, and the resulting vectors concatenated with the text tokens into one
-sequence. Attention then runs across the whole thing, both directions. The
-consequence worth adding, because it shows you have used one: the encoder emits
-a *fixed* number of vectors, so image cost does not scale with what is on the
-page — measured here at a flat 260 tokens whether the page held one line or
-fourteen.
+sequence. Attention then runs over that sequence as usual, with the causal
+mask letting text attend to the image vectors before it. The consequence worth
+adding, because it shows you have used one: this encoder emits a *fixed* number
+of vectors, so image cost does not scale with what is on the page — measured
+here at a flat 290 prompt tokens for every page from 34-px to 11-px type, of
+which the image itself accounts for 260. Then add that tiling and
+dynamic-resolution encoders do scale with the image.
 
 **Q: A model reads your documents well in testing and badly in production.
 Where do you look?**
@@ -885,8 +956,8 @@ both ways. The ratio is the first thing to know and takes two minutes.
 ## What to remember {#sec-multimodal-summary}
 
 - **An image is a flat rate — for this encoder.** Every one of the 320 pages in
-  this chapter cost the same **290 prompt tokens** — 256 image vectors plus the
-  prompt — regardless of font size or content, because this model resizes to a
+  this chapter cost the same **290 prompt tokens** — 256 image vectors, a few
+  marker tokens and the prompt — regardless of font size or content, because this model resizes to a
   fixed grid and pools to a fixed 256 vectors. Dynamic-resolution and tiling
   encoders, which most 2025–2026 families use, charge a variable number instead.
   Look up your own encoder's rule before budgeting; that it *has* one is the
@@ -901,9 +972,10 @@ both ways. The ratio is the first thing to know and takes two minutes.
   across the ladder; Turkish went 0.26% → **6.67%**.
 - **Turkish cost about 5× the error rate of English at every resolution**, on
   professionally translated pairs where the content was identical. No
-  tokenizer, no stemmer, no `lower()` — just pixels, and the tool still worked
-  measurably worse outside English. @sec-turkish-nlp's pattern does not need a
-  text pipeline to appear.
+  tokenizer, stemmer or `lower()` on the input side — just pixels, and the tool
+  still worked measurably worse outside English. @sec-turkish-nlp's pattern
+  does not need a text *input* to appear; the output is still written by a
+  language model.
 - **The failure mode is fluency, not garbage.** Diacritic loss was the minority
   of the damage (95.1% retained at the worst setting). The majority was a word
   the model could not resolve, replaced with a shorter, grammatical, plausible
@@ -914,8 +986,8 @@ both ways. The ratio is the first thing to know and takes two minutes.
   up to about 3.3%, and 90 questions drawn from 30 tables are not fully
   independent — and
   read the present values at 98.9%. Absence is checkable against evidence;
-  illegibility is not, because nothing in a forward pass separates reading from
-  inferring.
+  illegibility is not, because nothing in a forward pass reliably separates
+  reading from inferring.
 - **So use both tools.** Dedicated OCR for the transcript, where failures come
   with confidences you can gate on; the VLM for layout, locating fields, charts, and questions
   about the page. Replacing a gateable failure mode with a silent one is a
