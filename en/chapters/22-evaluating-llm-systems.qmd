@@ -43,7 +43,7 @@ training data, and you cannot open the training set to find out
 
 ::: {#gloss-benchmark-contamination .column-margin .term-gloss}
 **Benchmark contamination** — test items that were in a model's training data,
-so its score reports memorisation rather than capability. You cannot inspect a
+so its score can reflect memorisation rather than capability. You cannot inspect a
 closed model's training set, but that does not make contamination
 unmeasurable: @oren2024proving turns it into a hypothesis test you can run
 through an API.
@@ -61,7 +61,8 @@ Two things follow, and the second is why this is a section rather than a
 warning. Contamination is **testable**, even on a model you cannot open:
 @oren2024proving permutes a benchmark's item order and checks whether the
 model gives higher likelihood to the canonical ordering, which is a real
-hypothesis test you can run through an API. @sec-data-annotation and
+hypothesis test you can run through an API — provided the API returns token
+log-probabilities, which the test needs and not every closed API exposes. @sec-data-annotation and
 @sec-pretraining both point at it; this is the chapter where you would run
 it, before quoting a benchmark number you did not generate yourself. And the
 structural answer since 2024 has been benchmarks that rotate their items
@@ -70,7 +71,8 @@ of its questions every month, trading comparability across time for a
 contamination guarantee. Neither replaces your own eval set. Both make a
 leaderboard number slightly less of a rumour.
 
-**Saturation.** When the headline models are at 88, 89 and 90, one point of
+**Saturation.** A benchmark is *saturated* when the best models score close
+to its ceiling, so there is little room left for them to differ. When the headline models are at 88, 89 and 90, one point of
 difference is competing with everything else that varies at that scale: the
 benchmark's own label errors, its ambiguous items, and the prompt each lab
 used. Close scores do not by themselves distinguish a small real difference
@@ -214,7 +216,7 @@ thirty items per arm and McNemar's exact test on thirty paired items both give
 are two to five.
 
 That is worth sitting with, because thirty items is a common size; it is the
-size this chapter's own exercise asked for in draft.
+size this chapter's own exercise asked for in an earlier draft.
 
 This does **not** mean small eval sets are useless. It means they answer a
 different question, and the distinction is the most practically useful thing
@@ -242,7 +244,9 @@ comparison there was **paired** — the same 150 reviews through every prompt �
 and pairing is the standard advice.
 
 The advice is right and it is not unconditional, because McNemar's test throws
-away every item the two systems agree on. So what pairing buys depends on how
+away every item the two systems agree on. It looks only at the items where
+exactly one of the two systems is right, and asks whether those split 50/50
+between them, as they would if neither system were better. So what pairing buys depends on how
 often they disagree, which is an empirical property of *your* systems:
 
 ```text
@@ -264,18 +268,24 @@ more than that: delta_max = 2(1 - p_B) + (p_B - p_A) = 0.35. Past it the
 "both wrong" cell of the 2x2 table would have to hold a negative
 probability. Note the item counts: the unpaired column is a study with n
 items in each arm, so 2n items in total, while the paired columns run the
-same n items through both systems.
+same n items through both systems. Note also the tests: the unpaired column
+is the normal-approximation z-test, the paired columns are exact McNemar.
+Fisher's exact test on the unpaired side would give 0.04, 0.06, 0.11, 0.22
+and 0.52 for the first five rows.
 ```
 
 **Pairing pays in proportion to how much the two systems agree, and the
-threshold is one you can compute.** McNemar's asymptotic statistic is
+threshold is one you can compute.** Write $\Delta = p_B - p_A$ for the true
+accuracy difference, $\bar{p} = (p_A + p_B)/2$ for the average accuracy and
+$\bar{q} = 1 - \bar{p}$. McNemar's asymptotic statistic is roughly
 $\sqrt{n}\,\Delta/\sqrt{\delta}$, where $\delta$ is the disagreement rate;
-the two-arm unpaired statistic is $\sqrt{n}\,\Delta/\sqrt{2\bar{p}\bar{q}}$.
-So pairing wins exactly when $\delta < 2\bar{p}\bar{q}$, which for an 80%
+the two-arm unpaired statistic is roughly $\sqrt{n}\,\Delta/\sqrt{2\bar{p}\bar{q}}$.
+So pairing wins, to this approximation, when $\delta < 2\bar{p}\bar{q}$, which for an 80%
 system against an 85% one is **28.9%** — and it wins while using half the
-items. That number is not arbitrary either: it is the disagreement rate two
+items. That number is not arbitrary either: it is almost exactly the disagreement rate two
 *independent* systems would show,
-$p_A(1-p_B) + (1-p_A)p_B = 0.80 \times 0.15 + 0.20 \times 0.85 = 0.29$. Below
+$p_A(1-p_B) + (1-p_A)p_B = 0.80 \times 0.15 + 0.20 \times 0.85 = 0.29$ (the
+two differ by $\Delta^2/2$, here 0.00125). Below
 it your systems are positively correlated and pairing exploits the
 correlation. Above it they are anti-correlated, which is rare between two
 versions of the same system.
@@ -283,24 +293,24 @@ versions of the same system.
 Read the table row by row and the practical rule falls out. At 10%
 disagreement, 200 paired items reach 0.54 where 200 items in each of two arms
 — twice the labelling — reach 0.26. At 30% the paired design on n items has
-fallen behind the unpaired design on 2n, which is what "a wash" should have
-meant. So: comparing two prompts, two checkpoints, or two decoding settings —
+fallen behind the unpaired design on 2n items. So: comparing two prompts, two checkpoints, or two decoding settings —
 cases where the systems agree on most items — pair, and get the answer on half
 the labelling. Comparing two genuinely different architectures that disagree
 constantly, pairing buys little and the honest move is a bigger eval set
 rather than a cleverer test.
 
 What does **not** happen is pairing costing you anything on data you already
-have. An LLM eval is paired *whenever you run both systems on the same items* —
-which is the normal design, and worth checking rather than assuming: a
+have. An LLM eval is paired *whenever you run both systems on the same items*.
+That is the normal design, but check it rather than assume it: a
 comparison against a number from someone else's run, or against a different
-sample, is not paired and cannot be analysed as if it were. Analysing those items as two independent samples looks more
+sample, is not paired and cannot be analysed as if it were. When the items
+*are* shared, analysing them as two independent samples looks more
 powerful past the independence point, but only because the test no longer has
-the error rate it claims. Simulated at n = 500 under a true null of 80%
+the error rate it claims. Computed exactly at n = 500 under a true null of 80%
 against 80%, where independence sits at 32% disagreement, the unpaired
-analysis rejects 0.06% of the time at 10% disagreement, 4.9% at 32%, and
+analysis rejects 0.05% of the time at 10% disagreement, 5.0% at 32%, and
 **6.4%** at 36% — it buys the extra power with false positives. McNemar's
-exact test stays between 3.7% and 4.1% across the same range, conservative in
+exact test stays between 3.7% and 4.2% across the same range, conservative in
 the way an exact test on a discrete statistic is. On a fixed eval set the
 paired test is never the wrong choice. It is only sometimes not much of a
 gain.
@@ -363,8 +373,11 @@ Plot.plot({
 ```{ojs}
 //| echo: false
 md`The paired curve uses 500 items; the flat unpaired line uses 500 in **each
-of two arms**, so 1,000. They cross at the independence point, which is the
-whole content of the rule. The shaded band is the stretch of axis I published
+of two arms**, so 1,000. They cross close to the independence point, which is the
+whole content of the rule — a little before it, at about 27%, because the
+paired curve is the slightly conservative exact McNemar test while the flat
+line is the normal approximation. Put Fisher's exact test on the unpaired side
+(0.52 at 500 per arm) and the crossing moves onto 28.9%. The shaded band is the stretch of axis I published
 a column in — at 80% against 85% the two systems cannot disagree on more than
 35% of items, and a plot makes that obvious in a way six columns of numbers
 did not.`
@@ -421,15 +434,18 @@ answers drift toward those answers, and the drift is invisible afterwards.
 Write the rubric, label a sample against it, measure how often two labellers
 agree, and *then* run anything. Report that agreement as Cohen's $\kappa$
 [@cohen1960coefficient] rather than as a raw percentage, because a raw
-percentage includes the agreement two people would reach by guessing: on an
-eval set where 80% of items are "correct", two independent guessers already
-agree 68% of the time, so a raw 70% is $\kappa \approx 0.06$ — essentially no
-reliability at all. For more than two labellers, or an ordinal rubric, use
+percentage includes the agreement two people would reach without reading the
+items: on an eval set where both labellers call 80% of items "correct", two
+labellers assigning those rates independently already agree 68% of the time
+($0.8^2 + 0.2^2$), so a raw 70% is $\kappa \approx 0.06$ — essentially no
+agreement beyond that baseline. Report the confusion table beside it, because
+on a heavily skewed set kappa is low and unstable even for careful labellers
+(@sec-data-annotation shows both effects). For more than two labellers, or an ordinal rubric, use
 Krippendorff's $\alpha$ [@krippendorff2018content]. Human agreement is not a
 hard ceiling on system scores — measured against a reconciled gold standard a
 system can beat any single labeller — but a system scoring far above the
 labellers is usually fitting their shared quirks rather than the task.
-@sec-data-annotation has the machinery.
+@sec-data-annotation has the rest of the machinery.
 
 ### Version the eval like code
 
@@ -478,8 +494,11 @@ also **a measuring instrument you did not calibrate**. So calibrate it — with
 probes whose right answer you already know, which means you can score the
 judge rather than trust it.
 
-Four probes, on 60 Turkish news articles, comparing summaries. Three of
-them ran:
+Four probes, on 60 Turkish news articles, comparing summaries. The
+"professional summary" below is the one-sentence summary XL-Sum ships with each
+article, written by BBC Türkçe's journalists — the dataset's reference summary
+(@sec-summarization). Three of the
+probes were run for this chapter:
 
 1. **Identical.** A and B are the same text. The only correct verdict is a
    tie. This is @sec-summarization's copied-text control, moved from metrics
@@ -498,9 +517,9 @@ them ran:
    once the orders are averaged. **This is the probe I did not run**, and it
    is the one that matters most when the judge and the system come from the
    same lab: @panickssery2024llm found the strength of the bias tracks how
-   well a model recognises its own writing, so it grows with capability
-   rather than shrinking. The setup here — two models, both able to
-   summarise — is an afternoon away from having it.
+   well a model recognises its own writing, which suggests it may grow, not
+   shrink, as models get better at recognising themselves. The setup here —
+   two models, both able to summarise — could run it in an afternoon.
 
 ::: {#gloss-position-bias .column-margin .term-gloss}
 **Position bias** — a judge preferring whichever candidate it saw first.
@@ -538,8 +557,10 @@ samples, which they are not: both read the same 60 articles.
 The identical-text control is the sanity check a careful team would think to
 run, and **both models score 100%**. Sixty pairs of byte-identical text, sixty
 ties, no exceptions. Even that deserves an interval, by this chapter's own
-rule: 60/60 is a Wilson bound of [94.0, 100], so the probe is equally
-consistent with a judge that would miss one comparison in seventeen. It is a
+rule: 60/60 has a Wilson interval (a confidence interval for a proportion
+that stays sensible at small $n$ and at 0% or 100%) of [94.0, 100], so the
+probe is also consistent with a judge that misses as many as one comparison
+in seventeen. It is a
 floor test, not a certificate. And if it were your whole audit you would
 conclude you have two sound judges and pick on price.
 
@@ -562,9 +583,12 @@ a Bernoulli trial either. An article-level bootstrap is the honest interval, and
 this run did not keep what it needs. Every version of the interval
 comfortably contains 50, which is the only thing the conclusion needs.
 
-In fairness to the model, a news lead is a genuinely strong summary — @sec-summarization measured lead-3 at
-14.03 ROUGE-1 against an extractive oracle of 24.89, so this is not an absurd
-thing to find difficult. But until a human rubric says which of the two should
+In fairness to the model, the comparison is not trivial: an article's opening
+sentence is fluent, on-topic text written by the same journalist. But it is not
+a strong summary on this corpus — @sec-summarization found lead bias weak here,
+with the first sentence scoring 12.75 ROUGE-1 against 24.89 for the best single
+sentence, and being the closest match to the reference only 15.8% of the time.
+So ROUGE, at least, does not rate the two as close. Until a human rubric says which of the two should
 win, a judge whose preference between them is indistinguishable from a coin has
 not shown that it can rank your system's outputs either.
 
@@ -685,7 +709,10 @@ of "the situation is as described above" — and detecting that is a much easier
 task than resisting a genuinely more detailed, better-organised, longer
 answer.
 
-What I measured is that both judges reject obvious padding. What I did not
+"Did not reproduce" means neither judge *preferred* the longer copy. It does
+not mean `qwen3.5:9b` handled the probe well: choosing a strictly worse copy
+more than one time in four is still an error rate, just not a length bias.
+What I measured is that both judges mostly reject obvious padding. What I did not
 measure is what they do with elaboration that adds real structure but no
 correctness, which is the case the folklore is actually about.
 
@@ -701,12 +728,15 @@ than after.
   count only the items where the verdict agrees, or randomise and accept the
   extra variance. If you drop the items that flip, report how many are left: a
   verdict that changes with order is an abstention, and the coverage rule below
-  applies to it. Reporting a single-order pairwise result from a judge with
+  applies to it. Reporting a single-order pairwise result from a judge with a
   38% flip rate is reporting the coin, not the systems.
 - **Prefer pairwise over absolute scoring**, but know what it costs. Asking
   "which is better" is more reliable than asking for a 1–5 rating, because a
   rating scale drifts between calls and has no anchor — @liu2023geval is the
-  careful version of the absolute-scoring approach if you need one. The cost
+  careful version of the absolute-scoring approach if you need one. The first
+  cost is that pairwise is exactly where position bias lives — an absolute
+  score of one answer has no slot A — so pairwise only pays if you also follow
+  the both-orders rule above. The second
   is that pairwise comparisons do not aggregate into a score without more
   structure, and the structure has a name: a **Bradley–Terry** model
   [@bradley1952rank], which fits one latent strength per system from the win
@@ -716,7 +746,10 @@ than after.
   a 1–5 scale lacks while still adding up.
 - **Calibrate against human labels on a subsample.** Fifty items labelled by
   hand tells you the judge's agreement rate with the thing you actually care
-  about. Without that number, a judge score is a measurement in unknown units.
+  about — as $\kappa$, like the labellers' agreement. Read it against the
+  human–human $\kappa$: a judge that agrees with you about as well as a second
+  person does is as good as a second labeller, and one far below that is not.
+  Without that number, a judge score is a measurement in unknown units.
 - **Never let the judge be the same model as the system under test**
   [@panickssery2024llm], or at least never without running the fourth probe
   above and measuring the self-preference that setup invites.
@@ -734,9 +767,11 @@ that is *not* a proportion — a ROUGE mean, an average 1–5 rating, cost per
 item — resample the items instead:
 
 ```python
+import numpy as np
 from scipy.stats import bootstrap
-ci = bootstrap((scores,), np.mean, confidence_level=0.95,
-               n_resamples=10_000, method="BCa", random_state=0)
+res = bootstrap((scores,), np.mean, confidence_level=0.95,
+                n_resamples=10_000, method="BCa", rng=0)
+print(res.confidence_interval)
 ```
 
 And resample at the level the data is clustered at, not the level it is stored
@@ -778,8 +813,9 @@ statements, and the second is the one that
 matters when you are staring at a single report. A regression report is usually
 twelve slices.
 Holm's step-down correction —
-`statsmodels.stats.multitest.multipletests(p, method="holm")` — costs almost
-no power against Bonferroni and assumes no independence. The judge table above
+`statsmodels.stats.multitest.multipletests(p, method="holm")` — is never less
+powerful than Bonferroni and, like it, does not need the tests to be
+independent. The judge table above
 reports three tests, and what survives correction is the shorter list given
 under that table rather than the p-value column; saying which is the whole of
 the discipline.
@@ -805,12 +841,14 @@ generations — a pipeline that changed nothing still trips a 5% alarm about onc
 in twenty runs, and with better than even odds within fourteen
 ($1 - 0.95^{14} = 0.51$). Re-scoring the same deterministic outputs on the same
 fixed set is not a new chance to fail; it gives the same answer every time. Two cheap
-fixes. Set the alarm from the eval's own detectable difference, so a 100-item
-eval never carries a rule below 13 points; and treat the alarm as a trigger
+fixes. Set the alarm from the eval's own noise level: on a 100-item eval at
+80%, a swing of about 11 points happens by chance one run in twenty, and a real
+drop has to be about 13 points before the eval catches it reliably, so a rule
+below that range fires on noise. And treat the alarm as a trigger
 for a second, larger run rather than as a verdict. If what you actually want
 is a threshold you can watch continuously as items accumulate, the tool is an
 always-valid sequential test [@johari2022always] — a fixed-$\alpha$ test
-looked at repeatedly has no $\alpha$ at all.
+looked at repeatedly no longer has the $\alpha$ it claims.
 
 ## Intuition checks {#sec-llm-eval-intuition}
 
@@ -847,9 +885,9 @@ Use small sets to learn what breaks, large sets to decide what ships.
 Yes, on data you already have — but know what it buys. McNemar discards every
 item the systems agree on, so its *gain* depends on the disagreement rate, and
 the threshold is computable: pairing on n items beats an unpaired study with n
-in each arm exactly when the disagreement rate is below
-$2\bar{p}\bar{q}$, which for 80% against 85% is **28.9%** — the rate two
-independent systems would show. Comparing two prompts, which agree on most
+in each arm roughly when the disagreement rate is below
+$2\bar{p}\bar{q}$, which for 80% against 85% is **28.9%** — almost exactly
+the rate two independent systems would show. Comparing two prompts, which agree on most
 items, pairing wins on half the labelling. Comparing two very different
 systems it buys little, and a bigger eval set is the honest fix. What it never
 does is cost you power: the unpaired analysis of paired data only looks
@@ -996,10 +1034,13 @@ before running anything.
 ### Step 2 — measure human agreement
 
 Have a second person label 25 of them, then compute **Cohen's $\kappa$**
-(`sklearn.metrics.cohen_kappa_score`) rather than raw agreement, because raw
-agreement on a skewed eval set is mostly the agreement of two people guessing.
-Below $\kappa = 0.4$ the rubric is the problem, not the system, and no eval
-built on it will mean anything.
+(`sklearn.metrics.cohen_kappa_score`) as well as raw agreement, because raw
+agreement on a skewed eval set is mostly the agreement two labellers would
+reach without reading the items. Treat 0.4 as a rough warning line, not a
+verdict: at 25 items the interval around kappa is wide, and on a skewed set
+kappa is low even for careful labellers (@sec-data-annotation). A low kappa
+*with* a confusion table full of genuine disagreements says the rubric is the
+problem, not the system — fix it before building an eval on it.
 
 ### Step 3 — run the identical-text probe
 
@@ -1021,7 +1062,9 @@ says what that costs.
 
 On the 50 labelled items, how often does the judge agree with you — again as
 $\kappa$, not as a raw percentage? That is the number that converts judge
-scores into something meaningful.
+scores into something meaningful. Put it next to the human–human $\kappa$
+from Step 2: the judge is good enough when it agrees with you about as well
+as your second labeller did.
 
 ### Step 6 — size the next eval
 
@@ -1122,8 +1165,8 @@ below that, everything else here is urgent.
 - **Pairing helps in proportion to how much the systems agree.** At 10%
   disagreement, 200 paired items reach 0.54 power against 0.26 for 200 items
   in each of two arms — twice the power on half the labelling. The gain shrinks
-  to nothing at **28.9% disagreement**, which is where two systems would be
-  statistically independent, and it never goes negative on data you already
+  to nothing at about **28.9% disagreement**, which is essentially where two
+  systems would be statistically independent, and it never goes negative on data you already
   have.
 - **Audit the judge with controls that have known answers.** Both judges here
   scored **100%** on identical-text ties — 60/60, which is still only
