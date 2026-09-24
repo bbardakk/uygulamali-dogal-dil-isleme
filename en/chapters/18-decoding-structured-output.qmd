@@ -33,29 +33,35 @@ character of the output more than most people expect.
 
 - **Temperature** $\tau$ rescales logits before the softmax:
   $p_i \propto \exp(z_i/\tau)$. Low $\tau$ sharpens, high $\tau$ flattens.
-- **Top-k** keeps only the $k$ highest-probability tokens, then renormalizes.
+- **Top-k** keeps only the $k$ highest-probability tokens, then renormalises.
 - **Top-p (nucleus)** keeps the smallest set of tokens whose cumulative
-  probability exceeds $p$, then renormalizes [@holtzman2020curious].
+  probability reaches $p$, then renormalises [@holtzman2020curious].
 
-**The order these run in is fixed, and it is the part that surprises people.**
-In vLLM and in `transformers`, one decoding step applies: the
+**The order these run in matters, and it is the part that surprises people.**
+In `transformers`, one decoding step applies the
 repetition/frequency/presence penalties to the raw logits, then temperature,
-then top-k, then top-p, then min-p, then samples. Two consequences follow.
+then top-k, then top-p, then min-p, and then samples. vLLM also applies the
+penalties and then temperature first, but runs min-p *before* top-k and top-p;
+llama.cpp's default chain applies temperature *last*, after all the cutoffs.
+So the order is fixed inside one library, not across libraries — check the one
+you use. Two consequences follow for the temperature-first order.
 Because temperature runs *before* top-p, raising the temperature changes which
 tokens fall inside the nucleus — so the common claim that temperature "only
 changes the contrast, never the ranking" is true of temperature alone and
 misleading in a pipeline that also truncates; the explorer below lets you watch
 the nucleus change membership. And because the penalties run *before*
-temperature, the same penalty value bites far harder at $\tau = 0.2$ than at
-$\tau = 1.5$. If you are tuning both, tune the temperature first.
+temperature (in all three libraries), the same penalty value bites far harder
+at $\tau = 0.2$ than at $\tau = 1.5$: an additive penalty $\alpha$ on the raw
+logit becomes $\alpha/\tau$ after scaling. If you are tuning both, tune the
+temperature first.
 
 ### Explore: temperature, top-k, and top-p
 
 The model has just read *"After the lecture, the students were completely
-____"* and produced the logits below. Gray bars show the raw softmax
-distribution; teal bars show what survives your sampling policy, after
-renormalization. Try $\tau = 0.2$, then $\tau = 1.8$. Then cut the tail with
-top-p $= 0.6$.
+____"* and produced the logits below. Gray bars show the softmax distribution
+at the current temperature, before any cutoff; teal bars show what survives
+your sampling policy, after renormalisation. Try $\tau = 0.2$, then
+$\tau = 1.8$. Then cut the tail with top-p $= 0.6$.
 
 ::: {.anlp-widget}
 ```{=html}
@@ -103,11 +109,13 @@ samplingDist = {
   // 2) top-k filter
   rows = rows.map((d, i) => ({ ...d, kept: i < topK }));
 
-  // 3) top-p (nucleus) filter over what survived top-k
+  // 3) top-p (nucleus) filter over what survived top-k,
+  //    measured on the top-k survivors renormalised to sum to 1
+  const massK = rows.filter(d => d.kept).reduce((a, d) => a + d.p, 0);
   let cum = 0;
   rows = rows.map(d => {
     const before = cum;
-    if (d.kept) cum += d.p;
+    if (d.kept) cum += d.p / massK;
     return { ...d, kept: d.kept && before < topP };
   });
 
@@ -145,8 +153,8 @@ Plot.plot({
 ```{ojs}
 //| echo: false
 md`**${samplingDist.filter(d => d.kept).length} of 12** candidate tokens survive
-this policy. Gray = raw softmax at τ = ${temperature.toFixed(2)}; teal =
-renormalized sampling distribution.`
+this policy. Gray = softmax at τ = ${temperature.toFixed(2)}, before any cutoff; teal =
+renormalised sampling distribution.`
 ```
 :::
 
@@ -161,16 +169,25 @@ applied system from here on.
 Three more policies complete the picture.
 
 **Greedy** takes the argmax at every step. It is temperature 0 in the limit,
-and it is the right default whenever there is one correct answer.
+and it is the right default whenever there is one correct answer. (APIs treat
+"temperature 0" as a request for greedy decoding, since dividing by zero is
+undefined. Even then a hosted API may not return the same string every time:
+batching and floating-point rounding on the GPU can change a near-tie between
+two tokens, and after one different token the rest of the text differs too.)
 
-**Beam search** keeps the *k* best partial sequences and extends all of them,
-so it optimises the whole sequence rather than each token.
+**Beam search** keeps the *k* best partial sequences (*k* is the *beam
+width*) and extends all of them, so it searches for a high-probability *whole
+sequence* rather than choosing the best token at each step. It is still a
+search with a limited width, so it can miss the single most probable sequence.
 
 @sec-machine-translation measures it properly on translation, and two of its
 findings are worth carrying here. The gains die quickly — beam 1 to 2 bought
 +0.61 BLEU, and beam 2 to 64 bought +0.57 more for seven times the compute.
-And the folkloric "curse of beam search" did not appear at all on a model that
-normalises by length during the search.
+And the widely repeated warning that wider beams make the output *worse* (the
+"curse of beam search") did not appear at all, most likely because the decoder
+normalised by length during the search. Length normalisation divides a beam's
+log-probability by its length; without it, every extra token adds another
+negative log-probability, so the search prefers outputs that are too short.
 
 **Min-p** [@nguyen2024minp] is the newer cutoff. Where top-p keeps a fixed
 *mass* and top-k a fixed *count*, min-p keeps every token whose probability is
@@ -181,12 +198,13 @@ $$
 $$
 
 That makes the cutoff adapt to the shape of the distribution rather than to a
-constant.
+constant. Typical values of $m$ are 0.05–0.1: with $m = 0.1$ and a top token
+at 0.6, every token below 0.06 is cut.
 
 When the model is confident — one token at 0.9 — min-p keeps almost nothing,
 which is what you want. When it is genuinely uncertain across twenty plausible
-continuations, min-p keeps them all, where top-p 0.9 would have kept an
-arbitrary prefix of the list.
+continuations, min-p keeps them all, where top-p 0.9 would cut the last few by
+cumulative mass alone, however plausible they are.
 
 ::: {.column-margin}
 The general rule underneath all five: [the policy should depend on how many
@@ -220,14 +238,14 @@ repetition.
 @holtzman2020curious named this and showed the surprising part: the loop is
 not a low-probability accident. **The repeated continuation is often the
 single highest-probability sequence available**, which is why greedy decoding
-walks into it and sampling does not.
+walks into it and sampling rarely does.
 
 The usual controls, and what each costs:
 
 | control | what it does | what it breaks |
 |:--|:--|:--|
 | Sampling (top-p, min-p) | takes a non-argmax token sometimes, breaking the loop | variety you may not want in an extraction task |
-| Repetition penalty | rescales the logit of any already-used token toward $-\infty$ — dividing it when positive, multiplying when negative (see below) | punishes legitimately repeated words — names, technical terms, `null` |
+| Repetition penalty | lowers the logit of any already-used token — dividing it when positive, multiplying when negative (see below) | punishes legitimately repeated words — names, technical terms, `null` |
 | No-repeat n-gram | forbids any n-gram already emitted | forbids real repeated phrases; ruinous in structured output where `{"type":` recurs |
 | Presence penalty | a flat subtraction the first time a token appears | same failure mode, milder; does not escalate |
 | Frequency penalty | a subtraction proportional to how often it has appeared | escalates with every repeat, so long outputs drift |
@@ -242,8 +260,9 @@ z_i' = \begin{cases} z_i / \theta & z_i \ge 0 \\ z_i \cdot \theta & z_i < 0 \end
 $$
 
 Dividing a *negative* logit by $\theta > 1$ raises it towards zero — that is a
-reward, not a penalty — which is why the two branches are not cosmetic and why
-the reference implementations special-case the sign [@keskar2019ctrl]. The
+reward, not a penalty — which is why the two branches are not cosmetic. The
+penalty comes from CTRL [@keskar2019ctrl], whose formula simply divides; the
+sign case was added by later implementations such as `transformers`. The
 OpenAI-style penalties avoid the problem by being additive and acting on counts
 instead:
 $z_i' = z_i - \alpha_{\text{presence}}\,\mathbb{1}[c_i > 0] - \alpha_{\text{freq}}\,c_i$,
@@ -323,8 +342,8 @@ distorting version, which is the right default and worth knowing you are using.
 
   <text x="400" y="118" class="t-xs t-b t-accent">CONSTRAINED — THE AUTOMATON MASKS FIRST</text>
   <rect x="400" y="128" width="354" height="58" rx="6" class="box-accent"/>
-  <text x="577" y="148" class="t-xs t-mid t-muted">this schema emits canonical JSON, so only <tspan class="t-mono">"</tspan> continues here,</text>
-  <text x="577" y="162" class="t-xs t-mid t-muted">so the other three logits are set to −∞</text>
+  <text x="577" y="148" class="t-xs t-mid t-muted">this grammar allows no whitespace, so only <tspan class="t-mono">"</tspan> continues here,</text>
+  <text x="577" y="162" class="t-xs t-mid t-muted">and the other three logits are set to −∞</text>
   <text x="577" y="178" class="t-xs t-mid t-b t-accent">invalid output is unreachable</text>
 
   <text x="10" y="212" class="t-xs t-b t-muted">WHAT THE SAMPLER SEES, AFTER MASKING</text>
@@ -399,7 +418,8 @@ level including nested objects with a nullable field. Enforcement took that to
 produce the JSON you describe; the grammar is insurance on the last one or two
 percent.]{.hl}
 
-**Two qualifications on that null, and they matter more than the null does.**
+**Two qualifications on that null result (no difference found), and they
+matter more than the result itself.**
 First, it is a null on 150 items: the 95% interval around an 88% accuracy is
 roughly ±5 points, so this experiment could not have detected a two- to
 five-point degradation even if one were there. Second, the task here is
@@ -420,8 +440,8 @@ scored as wrong. The grammar did not make the model smarter; it stopped a
 formatting failure from being counted as a reasoning failure.
 
 **The cost is latency, and it is not where you would guess.** Overhead ranged
-from **1.01× to 17.5×** (0.53 s to 9.26 s on the weak model at L4), and it was
-not monotone in schema complexity — L1 and L3 were cheap, L2 and L4 expensive.
+from **1.01× to 17.5×**; the top of that range is the weak model at L4, where
+0.53 s per item became 9.26 s. The overhead was not monotone in schema complexity — L1 and L3 were cheap, L2 and L4 expensive.
 The two ends sit on different models, which is itself the finding: on
 `qwen3.5:9b` the grammar costs between 1.006× and 1.13× — **essentially
 free** — and on `llama3.2:3b` between 1.5× and 17.5×. A grammar is cheap where
@@ -477,13 +497,24 @@ than usual: **something executes afterwards.**
 A malformed summary is a bad summary. A malformed argument object is either a
 crash or, worse, a call that succeeds with the wrong value.
 
+How this looks in practice: with *function calling*, you send the model a list
+of tool definitions, each a name, a description and a JSON Schema for its
+arguments, and the model replies with a tool name and an argument object
+instead of prose. Whether those arguments are *enforced* depends on a flag.
+Hosted APIs usually offer two strengths. A "JSON mode" guarantees only that the
+output is syntactically valid JSON, not that it matches your schema; a
+schema-enforced mode (OpenAI's API, for example, calls it `strict`) compiles
+your schema into the kind of grammar described above. Know which one you have
+switched on.
+
 Three rules follow from the measurements above.
 
 **Constrain the arguments, always.** This is the case where the strong-model
 result does not let you off. 98% schema-validity is excellent for extraction
 and unacceptable for execution: at a thousand calls a day it is twenty
 failures a day, each one a stack trace or a wrong action. The grammar takes
-that to zero, and the latency cost is bounded and known.
+that to zero for every call that finishes. Its latency cost is real and varies
+by schema, but you can measure it before you ship.
 
 **Type the arguments as narrowly as the tool allows.** An enum of four
 operations cannot be called with a fifth. A date typed as a string can be
@@ -541,7 +572,9 @@ version of that second result.
 ### It is not calibrated
 
 Discrimination and calibration are different properties, and the second one
-fails:
+fails. The table groups the 400 answers by stated confidence; ECE (expected
+calibration error, defined in @sec-classification) is the gap between
+confidence and accuracy in each bin, averaged with the bin sizes as weights:
 
 ```text
 confidence bin      n    accuracy   mean confidence
@@ -559,8 +592,9 @@ confidence bin      n    accuracy   mean confidence
 ECE = 7.04%
 ```
 
-Ten equal-width bins over $[0.50, 1.00)$, and say so, because ECE is sensitive
-to that choice and this binning is not flattering anyone: 284 of the 400 items
+The table uses ten equal-width bins over $[0.50, 1.00)$. Always say which
+bins you used, because ECE is sensitive to that choice, and this binning is
+not flattering anyone: 284 of the 400 items
 land in the top bin, which alone contributes about 44% of the 7.04%. An
 equal-mass binning, or a Brier score — which needs no bins at all — is the more
 honest summary of the same data.
@@ -590,7 +624,9 @@ fits a single scalar $T$ on a held-out slice and divides the logits by it — th
 same $\exp(z/\tau)$ from @sec-decoding-sampling, used after the fact instead of
 during generation. Because it is monotone it leaves the AUC and the abstention
 curve of the next section *exactly* unchanged while typically cutting ECE by a
-factor of two or more, so there is no reason not to try it first. If one scalar
+factor of two or more, so there is no reason not to try it first. What one
+scalar can fix is a *systematic* overconfidence, like the top bins here; it
+cannot remove the bin-to-bin zigzag in the middle of the table. If one scalar
 is not enough, @sec-classification's isotonic or Platt map is the next step.
 
 ### It is immediately useful for abstention
@@ -702,7 +738,7 @@ Left: each dot is one confidence bin, placed at the confidence the model
 stated and the accuracy it actually reached. A calibrated model would put every
 dot on the dashed diagonal; this one scatters, and the two rose dots are the
 failures worth remembering — the bin the model called a coin flip came in
-in at 33.3% on only 15 items, and the bin it called 92.6% came in at 68.0% on
+at 33.3% on only 15 items, and the bin it called 92.6% came in at 68.0% on
 25. Right:
 the same 400 reviews sorted by that same miscalibrated confidence, then
 truncated from the least-confident end. Accuracy climbs at every step, which
@@ -723,17 +759,18 @@ from it:
   dominated by its punctuation, which the model is certain about.
 
 Which is a design argument as much as a caveat: **if you want a confidence
-signal, structure the task so the answer is one constrained token.** That is
-why the classification prompt in @sec-prompting used `A`/`B` rather than
-`olumlu`/`olumsuz` — and, as it turned out, that variant also scored near the
-top on accuracy.
+signal, structure the task so the answer is one constrained token.** Such
+labels need not cost accuracy: in @sec-prompting's comparison of twelve prompt
+variants, the one with the meaningless labels `A`/`B` finished second, more
+than ten points ahead of `olumlu`/`olumsuz`.
 
 ## Streaming and incremental parsing {#sec-decoding-streaming}
 
-Streaming exists because latency is perceived, not measured. A response that
-takes four seconds to arrive complete feels slower than the same response
-whose first words appear in two hundred milliseconds — and the second one is
-strictly worse by every throughput metric.
+Streaming exists because users react to the latency they *perceive*, not the
+one you measure. A response that takes four seconds to arrive complete feels
+slower than the same response whose first words appear in two hundred
+milliseconds — even when both finish at the same moment, so no throughput
+metric can tell them apart.
 
 The tension with everything above is that **structured output and streaming
 want opposite things**. A JSON object is only parseable once its last brace
@@ -765,8 +802,9 @@ build when the interface warrants it.
 
 ## Intuition checks {#sec-decoding-intuition}
 
-Answer each one before you open it. All six are questions this chapter settled
-with a measurement rather than an argument.
+Answer each one before you open it. The first follows from the algebra; the
+other five are questions this chapter settled with a measurement rather than
+an argument.
 
 ::: {.callout-note collapse="true"}
 ## 1. Does lowering temperature make the model more accurate?
@@ -778,8 +816,9 @@ token at $\tau = 1.9$.
 
 So if greedy decoding gets an item wrong, lowering the temperature will not
 fix it; it will only make the model wrong more reliably. What temperature
-controls is variance, and the reason to lower it for extraction is
-reproducibility rather than correctness.
+controls is variance. Lowering it *can* raise the accuracy of sampled output —
+each draw lands on the argmax more often, which is what @sec-machine-translation
+saw at temperature 1.0 — but only up to greedy's accuracy, never beyond it.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -827,7 +866,8 @@ punctuation.
 Not as a probability. Measured on 400 items: the bin of answers the model
 rated 0.90–0.95 was right **68.0%** of the time. Expected calibration error
 was 7.04%, and the bin nearest probability 0.5 was right **33.3%** on 15 items — an interval
-wide enough to contain chance, and narrow enough to rule out usefulness.
+wide enough to contain chance, and too wide to prove anything except that the
+number is not a calibrated probability.
 
 But the *ranking* was good — AUC 0.8268 for predicting its own correctness —
 which is enough to route on. Use logprobs to order items, not to quote
@@ -877,10 +917,12 @@ want to produce.
 
 **Q: Why is beam search standard in translation and absent from chat?**
 
-Because beam search optimises for the highest-probability *sequence*, which is
+Because beam search looks for the highest-probability *sequence*, which is
 what you want when the task has approximately one right answer and actively
-not what you want when it has many. @sec-machine-translation measured the cost
-of confusing the two: a chat-default temperature of 1.0 took a translation
+not what you want when it has many: in open-ended text the most probable
+sequence tends to be bland and repetitive [@holtzman2020curious].
+@sec-machine-translation measured the cost of confusing the two in the other
+direction, sampling where one answer was wanted: a chat-default temperature of 1.0 took a translation
 model from 30.17 BLEU to 14.34.
 
 ### Testing whether you have shipped one
@@ -1010,7 +1052,7 @@ in your evaluation should be reported.
 | [Controllable Text Generation](https://lilianweng.github.io/posts/2021-01-02-controllable-text-generation/) — Lilian Weng | a survey-depth post covering the space this chapter samples from |
 | [`vllm`](https://github.com/vllm-project/vllm) | production serving, with structured-output support; read its sampling parameters to see what is actually exposed |
 | [Stanford CS336](https://stanford-cs336.github.io/spring2025/) | includes inference and decoding from the implementation side |
-| [Let's build GPT: from scratch](https://www.youtube.com/watch?v=kCc8FmEb1nY) — Andrej Karpathy | the last twenty minutes are the sampling loop this chapter is entirely about, in code you can pause and edit |
+| [Let's build GPT: from scratch](https://www.youtube.com/watch?v=kCc8FmEb1nY) — Andrej Karpathy | the `generate` function written early on, for the bigram baseline, is the simplest possible sampling loop (softmax, then draw a token), in code you can pause and edit; nanoGPT's version adds temperature and top-k |
 
 : Beyond the papers {tbl-colwidths="[42,58]"}
 
@@ -1027,12 +1069,13 @@ in your evaluation should be reported.
 ## What to remember {#sec-decoding-summary}
 
 - **Temperature never changes the ranking.** It rescales logits before the
-  softmax, so it controls variance and not correctness. If greedy gets an item
-  wrong, a lower temperature makes it wrong more reliably.
+  softmax, so it controls variance, and lowering it can raise accuracy only up
+  to greedy's. If greedy gets an item wrong, a lower temperature makes it
+  wrong more reliably.
 
 - **Pick the policy from how many good answers the task has.** One answer:
   greedy or a narrow beam. Many: sample. @sec-machine-translation measured the
-  cost of getting it backwards at nearly half the BLEU.
+  cost of getting it backwards at more than half the BLEU (30.17 → 14.34).
 
 - **Repetition loops are high-probability, not accidental**, which is why
   greedy walks into them. The penalties that fix them are blunt, and they are
