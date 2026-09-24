@@ -91,8 +91,8 @@ Before celebrating, look at *why* it got them apart.
 The model has never seen `kötü fiyat` *or* `fiyat kötü` in 858,000 tokens, so
 it has no direct evidence about bad prices at all — both sentences lean
 entirely on the interpolated lower-order term for one bigram. What tips the balance is mostly that
-`iyi fiyat` is a stock Turkish phrase, seen 112 times, and its mirror image is
-not.
+`iyi fiyat` ("good price") is a stock Turkish phrase, seen 112 times, while its
+counterpart in sentence `b`, `kötü fiyat`, was never seen at all.
 
 So [the model has learned a collocation, not a meaning]{.hl}. It prefers
 sentence `a` because that word order *sounds like* the reviews it read. That
@@ -158,7 +158,7 @@ anyway, because it is what turns an impossible count into a possible one. [↩](
 
 Only the last $n-1$ words matter. This is the **[Markov assumption](#gloss-markov-assumption){#term-markov-assumption .term-ref}**, and
 it is plainly false — "the phone I bought from the shop near the station
-last March finally ___" needs a word from eleven positions back. The
+last March finally ___" needs the word *phone*, twelve words back. The
 question is not whether it is false but how much it costs, and that
 turns out to be measurable.
 
@@ -221,7 +221,8 @@ have trained anything else.
 ::: {.column-margin}
 Shannon was already doing this in 1951, by hand, with a book and a
 pencil, to estimate the entropy of English [@shannon1951prediction]. The
-mathematics in this chapter is his; only the corpus size has changed.
+core of this chapter's mathematics — n-gram statistics and entropy — is his;
+the corpus size is the most obvious thing that has changed.
 :::
 
 ## Counting on 38,000 reviews
@@ -319,7 +320,7 @@ def p_mle(prev, w):
     return ngr[(prev, w)] / ctx[prev]
 ```
 
-That is the whole of statistical NLP as it stood in 1990, and it is worth
+That is the core of statistical language modelling as it stood around 1990, and it is worth
 looking at what it produces. Here is the model's distribution over the
 word that follows `kargo` ("shipping"):
 
@@ -366,19 +367,19 @@ name *end-of-turn token*.
 We now have a model that assigns probabilities to sentences. How do we say
 whether it is any *good*?
 
-Accuracy will not work — there is no single right answer to predict. What we
-can ask is how surprised the model was by text it had not seen, and there is a
-standard way of putting a number on that.
+We need a single number, and it should not require a downstream task, because the whole point is
+that the model was trained without one. Plain next-word accuracy is a poor
+choice too: many continuations are acceptable, and accuracy only asks whether
+the model's top guess was right, throwing away how much probability it gave to
+the word that actually came. What we can ask instead is how surprised the model
+was by text it had not seen, and there is a standard way of putting a number on
+that.
 
 ::: {#gloss-perplexity .column-margin .term-gloss}
 **perplexity** — how many words the model is effectively choosing
 between at each step. Lower is better: a perplexity of 10 means the
 model is about as unsure as someone picking from a shortlist of ten. [↩](#term-perplexity){.term-back}
 :::
-
-We need a number that says how good a language model is, and it should
-not require a downstream task, because the whole point is that the model
-was trained without one.
 
 The natural quantity is the probability the model assigns to text it has
 never seen. Held-out probability is a product of hundreds of thousands
@@ -389,17 +390,30 @@ $$
 \mathrm{PPL} = \exp\!\left(-\frac{1}{N}\sum_{i=1}^{N} \log P(w_i \mid h_i)\right)
 $$
 
+Here $N$ is the number of prediction events and $h_i$ is the context (history)
+before word $i$. The formula is the geometric mean of $1/P(w_i \mid h_i)$ — the
+reciprocal of the typical probability the model gave to the word that actually
+came next.
+
 The base does not matter as long as you are consistent: $\mathrm{PPL} =
 \exp(H_e) = 2^{H_2}$, where $H$ is the average negative log probability per
 token — which is the model's **cross-entropy** against the held-out text. So
 minimising perplexity, maximising held-out log-likelihood and minimising
-cross-entropy are three names for one operation, and the training loss of every
-model in the rest of this book is that same quantity before the exponential.
-The widget below reports $H_2$ in bits, one token at a time; the tables report
-$\exp(H_e)$.
+cross-entropy are three names for one operation, and the pretraining loss of
+every language model in the rest of this book is that same quantity before the
+exponential. The widget below reports $H_2$ in bits, one token at a time; the
+tables report $\exp(H_e)$.
 
-That is the geometric mean of $1/P(w_i \mid h_i)$ — the reciprocal of the
-typical probability the model gave to the word that actually came next.
+Two words in that paragraph deserve a line each. **Cross-entropy**
+$H(p, q) = -\sum_x p(x) \log q(x)$ measures how costly it is to describe data
+that really comes from $p$ (here, Turkish reviews) using a model $q$; the
+held-out average above is simply its estimate from a sample. It can never be
+lower than the entropy of $p$ itself, so even a perfect model keeps a
+perplexity above 1 — language has genuine uncertainty that no model removes.
+A **bit** is the information in one fair yes/no choice: $H_2 = 7$ bits per
+token means the model is as uncertain as if it had to answer seven fair
+yes/no questions to pin down each word, i.e. choose among $2^7 = 128$
+equally likely options.
 
 **Read it as an effective branching factor.** A model with [perplexity](#gloss-perplexity){#term-perplexity .term-ref} 100
 is, on average, as uncertain as if it were choosing uniformly among 100
@@ -549,9 +563,8 @@ to that.
 
 ## The catastrophe
 
-So far everything has worked on a sentence we chose. Now run the counting
-model on the held-out test set, which contains sentences nobody chose — and
-watch what happens.
+So far everything has worked on a sentence we chose. The test set contains
+sentences nobody chose — so watch what happens there.
 
 ::: {#gloss-maximum-likelihood-estimation-mle .column-margin .term-gloss}
 **maximum likelihood estimation (MLE)** — the estimate you get by
@@ -588,7 +601,7 @@ trigram      161,544 of 239,055     67.6%
 ```
 
 A trigram model trained on 858,000 words of Turkish reviews says that
-two-thirds of the next Turkish review is *impossible*.
+two-thirds of the words in the next Turkish reviews are *impossible*.
 
 The reason is not a bug and not a shortage of data in any fixable sense.
 It is that the number of possible n-grams grows like $V^n$ while your
@@ -599,7 +612,7 @@ dividing by become tiny. Look at what happens to the model as $n$ grows:
 ### how the count table behaves, 895,987 training events
           distinct    a new type      seen exactly
 n         n-grams     every…          once
-1           29,773     30.6 tokens      0.0%
+1           29,773     30.1 tokens      0.0%
 2          383,579      2.3 tokens     78.9%
 3          674,067      1.3 tokens     91.8%
 5          818,339      1.1 tokens     98.0%
@@ -682,9 +695,10 @@ because we already mapped those to `<unk>`.)
 ::: {.fig-cap}
 The teal line is the fraction of test predictions for which the model has
 *any* estimate; the rose line is the fraction for which that estimate is
-non-zero. Both fall off a cliff, and the gap between them is the
-probability mass that smoothing has to invent. At $n=5$ the model can say
-something informed about 10.4% of what it reads.
+non-zero. Both fall off a cliff. Everything above the rose line is what
+smoothing has to cover: in the gap between the lines the context is known but
+the continuation is new, and above the teal line even the context is new. At
+$n=5$ the model can say something informed about 10.4% of what it reads.
 :::
 ::::
 
@@ -701,8 +715,9 @@ $$
 P_{+1}(w \mid h) = \frac{c(h, w) + 1}{c(h) + V}
 $$
 
-It is the posterior mean under a symmetric Dirichlet prior with
-$\alpha_i = 1$ for every word — so the total concentration is $V$, not 1, and
+For the statistically minded: it is the posterior mean under a symmetric
+Dirichlet prior with $\alpha_i = 1$ for every word — a flat prior over all possible next-word
+distributions, which on average treats every word as equally likely. The total concentration is therefore $V$, not 1, and
 the MAP estimate under that prior would be the unsmoothed MLE instead. It is
 perfectly respectable, and on this corpus it is worse than useless:
 
@@ -785,10 +800,27 @@ $$
 P_{\text{KN}}(w \mid h) = \frac{\max(c(h,w) - d,\ 0)}{c(h)} + \lambda(h)\, P_{\text{KN}}(w \mid h')
 $$
 
+Here $h'$ is the context $h$ with its oldest word dropped, so the second term
+is the same formula one order down, applied recursively.
+
+::: {#gloss-backoff .column-margin .term-gloss}
+**backoff** — when the long context has never been seen, drop a word off
+the front and ask the shorter context instead. Interpolation always
+blends; backoff only falls back when it has to. [↩](#term-backoff){.term-back}
+:::
+
 The variant written there is **interpolated** Kneser-Ney: it always adds a share
-of the shorter-context estimate rather than falling back only when the count is
-zero. That distinction matters because the margin note beside this paragraph
-defines backoff as the other thing.
+of the shorter-context estimate. Keep that apart from
+[backoff](#gloss-backoff){#term-backoff .term-ref} in the strict sense, which
+consults the shorter context only when the longer count is zero.
+
+The clever part is not the discount, it is what the lower-order
+distribution counts. A naive smoother asks "how often does this word
+occur?" Kneser-Ney asks **"how many different contexts does this word
+occur in?"** The standard example is English, but the effect exists in every
+language: the word `Francisco` is frequent, but it appears almost exclusively
+after `San`, so it is a terrible guess after any *other* word. Frequency says
+common; continuation count says specialised. Kneser-Ney uses the second.
 
 Two quantities the formula hides. First, $\lambda(h)$ is not a free parameter —
 it is exactly the mass the discount removed, so that the distribution still sums
@@ -805,21 +837,11 @@ distribution,
 $$P_{\text{KN}}(w) = \frac{N_{1+}(\bullet w)}{N_{1+}(\bullet\bullet)},$$
 
 the number of distinct words that $w$ has ever followed, over the total number
-of distinct bigram types. That is the `Francisco` rule, written down.
-
-::: {#gloss-backoff .column-margin .term-gloss}
-**backoff** — when the long context has never been seen, drop a word off
-the front and ask the shorter context instead. Interpolation always
-blends; backoff only falls back when it has to. [↩](#term-backoff){.term-back}
-:::
-
-The clever part is not the discount, it is what the lower-order
-distribution counts. A naive [backoff](#gloss-backoff){#term-backoff .term-ref} asks "how often does this word
-occur?" Kneser-Ney asks **"how many different contexts does this word
-occur in?"** The standard example works in Turkish too: the word
-`Francisco` is frequent, but it appears almost exclusively after `San`,
-so it is a terrible guess after any *other* word. Frequency says common;
-continuation count says specialised. Kneser-Ney uses the second.
+of distinct bigram types. That is the `Francisco` rule, written down:
+`Francisco` has followed almost only one distinct word, so its continuation
+probability is tiny however often it occurs. (The discount $d$ is a constant
+between 0 and 1, tuned on the dev set or estimated from how many n-grams occur
+once and twice; values around 0.75 are typical.)
 
 ```text
 ### test perplexity, everything together
@@ -860,9 +882,11 @@ contribution was *what* to fall back to.
 :::
 
 ::: {.callout-note collapse="true"}
-## Intuition check: you double the corpus. Which number in that table moves most?
+## Intuition check: you double the corpus. Which Kneser-Ney number in that table moves most?
 
-Not the trigram's 333.5. The 5-gram's 353.8.
+Not the trigram's 333.5. The 5-gram's 353.8 — or so we predict; this is an
+expectation, not a measurement. (The add-one and add-k columns would move by
+far more in absolute terms, simply because they start so far off.)
 
 Every column of that table is limited by counts, and the higher orders
 are starved hardest — 98% of training 5-grams were singletons, and the extra
@@ -876,10 +900,10 @@ context match for 69.6% of test predictions; the extra data mostly
 sharpens estimates it already had.
 
 The transferable version: **the benefit of more data is largest exactly
-where the model was most starved.** This is the mechanism behind scaling
-laws, and it is why the models in @sec-pretraining are trained on
+where the model was most starved.** The same intuition sits behind the
+scaling laws of @sec-pretraining, and it is why the models there are trained on
 trillions of tokens rather than millions — a big model on a small corpus
-is a 5-gram table with extra steps.
+ends up doing what the 5-gram table does: memorising.
 
 It also has a limit worth predicting now. Doubling the corpus improves
 the 5-gram model but does not make 5-grams *sufficient*, because English
@@ -935,7 +959,7 @@ trigram      5.8%
 
 [Nine out of ten eight-word spans that the 5-gram model "writes" are
 copied word for word from the training data.]{.hl} The fluency is not
-generation, it is retrieval with extra steps — which is exactly what the
+generation, it is retrieval dressed up as generation — which is exactly what the
 sparsity table predicted, since 98% of training 5-grams occurred once,
 so conditioning on four words usually leaves the model exactly one
 choice: the word that followed last time.
@@ -980,22 +1004,28 @@ min_count    vocab    test <unk>    perplexity
 
 **A model that cannot name more than half the words in the test set
 reports a perplexity of 10.9.** It looks like a triumph and it is a
-side effect: 54.8% of its "predictions" are the single easy guess `<unk>`.
+side effect: for 54.8% of the test words, the "prediction" is the single easy guess `<unk>`.
 That is the widget's last sentence in numeric form — `uyuyakaldı` scored
 2.5 bits not because the model understood anything but because it had
 been allowed to stop trying.
 
-Note also the top row. Keeping every hapax word is *worse* than dropping
-them, at 752.5, so there is a genuine modelling reason to threshold as
-well as a way to cheat by thresholding. The two are not distinguishable
-from the perplexity alone. That is the point.
+Note also the top row. Keeping every hapax word gives the *highest* number,
+752.5 — but careful: that comparison crosses vocabularies too, so it is not by
+itself proof of a worse model. The genuine modelling reason to threshold is
+different: at `min_count` 1, `<unk>` never occurs in the training text, so the
+model has no counts from which to learn how often a new word turns up, and the
+5.21% of test words it has never seen get almost no probability. So there is a
+real reason to threshold as well as a way to cheat by thresholding. The two are
+not distinguishable from the perplexity alone. That is the point.
 
 So: **two perplexities are comparable only if the two models share a
 vocabulary and a tokenisation.** Across tokenisers the comparison is not
 merely unfair, it is undefined, because the denominator $N$ counts
 different things — this is why modern papers report bits per byte or
 report on a fixed benchmark with a frozen vocabulary
-[@chelba2014billion]. When you meet a leaderboard in
+[@chelba2014billion]. *Bits per byte* divides the total $-\log_2$ probability
+of the text by its length in bytes rather than in tokens, so the denominator is
+the same whatever tokeniser the model uses. When you meet a leaderboard in
 @sec-llm-eval, this is the first question to ask of it.
 
 ::: {.column-margin}
@@ -1026,7 +1056,9 @@ $n-1$ words — but stop treating those words as symbols. Instead:
    computes a smooth function of the context rather than looking up a
    cell in a table.
 3. **Project to a softmax over the vocabulary**, giving a proper
-   distribution over the next word.
+   distribution over the next word. A final linear layer produces one score
+   $z_v$ per vocabulary word, and the softmax (met in @sec-embeddings) turns
+   the scores into probabilities: $P(v \mid h) = e^{z_v} / \sum_{u} e^{z_u}$.
 
 The idea of sharing evidence between related words was not new — Brown
 and colleagues [@brown1992class] had already grouped words into hard
@@ -1055,6 +1087,26 @@ class NNLM(nn.Module):
     def forward(self, x):              # x: (batch, ctx) word ids
         return self.net(self.emb(x).flatten(1))
 ```
+
+`nn.Dropout(drop)` switches off a random fraction `drop` of the hidden units at
+each training step (and none at test time), so the network cannot rely on any
+single unit; it is a standard regulariser against overfitting.
+
+Training minimises exactly the quantity the perplexity section defined: the
+average negative log-probability of the word that actually came next. The
+forward pass returns scores, and the cross-entropy loss applies the softmax and
+takes the log in one step:
+
+```python
+logits = model(x)                          # (batch, V) scores
+loss = F.cross_entropy(logits, y)          # mean of -ln P(y | context)
+# math.exp(loss on the dev set) is the dev perplexity
+```
+
+So the "train ppl" and "dev ppl" columns below are just `exp` of this loss on
+the two splits. Nothing about the objective is specific to this small model:
+the pretraining in @sec-pretraining minimises the same next-token
+cross-entropy, only with a much longer context and far more data.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -1172,10 +1224,14 @@ ctx   emb   hid   drop        params       dev      test
 ```
 
 Read that table from the bottom up, because the ordering is the lesson.
-[Every single step *down* in capacity was a step up in
-quality.]{.hl} The largest model tried, with five words of context and
-19.4 million parameters, is the worst thing on the page at 548.8 — worse
-than the add-k trigram. The winner is the smallest model tried: two words
+[Apart from one row, every step *down* in capacity was a step up in
+quality.]{.hl} (The exception is the `drop=0.2` run: it has exactly as many
+parameters as the second row, 9,590,478, and differs from it only in
+regularisation — raising dropout alone moved test perplexity from 429.0 to
+362.6.) The largest model tried, with
+five words of context and 19.4 million parameters, is the worst thing on the
+page at 548.8 — worse than every interpolated and Kneser-Ney n-gram model in the
+smoothing table. The winner is the smallest model tried: two words
 of context, 32-dimensional embeddings, a 128-unit hidden layer.
 
 This is the same lesson as @sec-bake-off's, arriving through a different
@@ -1204,7 +1260,11 @@ way to catch it is the one used here — train it twice.
 Note the second column too, because the usual claim that neural models
 are more compact is *false here*: the neural model stores four and a half
 times as many numbers as the count table it merely matches, and takes two
-minutes rather than one second to fit.
+minutes rather than one second to fit. Almost all of those numbers sit at the
+two ends of the network: the embedding table ($29{,}774 \times 32$) and the
+output layer ($128 \times 29{,}774$ weights plus one bias per word) together
+hold 4.79 of the 4.80 million parameters. The vocabulary size, not the hidden
+layer, sets the cost of a model like this.
 
 Which raises the obvious question — what was the point? Two answers, and
 the second is the one that matters.
@@ -1251,7 +1311,10 @@ Be careful about how far you carry this finding. It is a result about
 **this corpus at this scale**: 896,000 training events, a 29,774-word
 vocabulary, and a feedforward model with two words of context. At the
 scales of @sec-pretraining the picture reverses, which is why the field
-went the way it did. What the result does establish, permanently, is that
+went the way it did — and a stronger architecture changes it even at this
+scale: recurrent models (*From a window to a state*, below) were already beating
+Kneser-Ney clearly on corpora of a few million words [@mikolov2010recurrent].
+What the result does establish, permanently, is that
 "neural models generalise better" is a claim to be measured on your data
 and not assumed from a textbook.
 
@@ -1281,16 +1344,16 @@ test set once, at the end:
 ```text
 Kneser-Ney trigram    333.5
 neural                332.4
-50/50 mixture         274.4      -17.7% against the better of the two
+50/50 mixture         274.4      -17.4% against the better of the two
 ```
 
-**An 18% cut in perplexity from two models that individually tie.** This
+**A 17% cut in perplexity from two models that individually tie.** This
 is not a trick; it is the result that kept neural language models alive
 through the 2000s, when on their own they were merely competitive with a
 well-tuned n-gram model and considerably more expensive to train. Bengio
 et al. reported the same structure of finding in 2003
-[@bengio2003neural], and every strong system for the following decade was
-a neural model interpolated with a count model
+[@bengio2003neural], and many of the strongest systems of the following decade
+were a neural model interpolated with a count model
 [@mikolov2010recurrent].
 
 The mixture also helps most exactly where the split table said the models
@@ -1320,9 +1383,10 @@ kalitesiz  ( 143x)  konsantre, lezzetlı, kapıdaydı, minicik, fileli
 The `kargo` row is the promise of this section delivered literally:
 `teslimat`, `gönderi`, `gönderim`, `kargolama`, `teslimatı` — the
 model discovered the shipping vocabulary of Turkish e-commerce from
-nothing but next-word prediction. And look at `hızlı` and `tavsiye`:
-their neighbours include `hizli`, `hizlı`, `tevsiye`, `tafsiye`,
-`tasviye`. **The model learned that misspellings of a word are the same
+nothing but next-word prediction. And look at `hızlı`: its
+neighbours include the misspellings `hizli` and `hizlı` (and `mikemmel` for
+`mükemmel`); `tavsiye` ("recommendation"), not shown in the table, has
+`tevsiye`, `tafsiye` and `tasviye` among its neighbours. **The model learned that misspellings of a word are the same
 word**, because they occur in the same places. No count table can do
 that; to a count table `hızlı` and `hizli` are as unrelated as `hızlı`
 and `kedi`.
@@ -1332,7 +1396,7 @@ chapter depends on it. The neighbours are excellent at 7,547
 occurrences, good at 2,472, thin at 657, and at 143 occurrences
 `kalitesiz` ("low quality") returns `konsantre`, `lezzetlı`, `kapıdaydı`
 — noise. [Embeddings are not magic; they are counts in a trench
-coat]{.hl}, and they degrade with the counts underneath them exactly as
+coat]{.hl} — counts in disguise — and they degrade with the counts underneath them exactly as
 @sec-embeddings found. The sharing of statistical strength is real, and
 it has a floor.
 
@@ -1364,7 +1428,7 @@ her gün bu <unk> bütün fonksiyonları bir verilen parayı hak ediyor…
 That text is worse than the 5-gram's output — it wanders, and it loses
 the thread after a clause or two. But **not one of the 2,989 eight-word
 spans it produced appears anywhere in the training data.** The 5-gram
-model achieved its fluency by retrieval; this model, at the same
+model achieved its fluency by retrieval; this model, at a similar
 perplexity, is composing. It is worse at sounding like a review and it is
 the only one of the two doing something that could ever become
 generation.
@@ -1384,8 +1448,8 @@ kalite kötü fiyat iyi    -11.262    ratio 1.561
 ```
 
 It breaks the tie in the right direction, more weakly than Kneser-Ney's
-2.933. On four-word sentences built from four common words, counting is
-still the better tool. The question chapter 4 left open is closed, and the
+2.933. On this pair — four common words, one stock phrase — counting is
+still the better tool; one pair is an illustration, not a benchmark. The question chapter 4 left open is closed, and the
 answer is less triumphant than the setup implied — which is the answer.
 
 ## From a window to a state
@@ -1412,7 +1476,8 @@ colleagues [@mikolov2010recurrent], this beat the best n-gram systems of
 the day, and LSTMs [@hochreiter1997long] made the long-range gradients
 trainable enough to be practical.
 
-There is a reason that took twenty years. Differentiating $h_t$ with respect to
+There is a reason recurrent language models took twenty years, from Elman to
+Mikolov, to pay off: their gradients are hard to train. Differentiating $h_t$ with respect to
 $h_{t-k}$ multiplies $k$ Jacobians together, and for a tanh unit each factor is
 $\operatorname{diag}(1 - h_t^2)\,W_h$ — the recurrent weights, but scaled by the
 activation derivative along the trajectory the network actually took. Repeated
@@ -1433,13 +1498,14 @@ everything relevant from an arbitrarily long past.
 
 [Removing the window did not remove the bottleneck. It moved it.]{.hl} The
 constraint used to read *"you may look at the last four words"*. Now it reads
-*"you may remember as much as fits in 512 numbers, compressed one word at a
-time"*.
+*"you may remember as much as fits in a few hundred numbers (512, say),
+compressed one word at a time"*.
 
 And there is a second cost, which turned out to matter more. Because $h_t$
 depends on $h_{t-1}$, the computation is inherently sequential: a
-thousand-token document takes a thousand steps that cannot be parallelised.
-On modern hardware that is fatal.
+thousand-token document takes a thousand steps that cannot be parallelised
+across positions. On GPUs, which are fast only when they do many things at
+once, that is a severe handicap.
 
 Two bottlenecks, then: a compression bottleneck and a sequencing
 bottleneck. @sec-transformers is what happens when someone removes both
@@ -1461,7 +1527,7 @@ would you actually deploy?
 | Repeats training text | [5.8% of its 8-word spans copied verbatim at $n=3$, 91.6% at the $n=5$ that makes it fluent]{.con} | [0.0% copied]{.pro} |
 | Gives you embeddings | [no]{.con} | [yes, free]{.pro} |
 | Adding data | [retrain in seconds]{.pro} | [retrain in minutes]{.con} |
-| Returns from more data | [flattening at this scale]{.con} | [still steep]{.pro} |
+| Returns from more data (expected, not measured here) | [flattening — 4- and 5-grams already add nothing]{.con} | [expected to keep improving]{.pro} |
 | Debuggable | [inspect the counts]{.pro} | [inspect nothing]{.con} |
 
 : What each model is actually for, on 38,000 Turkish reviews {tbl-colwidths="[30,35,35]"}
@@ -1469,8 +1535,9 @@ would you actually deploy?
 The practical reading: **at this scale, use the n-gram model, and use
 both if you can afford it.** The neural model earns its place not by
 today's perplexity but by the two rows near the bottom — it does not reproduce
-training text, and its returns from a hundred times more data are the ones that
-keep going. That is a comparison of slopes, not a claim that counting stops
+training text, and its returns from a hundred times more data are the ones
+expected to keep going (this chapter did not measure that; @sec-pretraining
+shows the evidence at scale). That is a comparison of slopes, not a claim that counting stops
 improving; string overlap is also a measure of copying rather than of meaning,
 so read the 0.0% as "assembles its own word sequences", not as "says something
 new". That is a bet on the future,
@@ -1485,24 +1552,25 @@ and this chapter is the moment in the book where the bet is placed.
 a vocabulary and a tokenisation. The table in *What perplexity does not
 tell you* moved one model from 752.5 to 10.9 by changing nothing but the
 frequency threshold. If the neural model was trained with a 30k
-vocabulary and the baseline with 72k, the 40 points are a side effect of
-the `<unk>` rate, not a result.
+vocabulary and the baseline with 72k, the 40 points may be entirely a side
+effect of the `<unk>` rate, not a result.
 :::
 
 ::: {.callout-note collapse="true"}
 ## Why did the smallest neural model win the sweep?
 
 Because 38,000 reviews is a small corpus, and the binding constraint is
-evidence rather than capacity. The 19.4-million-parameter model had
-roughly 22 parameters per training event; it memorised the training set
-and its dev perplexity turned around by epoch 3. Model capacity should be
-chosen against dataset size, and the sweep is how you find out — every
-step down in capacity was a step up in quality, which is a signal you
-should keep stepping down.
+evidence rather than capacity. Even the 9.6-million-parameter first run, at
+roughly eleven parameters per training event, memorised the training set and
+its dev perplexity turned around at epoch 3; the 19.4-million-parameter model
+had roughly 22 per event and did worse still. Model capacity should be
+chosen against dataset size, and the sweep is how you find out — apart from
+the dropout change, every step down in capacity was a step up in quality,
+which is a signal you should keep stepping down.
 :::
 
 ::: {.callout-note collapse="true"}
-## If the two models tie at 333, why does mixing them help by 18%?
+## If the two models tie at 333, why does mixing them help by 17%?
 
 Because they are wrong about different things. The split by seen and
 unseen context shows the neural model ahead on familiar contexts (265.9
@@ -1530,8 +1598,8 @@ data says the two are worth the same.
 ## A 5-gram model writes fluent Turkish. Why is that bad news rather than good?
 
 Because 91.6% of the eight-word spans it produces are copied verbatim
-from training data — against 5.8% for the trigram, which is the model that
-actually wins on perplexity. The fluency is retrieval, not generation. Sparsity
+from training data — against 5.8% for the trigram, which is the n-gram model
+that actually wins on perplexity. The fluency is retrieval, not generation. Sparsity
 explains it: 98% of training 5-grams occur once, so a four-word context
 usually admits exactly one continuation — the one that followed last
 time. It also means the model cannot be shown to a user without a
@@ -1574,8 +1642,11 @@ marketing.
    guess in a novel context. Raw frequency gets this exactly backwards.
 
 4. **You have 10 million tokens. 5-gram or neural?** The expected answer
-   is a question back — what is the task? For perplexity alone at that
-   scale, a tuned n-gram model is competitive and trains in seconds. Take
+   is a question back — what is the task? For perplexity alone, a tuned
+   n-gram model is a strong, cheap baseline that trains in seconds — but
+   know the limits of this chapter's tie: it was a small feedforward model
+   on under a million tokens, and well-regularised recurrent or transformer
+   models usually beat Kneser-Ney clearly at 10 million tokens. Take
    the neural model when you need the embeddings, when text must be
    generated rather than retrieved, or when you expect the corpus to grow
    by orders of magnitude.
@@ -1637,9 +1708,10 @@ marketing.
    total probability add-one assigns to the 516 observed continuations
    and how much to the other 29,257. Then find the value of $k$ at which
    those two masses are equal, and compare it to the tuned $k = 0.003$.
-3. **Move the crossover.** The interpolation weights put 0.0001 on
-   4-grams. Retrain on 5,000 reviews and on all 38,000, and plot how the
-   fitted $\lambda$s change with corpus size. At what corpus size would
+3. **Move the crossover.** The interpolation weights put 0.0003 on
+   4-grams (0.0001 inside the 5-gram model). Retrain on 5,000, 10,000,
+   20,000 and all 38,000 reviews, and plot how the fitted $\lambda$s change
+   with corpus size. At what corpus size would
    you predict 4-grams start to earn their weight?
 4. **Break perplexity on purpose.** Reproduce the vocabulary table, then
    write the two-sentence description of your model that would let a
@@ -1656,9 +1728,9 @@ marketing.
    advantage live in frequent words or rare ones? Use the answer to
    argue for or against the claim that embeddings share statistical
    strength.
-7. **Break the mixture.** The 50/50 interpolation cut perplexity by 18%.
-   Interpolate Kneser-Ney with a *second, differently seeded* neural
-   model instead, and report the gain. How much of the 18% came from
+7. **Break the mixture.** The 50/50 interpolation cut perplexity by 17%.
+   Interpolate the neural model with a *second, differently seeded* neural
+   model instead of with Kneser-Ney, and report the gain. How much of the 17% came from
    combining two different model families, and how much from simple
    ensembling?
 8. **A Turkish-specific probe.** Turkish negation is a suffix, so
