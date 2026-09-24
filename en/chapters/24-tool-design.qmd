@@ -55,16 +55,16 @@ which one you are doing:
 : Four jobs, one object {tbl-colwidths="[30,70]"}
 
 The last row is the one people skip, and it is where most misuse comes from.
-Your users say *how much did we spend*; your API calls it `budget_allocated`.
+Your users say *how much was set aside for it*; your API calls it `budget_allocated`.
 Something has to bridge that, and if the schema does not, the model invents a
 bridge.
 
 **What we will look at.** First a measurement of which part of a schema
 actually earns its keep, where the answer is uncomfortable for anyone who has
 spent an afternoon polishing a tool description. Then the same treatment
-applied to error strings, which turn out to be worth more than any other single
-change you can make — and where the style most tools return by default turns
-out to be a half-written one. Then what a tool should hand back, which is a
+applied to error strings, which produced the largest single effect measured in
+this chapter — and where the raw exception most tools return by default turns
+out to be a half-written error message. Then what a tool should hand back, which is a
 question about the agent's memory rather than about output. Then what to do
 when there are too many tools to list at all. And finally how to tell whether a
 tool is any good, which is not a question you can answer without asking a
@@ -124,11 +124,10 @@ $p = 2 \times 2^{-45} \approx 5.7 \times 10^{-14}$. (An earlier draft quoted
 Fisher's $p < 10^{-19}$, which treats the variants as independent samples: the
 conclusion is the same, the number is not.) Careful prose descriptions on top
 of the enum added **nothing observable** — though with C already at 60/60 there
-was no room left to add anything. The paired test is what the close
-comparisons later in the chapter need, and it is what you should run on your
-own tool. That is
-the opposite of where most effort goes: people write the description and leave
-the parameter as a string.
+was no room left to add anything. That is the opposite of where most effort
+goes: people write the description and leave the parameter as a string.
+The paired test is what the close comparisons later in the chapter need, and it
+is what you should run on your own tool.
 
 **What the enum is doing here, and what it is not.** `ollama` does not
 grammar-constrain enum values in a tool definition, so variant C's 100% is not
@@ -136,7 +135,8 @@ the decoder refusing to emit `mali buyukluk`. It is the model reading `butce,
 personel, sure` in the schema and using them. That matters, because it makes
 this finding and the error-message finding later in the chapter the *same*
 finding: what fixed both was putting the API's vocabulary where the model could
-see it. If your runtime *does* constrain decoding, the enum becomes a
+see it. If your runtime *does* constrain decoding — hosted APIs call this a
+schema-enforced or `strict` mode (@sec-decoding) — the enum becomes a
 guarantee and this experiment tells you nothing about the model at all. Say
 which case you are in before you generalise.
 
@@ -155,7 +155,8 @@ totals hide.
 
 **The opaque schema did not make wrong calls. It made no calls.** With a tool
 named `f1` taking `a` and `b`, the model called it 58.3% of the time and,
-when it did not, answered from parametric memory instead — inventing a
+when it did not, answered from parametric memory (what it absorbed in training)
+instead — inventing a
 paragraph about what `ZRG-14` supposedly is. That is a far worse failure than a
 malformed call: a wrong call errors, and an invented answer looks like an
 answer.
@@ -314,7 +315,7 @@ Plot.plot({
 //| echo: false
 md`${toolWhich === "schema"
   ? "The jump is entirely between **B** and **C** — free string to enum, 25% to 100%. The prose descriptions added in **D** added nothing observable once **C** had reached 60/60. And **A** shows the failure worth fearing: it did not call the tool at all on 41.7% of tasks, and answered from memory instead."
-  : "One sentence separates the last row from the other three. The stack trace — what most tools return by default — produced the fewest retries of any style, but the highest share of *correct* ones: 7 of its 9 retries found the right field."}`
+  : "One sentence separates the last row from the other three. The stack trace — close to what most tools return by default — produced the fewest retries of any style, but among the three incomplete styles the highest share of *correct* ones: 7 of its 9 retries found the right field."}`
 ```
 :::
 
@@ -338,7 +339,8 @@ most people follow.
 
 ## Error messages are prompts {#sec-tool-design-errors}
 
-@sec-agent-anatomy's line 6 turned an exception into an observation. That makes
+The line marked 6 in @sec-agent-anatomy's loop turned an exception into an
+observation. That makes
 the error string prompt text too — the model reads it and decides what to do
 next — and almost nobody writes it that way, because error messages are written
 for a human who will be reading a log.
@@ -405,8 +407,10 @@ author.
 Three things in that table are worth taking seriously.
 
 **The stack trace is the most interesting of the four, not the worst.** It is
-also the one your tools almost certainly return today, because it is what
-happens if you do nothing. It produced the *fewest* retries — 15.0% against a
+also close to what your tools return today if nobody wrote an error message: a
+raw exception. (@sec-agent-anatomy's loop sends back `ERROR: {e}`, which for
+this failure is just `ERROR: 'bütçe'` — the traceback's last line, with the
+same missing half.) It produced the *fewest* retries — 15.0% against a
 bare `"Error"`'s 23.3% — but the retries it produced were the ones that
 worked: **7 of its 9 retries landed on the right field, against 1 of 14 for
 the bare error and 2 of 22 for the vague one**. Read those as descriptive:
@@ -467,8 +471,8 @@ Two corollaries worth building in:
   enum. If the set is too large to list, list the nearest few — `did you mean
   butce?` is a complete recovery instruction.
 - **Never return a raw exception.** Catch it, and translate. The translation is
-  a one-line function and, on this evidence, it is worth more than any other
-  single change you can make to a tool.
+  a one-line function and, on this evidence, it bought the largest single
+  improvement measured in this chapter.
 
 ## What a tool returns is part of its design {#sec-tool-design-results}
 
@@ -485,7 +489,8 @@ budget in one call.** Whether that breaks the agent depends on the budget and
 the task — 50,000 tokens is most of a small window and 5% of a million-token
 one, re-sent on every later call — but the costs are the same in either case: context later
 steps needed, earlier observations pushed toward the middle where they are used
-less well, and a higher price on every remaining model call. Return what the *task* needs: the
+less well (@sec-context-engineering measures that), and a higher price on every
+remaining model call. Return what the *task* needs: the
 three fields, not the whole record; the matching rows, not the table.
 
 **Paginate, and say so in the result.** `"showing 10 of 247 matches; call again
@@ -497,6 +502,18 @@ wraps a 40-page PDF should not return 40 pages. What it returns is a design
 decision about what the agent is for, and making it inside the tool keeps it
 out of every prompt that uses the tool.
 
+**And some things a tool must never return.** Everything a tool returns is
+read by the model and, in most products, can end up in front of the user. So a
+tool never returns secrets — API keys, passwords, access tokens, internal
+connection strings — and never returns records the current user is not
+entitled to see; filter by permission *inside* the tool, before the text
+reaches the transcript, because the model cannot be trusted to keep a secret it
+has read. The reverse direction matters too: text a tool fetches from outside
+(a web page, an email, a ticket) is data, not instructions, and a model cannot
+reliably tell the two apart. @sec-agent-security treats this as *indirect
+prompt injection*; the tool author's part is to mark where fetched text begins
+and ends, and never to pass it off as the system's own words.
+
 ### Actions need different semantics from lookups
 
 Everything above is about reading. Tools that *do* things need three
@@ -506,11 +523,26 @@ table are why "read-only" does not always let you skip them.
 
 | property | why an agent specifically needs it |
 |:--|:--|
-| **Idempotent** | the loop will retry. A step cap, a timeout, or a model that did not see the result will all produce a second call — and "create the invoice" must not create two |
+| **Idempotent** | the same call will arrive twice. A timeout that fires after the action actually succeeded, a run restarted after hitting its step cap, or a model that did not see the result will all produce a second call — and "create the invoice" must not create two |
 | **Dry-run mode** | lets the agent, or you, see the effect before committing to it. A first-class `dry_run: true` parameter is worth more than any amount of prompt instruction |
 | **Confirmation-gated** | some actions should not execute on a model's say-so at all. That gate belongs in the runtime, not the prompt — @sec-guardrails is where this becomes a chapter |
 
 : Three properties a writing tool needs {tbl-colwidths="[26,74]"}
+
+The first row has a name worth knowing:
+[**idempotency**](#gloss-idempotency){#term-idempotency .term-ref}. A call is
+idempotent when making it twice has the same effect as making it once. Reads
+are idempotent by nature; "set the status to *paid*" is too; "add 100 TL to
+the balance" is not. The standard way to make a writing call idempotent is an
+*idempotency key*: the runtime attaches a unique id to each intended action,
+and the tool remembers which ids it has already carried out, so a repeat
+returns the first result instead of acting again.
+
+::: {#gloss-idempotency .column-margin .term-gloss}
+**idempotency** — a call that can be repeated without repeating its effect;
+what makes a retried agent step safe.
+[↩](#term-idempotency){.term-back}
+:::
 
 A read-only tool can usually skip all three, with two exceptions worth naming:
 a read that costs real money per call still wants a dry run, and a read over
@@ -530,8 +562,9 @@ called. This one is about what the tools cost *before* any of them is called.
 Every tool definition sits in the context of every call, so a flat list of
 fifty tools is a large fixed tax on every step, paid whether or not any of them
 is relevant. The published figures are larger than most people expect:
-@anthropic2025advancedtools reports a catalogue costing **77,000 tokens of
-definitions** before a single call, and about **85% of that** recovered by
+@anthropic2025advancedtools reports a catalogue of 50-plus tools whose
+definitions alone cost about **72,000 tokens** — some **77,000** with the rest
+of the starting context — before a single call, and an **85% reduction** from
 loading definitions on demand. @sec-mcp measures what the same tax looks like
 once your tools arrive over a protocol rather than out of your own codebase.
 
@@ -544,17 +577,22 @@ fix and the accurate fix are the same fix.
 
 Three ways out, in increasing order of how much they change your architecture:
 
-- **Namespace and prune.** Most large tool surfaces contain three tools that do
-  the same thing for historical reasons. Merging them is free accuracy.
+- **Namespace and prune.** Large tool surfaces often contain two or three
+  tools that do the same thing for historical reasons. Merging them is free
+  accuracy. The same instinct sets a tool's *granularity*: build one tool per
+  task a user has, not one per endpoint of your API — a single
+  `schedule_meeting` rather than `list_users`, `list_events` and
+  `create_event`, which the model would have to chain correctly on its own.
 - **Search, then load** —
   [**progressive disclosure**](#gloss-progressive-disclosure){#term-progressive-disclosure .term-ref}.
   Expose one `find_tools(query)` and load only the matching definitions for
   that step. This is @sec-retrieval applied to your
   own API surface, and it is what @anthropic2025advancedtools ships as a
-  first-class API feature. The threshold at which people reach for it is not a
-  constant — reports put it somewhere between thirty tools and a hundred,
-  depending on how verbose the definitions are — so measure your own
-  definition tax before picking a number.
+  first-class API feature. The threshold at which to reach for it is not a
+  constant. Anthropic's documentation says selection accuracy degrades once a
+  model sees more than about 30–50 tools, and suggests search from as few as
+  ten tools or 10,000 tokens of definitions; verbose definitions reach that
+  sooner. Measure your own definition tax before picking a number.
 - **Give it an interpreter instead.** If your tools are mostly small
   transformations, a sandboxed code environment replaces fifty definitions
   with one — the model composes what it needs rather than picking from a menu.
@@ -568,8 +606,10 @@ call. [↩](#term-progressive-disclosure){.term-back}
 ### Code mode, and what it costs
 
 That third option — [**code mode**](#gloss-code-mode){#term-code-mode .term-ref}
-— deserves naming clearly, because it is increasingly the default in serious
-systems [@cloudflare2025codemode].
+— deserves naming clearly, because providers now ship it:
+Cloudflare's Code Mode [@cloudflare2025codemode] and Anthropic's *programmatic
+tool calling* [@anthropic2025advancedtools] both let the model write code that
+calls the tools, instead of calling them one round-trip at a time.
 
 ::: {#gloss-code-mode .column-margin .term-gloss}
 **Code mode** — giving an agent a sandboxed interpreter instead of a fixed
@@ -735,10 +775,11 @@ parametric memory. In this chapter's measurement an opaque schema went uncalled
 
 A sentence saying what would have worked, with the valid options enumerated.
 Measured across four styles, that took recovery from 1.7% to 100%. And say the
-counterintuitive part, because it is the useful one: a stack trace was the
-*worst* of the four — worse than a bare "Error" — because it looks
-authoritative and contains no path forward. Catch the exception and translate
-it.
+counterintuitive part, because it is the useful one: a stack trace produced the
+*fewest* retries of the four, because it names the value that failed and never
+what would work. It is a half-written error message, not a worse-than-nothing
+one — its abandonment gap against a bare "Error" is three tasks in sixty and
+does not survive a test. Catch the exception and add the missing sentence.
 
 ### Testing whether you have shipped one
 
@@ -809,7 +850,7 @@ Right tool, right arguments, both or neither. Record the baseline.
 ### Step 4 — change one thing: add enums
 
 Every parameter with a fixed value set. Re-measure. On this chapter's tool that
-single change was worth 75 points.
+single change was worth 75 percentage points (25% to 100%).
 
 ### Step 5 — now rewrite the descriptions
 
@@ -897,13 +938,13 @@ that has a fixed value set, and measure the change. It is twenty minutes.
   *mali buyukluk*, *ekip mevcudu*, *takvim* — and `bütçe` where the API wanted
   `butce`, which is @sec-turkish-nlp's problem arriving inside a function
   signature.
-- **The error string is worth more than any other single change.** Recovery
+- **The error string made the largest single difference measured here.** Recovery
   went from **1.7% to 100%** by naming the invalid value and listing the valid
   ones. Write what *would* have worked; the rest is optional.
 - **A stack trace is a half-written error message.** It names the value that
   failed and never what would have worked, so it produced the fewest retries
-  of any style — though the ones it produced were the most often correct, 7 of
-  9. Do not read it as *worse than nothing*: at n = 60 that comparison sits
+  of any style — though, of the three incomplete styles, its retries were the
+  most often correct, 7 of 9. Do not read it as *worse than nothing*: at n = 60 that comparison sits
   inside the noise. Read it as unfinished, and add the third sentence.
 - **The dominant failure after an error is giving up, not looping.** Three of
   four error styles made the model stop calling tools and answer without the
@@ -912,6 +953,9 @@ that has a fixed value set, and measure the change. It is twenty minutes.
   the task needs, state the pagination in the result, and summarise on the tool
   side. A 50,000-token result can consume context later steps need and is
   carried into every later call; judge it against the task's context and cost
-  budgets.
+  budgets. Never return secrets or records the user may not see.
+- **A tool that acts must survive being called twice.** Make it idempotent,
+  give it a dry run, and put the confirmation gate in the runtime, not the
+  prompt.
 
 
