@@ -22,7 +22,9 @@ rather than re-derived. Software: `ollama` 0.24.0 serving `llama3.2:3b`, Python
   the right place;
 - write the compensating action for each tool, and identify the one that has
   none;
-- bound a session by steps, tokens and wall-clock time.
+- bound a session by steps, tokens and wall-clock time;
+- ship a change to an agent behind a canary, with a rollback trigger agreed in
+  advance.
 
 ## Where the agent actually runs {#sec-deployment-where}
 
@@ -39,7 +41,7 @@ binding.
 : Three shapes, and the constraint that should pick one
 {tbl-colwidths="[20,28,28,24]"}
 
-[The one that catches teams out is the third.]{.hl} An agent loop is not a
+[The third is the one that surprises teams.]{.hl} An agent loop is not a
 request handler: it can take minutes, and a platform that caps execution at a
 few seconds will kill it in the middle, after the tools have already run. If
 your runtime has a hard execution ceiling, the loop has to move behind a queue —
@@ -97,10 +99,10 @@ to add later:
 - **Cancellation that actually stops work.** A cancel flag the loop never checks
   is decoration. The loop must read it between steps, and the tools must be
   cancellable or at least idempotent, because a cancel arriving mid-tool-call
-  cannot unring that bell.
+  cannot undo what the tool has already started.
 - **A dead-letter path.** Jobs that fail repeatedly must land somewhere a human
-  sees, rather than being retried forever — which is @sec-deployment-retry's
-  problem in a different costume.
+  sees, rather than being retried forever — the same problem as
+  @sec-deployment-retry, in a different form.
 
 ## Durable execution, and what replay demands of your code {#sec-deployment-durable}
 
@@ -112,6 +114,14 @@ that already sent something.
 replaying the history after a crash, so completed work is not repeated. Temporal
 and Restate are the usual examples, and the idea long predates agents.
 
+One caveat decides how much this buys you. A step counts as completed only once
+its result is recorded, so a step that was *running* when the worker died is run
+again. If the tool acted and the worker crashed before the engine recorded the
+result, the effect happens twice. Temporal's documentation says this directly:
+an activity is recorded as completed once but may be executed more than once.
+Durable execution removes the re-running of finished steps; it does not remove
+the need for idempotent tools (@sec-deployment-idempotency).
+
 The part that matters for adopting one is not the engine, it is the contract it
 imposes on your code:
 
@@ -122,7 +132,7 @@ sequence of decisions. Reading the clock, generating a random id or calling an
 API directly from workflow code all break it, because the replay would take a
 different path than the original.
 
-Which lands awkwardly on agents, and it is worth being blunt about it. **An LLM
+This is awkward for agents, and it is worth being blunt about it. **An LLM
 call has to be treated as an external, potentially non-deterministic operation**
 — even at temperature 0, where batching, hardware and a silent model update all
 move the output. The resolution is
@@ -146,11 +156,15 @@ A provider retry that succeeds twice costs you money. An agent-step retry that
 succeeds twice sends the email twice.
 
 The interesting question underneath is one people assume rather than measure:
-**when you retry the step, do you get the same tool call?** Asking a model to
-emit one `send_email` call, eight times, for each of three tasks under three
-sampling conditions. `identical` is byte equality of the whole tool-call
-payload across all eight retries; `distinct to` and `distinct subj` count
-unique values of those two arguments only.
+**when you retry the step, do you get the same tool call?** The measurement:
+a model was asked to emit one `send_email` call, eight times, for each of three
+tasks under three sampling conditions. The three tasks leave the model
+progressively more to decide: `clear` names the recipient, `vague` is loosely
+worded, and `choice` (quoted below) leaves the recipient to the model. In the
+`seed` column, `0` is a fixed seed and `None` means no seed was set.
+`identical` is byte equality of the whole tool-call payload (the tool name and
+all its arguments) across all eight retries; `distinct to` and `distinct subj`
+count unique values of the recipient and subject arguments only.
 
 ```text
     task  temp   seed  identical  distinct to  distinct subj
@@ -182,10 +196,15 @@ address is invented, and a retry loop with no idempotency protection would have
 mailed several of them.
 
 **Read five as a floor, not an estimate.** Eight draws cannot bound how many
-addresses the model is willing to invent. With this distribution — one address
-three times, one twice, three once each — a Chao1 richness estimate puts the
-support at roughly **ten**, not five, because three singletons in eight draws
-is the signature of a long tail you have not sampled. In the other direction,
+addresses the model is willing to invent. Ecologists face the same problem when
+counting species, and their Chao1 estimator uses the values seen exactly once
+($f_1$) and exactly twice ($f_2$) to estimate how many were never seen. With
+this distribution — one address three times, one twice, three once each, so
+$f_1 = 3$ and $f_2 = 1$ — the classic form $5 + f_1^2/(2f_2)$ gives **9.5**, and
+the small-sample bias-corrected form $5 + f_1(f_1-1)/(2(f_2+1))$ gives 6.5.
+Eight draws are far too few to choose between them, but both are above five,
+because three singletons in eight draws is the signature of a long tail you
+have not sampled. In the other direction,
 eight identical outputs at temperature 0 give a Wilson 95% interval of about
 **[68%, 100%]** on the repeat rate, so "byte-identical eight times" is
 compatible with a true repeat rate near two thirds. Neither correction changes
@@ -193,7 +212,7 @@ the design conclusion. Both change what may be claimed: this establishes that
 the failure exists and reproduces easily, not how often it happens on your
 endpoint.
 
-Two things this does *not* say, both of which matter.
+Three things this does *not* say, all of which matter.
 
 **Temperature 0 is not the fix, it is a different risk.** At temperature 0 all
 eight retries were byte-identical for every task — including `choice`, which
@@ -224,8 +243,9 @@ including `clear`, which named the recipient and still varied in the body. What
 ambiguity changed is *which field* moved: `clear` kept the recipient and the
 subject, `vague` produced six subject lines, `choice` produced five recipients.
 Temperature perturbs everything; the task decides whether the perturbation
-lands on a field that has a side effect. Which is also why a key derived from
-*any* part of the payload rather than the recipient alone is unsafe.
+lands on a field that has a side effect. This is also why a key derived from
+*any* part of the payload is unsafe, not only one built from the recipient:
+which field moves depends on the task.
 :::
 
 ## Idempotency keys, and where the key comes from {#sec-deployment-idempotency}
@@ -246,11 +266,16 @@ So derive it from something upstream and stable:
 | key derived from | dedupes a retry? | notes |
 |:--|:--|:--|
 | Hash of tool arguments | [no]{.con} | changes when the model changes its mind — the failure this section measured |
-| Random id per attempt | [no]{.con} | a new key every retry, which is the same as having none |
+| Random id per attempt | [no]{.con} | a new key every retry, which is the same as having none. A random id generated *once* per operation and stored before the first attempt is fine — that is what Stripe suggests; the mistake is generating it per attempt |
 | `(session id, step index)` | [yes]{.pro} | stable across retries of the same step — add a sub-call index when one step makes several side-effecting calls, or they collide |
 | Upstream request id | [yes]{.pro} | right when one request must produce at most one side effect end to end |
 
 : Four candidate keys, and the two that work {tbl-colwidths="[26,18,56]"}
+
+The step index is stable only if it comes from a history that survived the
+crash — a session store or a durable engine's record. If a restart runs the
+agent from scratch, the model may make the same call at a different step, and
+the key changes with it.
 
 Scope the key to the tenant as well, so two customers cannot collide on the same
 logical operation id.
@@ -271,9 +296,17 @@ including the `send_email` this chapter keeps using — it is not, because an
 HTTP request cannot join your transaction. This is the dual-write problem, and
 the standard answer is the **transactional outbox**: in one transaction, write
 the idempotency record *and* a row describing the intended call; a separate
-publisher reads the outbox and performs the call at-least-once, carrying the
-key so the receiver dedupes it. You have not removed the duplicate. You have
-moved it somewhere a key can absorb it.
+publisher reads the outbox and performs the call *at least once* — it may
+repeat the call after a crash, but it never skips it — carrying the key so the
+receiver dedupes it. You have not removed the duplicate. You have moved it
+somewhere a key can absorb it.
+
+That last step assumes the receiver honours idempotency keys. Payment APIs such
+as Stripe's do; plain SMTP does not, and many email and messaging APIs do not
+either. Against such a receiver, at-least-once means "occasionally twice". What
+remains is to make the window small — record "sending" before the call, and
+after a crash check the provider's own log before sending again — and to know
+that the window exists.
 
 **The retention window must outlast your longest retry.** Easy to set to five
 minutes and then discover was needed for six hours, because the queue was
@@ -293,11 +326,11 @@ not after the incident.
 |:--|:--|:--|
 | Create a record | delete it | [mostly]{.pro} — the row goes, but anything that already fired on its creation (a webhook, a downstream event, a sent notification) does not un-fire |
 | Charge a card | refund | mostly — the fee and the statement line survive |
-| Book a slot | cancel | usually, unless it released a hold someone else took |
+| Book a slot | cancel | usually — but anyone turned away while the slot was held stays turned away |
 | Post to a channel | delete the message | [no — people read it]{.con} |
 | Send an email | [nothing]{.con} | [no]{.con} |
 
-: Compensations, and the two rows that admit there is none
+: Compensations, and the two rows with no real undo
 {tbl-colwidths="[24,30,46]"}
 
 [The bottom two rows are the design constraint.]{.hl} When a tool has no
@@ -312,14 +345,16 @@ agent a way to check its own plan before committing to it.
 
 ## Three ceilings every agent needs {#sec-deployment-ceilings}
 
-@sec-agent-anatomy measured what happens without them: runs that never
-terminate, and an outcome metric that records the ones which happened to be
-right as successes. Three limits, and they catch different failures:
+@sec-agent-anatomy measured why they are needed: with one protocol, sixty
+percent of the easiest tasks never stopped on their own and ran until the step
+cap — although each run already had the answer at step 0 — so an accuracy column
+that looked like a reasoning result was really a termination result. Three
+limits, and they catch different failures:
 
 | ceiling | catches | what to do at the limit |
 |:--|:--|:--|
 | **Steps** | the loop that keeps calling tools | stop, return partial work, mark it unfinished |
-| **Tokens** | the run that stays cheap per step and expensive overall | stop and report spend — @sec-gateway enforces the same limit per key |
+| **Tokens** | the run that stays cheap per step and expensive overall | stop and report spend — @sec-gateway enforces a related budget per virtual key |
 | **Wall clock** | the tool that hangs, which neither other limit sees | cancel, and make sure cancellation reaches the tool |
 
 : Three ceilings, three different failures {tbl-colwidths="[16,42,42]"}
@@ -335,6 +370,58 @@ in the response, in the trace, and in your evaluation as a distinct outcome —
 looks 85% accurate while hitting its cap on a third of runs is not an 85%
 accurate agent.
 
+## Shipping a change: versions, canaries and rollback {#sec-deployment-release}
+
+Everything so far is about surviving a failure while a run is in progress. The
+other common way an agent breaks in production is a deploy: a new prompt, a new
+model version, a reworded tool description. Four habits make a deploy
+survivable.
+
+**Version the whole behaviour, not only the code.** What an agent does is set by
+its code, its prompts, the pinned model version (@sec-gateway-versions), the tool
+definitions, and settings such as temperature and the three ceilings. Release
+them together, under one release id, and record that id on every trace
+(@sec-observability). A prompt edited in a dashboard without a new release id is
+a deploy that nobody can attribute or roll back — and the "step change that
+lines up with a release" that @sec-production-eval diagnoses is visible only if
+the release was recorded.
+
+**Roll out to a slice first.** A **canary** sends a small share of live
+traffic — say 5% — to the new release, and compares it with the old release on
+the same traffic: error rate, latency, cost per run, the share of runs that hit
+a ceiling, and whatever quality signal you have. The share grows in stages
+(5% → 25% → 100%) only while the canary is not worse, and traffic moves back
+automatically when a threshold is crossed. A **shadow** deployment — the new
+release runs on a copy of live inputs, but nobody is shown its output — is safe
+for a chatbot and dangerous for an agent, because a shadow agent with real
+tools sends real emails. Its side-effecting tools must run in dry-run mode
+(@sec-deployment-compensation). What each of these rungs can and cannot detect
+is @sec-production-eval's subject.
+
+**Agree the rollback trigger before the deploy.** A **service level objective
+(SLO)** is a target over a time window, measured by a *service level indicator
+(SLI)* — for example, "99.5% of agent runs in a 30-day window finish without an
+error or a ceiling". The 0.5% that may fail is the **error budget**: at 200,000
+runs a month, 1,000 runs. A canary that burns that budget much faster than the
+old release is rolled back by rule, not after an argument during an incident.
+Choose the indicator with care: an HTTP 200 is not a successful run, because a
+run can return 200 and still have hit a ceiling or given a wrong answer
+(@sec-observability). Mind the size of the slice, too. A 5% canary on 200,000
+runs a month sees about 330 runs a day, so at a 0.5% baseline it expects fewer
+than two failures a day. That is enough to catch a release that breaks badly,
+and far too few to notice one that is slightly worse — which is why small
+effects are left to the A/B test.
+
+**Rollback undoes the code, not the effects.** Rolling back restores the old
+behaviour for *new* runs. It does not unsend the emails the bad release sent —
+that is the compensation table — and it does not settle what happens to runs
+that are still in flight. A durable workflow that started under the new code and
+is replayed by the old code (or the reverse) can take a different path, which is
+the determinism rule of @sec-deployment-durable again. Durable engines provide
+workflow versioning for this (in Temporal's Python SDK, `workflow.patched()`);
+the simple rule is to let every in-flight run finish on the version it started
+with.
+
 ## Intuition checks {#sec-deployment-intuition}
 
 Answer each one before you open it. Two of them turn on the retry measurement in
@@ -347,8 +434,8 @@ that decide whether a working prototype survives being deployed at all.
 
 You deployed a loop onto a request handler.
 
-Serverless platforms and many load balancers cap execution, and an agent loop is
-not a request: it can take minutes, and the cap arrives mid-run — after some
+Serverless platforms cap execution time, many load balancers cut a connection
+that stays idle too long, and an agent loop is not a request: it can take minutes, and the cap arrives mid-run — after some
 tools have already executed. The symptom is a truncated run with real side
 effects and no result.
 
@@ -452,8 +539,9 @@ Whatever the completed tool calls already did, with no record that they
 completed. A naive restart re-executes them. Name the two answers: durable
 execution, which records each step and replays the history so completed work is
 not repeated; or idempotency keys on the side-effecting tools, so re-execution
-is harmless. Most systems need the second regardless, because the first only
-covers crashes inside the engine.
+is harmless. Most systems need the second regardless, because durable engines
+run each step *at least once*: a crash after the tool acted but before the
+engine recorded the result re-runs that step.
 
 **Q: Is retrying an LLM step idempotent?**
 
@@ -500,6 +588,16 @@ real — deleting a message people already read is not an undo — and if it is 
 why the action was not behind an approval gate. Then whether it could have been
 a duplicate rather than a decision, which is the idempotency question, and
 whether the run hit a ceiling and was reported as a success.
+
+**Q: How would you roll out a new prompt for an agent that sends emails?**
+
+As a release: the prompt, the pinned model, the tool definitions and the
+settings under one id recorded on every trace. Then a canary on a small slice,
+compared with the old release on error rate, ceiling hits, cost and a quality
+signal, with a rollback trigger taken from the SLO's error budget and agreed in
+advance. Not a plain shadow deployment, because a shadow agent with a real
+`send_email` sends real mail — shadow only with tools in dry-run mode. And say
+what rollback cannot do: it does not unsend what the canary already sent.
 
 ## The 2026 toolbox {#sec-deployment-tools}
 
@@ -556,6 +654,10 @@ second execution must return the first result without acting.
 
 ### Step 4 — put the key and the effect in one transaction
 
+A file append cannot join a database transaction, so for this step make the
+fake `send_email` insert a row into the same database (SQLite is enough) that
+holds the idempotency records, and write both in one transaction. For a real
+remote call, use the outbox described above instead.
 Then re-run step 1, killing the worker *between* the effect and the record.
 If the duplicate comes back, the write was not atomic — which is the bug this
 step exists to expose.
@@ -616,6 +718,12 @@ evidence that each of the three ceilings fires and is reported.
    completed. If nothing checks the flag between steps, you do not have
    cancellation.
 
+8. **Size the canary.** Write an SLO for an agent you know, with its SLI stated
+   precisely, and compute the monthly error budget. Then compute how many runs a
+   5% canary sees per day, and how many failures it should expect at your
+   baseline failure rate. How much worse would a release have to be before a
+   day of canary traffic could tell?
+
 ## Where to go deeper {#sec-deployment-deeper}
 
 Before reading: pick the one tool in your system whose effect you would least
@@ -630,7 +738,8 @@ research result; the second is the one research source the chapter cites.
 |:--|:--|
 | [Making retries safe with idempotent APIs](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/) | the clearest write-up of the key, the record and the transaction boundary this chapter argues for |
 | [Stripe's idempotent requests](https://docs.stripe.com/api/idempotent_requests) | the same design as a shipped public API, including the retention window most people set too short |
-| [Handling Overload](https://sre.google/sre-book/handling-overload/) | the client-side retry budget, which is what keeps a dead-letter path from becoming an outage |
+| [Handling Overload](https://sre.google/sre-book/handling-overload/) | the client-side retry budget, which stops the retries of failing jobs from turning into an outage |
+| [Service Level Objectives](https://sre.google/sre-book/service-level-objectives/) | the Google SRE book's chapter on SLIs and SLOs; its error budget is the rollback trigger of @sec-deployment-release |
 | [Temporal's workflow determinism rules](https://docs.temporal.io/workflow-definition) | the replay contract stated precisely; read this before adopting any durable engine, not after |
 | [`temporalio/sdk-python`](https://github.com/temporalio/sdk-python) | the workflow/activity split in code, which is where the LLM call has to land |
 | [`restate`](https://github.com/restatedev/restate) / [`dbos-transact-py`](https://github.com/dbos-inc/dbos-transact-py) | two lighter takes on durability, useful for seeing which parts of Temporal's contract are essential |
@@ -666,7 +775,8 @@ research result; the second is the one research source the chapter cites.
   random ids and direct API calls inside workflow code break it. The LLM call is
   the least deterministic thing you have, so it belongs in a recorded *step*,
   not in workflow code. Adopting an engine later usually means rewriting the
-  loop.
+  loop. And a step that was running at the crash runs again, so the tools still
+  need to be idempotent.
 
 - **Retrying a step is not retrying a request.** @sec-gateway's retry problem is
   amplification; this one is duplication. And the retry may not even repeat the
@@ -699,3 +809,10 @@ research result; the second is the one research source the chapter cites.
   forever. Hitting one is a *result*: it belongs in the response, the trace and
   the evaluation, and @sec-agent-eval's termination rate is where an agent that
   looks accurate while capping out gets caught.
+
+- **Ship a change as one versioned release, to a slice first.** Code, prompts,
+  pinned model, tool definitions and settings share one release id on every
+  trace. A canary with a rollback trigger taken from the SLO's error budget
+  catches a release that breaks badly; a shadow agent needs its tools in dry-run
+  mode; and a rollback restores the code, not the effects the bad release
+  already had.
