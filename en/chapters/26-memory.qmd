@@ -16,6 +16,7 @@ about what survives *between* them. Software: NumPy 2.5.2 on Python 3.14.5.
 - distinguish working, episodic and semantic memory, and pick storage for each;
 - define a write policy — what gets remembered, when, and who decides;
 - handle staleness and contradiction instead of accumulating stale facts;
+- test a memory at the write, at the read, and across many sessions;
 - reason about consent and deletion in a system that remembers people.
 
 ## Three kinds of memory, three different problems {#sec-memory-kinds}
@@ -28,7 +29,7 @@ lifetime, a different storage answer, and a different failure mode.
 |:--|:--|:--|:--|:--|
 | **Working** | the current transcript — the task, recent steps, live tool results | one run | the context window | it fills up. @sec-context-engineering is entirely about this |
 | **Episodic** | what happened, and when: past conversations, actions taken, outcomes | across runs | append-only log, retrievable | it accumulates. Volume grows without bound and old episodes crowd out useful ones |
-| **Semantic** | durable facts: preferences, entities, relationships, learned rules | until contradicted | a store you can update *and* delete from | it goes **stale**, and stale facts are worse than absent ones |
+| **Semantic** | durable facts: preferences, entities, relationships, learned rules | until contradicted or expired | a store you can update *and* delete from | it goes **stale**, and stale facts are worse than absent ones |
 
 : One word, three problems {tbl-colwidths="[14,32,12,20,22]"}
 
@@ -52,15 +53,27 @@ the fact that people's memory blurs the two is not a reason for your system
 to.
 :::
 
+You will also meet a fourth kind in the literature: **procedural memory**,
+knowledge of *how* to do the task. The widely used agent taxonomy
+([CoALA](https://arxiv.org/abs/2309.02427), Sumers et al.) lists working,
+episodic, semantic and procedural memory. In most systems procedural memory is
+not a store at all: it is the system prompt, the tool definitions and the code,
+and it changes when you deploy. It becomes a memory problem only when the agent
+may rewrite its own instructions — a file of "lessons learned" it edits and
+reads back at every start. Treat that as the most sensitive write path in this
+chapter, because a bad entry there changes every later run, not one answer.
+
 **What we will look at.** First where each kind of memory should live, where
 the popular answer — embed everything — turns out to be the wrong default for
 exactly one of the three. Then what gets written and who decides, which is a
 policy you have already chosen by not choosing it. Then a measurement of what
 happens when the store holds two facts that disagree, which is the question
 this chapter can answer cheaply and the one most designs assume away. Then
-forgetting, which has to be built at the start. And finally what a system
-owes the people it remembers, all of which turns out to be schema decisions
-rather than policy documents.
+forgetting, which has to be built at the start. Then three practical
+questions: whether memory is a tool the agent calls or infrastructure it never
+sees, what survives a crash, and how you test a memory at all. And finally what
+a system owes the people it remembers, all of which turns out to be schema
+decisions rather than policy documents.
 
 ## Storage: stop reaching for a vector database first {#sec-memory-storage}
 
@@ -99,17 +112,19 @@ The architecture that works for most systems is unglamorous and hybrid:
 
 A common design mistake in this area is putting facts in vectors without giving
 them an identity. Not because the storage layer refuses: `pgvector` rows take ordinary
-SQL `UPDATE`, `DELETE` and upsert, and every managed vector store has an
-id-keyed delete. The problem is an append-only collection with no stable key for the
-fact. If nothing enforces one row per `(user, preferred_channel)`, a corrected
-preference becomes a second embedding sitting next to the first, both
-retrievable, and similarity search has no reason to prefer the new one. Both
-update and delete turn out to be requirements rather than nice-to-haves — one
-for correctness and one for law — and what makes them work is fact identity
-enforced in the schema. A unique constraint on `(user_id, fact_type)` works just
-as well on a `pgvector` table that also stores the embedding; the point is the
-key, not where the vector lives, with any similarity index treated as a derived
-view over it.
+SQL `UPDATE`, `DELETE` and upsert (update the row if the key exists, insert it
+otherwise), and every managed vector store has an id-keyed delete. The problem
+is an append-only collection with no stable key for the fact.
+
+If nothing enforces one row per `(user_id, key)` — say, one `preferred_channel`
+per user — a corrected preference becomes a second embedding sitting next to
+the first. Both are retrievable, and similarity search has no reason to prefer
+the new one. Both update and delete turn out to be requirements rather than
+nice-to-haves — one for correctness and one for law — and what makes them work
+is fact identity enforced in the schema. A unique constraint on
+`(user_id, key)` works just as well on a `pgvector` table that also stores the
+embedding. The point is the key, not where the vector lives; any similarity
+index is a derived view over it.
 
 ## Write policies: the decision nobody makes on purpose {#sec-memory-write}
 
@@ -133,7 +148,7 @@ Rule-based writes only what you named. User-confirmed writes only what a person
 approved. Model-decided writes anything the model read — including tool output
 and any document it was handed.
 
-Three rules that survive contact with production:
+Four rules that hold up in production:
 
 **Remember decisions and preferences, not conversation.** *The user prefers
 invoices at the Levent office* is a fact with a shelf life. The paragraph in
@@ -215,9 +230,9 @@ sentence — *when facts conflict, use the most recently recorded one* — took 
 to 83.3%. That is a large, cheap improvement. Still, one answer in six hedges
 instead of naming the newer value, though none picks the older one.
 
-Both steps are larger than three overlapping intervals can show, because the
-three conditions ran on the *same* thirty items and the comparison between
-them is therefore paired. Nothing was correct in `bare`, so the bare-to-dated
+The three intervals in the table do not overlap, but comparing intervals is not
+the right test here either: the three conditions ran on the *same* thirty
+items, so the comparison between them is paired. Nothing was correct in `bare`, so the bare-to-dated
 step has ten discordant pairs all in one direction: McNemar's exact test gives
 p = 0.002. The dated-to-rule step adds fifteen net, and across every split of
 the discordant pairs consistent with those margins the exact p runs from
@@ -227,30 +242,39 @@ they are not the test of the difference.
 **The rule interacts with position, and that is the least comfortable number
 here.** In the `dated+rule` condition the model was right on 15 of 15 items
 where the newer fact was listed *last*, and on 10 of 15 where it was listed
-*first* — 100% against 66.7%, two-sided Fisher exact p = 0.042. In `bare` and
-`dated` the split is flat (0/0 and 33.3/33.3), so this is not a general
-position effect; it appears only once the rule is there. Read conservatively,
-an explicit rule buys somewhere between two thirds and all of it, depending on
+*first* — 100% against 66.7%, two-sided Fisher exact p = 0.042. That is
+fifteen items per cell and a split chosen after looking, so treat it as a
+warning worth checking on your own model rather than a law. In `bare` and
+`dated` the split is flat (0.0/0.0 and 33.3/33.3), so this is not a general
+position effect; it appears only once the rule is there. Read conservatively:
+with the rule, accuracy is somewhere between two thirds and 100%, depending on
 an ordering you did not think you were choosing. Which is one more argument for
 the conclusion below: resolve in retrieval, inject one fact, and there is no
 ordering left to get wrong.
 
 [Conflict resolution belongs in your retrieval code, not in your prompt.]{.hl}
 Resolve before you inject: return one fact, the one your policy chose, and the
-model has nothing to be inconsistent about. That is also the design the
-published systems converged on. @rasmussen2025zep builds the store on a
-bi-temporal graph and *invalidates* the superseded edge when a fact changes, so
-the agent is never handed both; @chhikara2025mem0 makes extraction,
-consolidation and the update policy the library's job rather than the prompt's.
-This measurement is a small local argument for an architecture other people
-arrived at from the other direction.
+model has nothing to be inconsistent about. Published systems moved the same
+decision out of the answering prompt, in two different ways.
+@rasmussen2025zep builds the store on a bi-temporal graph — each fact carries
+both when it was true and when the system learned it — and, when a new fact
+contradicts an old one, *invalidates* the superseded edge by recording when it
+stopped being true, rather than keeping two live facts side by side.
+@chhikara2025mem0 resolves conflicts at write time: for each new fact, an LLM
+call compares it with similar stored memories and chooses to add, update,
+delete or do nothing. A model still decides there, but once, on one pair, when
+the fact is written — not every time a question is answered. This measurement
+is a small local argument for an architecture other people arrived at from the
+other direction.
 
 **The default behaviour is hedging, not lying.** In the bare condition the
 model picked the *older* fact 16.7% of the time and gave both or neither
 **83.3%** of the time. That is better than confidently picking wrong — but a
 system that answers "your preference is email, or possibly phone" has failed
 the user just as thoroughly, and it fails in a form that is harder to detect
-than a wrong answer.
+than a wrong answer. In the bare condition the hedge is the model's most
+honest reply; the failure belongs to the system, which gave it no way to
+decide.
 
 :::: {.anlp-fig}
 
@@ -312,11 +336,11 @@ right.
 ::::
 
 ::: {.column-margin}
-Small measurement, narrow claim: one model, thirty items, intervals around ±17
-points. What it establishes is the *ordering* — bare < dated < dated+rule —
+Small measurement, narrow claim: one model, thirty items, intervals up to 32
+points wide. What it establishes is the *ordering* — bare < dated < dated+rule —
 and the practical conclusion, which does not depend on the exact figures: do
 not leave contradiction resolution to the model when a `WHERE` clause and an
-`ORDER BY written_at DESC LIMIT 1` will do it exactly.
+`ORDER BY … LIMIT 1` over your precedence columns will do it exactly.
 :::
 
 ### So what should the retrieval side do?
@@ -325,16 +349,22 @@ Resolve, then inject. Concretely, four rules that cover almost every case:
 
 - **One fact per key.** If the store can hold two values for *preferred
   channel*, the ambiguity reaches the model. Make the write path an upsert and
-  the ambiguity never exists.
-- **Recency wins by default**, because it is right more often than any other
-  simple rule and it is the one users expect. Recency of *what*, though: record
+  the ambiguity never exists. An upsert overwrites, though, and *list what
+  changed since March* needs the old value: copy it to a history table (or to
+  the episode log) before overwriting, or keep every version as a row with
+  `valid_from` and `valid_to` and read only the open one — the same idea as
+  the bi-temporal store above. The upsert is also the moment to check
+  precedence: if the new value comes from a weaker source than the stored one,
+  keep the stored one and log the conflict.
+- **Recency wins by default**, because it is usually right and it is the rule
+  users expect. Recency of *what*, though: record
   the time the fact was true and the time you learned it separately, because a
   late-arriving report of an old event is not news. Where recency is wrong — a
   stated preference should outrank an inferred one regardless of date, and an
   authoritative source should outrank a guess — encode *that*, explicitly, as a
   precedence over source and event time rather than over write time.
 - **Expire on a schedule, not on faith.** Anything time-sensitive gets a TTL
-  at write time. A shipping address does not expire; a *current project* does.
+  (*time to live*: how long the fact counts as valid) at write time. A shipping address does not expire; a *current project* does.
 - **Surface conflicts you cannot resolve.** If two sources of equal precedence
   disagree, the honest move is to ask, not to guess — and it is a much better
   user experience than either answer.
@@ -359,7 +389,7 @@ awkward to retrofit:
 
 Everything so far has been about the store. This section is about the wire
 between the store and the agent, and there are only two ways to run it — they
-trade the same thing @sec-agent-anatomy's autonomy ladder traded: capability
+trade the same thing @sec-agent-anatomy's levels of autonomy traded: capability
 against predictability.
 
 **Memory as a tool.** The agent gets `remember(fact)` and `recall(query)` and
@@ -369,7 +399,9 @@ that it is another decision the model can get wrong — and @sec-tool-design
 measured what a badly-specified tool does: it goes uncalled, silently.
 
 **Memory as infrastructure.** Before every run, your code retrieves what is
-relevant and injects it into the system prompt. The agent never knows there is
+relevant and injects it into the context — typically a clearly delimited block
+labelled as stored data about the user, not as instructions, which is the
+write-path rule above applied on the read side. The agent never knows there is
 a memory system; it simply knows things. This is predictable, testable, and
 costs no model decisions — and it is the right default for the same reason a
 fixed pipeline is the right default in @sec-agent-anatomy.
@@ -394,9 +426,37 @@ that lives in a process.
   different branch is a second implementation you will not test.
 
 @packer2023memgpt is the reference design for taking this seriously — an agent
-that manages its own paging between a small context and external storage, and
-the paper worth reading if you want the operating-system analogy done
-properly.
+that manages its own *paging*, the operating-system term for moving data
+between a small fast memory and a large slow one: here, between the context
+window and external storage. It is the paper worth reading if you want the
+operating-system analogy done properly.
+
+## Evaluating a memory {#sec-memory-eval}
+
+A memory can fail at three points, and each needs its own check.
+
+- **The write.** Of the facts the system stored, how many should it have
+  stored (precision)? Of the facts it should have stored, how many did it
+  store (recall)? A labelled set of a few dozen conversations, each with the
+  facts a careful person would keep, is enough to start. Count forbidden writes
+  — injected instructions, data you promised not to keep — separately, because
+  one of those matters more than ten missed preferences.
+- **The read.** Given a key or a question, does recall return the *current*
+  value, and only that? The contradiction probe above is a test of this kind,
+  and so are steps 3 and 4 of the lab.
+- **The whole loop, over many sessions.** Public benchmarks do this with long
+  multi-session conversations and questions about them:
+  [LoCoMo](https://arxiv.org/abs/2402.17753) (Maharana et al., 2024) and
+  [LongMemEval](https://arxiv.org/abs/2410.10813) (Wu et al., 2024), whose
+  question types include *knowledge updates* — this chapter's contradiction
+  problem — and *abstention*, answering "I don't know" when nothing was stored.
+  @chhikara2025mem0 reports on LoCoMo and @rasmussen2025zep on LongMemEval.
+  Numbers from different papers are rarely comparable: the answering model, the
+  judge and the prompt all differ.
+
+The general machinery — judges, confidence intervals, paired comparisons — is
+@sec-agent-eval's subject; what is specific to memory is that the questions
+have to be asked *after* time has passed and facts have changed.
 
 ## Privacy, consent, and deletion {#sec-memory-privacy}
 
@@ -405,12 +465,17 @@ and the engineering decisions that satisfy them are made in
 @sec-memory-storage rather than in a policy document written afterwards.
 
 **Deletion has to actually delete.** This is the concrete reason facts belong
-in a store with a real `DELETE`, and the reason "we embed everything" becomes
-a problem the first time someone exercises a right to erasure: a vector index
-deletes a vector by id, not a fact. Unless you kept a mapping from each fact to
-the vectors that encode it, you first have to find them. Searching an index for
-every trace of one fact to honour one deletion request is the cost of the
-architecture decision, paid later.
+in a store with a real `DELETE`. The right is written into law: the GDPR's
+right to erasure (Article 17) in the EU, and in Türkiye KVKK Article 7, which
+requires personal data to be deleted, destroyed or anonymised once the reason
+for processing it is gone, with Article 11 giving the person the right to ask;
+@sec-governance-kvkk covers both regimes. Erasing *a whole user* is the easy
+case if every vector carries a `user_id`. "We embed everything" becomes a
+problem the first time someone asks you to forget or correct *one specific
+thing*: a vector index deletes a vector by id, not a fact. Unless you kept a
+mapping from each fact to the vectors that encode it, you first have to find
+them. Searching an index for every trace of one fact to honour one request is
+the cost of the architecture decision, paid later.
 
 **Provenance is what makes an answer possible.** *Why does this system think I
 prefer phone calls?* is a question with a good answer only if you recorded
@@ -420,7 +485,13 @@ which event caused the write. It is one column, added at the start.
 one your extractor inferred, and users experience the second as surveillance
 even when it is accurate. Store the distinction, use it in precedence rules —
 and when a memory drives something visible, be able to show what it was based
-on.
+on. Never let the extractor *infer* health, religion, political views or
+anything else the law treats as special-category data (GDPR Article 9, KVKK
+Article 6): an accurate guess about such a thing is itself sensitive
+processing. And "consent" in this chapter means the everyday sense — the person
+saw the memory and agreed. Whether that is also your legal basis under KVKK or
+the GDPR is a separate question; @sec-governance-kvkk explains why consent is
+rarely the basis that fits.
 
 **Retention is a decision, not a default.** Everything written gets an expiry
 or an explicit exemption. @sec-governance is where this becomes a regime; the
@@ -438,8 +509,8 @@ and expensive on day two hundred.
 ## Intuition checks {#sec-memory-intuition}
 
 Answer each one before you open it. One is settled by the measurement this
-chapter runs; the other five are design decisions it argues for, and every one
-of them is a schema choice that costs nothing on day one.
+chapter runs; the other five are design decisions it argues for, and most of
+them come down to a schema choice that costs nothing on day one.
 
 ::: {.callout-note collapse="true"}
 ## 1. Should memory go in a vector database?
@@ -451,9 +522,9 @@ it — you can, by id. What a vector index does not give you is a *key*: nothing
 stops two contradictory embeddings of the same preference coexisting, and
 nearest-neighbour search has no notion of which is current. Facts go in rows
 keyed by `(user, key)`, where an upsert makes the contradiction impossible;
-episodes go in an index with pointers back to the record. Putting facts in vectors is the most common
-production mistake in this area, and the bill arrives at the first erasure
-request.
+episodes go in an index with pointers back to the record. Putting facts in
+vectors without a key is a common production mistake in this area, and you pay
+for it the first time a user asks you to correct or forget one specific fact.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -534,7 +605,8 @@ context engineering; episodic memory is an event log, retrieved by similarity;
 semantic memory is facts, and belongs in rows keyed by user and attribute with
 provenance and an expiry. Then say what each store must support — facts need
 update and delete, episodes need ranking by relevance and age — and note that
-this is why "embed everything" fails: it cannot express an update.
+this is why "embed everything" fails: without a key per fact, there is nothing
+to update.
 
 **Q: Two memories contradict. What happens?**
 
@@ -582,9 +654,9 @@ Worth knowing about, not used above:
 
 | library | current version | when you would reach for it |
 |:--|:--|:--|
-| `letta` | 0.16.8 | self-managed memory paging, the MemGPT lineage |
-| `mem0ai` | 2.0.19 | extraction, update and conflict policies as a library [@chhikara2025mem0] |
-| `zep-python` | 2.0.2 | temporal knowledge-graph memory, when *when* matters as much as *what* [@rasmussen2025zep] |
+| `letta` | 0.33.1 | self-managed memory paging, the MemGPT lineage |
+| `mem0ai` | 2.2.0 | extraction, update and conflict policies as a library [@chhikara2025mem0] |
+| `graphiti-core` | 0.30.2 | the open-source temporal knowledge graph behind Zep, when *when* matters as much as *what* [@rasmussen2025zep] |
 | `langmem` | 0.0.30 | memory primitives for LangGraph agents |
 | `pgvector` | 0.5.0 | episodes in the database that already holds your facts — usually the right answer |
 
@@ -603,8 +675,10 @@ each of the three it stores: who decides, and when does it expire.
 
 ### Step 2 — a table, not an index
 
-`user_id, key, value, source, written_at, expires_at`. Upsert on
-`(user_id, key)` so two values for one key cannot exist.
+`user_id, key, value, source, valid_from, written_at, expires_at` — with
+`valid_from` for when the fact became true and `written_at` for when you
+learned it. Upsert on `(user_id, key)` so two values for one key cannot exist,
+and copy the old value to a history table before you overwrite it.
 
 ### Step 3 — plant a contradiction
 
@@ -614,8 +688,12 @@ model is left to resolve it.
 
 ### Step 4 — measure staleness
 
-Age the timestamps on a copy of your store by six months and ask ten questions.
-Count how many answers are now wrong. That number is what a TTL is worth.
+Simulate six months passing: on a copy of your store, move every timestamp
+back six months, then ask ten questions. Shifting dates does not change the
+answers, so judge each one yourself — would this fact probably still be true
+after six months (an address, yes; a current project, often not)? Count the
+answers that are probably wrong now. That number is what a TTL is worth, and
+the keys behind them are the ones that need one.
 
 ### Step 5 — delete a user, then look
 
@@ -642,8 +720,9 @@ system should stop writing.
    decide the resolution rule and defend it against the case where recency is
    the wrong answer.
 3. **Age your store.** Move every timestamp back six months and re-ask ten
-   questions. Count the answers that are now wrong; that is what you are
-   buying with a TTL.
+   questions. For each answer, judge whether the fact behind it would probably
+   still be true six months later; count the ones that would not. That is what
+   you are buying with a TTL.
 4. **Delete and hunt.** Run your deletion path for one user, then search every
    store, index, log and cache. Write down where the data survived.
 5. **Provenance audit.** Pick five memories and produce the event that caused
@@ -664,9 +743,10 @@ episode. If facts are living in a vector index, you have found your first task.
 |:--|:--|
 | [`letta`](https://github.com/letta-ai/letta) | the MemGPT design as a working system — the clearest way to see self-managed paging between context and storage |
 | [`mem0`](https://github.com/mem0ai/mem0) | a memory layer with explicit extraction and update policies; useful to read for the policy vocabulary even if you build your own |
-| [`zep`](https://github.com/getzep/zep) | memory with temporal reasoning built in, which is the contradiction problem taken seriously |
+| [`graphiti`](https://github.com/getzep/graphiti) | Zep's open-source temporal knowledge graph: facts with validity intervals, which is the contradiction problem taken seriously |
 | [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) — Anthropic | the surrounding argument for why less machinery usually wins |
-| [Lil'Log on agents](https://lilianweng.github.io/posts/2023-06-23-agent/) | the survey post that popularised the working/episodic/semantic split in this setting |
+| [Lil'Log on agents](https://lilianweng.github.io/posts/2023-06-23-agent/) | the widely read survey post that maps the human-memory vocabulary (short-term, long-term; episodic, semantic, procedural) onto agent components — note that it maps all long-term memory onto a vector store, the default this chapter argues against |
+| [CoALA](https://arxiv.org/abs/2309.02427) — Sumers et al. | the paper behind the working / episodic / semantic / procedural taxonomy for language agents |
 
 : Beyond the papers {tbl-colwidths="[42,58]"}
 
@@ -676,7 +756,8 @@ episode. If facts are living in a vector index, you have found your first task.
 | extraction, consolidation and update as a library | @chhikara2025mem0 |
 | invalidating a superseded fact instead of storing both | @rasmussen2025zep |
 | what a long context does and does not retain | @hsieh2024ruler; @modarressi2025nolima |
-| retrieval quality as memory grows | @thakur2021beir |
+| why one retriever's scores do not transfer across corpora | @thakur2021beir |
+| testing memory over many sessions | [LoCoMo](https://arxiv.org/abs/2402.17753); [LongMemEval](https://arxiv.org/abs/2410.10813) |
 | the loop this all hangs from | @yao2023react |
 
 : The primary sources {tbl-colwidths="[46,54]"}
@@ -688,8 +769,9 @@ episode. If facts are living in a vector index, you have found your first task.
   **semantic memory fails silently**, returning a March fact confidently in
   July.
 - **Facts in rows, episodes in vectors.** A fact needs update and delete, and a
-  vector index offers neither by name. Putting facts in an index is the common
-  production mistake, and the bill arrives at the first erasure request.
+  vector index offers them only by vector id, not by fact. Putting facts in an
+  index without a key is a common production mistake, and you pay for it the
+  first time a user asks you to correct or forget one specific fact.
 - **The model will not resolve contradictions for you.** With both facts
   present and no timestamps it chose the newer one **0%** of the time and
   hedged on 83.3%; timestamps alone took it to 33.3%; an explicit recency rule
@@ -699,8 +781,11 @@ episode. If facts are living in a vector index, you have found your first task.
   or possibly phone" — better than lying, still a failed answer, and a bare
   accuracy number cannot tell it apart from a wrong pick.
 - **Write an explicit statement the first time, and an inference only on a
-  second occurrence or a confirmation**, and record provenance every time. Without provenance you cannot resolve, expire, or
-  explain.
+  second occurrence or a confirmation**, and record provenance every time.
+  Without provenance you cannot resolve, expire, or explain.
+- **Test the write, the read and the whole loop.** Write precision and
+  recall, "does recall return the current value", and questions asked after
+  facts have changed.
 - **Forgetting is a feature.** TTL at write time, decay for episodes, and
   deletion that actually deletes rather than a flag the retriever might forget.
 - **Read as infrastructure, write as a tool.** Recall should happen every time
