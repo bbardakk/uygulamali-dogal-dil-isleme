@@ -149,7 +149,7 @@ kendiliğinizden eklemek girdinizi modelin beklediği biçimden uzaklaştırır.
 
 | Adım | [Size ne kazandırır]{.pro} | [Size neye mal olur]{.con} | Varsayılan |
 |---|---|---|---|
-| Küçük harfe çevirme | `Pompa` = `pompa`, birçok sayımı yarıya indirir | `AŞ` şirketi ile `aş` fiili aynılaşır — ve Türkçede `str.lower()` doğrudan yanlıştır, hem de sessizce. | İngilizce için evet; başka dillerde yalnızca yerel ayara duyarlı bir işlevle |
+| Küçük harfe çevirme | `Pompa` = `pompa`: iki sütun tek sütunda birleşir, sayımları toplanır | `AŞ` şirketi ile `aş` fiili aynılaşır — ve Türkçede `str.lower()` doğrudan yanlıştır, hem de sessizce. | İngilizce için evet; başka dillerde yalnızca yerel ayara duyarlı bir işlevle |
 | Noktalama temizleme | `arızalandı;` = `arızalandı` | `P-101`'i, ondalıkları, URL'leri, kimyasal formülleri bozar. | Hayır — seçerek temizleyin |
 | [**Stop word**](#gloss-stop-word){#term-stop-word .term-ref} atma | `the`, `is`, `of` düşer; burada token'ların %43,9'u | Olumsuzlamayı (`not`) ve *to be or not to be* gibi ifadeleri yok eder. | Yalnızca seyrek sayım modellerinde |
 | Gövdeleme (stemming) | `replaced` → `replac`, `kitaplarımızdan` → `kitap`; çekimleri ucuza tek çatı altında toplar | Kaba ek kırpma. `university` → `univers` = `universe`. | Hayır |
@@ -413,7 +413,7 @@ ardından @sec-metin-veri-baytlar onu ele alıyor.
   <rect x="298" y="234" width="110" height="40" rx="9" class="chip"/>
   <text x="353" y="259" class="t-sm t-mono t-mid">est&lt;/w&gt;</text>
 
-  <text x="424" y="250" class="t-sm t-muted">Modelin binlerce kez gördüğü iki birim.</text>
+  <text x="424" y="250" class="t-sm t-muted">Birleştirmelerin zaten kurduğu iki birim.</text>
   <text x="424" y="267" class="t-sm t-muted">Sözlük dışı token yok — en kötü durumda</text>
   <text x="424" y="284" class="t-sm t-muted">karakterlere geri düşülür.</text>
 </svg>
@@ -497,7 +497,7 @@ html`<div style="font-size:0.9rem;">
         <p style="margin-top:0.7rem; color:var(--fig-muted);">
           Sonuç: <b>${bpeTrace[bpeTrace.length - 1].symbols.length}</b> token.
           Dört kelimelik bir derlemden sadece 10 birleştirme öğrenildi —
-          gerçek bir tokenizer 50.000 ve fazlasını öğrenir.
+          gerçek bir tokenizer on binlercesini öğrenir (GPT-2: yaklaşık 50.000).
         </p>
         ${bpeTrace.dropped ? html`<p style="color:var(--fig-warm);">
           <code>a–z</code> dışındaki karakterler atıldı: bu oyuncak birleştirme
@@ -540,10 +540,14 @@ Gerçek bir karakter düzeyi tokenizer'ın karşılaşabileceği her karakteri
 başlangıç alfabesinde bulundurması gerekir; Unicode ise yüz binin çok üstünde
 karakter tanımlar. Nadir olanlar `<UNK>` olur.
 
-**Baytlardan başlamak.** Bilgisayarlar karakter değil bayt saklar. Web'deki
-metnin standart kodlaması olan UTF-8, her karakteri bir ile dört bayt arasında
-yazar. ASCII harfleri bir bayt tutar; Türkçedeki `ç`, `ş`, `ğ`, `ı`, `ö`, `ü` ve
-`İ` harfleri iki; Çince karakterlerin çoğu üç, emoji dört bayt tutar:
+**Baytlardan başlamak.** Bilgisayarlar karakter değil bayt saklar. Burada iki
+katman var. Unicode her karaktere bir numara verir; buna **kod noktası** (code
+point) denir ve `U+` ardından onaltılık (hexadecimal) sayı olarak yazılır: `ç`,
+U+00E7'dir. Bu numaranın hangi baytlarla saklanacağına ise bir *kodlama*
+(encoding) karar verir. Web'deki metnin standart kodlaması olan UTF-8, her kod
+noktasını bir ile dört bayt arasında yazar. ASCII harfleri bir bayt tutar;
+Türkçedeki `ç`, `ş`, `ğ`, `ı`, `ö`, `ü` ve `İ` harfleri iki; Çince karakterlerin
+çoğu üç, emojilerin çoğu dört bayt tutar:
 
 ```python
 for ch in ["a", "ç", "ş", "İ", "世", "😀"]:
@@ -568,7 +572,10 @@ karakterlere dönüşür — eğitim metninde yeterince Türkçe varsa `ç`'nin 
 erkenden tek token olur — sonra da eskisi gibi alt kelimelere.
 
 Aşağıda byte düzeyinde bir tokenizer, OpenAI'ın `cl100k_base` kodlaması, her
-token'ın arkasındaki baytları gösteriyor:
+token'ın arkasındaki baytları gösteriyor. `enc.encode` bir tamsayı token
+kimlikleri (id) listesi döndürür — modele giden şey dizgiler değil, bu
+tamsayılardır — `decode_single_token_bytes` ise her kimliğin hangi baytları
+temsil ettiğini gösterir:
 
 ```python
 import tiktoken
@@ -613,8 +620,9 @@ token'lık bir sözlükle tanıttı [@radford2019language]. OpenAI'ın bir sonra
 alt bölümde ölçülen `cl100k_base` ve `o200k_base` kodlamaları byte düzeyindedir.
 Llama 3, 128 bin token'lık bir sözlüğe geçti: OpenAI'ın `tiktoken`'ından
 alınan 100 bin token'a İngilizce dışındaki diller için 28 bin token eklendi
-[@grattafiori2024llama3]. BERT ailesinden encoder modelleri hâlâ
-karakterler üzerinde WordPiece kullanıyor [@devlin2019bert]; hangi algoritmanın
+[@grattafiori2024llama3]. BERT ve DistilBERT, ELECTRA gibi yakın akrabaları hâlâ
+karakterler üzerinde WordPiece kullanıyor [@devlin2019bert] (RoBERTa ise BERT
+üzerine kurulu olsa da GPT-2'nin byte düzeyindeki BPE'sine geçti); hangi algoritmanın
 nerede kullanıldığını @sec-metin-veri-algoritmalar'daki tablo gösteriyor.
 Pratik kural bunların hiçbirine bağlı değil: modelin eğitildiği tokenizer'ı
 kullanın ve token'ları onunla sayın.
@@ -684,7 +692,9 @@ Bu neden böyle? Türkçe, İngilizceye kıyasla dilbilgisel bilgiyi tek bir
 kelimenin içinde eklerle kodlamaya çok daha fazla başvurur
 [@oflazer1994two]; bu yüzden aynı kökün çok sayıda yüzey biçimi oluşur.
 İngilizce aynı bilgiyi daha sık ayrı kelimelere dağıtır ve frekans temelli
-bir birleştirme algoritmasının iyi yakaladığı da budur.
+bir birleştirme algoritmasının iyi yakaladığı da budur. Aşağıda tek bir Türkçe
+kökün ek ek büyüyüşünü yine `cl100k_base` ile görüyorsunuz; her kelime, bir
+cümlenin içindeki hâliyle, başında bir boşlukla kodlandı:
 
 ```text
 ev             1 tokens  [' ev']
@@ -771,8 +781,10 @@ kelimeye ihtiyaç duydu, yine de daha az token ödedi.
 dilbilgisinin tek bir kuralını vermedi. Çekince `im|iz`'de: *-imiz*
 (iyelik) **tek** bir biçimbirimdir ve BPE onu ikiye bölmüştür, çünkü `im` ile
 `iz` tek başlarına da sık geçiyor. Yukarıdaki şekilde `iz`'in altına açıklama
-yerine tire konmasının nedeni de bu. Sıklık, morfoloji için iyi bir vekildir
-ama onun yerine geçmez — üstelik eşit sözlük büyüklüğünde unigram LM,
+yerine tire konmasının nedeni de bu. Daha yeni `o200k_base` ise `imiz`'i
+bölmeden tek parça tutuyor (`ev|ler|imiz|den`, dört token); bu da kesimin dile
+değil, birleştirme tablosuna bağlı olduğunu gösteriyor. Sıklık, morfoloji için
+iyi bir vekildir ama onun yerine geçmez — üstelik eşit sözlük büyüklüğünde unigram LM,
 morfolojiye BPE'den daha yakın bölüyor [@bostrom2020byte].
 
 Yukarıdaki çıktılarda iki farklı gelenek iç içe geçiyor; bunları adlandırmakta
@@ -788,7 +800,7 @@ yukarıdaki `' ev'`'in başındaki boşluk bu — SentencePiece
 [@kudo2018sentencepiece] ise görünür bir işaret koyar: `▁ev`. Aynı fikir, iki
 yazım; şekilde `▁` biçimi kullanılıyor, çünkü sayfada görmesi daha kolay.
 
-Bir örnek daha; bu kez Türkçeye özgü harflerin (ö, ü, ş gibi) fazladan token'a mal olduğunu göstermek için:
+Bir örnek daha; bu kez Türkçeye özgü harflerin (ö, ü, ş gibi) fazladan token'a mal olduğunu göstermek için (yine `cl100k_base`, bu kez baştaki boşluk olmadan):
 
 ```text
 gorusebileceklerimiz            8 tokens  ['gor','use','b','ile','cek','ler','im','iz']
@@ -804,7 +816,8 @@ bir adım var. `ö` iki biçimde saklanabilir: tek bir kod noktası olarak (U+00
 "NFC") ya da `o` artı birleştirici çift nokta olarak (U+0308, "NFD"). İkisi
 ekranda ayırt edilemez, Python'da *eşit değil* diye karşılaştırılır ve farklı
 sayıda token'a mal olur — `görüşebileceklerimiz` NFC'de 20 karakter ve 23 bayt,
-NFD'de 23 karakter ve 26 bayttır. macOS dosya adları, birçok PDF çıkarımı ve
+NFD'de 23 karakter ve 26 bayttır; `cl100k_base` ile NFC'de 10, NFD'de ise 15
+token tutar. macOS dosya adları, birçok PDF çıkarımı ve
 bazı web formları size NFD verir. Dolayısıyla ASCII dışı metne dokunan her
 hattın ilk satırı şudur:
 
@@ -814,7 +827,11 @@ text = unicodedata.normalize("NFC", text)
 ```
 
 Bu bölümdeki her ölçüm o çağrıdan sonra alındı. Atlarsanız, sözlüğünüz aynı
-kelimenin iki yazımını sessizce barındırır.
+kelimenin iki yazımını sessizce barındırır. Karşınıza **NFKC** de çıkacaktır:
+"uyumluluk" varyantlarını da birleştiren daha güçlü bir biçimdir — `ﬁ` bitişik
+harfini `fi`'ye, tam genişlikteki `Ａ`'yı `A`'ya çevirir — ve SentencePiece bunu,
+biraz genişletilmiş bir hâliyle, varsayılan olarak uygular. NFC'den daha fazla
+şeyi değiştirdiği için bilerek kullanın.
 
 Yukarıdaki ASCII karşılaştırması bir optimizasyon önerisi değildir. Türkçe
 karakterleri bozmak arama kalitesini, kullanıcı deneyimini ve anlam
@@ -901,8 +918,8 @@ Aşağıdaki tablo üç seçeneği kâğıt üzerinde karşılaştırıyor. Önc
 bir örnekte izleyin; böylece tablonun her satırı, gözünüzle gördüğünüz bir şeye
 karşılık gelsin.
 
-Derlem altmış Türkçe kelimeden oluşuyor: on iki kökün her biri aynı dört ekle
-birlikte geçiyor. Ekler ünlü uyumuna göre yazılmış (`-ler`/`-lar`, `-de`/`-da`).
+Derlem altmış Türkçe kelimeden oluşuyor: on iki kökün her biri hem yalın hâliyle
+hem de aynı dört ek dizisiyle (`-ler`, `-de`, `-den`, `-lerde`) geçiyor. Ekler ünlü uyumuna göre yazılmış (`-ler`/`-lar`, `-de`/`-da`).
 İki test kelimesi, `evlerden` ve `okullardan`, derlemde hiç geçmiyor; ama
 parçalarının hepsi geçiyor.
 Her tokenizer derlemden öğreniyor, sonra bu iki yeni kelimeyi bölüyor. BPE
@@ -1004,8 +1021,9 @@ iniyor:
 
 **Üçü de alt kelime üretir; temel fark, hangi parçaların sözlüğe girmesini
 "iyi" saydıklarıdır.** `SentencePiece` [@kudo2018sentencepiece] ise dördüncü
-bir algoritma değil, BPE ya da Unigram LM'i çalıştırabilen bir *kütüphanedir*;
-karşılaştırmayı kurarken bunu baştan ayırmakta fayda var. Aşağıdaki tablo aynı
+bir algoritma değil, BPE ya da Unigram LM'i çalıştırabilen bir *kütüphanedir*
+— Llama 2 ve Gemma onu BPE kipinde, T5 ve ALBERT ise Unigram kipinde kullanır.
+Karşılaştırmayı kurarken bunu baştan ayırmakta fayda var. Aşağıdaki tablo aynı
 üç yöntemin neyi optimize ettiğini ayrıntılandırıyor; bir modelin hangisini
 kullandığını bilmek, bölünmelerini öngörmenin yoludur. WordPiece satırındaki
 oran için bir çekince: özgün eğitim yordamının bütün ayrıntıları yayımlanmış
@@ -1014,9 +1032,9 @@ yeniden kurmadır.
 
 | | Neyi optimize eder | Yön | Nerede kullanılır |
 |---|---|---|---|
-| **BPE** [@sennrich2016neural] | en *sık* komşu çifti birleştir | aşağıdan yukarı, sözlük büyür | GPT-2/3/4, RoBERTa, Llama |
+| **BPE** [@sennrich2016neural] | en *sık* komşu çifti birleştir | aşağıdan yukarı, sözlük büyür | GPT-2/3/4, RoBERTa, Llama, Gemma |
 | **WordPiece** [@schuster2012japanese] | derlem olabilirliğini en çok artıran çifti birleştir, kabaca $\frac{c(ab)}{c(a)\,c(b)}$'yi büyüt | aşağıdan yukarı | BERT, DistilBERT, ELECTRA |
-| **Unigram LM** [@kudo2018subword] | büyük bir aday kümeden başla ve kaldırılması en az olabilirliğe mal olan parçaları EM ile *buda* | yukarıdan aşağı, sözlük küçülür | T5, ALBERT, Gemma, çoğu SentencePiece modeli |
+| **Unigram LM** [@kudo2018subword] | büyük bir aday kümeden başla ve kaldırılması en az olabilirliğe mal olan parçaları *buda*; parça olasılıklarını EM (beklenti–maksimizasyon) ile yeniden kestir | yukarıdan aşağı, sözlük küçülür | T5, ALBERT, XLNet, XLM-R |
 
 : Üç alt kelime algoritması ve her birinin gerçekte neyi en büyük kılmaya çalıştığı
 {tbl-colwidths="[16,40,24,20]"}
@@ -1254,8 +1272,8 @@ boşluklar dâhil ham dizgeyi girdi olarak ele alır; token'larının boşluk ol
 yerde `▁` taşımasının nedeni de bu.
 
 Seçim BPE lehine kesinleşmiş de değil: eşit sözlük büyüklüğünde unigram LM,
-morfolojiye daha yakın bölüyor ve onunla ön eğitilen dil modelleri BPE ile
-eğitilenlerden daha iyi çıkıyor [@bostrom2020byte].
+morfolojiye daha yakın bölüyor ve onunla ön eğitilen modeller, alt görevlerde
+BPE ile eğitilenlere denk ya da onlardan daha iyi sonuç verdi [@bostrom2020byte].
 
 ## Zipf ve Heaps: kelimelerin uzun kuyruğu {#sec-metin-veri-zipf}
 
@@ -1317,7 +1335,8 @@ yeni veri yalnızca mevcut kelimelerin sayımlarını artırmıyor, yeni türler
 sıranın bir kuvvetiyle düşer, $f(r) \propto r^{-\alpha}$; bu da log-log
 eksenlerde düz bir çizgiye *yakın* demektir. O cümledeki "yakın" kelimesi boşuna
 orada değil. Bu derlemde onuncu sıradaki kelime 26.985 kez geçiyor; temiz bir
-$\alpha = 1$'in öngöreceği ~10.600 kez değil. Dağılımın başı yasanın
+$\alpha = 1$'in öngöreceği ~10.600 kez (ilk kelimenin 106.425'inin onda biri)
+değil. Dağılımın başı yasanın
 öngördüğünden daha yassı; Mandelbrot'un $f(r) \propto (r + b)^{-\alpha}$
 düzeltmesi de tam bunu hesaba katmak için var. Düz çizgiyi veriden kestirilmiş
 bir model olarak değil, bir *biçim* olarak alın.
@@ -1715,8 +1734,8 @@ da logaritmik $1 + \log c(t,d)$ biçimini kullanır; çıkan sayılar da farklı
 olur. Bir varyantı adlandırmanın klasik kısaltması, (tf) × (idf) ×
 (normalleştirme) için üç harfli bir kod olan SMART gösterimidir:
 `scikit-learn`'ün varsayılanı kabaca **`ntc`** — doğal tf, düzleştirilmiş idf,
-kosinüs normalleştirmesi — klasik bilgi erişimi varsayılanı ise logaritmik
-tf'li **`ltc`**'dir. `sublinear_tf=True` sizi `n`'den `l`'ye taşır ve bu
+kosinüs normalleştirmesi — klasik bilgi erişiminde yaygın bir seçim ise
+logaritmik tf'li **`ltc`**'dir. `sublinear_tf=True` sizi `n`'den `l`'ye taşır ve bu
 bölümün sonundaki deneyde bir satır kazanan seçenek odur. Bir sayıyı
 raporlarken hangi varyantı kullandığınızı yazın; "TF-IDF" tek başına bir
 şartname değildir.
@@ -2396,9 +2415,9 @@ Operasyonel anlamı taban tabana zıt iki cümle, ağırlıklandırmaya göre 0,
 0,87 arasında bir kosinüs alıyor — TF-IDF biraz yardım ediyor ama yeterli
 olmaktan çok uzak. Stop word listenizde `değil` sözcüğü varsa — ki bazı hazır
 Türkçe listelerde bulunur — iki cümle arasındaki en önemli farkı daha vektörü
-kurmadan silersiniz ve cümleler birbirine tam olarak %100 benzer hâle gelir.
-Bir metin sınıflandırıcısının güvenlik açısından kritik bir incelemede sessizce
-yanlış sonuç vermesinin en yaygın yolu budur.
+kurmadan silersiniz ve iki vektör birebir aynı hâle gelir (kosinüs 1). Bir
+metin sınıflandırıcısının güvenlik açısından kritik bir incelemede sessizce
+yanlış sonuç vermesinin yaygın yollarından biri budur.
 
 ::: {.column-margin}
 Türkçede olumsuzluk iki ayrı yoldan gelir ve ikisi de kendi açısından
@@ -2493,9 +2512,12 @@ Bu altı satırı dikkatle okuyun, çünkü içlerinde dört çıkarım var:
 Bu altı sayıdan herhangi birini aktarmadan önce bir çekince; çünkü bu kitap
 herkesten aynı şeyi istiyor. Bunlar, yanında aralık verilmemiş nokta
 kestirimleri. Test kümesinde 1.550 belge var; dolayısıyla 0,83 civarındaki
-*tek* bir doğruluğun %95 aralığı kabaca ±1,9 puan — 3. ve 4. çıkarımların her
-biri ise 1,2 puanlık bir farka dayanıyor. O hâlde 1. ve 2. çıkarımı bulgu,
-3. ve 4. çıkarımı *yön* olarak okuyun.
+*tek* bir doğruluğun %95 aralığı kabaca ±1,9 puan. Bu türden iki doğruluk
+arasındaki *fark*ın aralığı ise, ikisi bağımsız kestirimler gibi ele alındığında,
+daha geniştir: kabaca ±2,6 puan. 1. çıkarım 6,4 puanlık bir farka dayanıyor ve
+bu eşiği rahatça aşıyor; 2. çıkarım 2,2 puana dayanıyor ve sınırda; 3. ve 4.
+çıkarımların her biri ise 1,2 puana. O hâlde 1. çıkarımı bulgu, 2. çıkarımı
+olası ama bu tabloyla kanıtlanmamış, 3. ve 4. çıkarımı ise *yön* olarak okuyun.
 
 ::: {.callout-note collapse="true"}
 ## İleri not: aynı test örneklerini gören iki modeli karşılaştırmak
@@ -2585,9 +2607,13 @@ bölümdeki bir fikrin üretimdeki hâli:
   üretme yöntemi.
 - **Shingling:** kelime sırasının bir kısmını koruyan, n-gram tabanlı temsil.
 
+Kullanım yerlerinin kendisi:
+
 - **Uber'de talep yönlendirme.** Uber'in müşteri destek sistemi COTA, bu
   bölümdeki hattı neredeyse satır satır çalıştırıyor: temizle, tokenize et,
-  stop word'leri at, kök bul, TF-IDF, LSA ile boyut indir, sonra aday
+  stop word'leri at, kök bul, TF-IDF, LSA ile boyut indir (latent semantic
+  analysis, yani TF-IDF matrisinin kesik SVD'si; aşağıdaki mülakat sorularına
+  bakın), sonra aday
   çözümleri talebe kosinüs benzerliğine göre sırala [@uber2018cota]. Sistem,
   talep çözüm süresini yaklaşık %10 kısaltmış. Yazıya göre kosinüs
   benzerliğine dayalı sıralayıcı, konu vektörlerini doğrudan kullanmaya
@@ -2904,15 +2930,17 @@ farklı değerler, her değerin hangi sütuna ait olduğu ve her satırın bu
 listede nereden başladığı. Böylece maliyet hücre sayısıyla değil, *sıfırdan
 farklı hücre* sayısıyla ölçeklenir. %0,1 yoğunlukta bu $10^8$ değer demek;
 değer başına 12 bayttan yaklaşık **1,2 GB** — yani 800 GB'ın yerine 1,2 GB,
-kabaca **665×** kazanç. %1 yoğunlukta bile 12 GB'da kalırsınız.
+kabaca **670×** kazanç. %1 yoğunlukta bile 12 GB'da kalırsınız.
 
 İyi bir cevabı asıl ayıran kısım şurası: seyreklik bir depolama numarası değil,
 hangi işlemleri yapabileceğinizi belirleyen bir kısıttır.
 
 - **Seyrekliği yok eden işlemler.** Sütunlardan ortalama çıkarmak (ortalama
   merkezleme) her sıfırı sıfırdan farklı yapar ve sizi bir anda 800 GB'a geri
-  götürür. Ham matris üzerinde PCA da bunu yapar, çünkü içinde sessizce
-  ortalama merkezleme vardır.
+  götürür. Ders kitabındaki PCA da bunu yapar, çünkü önce ortalama merkezleme
+  uygular. (Yeni `scikit-learn` sürümleri seyrek bir matrisi örtük olarak
+  merkezleyebiliyor, ama yalnızca belirli çözücülerle; güvenmeden önce kontrol
+  edin.)
 - **Seyrekliği koruyan işlemler.** Satır bazında L2 normalleştirme ve
   matris–vektör çarpımları yalnızca sıfırdan farklı hücrelere dokunur; biçimi
   bozmazlar.
@@ -3194,7 +3222,7 @@ kendinizi kontrol etmenizi kolaylaştırır.
    oynatır — silinen sütunların token kullanımlarındaki payını da rapor edin.
 5. Olumsuzlamanın taşıdığı fark tek bir sütundur; kosinüs 0,9'un üstünde
    kalabilir.
-6. Log-log grafikte baş kısım düz çizginin üstünde kalır; ilk beş token'da
+6. Log-log grafikte baş kısım (ilk birkaç sıra) düz bir çizgiden daha yassıdır; ilk beş token'da
    derlem artefaktları görmeniz olağandır.
 7. Kelime başına token sayısı ek sayısıyla birlikte artar; ASCII'ye indirgeme
    token sayısını düşürür ama anlam ve arama kalitesini bozar.

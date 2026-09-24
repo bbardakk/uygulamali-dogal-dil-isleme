@@ -5,8 +5,8 @@
 was produced by running the code shown, with `scikit-learn` 1.9 and
 `tiktoken` 0.13; the full environment is in @sec-setup. The
 `LogisticRegression` results are deterministic — the default `lbfgs` solver
-takes no randomness, so the `random_state` below is belt and braces rather than
-a seed that matters. The tokenizer, Zipf, and vector-space explorers are
+takes no randomness, so the `random_state` below is only an extra safeguard,
+not a seed that changes anything. The tokenizer, Zipf, and vector-space explorers are
 interactive.
 :::
 
@@ -29,8 +29,8 @@ gap, and the bridge has exactly two spans: [decide what the units are]{.hl}
 
 That is the whole chapter.
 
-It is worth saying up front, because the techniques below — bag-of-words,
-TF-IDF — are sometimes dismissed as historical. They are not.
+This framing is worth stating up front, because the techniques below —
+bag-of-words, TF-IDF — are sometimes dismissed as historical. They are not.
 
 The representations we build here are **sparse**: most words in the
 vocabulary do not occur in any given document, so most coordinates of a
@@ -127,7 +127,7 @@ input away from the form the model expects.
 
 | Step | [What it buys you]{.pro} | [What it costs you]{.con} | Default |
 |---|---|---|---|
-| Lowercasing | `Pump` = `pump`, halving many counts | `US` → `us`, `Apple` → `apple`. Loses proper nouns and acronyms — and in Turkish `str.lower()` is outright wrong, silently. | Yes for English; elsewhere only with a locale-aware function |
+| Lowercasing | `Pump` = `pump`: two columns merge into one and their counts add up | `US` → `us`, `Apple` → `apple`. Loses proper nouns and acronyms — and in Turkish `str.lower()` is outright wrong, silently. | Yes for English; elsewhere only with a locale-aware function |
 | Punctuation stripping | `fail;` = `fail` | Destroys `P-101`, decimals, URLs, chemical formulas. | No — strip selectively |
 | Stop word removal | drops `the`, `is`, `of`; 43.9% of tokens here | Destroys negation (`not`), and phrases like *to be or not to be*. | Only for sparse count models |
 | Stemming | `replaced` → `replac`, collapsing inflections cheaply | Crude suffix chopping. `university` → `univers` = `universe`. | No |
@@ -372,8 +372,8 @@ merges were learned over — is where real tokenizers differ from this toy, and
   <rect x="298" y="234" width="110" height="40" rx="9" class="chip"/>
   <text x="353" y="259" class="t-sm t-mono t-mid">est&lt;/w&gt;</text>
 
-  <text x="424" y="250" class="t-sm t-muted">Two units the model has seen thousands</text>
-  <text x="424" y="267" class="t-sm t-muted">of times. No out-of-vocabulary token —</text>
+  <text x="424" y="250" class="t-sm t-muted">Two units the merges already built.</text>
+  <text x="424" y="267" class="t-sm t-muted">No out-of-vocabulary token —</text>
   <text x="424" y="284" class="t-sm t-muted">the worst case is a fallback to characters.</text>
 </svg>
 ```
@@ -456,7 +456,7 @@ html`<div style="font-size:0.9rem;">
         <p style="margin-top:0.7rem; color:var(--fig-muted);">
           Final: <b>${bpeTrace[bpeTrace.length - 1].symbols.length}</b> token(s).
           Only 10 merges were learned, from a four-word corpus — a real
-          tokenizer learns 50,000 or more.
+          tokenizer learns tens of thousands (GPT-2: about 50,000).
         </p>
         ${bpeTrace.dropped ? html`<p style="color:var(--fig-warm);">
           Characters outside <code>a–z</code> were dropped: this toy merge list
@@ -496,10 +496,12 @@ needs every character it may ever meet in its starting alphabet, and Unicode
 defines well over a hundred thousand of them. The rare ones become `<UNK>`.
 
 **Starting from bytes.** Computers do not store characters; they store bytes.
-UTF-8, the standard encoding for text on the web, writes each character as one
-to four bytes. ASCII letters take one byte; the Turkish letters `ç`, `ş`, `ğ`,
-`ı`, `ö`, `ü` and `İ` take two; most Chinese characters take three and emoji
-four:
+Two layers are involved. Unicode gives every character a number, its **code
+point**, written `U+` followed by the number in hexadecimal: `ç` is U+00E7.
+An *encoding* then decides which bytes store that number. UTF-8, the standard
+encoding for text on the web, writes each code point as one to four bytes.
+ASCII letters take one byte; the Turkish letters `ç`, `ş`, `ğ`, `ı`, `ö`, `ü`
+and `İ` take two; most Chinese characters take three and most emoji four:
 
 ```python
 for ch in ["a", "ç", "ş", "İ", "世", "😀"]:
@@ -524,7 +526,9 @@ first — the two bytes of `ç` become one token early if the training text hold
 enough Turkish — and then into subwords, as before.
 
 Here is a byte-level tokenizer, OpenAI's `cl100k_base`, showing the bytes behind
-each token:
+each token. `enc.encode` returns a list of integer token ids — those integers,
+not strings, are what the model receives — and `decode_single_token_bytes`
+shows the bytes each id stands for:
 
 ```python
 import tiktoken
@@ -568,8 +572,10 @@ through an API, byte-level BPE is the default. GPT-2 introduced it with a
 50,257-token vocabulary [@radford2019language]. OpenAI's `cl100k_base` and
 `o200k_base`, measured in the next section, are byte-level. Llama 3 moved to a
 128K-token vocabulary that combines 100K tokens from OpenAI's `tiktoken` with 28K
-added for non-English languages [@grattafiori2024llama3]. Encoder models of the
-BERT family still ship WordPiece over characters [@devlin2019bert], and the
+added for non-English languages [@grattafiori2024llama3]. BERT and its close
+relatives such as DistilBERT and ELECTRA still ship WordPiece over characters
+[@devlin2019bert] (RoBERTa, although built on BERT, switched to GPT-2's
+byte-level BPE), and the
 table in @sec-text-as-data-algorithms shows which algorithm ships where. The
 practical rule does not depend on any of this: use the tokenizer the model was
 trained with, and count tokens with it.
@@ -639,7 +645,9 @@ Why does it happen? Turkish encodes far more grammatical information inside a
 single word, with suffixes, than English does [@oflazer1994two], so one stem
 produces many surface forms. English spreads the same information across
 separate words more often, and that is exactly what a frequency-based merge
-algorithm captures well.
+algorithm captures well. Here is one Turkish stem growing suffix by suffix,
+again on `cl100k_base`; each word is encoded with a leading space, the way it
+would appear inside a sentence:
 
 ```text
 ev             1 tokens  [' ev']
@@ -726,20 +734,28 @@ boundaries — *ev* (house), *-ler* (plural), *-den* (from) — and nobody suppl
 a rule of Turkish grammar. The asterisk is `im|iz`: *-imiz* ("our") is a
 **single** morpheme that BPE has cut in half, because `im` and `iz` are each
 frequent on their own. That is why the figure above puts a dash under `iz`
-rather than a gloss. Frequency is a good proxy for morphology, not a substitute
-for it — and at equal vocabulary size, unigram LM segments closer to morphology
+rather than a gloss. The newer `o200k_base` happens to keep `imiz` whole
+(`ev|ler|imiz|den`, four tokens), which shows that the exact cut depends on the
+merge table, not on the language. Frequency is a good proxy for morphology, not
+a substitute for it — and at equal vocabulary size, unigram LM segments closer to morphology
 than BPE does [@bostrom2020byte].
 
-Two conventions collide in those outputs, and they are worth naming. GPT's BPE tokenizers and BERT's WordPiece both skip the raw string; they first **pre-tokenize** it, splitting on whitespace and punctuation (GPT-2 does this with a regex), and only then split each piece into subwords. (SentencePiece deliberately does not — it is
-built to run on the raw string, which is what makes it work on languages that do
-not delimit words with spaces.) Where a pre-tokenizer is used, word boundaries
-have to survive into the token itself, or detokenisation would be ambiguous. GPT's encodings attach the
+Two conventions collide in those outputs, and they are worth naming. GPT's BPE
+tokenizers and BERT's WordPiece do not run on the raw string. They first
+**pre-tokenize** it: they split it on whitespace and punctuation (GPT-2 does
+this with a regular expression), and only then split each piece into subwords.
+SentencePiece deliberately does not pre-tokenize. It is built to run on the raw
+string, which is what makes it work on languages that do not put spaces between
+words. Where a pre-tokenizer is used, word boundaries have to survive into the
+token itself, or detokenization (turning tokens back into text) would be
+ambiguous. GPT's encodings attach the
 preceding space to the token — hence `' ev'` above, with a leading space —
 while SentencePiece [@kudo2018sentencepiece] substitutes a visible marker,
 `▁ev`. Same idea, two spellings; the figure uses the `▁` form because it is
 easier to see on a page.
 
-One more, to show that diacritics cost extra:
+One more, to show that diacritics cost extra (still `cl100k_base`, this time
+without a leading space):
 
 ```text
 gorusebileceklerimiz            8 tokens  ['gor','use','b','ile','cek','ler','im','iz']
@@ -755,7 +771,8 @@ can be stored two ways: as a single code point (U+00F6, "NFC") or as `o`
 followed by a combining diaeresis (U+0308, "NFD"). The two are indistinguishable
 on screen, compare as *unequal* in Python, and cost different numbers of tokens
 — `görüşebileceklerimiz` is 20 characters and 23 bytes in NFC, 23 characters and
-26 bytes in NFD. macOS filenames, many PDF extractions and some web forms hand
+26 bytes in NFD, and on `cl100k_base` it costs 10 tokens in NFC but 15 in NFD.
+macOS filenames, many PDF extractions and some web forms hand
 you NFD. So the first line of any pipeline that touches non-ASCII text is:
 
 ```python
@@ -764,7 +781,11 @@ text = unicodedata.normalize("NFC", text)
 ```
 
 Every measurement in this section was taken after that call. Skip it and your
-vocabulary quietly contains two spellings of the same word.
+vocabulary quietly contains two spellings of the same word. You will also meet
+**NFKC**, a stronger form that additionally folds "compatibility" variants —
+the ligature `ﬁ` into `fi`, full-width `Ａ` into `A` — and which SentencePiece
+applies by default, in a slightly extended form. It changes more than NFC does,
+so use it deliberately.
 
 The ASCII comparison above is not an optimisation suggestion. Stripping Turkish
 characters damages search quality, user experience and meaning distinctions;
@@ -833,8 +854,9 @@ The table below compares the three choices on paper. First, watch all three on
 one small example, so that every row of the table is something you have seen
 happen.
 
-The corpus is sixty Turkish words: twelve stems, each with the same four
-suffixes, spelled with vowel harmony (`-ler`/`-lar`, `-de`/`-da`). The two test
+The corpus is sixty Turkish words: twelve stems, each on its own and with the
+same four endings (`-ler`, `-de`, `-den`, `-lerde`), spelled with vowel harmony
+(`-ler`/`-lar`, `-de`/`-da`). The two test
 words, `evlerden` ("from the houses") and `okullardan` ("from the schools"),
 appear nowhere in it, although every piece of them does. Each tokenizer learns
 from the corpus and then splits the two new words. The BPE line reuses
@@ -936,8 +958,9 @@ each:
 
 **All three produce subwords; what differs is which pieces they count as
 "good" enough to keep.** `SentencePiece` [@kudo2018sentencepiece] is not a
-fourth algorithm but a *toolkit* that can run BPE or Unigram LM — worth
-separating before the comparison starts. The table below spells out what each
+fourth algorithm but a *toolkit* that can run BPE or Unigram LM — Llama 2 and
+Gemma use it in BPE mode, T5 and ALBERT in Unigram mode. That distinction is
+worth making before the comparison starts. The table below spells out what each
 one optimises, and knowing which one a model uses is how you predict its
 splits. One caveat about the WordPiece row: the original training procedure is
 not published in full, and this ratio is the common approximate reconstruction
@@ -945,9 +968,9 @@ used to explain its logic.
 
 | | What it optimises | Direction | Ships in |
 |---|---|---|---|
-| **BPE** [@sennrich2016neural] | merge the most *frequent* adjacent pair | bottom-up, the vocabulary grows | GPT-2/3/4, RoBERTa, Llama |
+| **BPE** [@sennrich2016neural] | merge the most *frequent* adjacent pair | bottom-up, the vocabulary grows | GPT-2/3/4, RoBERTa, Llama, Gemma |
 | **WordPiece** [@schuster2012japanese] | merge the pair that most increases corpus likelihood, roughly maximising $\frac{c(ab)}{c(a)\,c(b)}$ | bottom-up | BERT, DistilBERT, ELECTRA |
-| **Unigram LM** [@kudo2018subword] | start from a large candidate set and *prune* the pieces whose removal costs least likelihood, by EM | top-down, the vocabulary shrinks | T5, ALBERT, Gemma, most SentencePiece models |
+| **Unigram LM** [@kudo2018subword] | start from a large candidate set and *prune* the pieces whose removal costs least likelihood, re-estimating piece probabilities by EM (expectation–maximization) | top-down, the vocabulary shrinks | T5, ALBERT, XLNet, XLM-R |
 
 : Three subword algorithms, and what each one is actually maximising
 {tbl-colwidths="[16,40,24,20]"}
@@ -1128,7 +1151,7 @@ The probability of a split is the product of its pieces' probabilities, so
 every extra piece multiplies in another number below one. That is why the
 two-piece split beats the eight-letter one by 28 orders of magnitude, and why
 Unigram LM can also *sample* a less probable split during training — the
-subword regularisation described below.
+subword regularization described below.
 
 ::: {.callout-note collapse="true"}
 ## Deep dive: checking the minimal Unigram LM against SentencePiece
@@ -1174,7 +1197,7 @@ Two consequences worth carrying. First, WordPiece's ratio penalises pairs
 whose parts are already common on their own — above, that is why it built stems
 before suffixes. Second, Unigram LM is the only one that assigns a
 *probability* to each segmentation rather than one deterministic answer, which
-is what makes subword regularisation possible: sample a different segmentation
+is what makes subword regularization possible: sample a different segmentation
 each epoch and the model stops overfitting to one arbitrary split
 [@kudo2018subword]. And the contribution of `SentencePiece`
 [@kudo2018sentencepiece], the toolkit named above, shows up here: it treats the
@@ -1182,8 +1205,9 @@ raw string, spaces included, as the input, which is why its tokens carry a `▁`
 where a space was.
 
 The choice is not settled in BPE's favour, either: at equal vocabulary size,
-unigram LM segments closer to morphology and pretrains better language models
-than BPE does [@bostrom2020byte].
+unigram LM segments closer to morphology than BPE does, and models pretrained
+with it matched or outperformed BPE-based ones on downstream tasks
+[@bostrom2020byte].
 
 ## Zipf and Heaps: the long tail of words {#sec-text-as-data-zipf}
 
@@ -1240,12 +1264,15 @@ exactly once]{.hl}. Those single-occurrence words (*hapax legomena*) are
 49% of everything you would have to store, and 1.7% of what you would ever
 see. That one line is also why growing a word-level vocabulary to fix
 out-of-vocabulary words does not scale: new data does not only raise the counts
-of words you have, it keeps producing new types. This is **Zipf's law** [@zipf1949human]: frequency falls off as a power of
+of words you have, it keeps producing new types.
+
+This is **Zipf's law** [@zipf1949human]: frequency falls off as a power of
 rank, $f(r) \propto r^{-\alpha}$, which is close to a straight line on log-log
 axes. "Close to" is doing work in that sentence. On this corpus the
 tenth-ranked word appears 26,985 times, not the roughly 10,600 a clean
-$\alpha = 1$ would predict — the head of the distribution is flatter than the
-law, which is what Mandelbrot's correction $f(r) \propto (r + b)^{-\alpha}$
+$\alpha = 1$ would predict (the top word's 106,425 divided by 10) — the head
+of the distribution is flatter than the law, which is what Mandelbrot's
+correction $f(r) \propto (r + b)^{-\alpha}$
 exists to absorb. Take the straight line as a *shape*, not as a fitted model.
 
 ::: {.callout-warning appearance="simple" collapse="true"}
@@ -1622,7 +1649,7 @@ and rare *across documents*. Splitting that into two factors gives TF-IDF.
 
 **Term frequency** is how often the word occurs in this document — the *raw*
 count we already have. Note *raw*: `scikit-learn` does not divide by document
-length here, because the L2 normalisation in step 5 handles length.
+length here, because the L2 normalization in step 5 handles length.
 
 ::: {.callout-note collapse="true"}
 ## Practice note: TF-IDF is not one formula
@@ -1630,9 +1657,9 @@ length here, because the L2 normalisation in step 5 handles length.
 Many textbooks define term frequency as $\mathrm{tf} = c(t,d)/|d|$, or as the
 logarithmic $1 + \log c(t,d)$, and the resulting numbers differ. The classical
 shorthand for naming a variant is SMART notation, a three-letter code for
-(tf) × (idf) × (normalisation): `scikit-learn`'s default is roughly **`ntc`** —
-natural tf, smoothed idf, cosine normalisation — where the classic IR default
-is **`ltc`**, with logarithmic tf. Setting `sublinear_tf=True` moves you from
+(tf) × (idf) × (normalization): `scikit-learn`'s default is roughly **`ntc`** —
+natural tf, smoothed idf, cosine normalization — where a common classic IR
+choice is **`ltc`**, with logarithmic tf. Setting `sublinear_tf=True` moves you from
 `n` to `l`, and it is the option that wins a row in the experiment at the end
 of this chapter. Say which variant produced a number you report; "TF-IDF" on
 its own is not a specification.
@@ -1855,7 +1882,7 @@ followed by a division.
 Before the mathematics, the reason for that division, as a question: why should
 two documents on the same topic — one 20 words long, the other 2,000 — look far
 apart only because one is longer? Every count in the long document is bigger, so
-its vector is longer. L2 normalisation removes exactly that length effect and
+its vector is longer. L2 normalization removes exactly that length effect and
 leaves behind how the document distributes its weight across terms.
 
 ::: {#gloss-tf-idf .column-margin .term-gloss}
@@ -1923,7 +1950,7 @@ becomes which direction each one points, not how far it reaches.
 
 One document cannot be put on the sphere: an empty one, or one whose every
 word is out of vocabulary, has $\lVert v \rVert_2 = 0$ and no direction to
-normalise. Cosine with it is $0/0$ — undefined. `scikit-learn` returns a zero
+normalize. Cosine with it is $0/0$ — undefined. `scikit-learn` returns a zero
 row and a cosine of 0, which is a convention rather than an answer; if such
 documents exist in your corpus, count them before you trust any similarity
 built on them.
@@ -2302,8 +2329,8 @@ Two sentences with opposite operational meaning sit at cosines of 0.78 to 0.87
 depending on the weighting — TF-IDF helps a little, and nowhere near enough. If
 your stop word list contains *no* — and most default lists do — you delete the
 most important difference between the two sentences before the vector is even
-built, and they become 100% similar. This is the single most common way a text
-classifier silently fails a safety-critical review.
+built, and the two vectors become identical (cosine 1). This is a common way
+for a text classifier to fail a safety-critical review silently.
 
 **It cannot handle synonymy or polysemy.** `pump failed` and `pump broke`
 share nothing beyond `pump`. In a lowercased bag of words, `Apple` the company
@@ -2385,9 +2412,12 @@ Read those six lines carefully, because they contain four conclusions:
 A caution before you quote any of those six numbers, because this book asks the
 same of everyone else. They are point estimates with no intervals attached. The
 test set holds 1,550 documents, so a *single* accuracy near 0.83 carries a 95%
-interval of roughly ±1.9 points — and conclusions 3 and 4 each rest on a gap of
-1.2. So read conclusions 1 and 2 as findings and conclusions 3 and 4 as
-*directions*.
+interval of roughly ±1.9 points. The *difference* between two such accuracies,
+treated as independent estimates, has a wider interval, roughly ±2.6 points.
+Conclusion 1 rests on a gap of 6.4 and clears that easily; conclusion 2 rests on
+2.2 and is borderline; conclusions 3 and 4 each rest on 1.2. So read conclusion
+1 as a finding, conclusion 2 as likely but not proven by this table, and
+conclusions 3 and 4 as *directions*.
 
 ::: {.callout-note collapse="true"}
 ## Advanced note: comparing two models that saw the same test items
@@ -2476,9 +2506,13 @@ production form of an idea from this chapter:
   holding a vocabulary in memory.
 - **Shingling:** an n-gram representation that keeps part of the word order.
 
+The deployments themselves:
+
 - **Ticket triage at Uber.** COTA, Uber's customer support system, runs the
   pipeline from this chapter almost line for line: clean, tokenize, remove
-  stop words, lemmatize, TF-IDF, reduce with LSA, then rank candidate
+  stop words, lemmatize, TF-IDF, reduce with LSA (latent semantic analysis, a
+  truncated SVD of the TF-IDF matrix; see the interview questions below), then
+  rank candidate
   solutions by cosine similarity to the ticket [@uber2018cota]. It cut ticket
   resolution time by around 10%, and the write-up notes that the
   cosine-similarity ranker beat using the topic vectors directly by 25%
@@ -2507,7 +2541,7 @@ $k_1 + 1$ and stops growing, so the tenth occurrence of a word adds almost
 nothing — that is `sublinear_tf` with a tunable ceiling. And $b \in [0,1]$
 interpolates between ignoring document length ($b = 0$) and dividing the term
 frequency by the document's length relative to the corpus average ($b = 1$).
-That is the same *concern* L2 normalisation addresses — long documents should
+That is the same *concern* L2 normalization addresses — long documents should
 not win on length alone — handled by a different formula and with a dial
 instead of a switch.
 Lucene's defaults are $k_1 = 1.2$ and $b = 0.75$ [@robertson2009probabilistic].
@@ -2779,15 +2813,16 @@ as a grid but as three lists — the non-zero values, the column each value
 belongs to, and where each row starts in that list. Cost then scales with
 the number of *non-zeros* rather than the number of cells. At 0.1% density
 that is $10^8$ values, roughly **1.2 GB** at 12 bytes each — 1.2 GB in place
-of 800 GB, about a **665×** saving. Even at 1% density you stay at 12 GB.
+of 800 GB, about a **670×** saving. Even at 1% density you stay at 12 GB.
 
 What separates a good answer is the next part: sparsity is not a storage
 trick, it is a constraint on which operations you are allowed to perform.
 
 - **Operations that destroy sparsity.** Subtracting the column mean
   (mean-centering) makes every zero non-zero and puts you straight back at
-  800 GB. PCA on the raw matrix does the same, because it mean-centers
-  silently.
+  800 GB. A textbook PCA does the same, because it mean-centers first.
+  (Recent `scikit-learn` versions can center a sparse matrix implicitly, but
+  only with particular solvers; check before you rely on it.)
 - **Operations that preserve it.** Row-wise L2 normalization and
   matrix–vector products touch only the non-zeros and leave the format intact.
 - **Operations whose *input* stays sparse and whose *output* need not.** An
@@ -3000,7 +3035,7 @@ goes past this chapter.
 3. **Derive it by hand.** *(Basic)* For the four-document corpus in this chapter,
    compute the TF-IDF vector for d3 with pen and paper, then verify against
    `TfidfVectorizer`. If they disagree, the disagreement is almost always in
-   one of three places — the smoothing, the L2 normalisation, or the
+   one of three places — the smoothing, the L2 normalization, or the
    tokenizer's `token_pattern`. Find which.
 4. **Replicate and extend.** *(Applied)* Reproduce the classification table above, then
    add one row: TF-IDF with `min_df=5`. Does accuracy fall? By how much did
@@ -3035,14 +3070,14 @@ yourself.
    which is what splits identifiers (`P-101`, version numbers, code
    fragments).
 3. The hand computation should match the library to the last digit; if it does
-   not, the difference comes from smoothing, L2 normalisation or
+   not, the difference comes from smoothing, L2 normalization or
    `token_pattern`.
 4. `min_df=5` removes most columns and moves accuracy very little — report the
    share of token occurrences those columns carried.
 5. The difference negation carries is a single column; cosine can stay above
    0.9.
-6. On log-log axes the head sits above the straight line, and corpus artefacts
-   in the top five tokens are normal.
+6. On log-log axes the head (the top few ranks) is flatter than a straight
+   line, and corpus artefacts in the top five tokens are normal.
 7. The document mentioning the query term three times ranks higher; without
    saturation that effect grows out of proportion.
 :::
