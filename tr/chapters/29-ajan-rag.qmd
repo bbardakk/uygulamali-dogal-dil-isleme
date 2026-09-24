@@ -30,8 +30,9 @@ varsayılan olmasının nedenidir.
 
 Ajan tabanlı RAG tek bir kararı kurma anından çalışma anına taşır: **erişim,
 modelin gerekli gördüğü kadar çağırdığı bir araç hâline gelir.**
-@sec-ajan-anatomisi'nin terimleriyle retriever (ilgili belgeleri bulup getiren arama bileşeni), bir hattın 5. aşaması olmayı
-bırakır ve araç listesinde bir madde olur.
+Retriever (ilgili belgeleri bulup getiren arama bileşeni) @sec-rag'in hattındaki
+5. aşama olmayı bırakır ve @sec-ajan-anatomisi'nin terimleriyle araç listesinde
+bir madde olur.
 
 Bunun kazandırdığı, tam olarak:
 
@@ -49,7 +50,8 @@ sonlanması bir koşul değil bir model yargısı olan bir döngü.
 **Neye bakacağız.** Önce sabit bir hattın yapısal olarak cevaplayamadığı tek soru
 biçimi ve ne kadar kötü cevaplayamadığının ölçümü — hattın en başından beri
 yeterli olduğu durumda döngünün neye mal olduğunu gösteren bir kontrolle. Sonra
-ikinci sorguyu elde etmenin iki yolu ve aralarında seçim kuralı. Sonra birkaç
+ikinci sorguyu elde etmenin iki yolu, aralarında seçim kuralı ve literatürde
+karşılaşacağınız adlandırılmış tasarımlar (Self-RAG ve diğerleri). Sonra birkaç
 indeksle ne olduğu; cazip cevabın, @sec-erisim'in zaten kaybettiğini ölçtüğü
 cevap olduğu yer. Sonra çıkış koşulu bir modelin görüşü olan bir döngünün nasıl
 durdurulacağı. Son olarak da iki mimarinin nasıl karşılaştırılacağı: farkında
@@ -68,6 +70,12 @@ olmadan yalnızca mimarinin kurulma amacı olan durumu ölçmeye düşmeden.
 
 Soru `ZRG-14` içeriyor. `KVT-22` **içermiyor**, çünkü soran onu bilmiyor —
 sorduğu şey zaten bu.
+
+Devam etmeden önce birkaç terim. Bir belgeden ötekine geçen her adıma *hop*
+(adım) denir; bu yüzden bu soru **iki adımlı** (two-hop) bir sorudur, iki ya da
+daha fazla böyle adım gerektiren sorulara da **çok adımlı** (multi-hop) denir.
+İki belgeyi birbirine bağlayan ad olan `KVT-22` ise *köprü varlıktır* (bridge
+entity): hem ilk adımın cevabı hem de ikinci adımın arama anahtarıdır.
 
 Yani bu sorguyu alan bir retriever 1. belgeyi kolayca buluyor ve sorguda 2.
 belgeyi işaret eden hiçbir şey yok: [ikinci belgeyi getirmek için gereken terim
@@ -207,10 +215,11 @@ bu kontrolü istiyor; bölüm de onu koşmalı. Koşana kadar "yapısal"ı kanı
 değil olası açıklama olarak okuyun.
 
 **Tek adımlı sorularda döngü hiçbir şey kazandırmıyor ve 1,15 kata mal
-oluyor.** Birebir aynı doğruluk, birebir aynı tur sayısı, her seferinde yeterli
-dönen bir yeterlilik kontrolü için %15 daha fazla token. Üretimdeki soruların
-çoğu tek adımlıdır, dolayısıyla gerçek bir yüke hâkim olan durum budur — ve
-mimarinin saf ek yük olduğu durum.
+oluyor.** Birebir aynı doğruluk ve her seferinde yeterli dönen bir yeterlilik
+kontrolü için %15 daha fazla token (155'e karşı 179). Çoğu uygulamada soruların
+büyük kısmı tek adımlıdır (sizinkini labın 1. adımı ölçer); dolayısıyla
+gerçek bir yüke genellikle hâkim olan durum budur ve mimarinin saf ek yük olduğu
+durum da budur.
 
 **Tavanı kaldırmak, görevi güvenilir biçimde çözmek demek değildir.** Ajan tabanlı erişim %0'dan
 **%30**'a gitti — gözlenen sıfır bir taban çizgisinden 30 puanlık bir kazanç; ki
@@ -251,23 +260,29 @@ gönderen bileşen):
   %20 iki adımlıda ≈ 352 token, harmanlanmış 2,26 kat, +6 puan için. Hücre
   çarpanı mimariyi satan sayıdır; harmanlanmış olan ödediğiniz sayıdır.
 - **Sonra yönlendiriciye ihtiyacınız olup olmadığını kontrol edin.** Bu ölçümde
-  döngü kendi kendini yönlendirdi: tek adımlı sorularda ortalaması tam olarak
-  **1,00 tur**du, ihtiyaç duymadığı ikinci bir sorguyu bir kez bile açmadı. Bu,
-  *kusursuz* bir yönlendiricinin kazancını 24 token'lık yeterlilik kontrolüyle
-  sınırlıyor — %5'lik bir karışımda harmanlanmış faturanın yaklaşık %10'u, üstelik
-  birebir aynı doğruluk için. Yani burada yönlendirmenin gerekçesi maliyet değil.
-  Gecikme, hata ayıklanabilirlik ve kuyruk varyansı. Ve kusurlu bir sınıflandırıcı
-  hiç olmamasından kesinlikle kötüdür: hatta yanlış yönlendirilen iki adımlı bir
-  soru %30 değil sıfır alır.
+  döngü büyük ölçüde kendi kendini yönlendirdi: tek adımlı sorularda hattan
+  yalnızca 24 token fazla harcadı; bu, ikinci sorguyu nadiren ya da hiç
+  göndermeyen bir döngüyle uyumlu. (Geri çekilen tur sayacı orada 1,00 tur
+  kaydetmişti, ama o sayaca güvenilmiyor.) *Kusursuz* bir yönlendiricinin
+  kazandırabileceği de bu 24 token'dır — %5'lik bir karışımda harmanlanmış
+  faturanın yaklaşık %10'u (222 token'ın 0,95 × 24 ≈ 23'ü), üstelik birebir aynı
+  doğruluk için. Yani burada yönlendirmenin gerekçesi maliyet değil. Gecikme,
+  hata ayıklanabilirlik ve kuyruk varyansı. Ve kusurlu bir sınıflandırıcı
+  doğrulukta yalnızca kaybettirebilir: hatta yanlış yönlendirdiği her iki adımlı
+  soru %30 değil sıfır alır; bu yüzden hataları, küçük token tasarrufunun
+  değerinden pahalıya patlayabilir.
 
 ## Planlama ve ne zaman atlanacağı {#sec-ajan-rag-planlama}
 
 İkinci sorguyu elde etmenin iki yolu var ve farklı davranıyorlar.
 
 **Önce planla.** Herhangi bir şey erişmeden önce soruyu alt sorulara ayırın:
-*ZRG-14'ün ardılı hangi proje* ve *o projenin bütçesi ne*. Ayrıştırma önceden
-bilinebilir olduğunda temizdir — ve yukarıdaki iki adımlı örnek tam da *olmadığı*
-bir durumdur, çünkü ikinci alt soru, birincisi cevaplanana kadar yazılamaz.
+*ZRG-14'ün ardılı hangi proje* ve *o projenin bütçesi ne*. Alt sorgular önceden
+yazılabildiğinde bu temiz bir yoldur. İki adımlı örnek ise zor durumdur: iki alt
+soru yazılabilir, ama ikincisinin *arama sorgusu* yazılamaz, çünkü `KVT-22`'ye
+ihtiyaç duyar ve onu yalnızca ilk cevap verir. İçinde değişken olan bir plan
+(`<1. cevabın> bütçesi`) bunu halleder, yeter ki değişkeni çalışma anında
+dolduran bir şey olsun; sabit dizgilerden oluşan bir plan halledemez.
 
 **Eriş, sonra karar ver.** Erişin, bakın ve cevap orada değilse başka bir sorgu
 gönderin. Bu, mimariyi motive eden bağımlı durumu halleder. Aynı zamanda
@@ -286,13 +301,48 @@ sürümünü ölçtü: döngünün çıkışı kontrol edilmiş bir koşul deği
 tahminidir ve bir metin protokolünde, cevabı zaten getirmiş olarak **tek adımlı
 görevlerin %60'ında** sonlanamadı.
 
-Yargıyı daha güvenilir kılan iki şey var ve hiçbiri daha iyi bir prompt değil:
+Yargıyı daha güvenilir kılması beklenen iki tasarım tercihi var ve hiçbiri aynı
+sorunun daha özenle ifade edilmiş bir sürümü değil. (İkisi de bu bölümde
+ölçülmedi; ilki @sec-ajan-anatomisi'nin sonucuna dayanıyor.)
 
 - **"Cevapla" ile "yine ara"yı yapısal olarak farklı eylemler yapın**;
   @sec-cozumleme ve @sec-ajan-anatomisi'ne göre — aynı çıktıda yarışan iki dizgi
   değil, bir araç çağrısına karşı içerik.
 - **Bir yargı değil eksik anahtarı isteyin.** *Hâlâ neye ihtiyacın var?*
-  erişilebilir bir terim üretir. *Yeterince şeyin var mı?* bir evet üretir.
+  erişilebilir bir terim üretir. *Yeterince şeyin var mı?* çoğu zaman bir evet
+  üretir. İlki aynı zamanda bir tür *sorgu yeniden yazma*dır (query rewriting):
+  model, kullanıcının sözcüklerini yeniden göndermek yerine gördüğü boşluğu bir
+  sonraki arama sorgusuna çevirir.
+
+### Literatürde karşılaşacağınız adlandırılmış tasarımlar
+
+Literatür bu hamlelerin çoğuna ad vermiştir; okumaya başlamadan önce onları bu
+bölümün kavramlarıyla eşleştirmek işinizi kolaylaştırır.
+
+- **Self-RAG** [@asai2024selfrag], modelin kendisini özel *yansıtma token'ları*
+  (reflection tokens) üretecek biçimde eğitir: biri o noktada erişim yapılıp
+  yapılmayacağını söyler, diğerleri erişilen pasajın ilgili olup olmadığını ve
+  üretilen metnin o pasajca desteklenip desteklenmediğini ve işe yarayıp
+  yaramadığını puanlar. Bu bölümün döngüsünün hiç vermediği bir kararı ekler:
+  *erişimi tamamen atlamak*. Bunun için bir prompt değil, ince ayarlı bir model
+  gerekir.
+- **Düzeltici RAG (CRAG)**
+  ([Yan vd., 2024](https://arxiv.org/abs/2401.15884)) retriever'ın arkasına
+  küçük, eğitilmiş bir değerlendirici koyar. Erişilen belgeler yanlış
+  görünüyorsa web aramasına başvurur; tuttuğu belgeleri de süzer. Bu, üreticinin
+  değil ayrı bir modelin yaptığı bir yeterlilik kontrolüdür.
+- **IRCoT** ([Trivedi vd., 2023](https://arxiv.org/abs/2212.10509)) adım adım
+  akıl yürütmenin bir cümlesiyle bir erişimi dönüşümlü yürütür ve her yeni
+  cümleyi bir sonraki sorgu olarak kullanır: çok adımlı sorular için kurulmuş,
+  en ince taneli hâliyle "eriş, sonra karar ver" döngüsü.
+- **Adaptive-RAG** ([Jeong vd., 2024](https://arxiv.org/abs/2403.14403)) soru
+  karmaşıklığını tahmin eden küçük bir sınıflandırıcı eğitir ve her soruyu
+  erişimsiz yanıta, tek adımlı erişime ya da yinelemeli bir döngüye yönlendirir:
+  yukarıda önerilen yönlendiricinin yayımlanmış bir tasarımı.
+
+Hiçbiri bu bölümün hesabını değiştirmez: her biri, trafiğinizde yer kazanmadan
+önce @sec-ajan-rag-degerlendirme'deki tür bazında doğruluk ve doğru cevap
+başına token karşılaştırmasından geçmek zorundadır.
 
 ## Kaynaklar arası yönlendirme {#sec-ajan-rag-yonlendirme}
 
@@ -305,7 +355,7 @@ Birkaçıyla — bir belge deposu, bir kayıt sistemi, bir kod deposu, bir verit
 
 | yaklaşım | nasıl işler | ne zaman uyar |
 |:--|:--|:--|
-| **Her şeyi ara, birleştir** | bütün kaynakları sorgula, sonuçları kaynaştır | az sayıda kaynak, benzer içerik. Ama @sec-erisim saf birleştirmenin bedelini ölçtü: RRF, daha iyi tek retriever'a karşı **32,8 ve 46,8 recall@1 puanı** kaybetti |
+| **Her şeyi ara, birleştir** | bütün kaynakları sorgula, sonuçları kaynaştır | az sayıda kaynak, benzer içerik. Ama @sec-erisim saf birleştirmenin neye mal olabileceğini ölçtü: kalitesi farklı iki retriever'ı ağırlıksız sıra tersine dayalı birleştirmeyle (RRF) kaynaştırmak, daha iyi olana karşı **32,8 ve 46,8 recall@1 puanı** kaybettirdi. O ölçüm birkaç kaynak değil, tek derlem üzerinde iki retriever'dı; ama ders buraya da taşınır: girdilerden biri çok daha iyiyse eşit ağırlıklı birleştirme zarar verir |
 | **Bir kez yönlendir** | bir sınıflandırıcı ya da model kaynağı seçer, sonra erişir | [öngörülebilir ve ucuz]{.pro}; kaynaklar açıkça farklıysa doğru varsayılan |
 | **Ajan seçsin** | her kaynak, kendi açıklamasıyla bir araçtır | gerçekten karışık ihtiyaçlar ve @sec-arac-tasarimi'nin kurallarının işleyip işlemediğine karar verdiği durum — her kaynağın ne zaman geçerli olduğunu söyleyen şey açıklamadır |
 
@@ -357,11 +407,16 @@ en iyi durumunun gücüyle benimsenme biçimidir.
 
 : Dört sütun ve her birinin nedeni {tbl-colwidths="[34,66]"}
 
-Ve @sec-llm-degerlendirme'nin baseline disiplini burada güçlü biçimde geçerli:
-değerlendirme kümenizin **iki** soru türünü de gerçek oranlarına yakın biçimde
-içermesi gerekir. Projeyi motive eden çok adımlı sorulardan kurulmuş bir
-değerlendirme, ajan tabanlı RAG'i muazzam kazanırken gösterecek ve hiçbir
-kullanıcının üretmediği bir dağılımı ölçüyor olacaktır.
+Ve @sec-llm-degerlendirme-kurma'daki örnekleme disiplini burada güçlü biçimde
+geçerli. Değerlendirme kümenizin **iki** soru türünü de, her birini ayrı ayrı
+ölçmeye yetecek sayıda içermesi gerekir: gerçek karışımda çok adımlı soruların
+payı %5 ise, temsilî 100 soruluk bir kümede yalnızca beş kadar çok adımlı soru
+olur; bir aralık vermek için çok az. O yüzden bu bölümün yaptığı gibi
+tabakalayın (her türden 30), tür bazında raporlayın, sonra manşet sayı için
+gerçek oranlarınıza göre yeniden ağırlıklandırın — @sec-ajan-rag-tavan'daki
+harmanlama budur. Yalnızca projeyi motive eden çok adımlı sorulardan kurulmuş ve
+yeniden ağırlıklandırılmadan raporlanmış bir değerlendirme, ajan tabanlı RAG'i
+hiçbir kullanıcının üretmediği bir dağılımda muazzam kazanırken gösterecektir.
 
 ## Sezgi kontrolleri {#sec-ajan-rag-sezgi}
 
@@ -401,9 +456,9 @@ toplama kusurunun tekrarı.
 ::: {.callout-note collapse="true"}
 ## 3. Döngü sıradan sorularda neye mal oluyor?
 
-**Hiçbir şey için 1,15 kat.** Tek adımlı sorularda iki sistem de tek turda %100
-aldı ve ajan tabanlı sürüm, her seferinde yeterli dönen bir yeterlilik kontrolüne
-%15 daha fazla token harcadı. Üretimdeki soruların çoğu tek adımlı olduğundan
+**Hiçbir şey için 1,15 kat.** Tek adımlı sorularda iki sistem de %100 aldı ve
+ajan tabanlı sürüm, her seferinde yeterli dönen bir yeterlilik kontrolüne %15
+daha fazla token harcadı. Üretimde soruların çoğu genellikle tek adımlı olduğundan
 gerçek bir yüke hâkim olan durum budur — ve değiştirmek yerine yönlendirmenin
 argümanıdır.
 :::
@@ -440,8 +495,9 @@ Kaynaklar açıkça farklıysa bir kez yönlendirin — ucuz ve öngörülebilir
 İhtiyaçlar gerçekten karışıksa ajana kaynak başına bir araç verin; o durumda
 işleyip işlemediğine @sec-arac-tasarimi'nin kuralları karar verir, çünkü her
 kaynağın ne zaman geçerli olduğunu söyleyen şey açıklamadır.
-Her-şeyi-ara-ve-birleştir cazip seçenektir ve @sec-erisim bedelini ölçtü: saf
-birleştirme, daha iyi tek retriever'a karşı 32,8 ve 46,8 recall@1 puanı kaybetti.
+Her-şeyi-ara-ve-birleştir cazip seçenektir ve @sec-erisim bedelini benzer bir
+ortamda ölçtü: kalitesi farklı iki retriever'ı birleştirmek, daha iyi olana
+karşı 32,8 ve 46,8 recall@1 puanı kaybettirdi.
 Ve kökeni tutun: kaynaklar eşit güvene sahip değildir ve birleştirme ayrımı yok
 eder.
 :::
@@ -480,8 +536,9 @@ mal oldu. Muhakeme gösteren cevap sonuçtur: değiştirmek yerine yönlendirin,
 
 Soru türüne göre ayrılmış dört sütun: doğruluk, istek başına değil *doğru* cevap
 başına token, sınıra çarpma oranıyla birlikte tur sayısı ve varyans. Ve
-değerlendirme kümesinin iki soru türünü de kabaca üretim oranlarında içermesi
-gerekir — projeyi motive eden çok adımlı sorulardan kurulmuş bir değerlendirme,
+değerlendirme kümesinin iki soru türünden de her birini ölçmeye yetecek kadar
+içermesi, manşet sayının ise üretim oranlarına göre yeniden ağırlıklandırılması
+gerekir — yalnızca projeyi motive eden çok adımlı sorulardan kurulmuş bir değerlendirme,
 hiçbir kullanıcının üretmediği bir dağılımda büyük bir kazanç gösterecektir.
 
 **S: Erişim döngünüz ara sıra ortancasının elli katına mal oluyor. Ne
@@ -604,7 +661,7 @@ verir.
 | varyantların haritası | @gao2023rag |
 | eylemle iç içe geçmiş akıl yürütme | @yao2023react |
 | ilgisiz erişilmiş bağlamın neye mal olduğu | @shi2023large |
-| daha çok turun yanlış bir cevabı neden kurtarmadığı | @huang2024large |
+| yeni kanıt olmadan yeniden kontrol etmenin yanlış bir cevabı neden nadiren düzelttiği | @huang2024large |
 
 : Birincil kaynaklar {tbl-colwidths="[46,54]"}
 
@@ -636,6 +693,6 @@ verir.
   döngü yine de cevaplar ve saptanabilir bir kusuru saptanamaz bir kusura
   çevirir.
 - **Soru türüne göre ayrılmış dört sütun raporlayın.** Doğruluk, *doğru* cevap
-  başına token, sınıra çarpma oranıyla tur sayısı ve varyans — ve değerlendirme
-  kümesini projeyi motive eden çok adımlı durumlardan değil gerçek soru
-  karışımınızdan kurun.
+  başına token, sınıra çarpma oranıyla tur sayısı ve varyans — her türü yeterli
+  sayıda soruyla ölçün, sonra manşet sayıyı projeyi motive eden çok adımlı
+  durumlara göre değil gerçek soru karışımınıza göre ağırlıklandırın.

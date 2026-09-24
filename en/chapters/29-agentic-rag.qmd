@@ -3,8 +3,8 @@
 ::: {.callout-note appearance="simple" icon="false"}
 **Chapter status: drafted.** One small measurement, minutes to run: two-hop
 questions over a corpus of invented facts planted in 660 real Turkish news
-articles, with a single-hop control so the comparison is not rigged toward the
-chapter's subject. @sec-rag owns the fixed pipeline and @sec-agent-anatomy owns
+articles, with a single-hop control so the comparison does not favour the
+chapter's subject by design. @sec-rag owns the fixed pipeline and @sec-agent-anatomy owns
 the loop; this chapter is what happens when you put one inside the other.
 Software: `ollama` 0.24.0 serving `qwen3.5:9b`, `snowballstemmer` 3.1.1, NumPy
 2.5.2 on Python 3.14.5.
@@ -25,9 +25,9 @@ same thing happens on every request. That predictability is a feature, and it
 is why the pipeline is the right default.
 
 Agentic RAG moves one decision from build time to run time: **retrieval
-becomes a tool the model calls, as many times as it judges necessary.** In
-@sec-agent-anatomy's terms, the retriever stops being stage 5 of a pipeline and
-becomes an entry in the tool list.
+becomes a tool the model calls, as many times as it judges necessary.** The
+retriever stops being stage 5 of @sec-rag's pipeline and, in
+@sec-agent-anatomy's terms, becomes an entry in the tool list.
 
 What that buys, precisely:
 
@@ -45,7 +45,8 @@ termination is a model's judgement rather than a condition.
 **What we will look at.** First the one question shape a fixed pipeline
 structurally cannot answer, and a measurement of how badly — with a control
 that shows what the loop costs when the pipeline was fine all along. Then the
-two ways to get a second query, and the rule for choosing between them. Then
+two ways to get a second query, the rule for choosing between them, and the
+named designs (Self-RAG and others) you will meet in the literature. Then
 what happens with several indexes, where the tempting answer is the one
 @sec-retrieval already measured losing. Then how to stop a loop whose exit
 condition is a model's opinion. And finally how to compare the two
@@ -64,6 +65,12 @@ Here is the question shape that decides everything in this chapter.
 
 The question contains `ZRG-14`. It does **not** contain `KVT-22`, because the
 asker does not know it — that is what they are asking.
+
+Some vocabulary before going on. Each step from one document to the next is a
+*hop*, so this is a **two-hop** question, and questions that need two or more
+such steps are called **multi-hop**. `KVT-22`, the name that links the two
+documents, is the *bridge entity*: it is the answer to the first hop and the
+search key for the second.
 
 So a retriever given this query finds document 1 easily and has nothing in the
 query pointing at document 2: [the term needed to retrieve the second document
@@ -203,10 +210,11 @@ too. Until it does, read "structural" as the likely explanation rather than the
 established one.
 
 **On single-hop questions the loop buys nothing and costs 1.15×.** Identical
-accuracy, identical rounds, 15% more tokens for the sufficiency check that
-always came back sufficient. Most production questions are single-hop, so this
-is the case that dominates a real workload — and it is the case where the
-architecture is pure overhead.
+accuracy, and 15% more tokens (179 against 155) for the sufficiency check that
+always came back sufficient. In most deployments the majority of questions are
+single-hop — step 1 of the lab measures yours — so this is usually the case that
+dominates a real workload, and it is the case where the architecture is pure
+overhead.
 
 **Breaking the ceiling is not the same as clearing it.** Agentic retrieval went
 from 0% to **30%** — a 30-percentage-point gain from an observed baseline of
@@ -246,13 +254,17 @@ The honest recommendation is a router rather than an architecture:
   for +6 points. The per-cell multiplier is the number that sells the
   architecture; the blended one is the number you pay.
 - **Then check whether you need the router at all.** In this measurement the
-  loop routed itself: on single-hop questions it averaged exactly **1.00
-  rounds**, never once issuing a second query it did not need. That caps a
-  *perfect* router's saving at the 24-token sufficiency check — about 10% of
-  the blended bill at a 5% mix, for identical accuracy. So the case for routing
-  here is not cost. It is latency, debuggability and tail variance. And an
-  imperfect classifier is strictly worse than none, because a two-hop question
-  misrouted into the pipeline scores zero rather than 30%.
+  loop largely routed itself: on single-hop questions it spent only 24 tokens
+  more than the pipeline, which fits a loop that rarely or never issued a
+  second query. (The
+  withdrawn round counter recorded 1.00 rounds there, but that counter is not
+  trusted.) The 24 tokens are what a *perfect* router could save — about 10% of
+  the blended bill at a 5% mix (0.95 × 24 ≈ 23 of 222 tokens), for identical
+  accuracy. So the case for routing here is not cost. It is latency,
+  debuggability and tail variance. And on accuracy an imperfect classifier can
+  only lose: every two-hop question it misroutes into the pipeline scores zero
+  rather than 30%, so its errors can cost more than its small token saving is
+  worth.
 
 ## Planning, and when to skip it {#sec-agentic-rag-planning}
 
@@ -260,9 +272,12 @@ Two ways to get the second query, and they behave differently.
 
 **Plan first.** Decompose the question into sub-questions before retrieving
 anything: *which project succeeded ZRG-14* and *what is that project's budget*.
-Clean when the decomposition is knowable up front — and the two-hop example
-above is precisely a case where it is *not*, because the second sub-question
-cannot be written until the first is answered.
+Clean when the sub-queries can be written up front. The two-hop example is the
+awkward case: the two sub-questions can be written, but the second one's
+*search query* cannot, because it needs `KVT-22`, which only the first answer
+supplies. A plan with a variable in it (`budget of <answer 1>`) handles that,
+if something fills the variable in at run time; a plan of fixed strings does
+not.
 
 **Retrieve, then decide.** Retrieve, look, and issue another query if the
 answer is not there. This handles the dependent case, which is the case that
@@ -278,16 +293,49 @@ one where fan-out genuinely pays.
 The loop needs an answer to *do I have enough?*, and this is where agentic RAG
 is most fragile. @sec-agent-anatomy measured the general version of the
 problem: the loop's exit is a model's prediction, not a checked condition, and
-in a text protocol it failed to terminate on **60% of one-step tasks** having
+in a text protocol it failed to terminate on **60% of one-step tasks**, having
 already retrieved the answer.
 
-Two things make the judgement more reliable, and neither is a better prompt:
+Two design choices should make the judgement more reliable, and neither is a
+more carefully worded version of the same question. (Neither was measured in
+this chapter; the first rests on @sec-agent-anatomy's result.)
 
 - **Make "answer" and "search again" structurally different actions**, per
   @sec-decoding and @sec-agent-anatomy — a tool call versus content, not two
   strings competing in the same output.
 - **Ask for the missing key, not for a judgement.** *What do you still need?*
-  produces a retrievable term. *Do you have enough?* produces a yes.
+  produces a retrievable term. *Do you have enough?* tends to produce a yes.
+  The first is also a form of *query rewriting*: the model turns the gap it
+  sees into the next search query, instead of re-sending the user's words.
+
+### Named designs you will meet
+
+The literature has given names to most of these moves, and it helps to map
+them onto this chapter's vocabulary before reading it.
+
+- **Self-RAG** [@asai2024selfrag] trains the model itself to emit special
+  *reflection tokens*: one that says whether to retrieve at all at this point,
+  and others that grade whether a retrieved passage is relevant and whether the
+  generated text is supported by it and useful. It adds the decision this chapter's loop
+  never made — *skip retrieval entirely* — and it needs a fine-tuned model,
+  not a prompt.
+- **Corrective RAG (CRAG)**
+  ([Yan et al., 2024](https://arxiv.org/abs/2401.15884)) puts a small trained
+  evaluator after the retriever. When the retrieved documents look wrong, it
+  falls back to web search; it also filters the documents it keeps. That is a
+  sufficiency check done by a separate model rather than by the generator.
+- **IRCoT** ([Trivedi et al., 2023](https://arxiv.org/abs/2212.10509))
+  alternates one sentence of step-by-step reasoning with one retrieval, using
+  each new sentence as the next query — the retrieve-then-decide loop at its
+  finest grain, built for multi-hop questions.
+- **Adaptive-RAG** ([Jeong et al., 2024](https://arxiv.org/abs/2403.14403))
+  trains a small classifier to predict question complexity and routes each
+  question to no retrieval, single-step retrieval or an iterative loop — the
+  router recommended above, as a published design.
+
+None of them changes this chapter's accounting: each still needs the
+per-type accuracy and tokens-per-correct-answer comparison in
+@sec-agentic-rag-eval before it earns a place on your traffic.
 
 ## Routing across sources {#sec-agentic-rag-routing}
 
@@ -299,7 +347,7 @@ With several — a document store, a ticket system, a code repository, a databas
 
 | approach | how it works | when it fits |
 |:--|:--|:--|
-| **Search everything, merge** | query all sources, fuse the results | few sources, similar content. But @sec-retrieval measured what naive fusion costs: RRF lost **32.8 and 46.8 recall@1 points** against the better single retriever |
+| **Search everything, merge** | query all sources, fuse the results | few sources, similar content. But @sec-retrieval measured what naive fusion can cost: fusing two retrievers of unequal quality with unweighted reciprocal rank fusion (RRF) lost **32.8 and 46.8 recall@1 points** against the better one. That was two retrievers over one corpus, not several sources, but the lesson carries over: equal-weight fusion hurts when one input is much better |
 | **Route once** | a classifier or the model picks the source, then retrieves | [predictable and cheap]{.pro}; the right default when sources are clearly distinct |
 | **Let the agent choose** | each source is a tool with its own description | genuinely mixed needs, and the case where @sec-tool-design's rules decide whether it works — the description is what tells the model when each source applies |
 
@@ -330,7 +378,8 @@ Four bounds, all cheap, and the fourth is the one people skip:
 - **A repeat check.** If a query is one the loop has already issued, stop —
   @sec-agent-anatomy watched a loop re-issue the same call until its budget ran
   out, having had the answer since step 0.
-- **A floor on the answer.** When the cap is reached without an answer, say so.
+- **A floor on the answer** — a minimum of evidence below which the system
+  does not answer. When the cap is reached without an answer, say so.
   A loop that exhausts its budget and then answers anyway has converted a
   detectable failure into an undetectable one.
 
@@ -346,17 +395,21 @@ adopted on the strength of its best case.
 | what to report | why it is not optional |
 |:--|:--|
 | **Accuracy, split by question type** | the aggregate hides everything. Here it would have averaged a 100% single-hop tie with a 0%-versus-30% multi-hop gap into a number describing neither |
-| **Tokens per *correct* answer** | not tokens per request. A system that costs 6.6× and answers 30% of the time costs about 3,475 tokens per right answer; the per-request figure flatters it |
+| **Tokens per *correct* answer** | not tokens per request. A system that costs 6.6× and answers 30% of the time costs about 3,475 tokens per right answer; the per-request figure makes it look cheaper than it is |
 | **Rounds, and how often the cap was hit** | report both, and define a round. A mean tells you the typical spend; the cap-hit rate tells you whether the loop stops when satisfied or runs out of budget, and those are different systems. The mean alone cannot distinguish them — and a counter that breaks its own cap, as this chapter's withdrawn round count did, cannot be interpreted at all |
 | **Variance** | a fixed pipeline costs the same every time. A loop does not, and a p99 that is ten times the median is an operational fact your budget has to survive |
 
 : Four columns, and the reason for each {tbl-colwidths="[34,66]"}
 
-And the baseline discipline from @sec-llm-eval applies with force here: your
-eval set has to contain **both** question types in something like their real
-proportions. An eval built from the multi-hop questions that motivated the
-project will show agentic RAG winning enormously, and will be measuring a
-distribution no user produces.
+And the sampling discipline from @sec-llm-eval-building applies with force
+here. Your eval set has to contain **both** question types, with enough of
+each to measure each one: with a real mix of 5% multi-hop, a representative
+set of 100 questions holds about five multi-hop ones, far too few for an
+interval. So stratify, as this chapter did (30 of each), report per type, and
+then reweight to your real proportions for the headline — the blending in
+@sec-agentic-rag-ceiling. An eval built only from the multi-hop questions that
+motivated the project, and reported without reweighting, will show agentic RAG
+winning enormously on a distribution no user produces.
 
 ## Intuition checks {#sec-agentic-rag-intuition}
 
@@ -395,10 +448,10 @@ what came back, which is @sec-agent-anatomy's aggregation failure again.
 ::: {.callout-note collapse="true"}
 ## 3. What does the loop cost on ordinary questions?
 
-**1.15× for nothing.** On single-hop questions both systems scored 100% in one
-round, and the agentic version spent 15% more tokens on a sufficiency check
-that always came back sufficient. Since most production questions are
-single-hop, this is the case that dominates a real workload — which is the
+**1.15× for nothing.** On single-hop questions both systems scored 100%, and
+the agentic version spent 15% more tokens on a sufficiency check that always
+came back sufficient. Since single-hop questions are usually the majority in
+production, this is the case that dominates a real workload — which is the
 argument for routing rather than replacing.
 :::
 
@@ -433,8 +486,9 @@ Route once if the sources are clearly distinct — cheap and predictable. Give
 the agent one tool per source when the needs are genuinely mixed, in which case
 @sec-tool-design's rules decide whether it works, since the description is what
 says when each source applies. Search-everything-and-merge is the tempting
-option and @sec-retrieval measured its cost: naive fusion lost 32.8 and 46.8
-recall@1 points against the better single retriever. And keep provenance:
+option and @sec-retrieval measured its cost in a related setting: fusing two
+retrievers of unequal quality lost 32.8 and 46.8 recall@1 points against the
+better one. And keep provenance:
 sources do not have equal trust, and concatenation destroys the distinction.
 :::
 
@@ -473,9 +527,10 @@ replace, because the majority case is the one that pays the overhead.
 
 Four columns, split by question type: accuracy, tokens per *correct* answer
 rather than per request, rounds with cap-hit rate, and variance. And the eval
-set has to contain both question types in roughly their production proportions
-— an eval built from the multi-hop questions that motivated the project will
-show a huge win on a distribution no user produces.
+set has to contain enough of both question types to measure each, with the
+headline reweighted to production proportions — an eval built only from the
+multi-hop questions that motivated the project will show a huge win on a
+distribution no user produces.
 
 **Q: Your retrieval loop occasionally costs fifty times the median. What do you
 do?**
@@ -596,7 +651,7 @@ The proportion decides which half of this literature is relevant to you.
 | the map of the variants | @gao2023rag |
 | reasoning interleaved with acting | @yao2023react |
 | what irrelevant retrieved context costs | @shi2023large |
-| why more rounds do not rescue a wrong answer | @huang2024large |
+| why re-checking without new evidence rarely fixes a wrong answer | @huang2024large |
 
 : The primary sources {tbl-colwidths="[46,54]"}
 
@@ -626,6 +681,6 @@ The proportion decides which half of this literature is relevant to you.
   floor on the answer. Without the last, a loop that exhausts its budget
   answers anyway and turns a detectable failure into an undetectable one.
 - **Report four columns, split by question type.** Accuracy, tokens per
-  *correct* answer, rounds with cap-hit rate, and variance — and build the eval
-  set from your real question mix, not from the multi-hop cases that motivated
-  the project.
+  *correct* answer, rounds with cap-hit rate, and variance — measure each type
+  on enough questions, then weight the headline by your real question mix, not
+  by the multi-hop cases that motivated the project.
