@@ -5,12 +5,13 @@
 about 150 short requests against a 3B model on a laptop, a few minutes in
 total. They are enough because what matters is a ratio whose *sign and cause*
 are the same on every machine — prefill is compute-bound, decode is
-bandwidth-bound. The magnitude does not transfer, and the chapter says where
+bandwidth-bound (limited by how fast weights can be read from memory, not by
+arithmetic). The magnitude does not transfer, and the chapter says where
 it stops transferring rather than pretending otherwise. Everything that needs a GPU fleet to observe is
 cited rather than claimed. Every condition is measured five times and reported
 as a median; the conditions are run in shuffled order, so drift cannot pile up
-in the long-prompt rows; and a fixed short prompt is re-timed every fifth call
-as a control. On the run printed here that control held to **2.0%** across the
+in the long-prompt rows; and a fixed short prompt is re-timed at intervals
+through the session (11 times in all) as a control. On the run printed here that control held to **2.0%** across the
 whole session, which is what makes the rest of the table worth reading.
 Software: `ollama` 0.24.0 serving `llama3.2:3b` (Q4_K_M, 28 layers, 24
 attention heads, 8 KV heads, head dimension 128), `num_ctx` 8192,
@@ -81,7 +82,9 @@ output tokens usually cost several times input — and it is the ratio rather
 than the absolute numbers that survives a change of hardware. Take both figures
 from the same row: decode slows as the context grows (5.2 ms at 96 tokens,
 6.2 ms at 4,247), so pairing the best prefill with the worst decode inflates
-the gap.
+the gap. Prefill also dips a little on the longest row, most likely for a
+related reason: each prompt token attends to every token before it, so the
+attention part of prefill grows faster than the prompt does.
 
 ::: {.column-margin}
 The 1,433 tok/s on the first row is not a slower prefill; it is a fixed
@@ -90,7 +93,9 @@ confirm it, and they also make it the noisiest row in the table — 34.5% spread
 against 2–7% everywhere else, because the fixed cost dominates a prompt that
 small. An earlier single-shot version of this table reported **105 decode
 tok/s** on the last row; repeated five times it is 161, with 0.7% spread. That
-is what one measurement buys you.
+is what one measurement buys you. Each column is its own median over the five
+runs, so dividing one printed column by another (96 ÷ 0.064 = 1,500) can differ
+a little from the printed rate.
 :::
 
 So a first, crude latency model, good enough to argue with:
@@ -165,8 +170,8 @@ appears.
 **What we will look at.** First where the wall clock actually goes, which at
 production prompt lengths is almost entirely prefill — and why streaming cannot
 touch that. Then the KV cache, which is what makes decode fast and what makes a
-long context expensive, in gigabytes you can compute before renting anything.
-Then batching, which buys the operator throughput and charges the individual
+long context expensive, in gigabytes you can compute before renting anything,
+and how it adds up with the weights to the memory a card needs. Then batching, which buys the operator throughput and charges the individual
 user for it. Then prompt caching, the one lever with no quality cost and the
 largest measured win in this chapter. Then the cost worksheet, which is four
 numbers and a multiplication. And finally the remaining levers, in the order to
@@ -176,7 +181,8 @@ reach for them rather than the order they get proposed in.
 
 ::: {#gloss-time-to-first-token-ttft .column-margin .term-gloss}
 **time to first token (TTFT)** — how long the reader waits before anything
-appears. Dominated by prefill, and the number streaming is meant to improve.
+appears: queueing, prefill and the first decode step. Prefill dominates on long
+prompts; streaming does not shorten it, it makes it the wait the user feels.
 [↩](#term-time-to-first-token-ttft){.term-back}
 :::
 
@@ -207,8 +213,8 @@ is the prompt, and @sec-serving-cache is the cheapest version of that lever.
 
 **A long context makes decode slower too, not just prefill.** Every generated
 token attends over everything before it, so the per-token cost grows with what
-is already in the window. Measured properly this time — two repetitions,
-64 output tokens each, so the rate is stable:
+is already in the window. Measured separately — five repetitions, as
+everywhere else, with 64 output tokens each so the rate is stable:
 
 ```text
 context tokens   decode tok/s   ms per token
@@ -222,12 +228,18 @@ A 25% slowdown between an empty window and a 7,400-token one. Worth knowing
 because it compounds: a long prompt costs you once in prefill and then again,
 quietly, on every token you generate.
 
-Note what this table does *not* rescue. Earlier printings of this chapter used
-it to correct the first table's 105 tok/s row, and gave the corrected figure as
-139 — but 139 is the rate at **7,400** tokens, and the row being corrected was
-at **4,247**. The two are different context lengths, and the right figure for
-that row is **161**, measured directly. A correction taken from the wrong row
-is still a wrong number; it just looks sourced.
+When you compare this table with the first one, compare at matching context
+lengths. The first table's 4,247-token row (161 tok/s) agrees, within noise,
+with this table's 3,731-token row (161), not with the 7,414-token one (141). A
+number taken from the wrong row is still a wrong number; it just looks sourced.
+
+Two names for what these tables measure, because dashboards use them. The
+right-hand column — milliseconds per generated token — is the
+**time per output token (TPOT)**, also called inter-token latency; together with
+TTFT it describes what *one* user feels. **Throughput** is the other axis:
+tokens per second summed over every request the server is handling at once. It
+is what the operator pays for, and @sec-serving-batching shows why the two
+pull against each other.
 
 ## The KV cache, and why context has a price in gigabytes {#sec-serving-kv}
 
@@ -287,7 +299,7 @@ size a card with, and which one depends on what you are running.
 This is why "can I run a 3B model?" is the wrong
 question and "at what context length?" is the right one, and why the default
 `num_ctx` in a local server matters so much: ask for the full 131k window and
-you have committed 14 GB before the first request.
+you have committed 14 GiB (about 15 GB) before the first request.
 
 The 8 KV heads against 24 attention heads in that arithmetic are
 **grouped-query attention**, and they are the reason the number is 14 GiB
@@ -296,12 +308,33 @@ memory-bandwidth optimisation that shows up as a serving cost, which is a
 recurring shape: architecture choices from @sec-transformers reappear here as
 line items.
 
+**Sizing a card, all together.** The memory a server needs is roughly
+*weights + KV cache per sequence × concurrent sequences + a working margin* for
+activations and the runtime itself. Weights are parameters × bits per weight ÷ 8.
+This model's 3.2 billion weights take 6.4 GB at 16 bits and 2.0 GB as Q4_K_M —
+about five bits per weight on average, not four, because some tensors are kept
+at higher precision and every small block of weights carries its own scale.
+Served at fp16 with one 32k-token conversation, that is 6.4 GB of weights plus
+3.5 GiB (3.8 GB) of cache, about 10 GB before the margin. Four such
+conversations at once need 14 GiB of cache, and the cache is now more than
+twice the weights.
+
+For a mixture-of-experts model (@sec-moe), put the *total* parameter count into
+that formula: every expert must be in memory, because any token may be routed
+to any of them. The *active* count is what sets per-token speed. That is how
+`qwen3.6:35b-a3b` in @sec-classification needs a 23.9 GB file yet served
+documents slightly faster than the dense 9.7B model. (Under heavy batching,
+different tokens pick different experts, so more of the weights are read at
+every step and that speed advantage narrows.)
+
 At fleet scale the same pressure produced **PagedAttention**, which manages the
 cache in fixed-size blocks like virtual memory instead of one contiguous
 reservation per request [@kwon2023pagedattention]. The waste it removes is
-internal fragmentation — a request that reserved room for 2,000 tokens and
-generated 200 — and removing it is what lets a server hold many more concurrent
-sequences on the same card.
+fragmentation — room reserved for 2,000 tokens by a request that generated
+200, and the unusable gaps left between such reservations — and removing it is
+what lets a server hold many more concurrent sequences on the same card.
+Because blocks can be shared, it also lets several requests point at one copy
+of a common prompt prefix, which is what @sec-serving-cache builds on.
 
 ## Batching: throughput the individual user cannot feel {#sec-serving-batching}
 
@@ -326,7 +359,7 @@ decode stays bandwidth-bound until about $B = 295$; at four-bit weights, until
 about $B = 74$.
 
 Prefill is the same formula with the prompt length in place of $B$. For the
-4,247-token prompt above that is an intensity of 4,247 — more than an order of
+4,247-token prompt above, at fp16, that is an intensity of 4,247 — more than an order of
 magnitude past the ridge, which is exactly why prefill is compute-bound and
 decode is not, and why the two halves of the table behave so differently.
 
@@ -339,6 +372,12 @@ Batching converts that slack into throughput — and the second request is nearl
 free, and so is the fiftieth, and somewhere around the three-hundredth it is
 not, because the batch has crossed the ridge and the arithmetic starts to
 cost.
+
+In practice the limit arrives sooner, for two reasons the formula leaves out.
+Each sequence also reads its *own* KV cache at every step, and that traffic is
+not shared across the batch, so at long context it grows with $B$ and pulls
+intensity down. And every sequence's cache must fit in memory: on real cards
+it is usually memory, not the ridge, that caps the batch.
 
 ::: {#gloss-continuous-batching .column-margin .term-gloss}
 **continuous batching** — new requests join a running batch as slots free,
@@ -433,14 +472,19 @@ and the next request happens to share its prefix. That is the same *mechanism*
 a hosted API uses, but not the same *system*, and three differences change the
 number you will see in production.
 
-Eviction is the big one. A local server keeps one slot per model by default, so
+Eviction is the big one. `ollama` keeps one slot per model by default
+(`OLLAMA_NUM_PARALLEL=1`), so
 a single interleaved request from another user discards the prefix — and the
 measurement above sent the same prompt twice in a row, which is the friendliest
-case that exists. Two users alternating would have shown nothing. Control is
+case that exists. Two users alternating would have shown nothing. Servers
+built on paged blocks, such as vLLM and SGLang, keep many cached prefixes at
+once and share them between requests, which softens this but does not remove
+it. Control is
 the second: some hosted APIs cache automatically above a minimum prefix length,
 others require an explicit marker, and a local server gives you neither knob.
 Price is the third: hosted cached input tokens are billed at a discount rather
-than skipped, which is the line the worksheet in @sec-serving-cost depends on.
+than skipped, and some providers charge extra for the request that writes the
+cache. That discount is the line the worksheet in @sec-serving-cost depends on.
 
 Take 153× as an upper bound on the mechanism, and instrument the real hit rate
 on the real system.
@@ -477,8 +521,29 @@ The worksheet has four lines and one multiplication:
 
 Multiply out with your provider's three prices — uncached input, cached input,
 output — and you have a monthly bill with a cache-hit-rate term you can move.
+With illustrative prices, not any provider's, of \$1.00 per million uncached
+input tokens, \$0.10 per million cached and \$4.00 per million output tokens,
+the example works out as:
+
+| line | tokens per month | price per million | cost per month |
+|:--|--:|--:|--:|
+| uncached input (40% of 890) | 712 M | \$1.00 | \$712 |
+| cached input (60% of 890) | 1,068 M | \$0.10 | \$107 |
+| output (53) | 106 M | \$4.00 | \$424 |
+| **total** | | | **\$1,243** |
+
+: The worksheet multiplied out, at illustrative prices {tbl-colwidths="[34,22,22,22]"}
+
+Without the cache the same traffic costs \$2,204, of which input is \$1,780.
+Two things to read off it: the hit rate is worth more than any change on the
+output side, and once the cache works, input is about two thirds of the *bill*
+even though it is 94% of the *tokens*.
+
 The widget below is that arithmetic, wired to the latency model from
-@sec-serving-halves so both move together.
+@sec-serving-halves so both move together. It holds the measured rates
+fixed, so it ignores the decode slowdown at long context and extrapolates
+beyond the 7,400 tokens actually measured; read its long-prompt end as a lower
+bound.
 
 ::: {.anlp-widget}
 ```{=html}
@@ -556,7 +621,8 @@ html`<p style="font-size:0.88rem; color:var(--fig-muted); margin-top:0.5rem;">
   : html`With no cache the whole prompt is recomputed every time.`}
   At 2 million requests a month that is
   <b style="color:var(--fig-ink);">${((srvCalc.total * 2e6) / 3600).toLocaleString("en-US",
-  {maximumFractionDigits: 0})} machine-hours</b> of serving.
+  {maximumFractionDigits: 0})} machine-hours</b> of serving, if requests are
+  served one at a time; batching divides it.
 </p>`
 ```
 :::
@@ -572,7 +638,7 @@ ones with no quality cost, and teams routinely start at the bottom.
 | **Prompt caching** | up to 153× prefill, measured above | a prompt ordered by stability | [first, always]{.pro} |
 | **Smaller model** | 3–10× on everything | quality, measurably | when the eval says it holds |
 | **Quantization** | memory and bandwidth | some quality, task-dependent | when memory is the binding constraint |
-| **Speculative decoding** | decode latency, primarily; cost depends on serving efficiency and pricing | a draft model to host | when *decode* is the slow half — long answers. Limited end-to-end benefit when prefill dominates; on per-token API pricing the bill need not fall, while self-hosted throughput gains can lower cost per completed answer |
+| **Speculative decoding** | decode latency, primarily; cost depends on serving efficiency and pricing | a draft model to host | when *decode* is the slow half — long answers; little help when prefill dominates (details below) |
 | **Continuous batching** | throughput | per-user latency | when the server is busy, not before |
 
 : Six levers and what each one trades away {tbl-colwidths="[22,26,28,24]"}
@@ -580,7 +646,11 @@ ones with no quality cost, and teams routinely start at the bottom.
 Two deserve a sentence each, because both are widely misunderstood.
 
 **Quantization** stores weights at reduced precision — the model measured in
-this chapter is Q4_K_M, four bits and change. Modern post-training methods
+this chapter is Q4_K_M, about five bits per weight on average. Because decode
+reads every weight once per step, fewer bytes per weight also raise the decode
+ceiling, roughly bandwidth ÷ weight bytes: that is how the opening note got
+380 GB/s from 190 tokens per second on a 2.0 GB file, and the same chip would
+top out near 60 tokens per second on the 6.4 GB fp16 weights. Modern post-training methods
 choose *which* weights to keep precise rather than rounding uniformly: GPTQ
 solves a layer-wise reconstruction problem [@frantar2023gptq], AWQ protects the
 small fraction of weights that the activation distribution says matter most
@@ -594,12 +664,15 @@ proposes several tokens; the large model scores them all in a single parallel
 pass and a modified rejection-sampling step decides how many to keep, resampling
 the first rejected position from a corrected distribution
 [@leviathan2023speculative]. "Accepts the longest correct prefix" is the useful
-picture and not quite the mechanism: acceptance is stochastic, and a token the
-draft got *right* can still be rejected. The
+picture, and at temperature 0 it is exactly the mechanism: keep draft tokens
+while they match the large model's own greedy choice. With sampling it is only
+approximately so: acceptance is stochastic, and a plausible draft token can
+still be rejected. The
 output distribution is provably unchanged — this is not an approximation — and
 the win is in wall-clock, typically 2–3× when the draft model agrees often.
-Note what it does *not* do: the large model still processes every token, so
-FLOPs do not fall, and on per-token API pricing neither does the bill.
+Note what it does *not* do: the large model still processes every token, and
+also scores the rejected drafts, so FLOPs rise slightly rather than fall; on
+per-token API pricing the bill does not fall either.
 Self-hosted, cost follows GPU time and throughput, so the speedup can lower
 cost per completed answer — measure it on your own serving load. What it buys
 first is latency.
@@ -611,8 +684,8 @@ gives the training-side counterpart.
 
 ## Intuition checks {#sec-serving-intuition}
 
-Answer each one before you open it. Four are settled by measurements in this
-chapter — the two rates, the TTFT share, the KV cache arithmetic, and what a
+Answer each one before you open it. Four are settled by this chapter's
+measurements and arithmetic — the two rates, the TTFT share, the KV cache arithmetic, and what a
 cold prefill costs against a warm one — and the last two are the ones this
 chapter deliberately did not measure, because a single-stream laptop is the
 wrong instrument for batching and a general benchmark is the wrong instrument
@@ -649,19 +722,20 @@ rather than waiting — a real and large product improvement, and not a
 performance one.
 
 The give-away that a team has confused the two is a latency dashboard that
-improved when streaming shipped. It should not have; only the total-time metric
-moves, and only because the client now stops the clock at a different moment.
+improved when streaming shipped. Neither TTFT nor total time should have
+changed. If the number fell, the client is most likely now stopping the clock
+at the first chunk instead of the last one.
 :::
 
 ::: {.callout-note collapse="true"}
-## 3. Why does a 2 GB model need 14 GB of memory?
+## 3. Why can a 2 GB model need more than 16 GB of memory?
 
 Because the weights are not the whole footprint. The KV cache holds a key and a
 value for every token in the window, for every layer and every KV head.
 
 For this model at fp16 — 28 layers, 8 KV heads, head dimension 128 — that is
-112 KiB per token, so a 131,072-token window is 14 GiB of cache against a
-2.0 GB model file. Say what that ratio compares, though: four-bit weights
+112 KiB per token, so a 131,072-token window is 14 GiB (about 15 GB) of cache
+on top of a 2.0 GB model file. Say what that ratio compares, though: four-bit weights
 against a sixteen-bit cache. At matched precision the cache is 2.3× the
 weights. An 8-bit cache roughly halves the cache side, which is a lever worth
 knowing about and one that is off by default.
@@ -713,8 +787,10 @@ less than naive rounding — GPTQ and AWQ both choose which weights to protect
 rather than scaling everything uniformly — but "much less" is not "none", and
 the loss is task-dependent in ways a general benchmark will not tell you.
 
-If your constraint is prompt length, quantization does nothing for it: the KV
-cache is a separate allocation from the weights. Reach for it when the model
+If your constraint is prompt length, weight quantization does not shrink the
+problem: the KV cache is a separate allocation with its own lever (the 8-bit
+cache above), although memory freed from the weights can hold more cache.
+Reach for weight quantization when the model
 does not fit, and put it through the same eval you would use for a model swap.
 :::
 
@@ -740,10 +816,12 @@ undifferentiated "inference" have not looked.
 
 **Q: Why is the KV cache the thing that limits concurrency?**
 
-Because it scales with tokens times sequences, not with model size. Weights are
+Because it grows with tokens times sequences, while the weights are a fixed
+cost. Weights are
 loaded once and shared by every request on the card; the cache is per-sequence
-and grows with each token generated. Give the arithmetic —
-$2 \times L \times H_{kv} \times d_{\text{head}}$ per token — and note that
+and grows with every prompt and generated token. Give the arithmetic —
+$2 \times L \times H_{kv} \times d_{\text{head}}$ values per token, times the
+bytes per value — and note that
 grouped-query attention exists largely to shrink it. PagedAttention is the
 systems answer: manage it in blocks so a sequence that reserved 2,000 tokens
 and used 200 does not waste the rest.
@@ -789,11 +867,11 @@ in direct conflict, and somebody has to be told which one they are buying.
 
 About 150 requests against a 3B model on a laptop — 130 timed calls across 20
 conditions, each repeated five times (the cache condition sends a cold and a
-warm call per repeat), plus 11 canary calls and 2 discarded warm-ups — needs
-exactly two things,
-which is the first table. The second is what you would actually serve on, and
-none of it was used here — the numbers in this chapter are ratios, and ratios
-are the part that survives the move to a real card.
+warm call per repeat), plus 11 canary (control) calls and 2 discarded
+warm-ups — needs exactly two things, listed in the first table below. The
+second table is what you would actually serve on. None of it was used here:
+the numbers in this chapter are ratios, and ratios are the part that survives
+the move to a real card.
 
 | library | version used | what it is for here |
 |:--|:--|:--|
@@ -809,8 +887,8 @@ Worth knowing about, not used above:
 |:--|:--|:--|
 | `vllm` | 0.28.0 | the reference open-source server: continuous batching, paged KV cache, prefix caching [@kwon2023pagedattention] |
 | `sglang` | 0.5.18 | a serving runtime built around structured programs and aggressive prefix reuse |
-| `text-generation-inference` | 3.3.7 | HuggingFace's server, closest to their ecosystem |
-| `llama.cpp` | b10690 (rolling) | CPU and Apple Silicon inference; the engine underneath `ollama`. Tagged per build, so pin one |
+| `text-generation-inference` | 3.3.7 | Hugging Face's server, closest to their ecosystem; now in maintenance mode, and Hugging Face itself recommends vLLM or SGLang for new deployments |
+| `llama.cpp` | b10690 (rolling) | CPU and Apple Silicon inference; the engine `ollama` was built on (newer `ollama` versions also run many models on their own engine over the same `ggml` library). Tagged per build, so pin one |
 | `tensorrt-llm` | 1.2.1 | NVIDIA's compiler-based runtime when the last 20% of throughput matters |
 | `llmcompressor` | 0.13.0 | applying GPTQ and AWQ quantization [@frantar2023gptq; @lin2024awq] to a model you intend to serve |
 
@@ -905,7 +983,7 @@ once you know your own ratio.
 | [Transformer Inference Arithmetic](https://kipp.ly/transformer-inference-arithmetic/) | where the prefill/decode asymmetry comes from, derived rather than asserted |
 | [How To Scale Your Model](https://jax-ml.github.io/scaling-book/) | memory bandwidth and arithmetic intensity worked through carefully; the book-length version of @pope2023efficiently |
 | [Databricks on inference performance](https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices) | batching, TTFT and throughput measured on real hardware, which a laptop cannot show you |
-| [`llama.cpp`](https://github.com/ggml-org/llama.cpp) | the engine underneath the numbers in this chapter; read its KV cache handling if you serve on CPU or Apple Silicon |
+| [`llama.cpp`](https://github.com/ggml-org/llama.cpp) | the engine family underneath the numbers in this chapter; read its KV cache handling if you serve on CPU or Apple Silicon |
 | [`tensorrt-llm`](https://github.com/NVIDIA/TensorRT-LLM) | what the last 20% of throughput costs in build complexity, so you can decide whether you want it |
 | [`llm-compressor`](https://github.com/vllm-project/llm-compressor) | applying quantization to a model you intend to serve, with the evaluation loop attached |
 
@@ -927,7 +1005,7 @@ once you know your own ratio.
 - **A request is two operations, not one.** Prefill reads the prompt in one
   parallel pass; decode writes the answer one serial token at a time. Measured
   here at roughly **2,000 against 190 tokens per second** — writing a token
-  costs about **eleven times** what reading one does. Every serving decision
+  takes about **eleven times** as long as reading one. Every serving decision
   follows from which half your requests are made of.
 
 - **Latency is usually the prompt.** At 7,427 tokens of context, **91.0% of the
@@ -944,7 +1022,9 @@ once you know your own ratio.
   fp16, 4.0× the file with the eight-bit cache actually used here. Quote
   whichever matches your setup, but "will it fit?" is a question about context
   length either way. Grouped-query attention is why the number is 14 and not
-  42.
+  42. Size a card as weights + cache × concurrent sequences + a margin, and
+  for a mixture-of-experts model count the total parameters, not the active
+  ones.
 
 - **Prompt caching is the first lever and it is not subtle.** Warm prefill was
   **flat at 12–16 ms regardless of prompt length**: 153× on prefill and 9.0× on

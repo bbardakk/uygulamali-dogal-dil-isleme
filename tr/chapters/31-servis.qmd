@@ -12,8 +12,8 @@ Büyüklüğü taşınmıyor ve bölüm, aksini varsaymak yerine nerede taşınm
 bıraktığını söylüyor. Gözlemlenmesi için bir GPU filosu
 gereken her şey iddia edilmek yerine kaynak gösteriliyor. Her koşul beş kez
 ölçülüp medyan olarak raporlanıyor; koşullar karıştırılmış sırada koşuyor, ki
-kayma uzun prompt satırlarında birikemesin; ve sabit bir kısa prompt her beşinci
-çağrıda denetim olarak yeniden zamanlanıyor. Burada basılan koşuda o denetim tüm
+kayma uzun prompt satırlarında birikemesin; ve sabit bir kısa prompt, oturum
+boyunca aralıklarla (toplam 11 kez) denetim olarak yeniden zamanlanıyor. Burada basılan koşuda o denetim tüm
 oturum boyunca **%2,0** içinde kaldı; tablonun geri kalanını okunmaya değer kılan
 da bu. Yazılım: `ollama` 0.24.0, `llama3.2:3b` servis ediyor (Q4_K_M, 28 katman,
 24 attention head, 8 KV head, head boyutu 128; attention head: paralel çalışan
@@ -89,7 +89,10 @@ girdinin birkaç katına faturalandığı bir sağlayıcı fiyat listesi hakkın
 — ve bir donanım değişikliğinden
 sağ çıkan şey mutlak sayılar değil bu oran. İki rakamı da aynı satırdan alın:
 bağlam büyüdükçe decode yavaşlıyor (96 token'da 5,2 ms, 4.247'de 6,2 ms), yani
-en iyi prefill'i en kötü decode'la eşleştirmek farkı şişirir.
+en iyi prefill'i en kötü decode'la eşleştirmek farkı şişirir. Prefill de en uzun
+satırda biraz düşüyor; büyük olasılıkla benzer bir nedenle: her prompt token'ı
+kendinden önceki bütün token'lara dikkat ettiği için prefill'in dikkat kısmı
+prompt'tan daha hızlı büyüyor.
 
 ::: {.column-margin}
 İlk satırdaki 1.433 tok/s daha yavaş bir prefill değil; 96 token'lık bir
@@ -98,7 +101,8 @@ doğruluyor ve aynı zamanda onu tablonun en gürültülü satırı yapıyor —
 %2–7 iken burada %34,5 yayılım, çünkü bu kadar küçük bir prompt'ta sabit maliyet
 baskın. Bu bölümün daha önceki bir basımı son satırda **105 decode tok/s**
 raporluyordu; beş kez yinelendiğinde 161, hem de %0,7 yayılımla. Tek bir ölçümün
-size aldırdığı şey bu.
+size aldırdığı şey bu. Her sütun beş koşunun kendi medyanı; bu yüzden basılı bir
+sütunu ötekine bölmek (96 ÷ 0,064 = 1.500) basılı hızdan biraz farklı çıkabilir.
 :::
 
 Öyleyse tartışmaya yetecek kadar iyi, kaba bir ilk gecikme modeli:
@@ -173,7 +177,8 @@ süresinin neredeyse tamamı ilk karakter belirmeden önce harcanıyor.
 prompt uzunluklarında bu neredeyse tümüyle prefill'dir — ve akışın buna neden
 dokunamadığına. Sonra decode'u hızlandıran ve uzun bağlamı pahalılaştıran şey
 olan KV önbelleğine, hem de hiçbir şey kiralamadan önce hesaplayabileceğiniz
-gigabaytlar cinsinden. Sonra işletmeciye iş hacmi kazandıran ve bunun bedelini
+gigabaytlar cinsinden; ağırlıklarla birlikte bir kartın ihtiyaç duyduğu belleğe
+nasıl ulaştığına da. Sonra işletmeciye işlem hacmi kazandıran ve bunun bedelini
 tek tek kullanıcıya ödeten batch'lemeye. Sonra bu bölümdeki kalite maliyeti
 olmayan tek kola ve en büyük ölçülmüş kazanca, prompt önbelleklemeye. Sonra dört
 sayı ve bir çarpmadan ibaret olan maliyet çizelgesine. Ve en sonunda kalan
@@ -183,7 +188,8 @@ kollara — önerildikleri sıraya göre değil, başvurulması gereken sıraya 
 
 ::: {#gloss-time-to-first-token-ttft .column-margin .term-gloss}
 **ilk token'a kadar geçen süre (TTFT)** — okuyucunun bir şey belirmeden önce ne
-kadar beklediği. Prefill'in baskın olduğu ve akışın iyileştirmesi beklenen sayı.
+kadar beklediği: kuyruk, prefill ve ilk decode adımı. Uzun prompt'larda prefill
+baskındır; akış onu kısaltmaz, kullanıcının hissettiği bekleme hâline getirir.
 [↩](#term-time-to-first-token-ttft){.term-back}
 :::
 
@@ -214,8 +220,8 @@ ucuz sürümü @sec-servis-onbellek'tir.
 
 **Uzun bağlam yalnızca prefill'i değil, decode'u da yavaşlatır.** Üretilen her
 token kendinden öncekilerin tümüne dikkat eder, dolayısıyla token başına maliyet
-pencerede zaten bulunanla birlikte büyür. Bu kez düzgün ölçüldü — iki yineleme,
-her birinde 64 çıktı token'ı, ki hız kararlı olsun:
+pencerede zaten bulunanla birlikte büyür. Ayrıca ölçüldü — her yerde olduğu gibi
+beş yineleme, hız kararlı olsun diye her birinde 64 çıktı token'ı:
 
 ```text
 context tokens   decode tok/s   ms per token
@@ -229,12 +235,19 @@ Boş bir pencere ile 7.400 token'lık bir pencere arasında %25'lik bir yavaşla
 Bilmeye değer, çünkü bileşik etki yapıyor: uzun bir prompt size bir kez
 prefill'de, sonra da sessizce ürettiğiniz her token'da yeniden mal oluyor.
 
-Bu tablonun neyi *kurtarmadığına* dikkat edin. Bu bölümün daha önceki basımları
-onu ilk tablodaki 105 tok/s satırını düzeltmek için kullanıyor ve düzeltilmiş
-değeri 139 olarak veriyordu — ama 139, **7.400** token'daki hız ve düzeltilen
-satır **4.247** token'daydı. İkisi farklı bağlam uzunlukları ve o satır için
-doğru değer, doğrudan ölçülmüş hâliyle **161**. Yanlış satırdan alınmış bir
-düzeltme yine de yanlış bir sayıdır; yalnızca kaynaklı görünür.
+Bu tabloyu ilkiyle karşılaştırırken aynı bağlam uzunluklarını karşılaştırın.
+İlk tablonun 4.247 token'lık satırı (161 tok/s), gürültü sınırları içinde bu
+tablonun 3.731 token'lık satırıyla (161) örtüşüyor, 7.414 token'lık satırıyla
+(141) değil. Yanlış satırdan alınmış bir sayı yine de yanlış bir sayıdır;
+yalnızca kaynaklı görünür.
+
+Bu tabloların ölçtüğü şeyin iki adı var ve panolar bu adları kullanıyor. Sağdaki
+sütun — üretilen token başına milisaniye — **çıktı token'ı başına süre
+(TPOT)**, diğer adıyla token'lar arası gecikme; TTFT ile birlikte *tek* bir
+kullanıcının hissettiğini anlatır. **İşlem hacmi** (throughput) öteki eksen:
+sunucunun aynı anda yürüttüğü bütün isteklerin toplamında saniyedeki token
+sayısı. İşletmecinin parasını ödediği sayı odur ve ikisinin neden birbirine ters
+çektiğini @sec-servis-batchleme gösteriyor.
 
 ## KV önbelleği ve bağlamın gigabayt cinsinden bedeli {#sec-servis-kv}
 
@@ -296,7 +309,8 @@ bağlı.
 "3B'lik bir model çalıştırabilir miyim?"in
 yanlış, "hangi bağlam uzunluğunda?"nın doğru soru olmasının nedeni bu; yerel bir
 sunucudaki varsayılan `num_ctx`in bu kadar önemli olmasının nedeni de: 131k'lık
-tam pencereyi isteyin, daha ilk istekten önce 14 GB taahhüt etmiş olun.
+tam pencereyi isteyin, daha ilk istekten önce 14 GiB (yaklaşık 15 GB) taahhüt
+etmiş olun.
 
 O aritmetikteki 24 attention head'e karşı 8 KV head **gruplanmış sorgu
 dikkati** (grouped-query attention) ve sayının 42 değil 14 GiB olmasının
@@ -305,14 +319,36 @@ maliyeti olarak görünen bir bellek bant genişliği optimizasyonu bu ve tekrar
 eden bir biçim: @sec-transformerlar'daki mimari seçimleri burada satır kalemi
 olarak yeniden beliriyor.
 
+**Bir kartı baştan sona boyutlandırmak.** Bir sunucunun ihtiyaç duyduğu bellek
+kabaca *ağırlıklar + dizi başına KV önbelleği × eşzamanlı dizi sayısı + ara
+değerler (aktivasyonlar) ve çalışma zamanının kendisi için bir pay*. Ağırlıklar
+parametre sayısı × ağırlık başına bit ÷ 8 eder. Bu modelin 3,2 milyar ağırlığı
+16 bitte 6,4 GB, Q4_K_M olarak 2,0 GB tutuyor — bu da ortalama dört değil,
+yaklaşık beş bit demek; çünkü bazı tensörler daha yüksek hassasiyette tutuluyor
+ve her küçük ağırlık bloğu kendi ölçeğini taşıyor. fp16'da, 32k token'lık tek
+bir konuşmayla servis edildiğinde bu, 6,4 GB ağırlık artı 3,5 GiB (3,8 GB)
+önbellek, yani pay eklenmeden önce yaklaşık 10 GB eder. Aynı anda dört böyle
+konuşma 14 GiB önbellek ister; artık önbellek ağırlıkların iki katından fazla.
+
+Bir uzman karışımı (MoE) modelinde (@sec-transformerlar) bu formüle *toplam*
+parametre sayısını koyun: her uzmanın bellekte durması gerekir, çünkü herhangi
+bir token herhangi birine yönlendirilebilir. Token başına hızı belirleyen
+*etkin* parametre sayısıdır. @sec-siniflandirma'daki `qwen3.6:35b-a3b` bu yüzden
+23,9 GB'lık bir dosyaya ihtiyaç duyduğu hâlde belgeleri yoğun 9,7B'lik modelden
+biraz daha hızlı işledi. (Yoğun batch'lemede farklı token'lar farklı uzmanları
+seçer; böylece her adımda ağırlıkların daha büyük bir kısmı okunur ve bu hız
+avantajı daralır.)
+
 Filo ölçeğinde aynı basınç **PagedAttention**'ı doğurdu; bu yöntem önbelleği
 istek başına tek bir bitişik rezervasyon yerine sanal bellek gibi sabit boyutlu
-bloklar hâlinde yönetiyor [@kwon2023pagedattention]. Ortadan kaldırdığı israf iç
-parçalanma — 2.000 token'a yer ayırıp 200 üreten bir istek — ve onu kaldırmak,
+bloklar hâlinde yönetiyor [@kwon2023pagedattention]. Ortadan kaldırdığı israf
+parçalanma — 2.000 token'a yer ayırıp 200 üreten bir isteğin boş kalan yeri ve
+bu tür rezervasyonların arasında kalan kullanılamaz boşluklar — ve onu kaldırmak,
 bir sunucunun aynı kart üzerinde çok daha fazla eşzamanlı diziyi tutabilmesini
-sağlıyor.
+sağlıyor. Bloklar paylaşılabildiği için birkaç istek ortak bir prompt önekinin
+tek bir kopyasını da gösterebiliyor; @sec-servis-onbellek bunun üzerine kurulu.
 
-## Batch'leme: tek tek kullanıcının hissedemediği iş hacmi {#sec-servis-batchleme}
+## Batch'leme: tek tek kullanıcının hissedemediği işlem hacmi {#sec-servis-batchleme}
 
 ### Decode neden bandwidth-bound ve bu nerede biter
 
@@ -334,7 +370,7 @@ fp16'da decode yaklaşık $B = 295$'e kadar bandwidth-bound kalıyor; dört bitl
 ağırlıkla yaklaşık $B = 74$'e kadar.
 
 Prefill aynı formül, $B$'nin yerinde prompt uzunluğuyla. Yukarıdaki 4.247
-token'lık prompt için bu, 4.247'lik bir yoğunluk demek — ridge'in bir
+token'lık prompt için bu, fp16'da 4.247'lik bir yoğunluk demek — ridge'in bir
 büyüklük mertebesinden fazla ötesi; prefill'in neden compute-bound, decode'un
 neden olmadığının ve tablonun iki yarısının neden bu kadar farklı davrandığının
 cevabı da bu.
@@ -344,13 +380,19 @@ O sayı, devamındaki iddianın dürüst sınırı da.
 Decode bellek sınırlıdır: donanım zamanını çarpma yaparak değil, ağırlıkları
 taşıyarak geçirir. Bu da ikinci bir isteğin *neredeyse hiç ek maliyeti olmaması*
 demektir, çünkü bir dizi için taşınan ağırlıklar aynı anda birkaç diziye hizmet
-edebilir. Batch'leme bu boşluğu iş hacmine çevirir — ve ikinci istek neredeyse
+edebilir. Batch'leme bu boşluğu işlem hacmine çevirir — ve ikinci istek neredeyse
 bedava, ellincisi de öyle, üç yüzüncüsü değil; çünkü batch ridge'i geçmiştir ve
 aritmetik para etmeye başlar.
 
+Pratikte sınır daha erken gelir; formülün dışarıda bıraktığı iki nedenle. Her
+dizi her adımda *kendi* KV önbelleğini de okur ve bu trafik batch içinde
+paylaşılmaz; uzun bağlamda $B$ ile birlikte büyür ve yoğunluğu aşağı çeker.
+Ayrıca her dizinin önbelleği belleğe sığmak zorundadır: gerçek kartlarda batch'i
+çoğunlukla ridge değil bellek sınırlar.
+
 ::: {#gloss-continuous-batching .column-margin .term-gloss}
 **sürekli batch'leme** — yeni istekler, tüm batch'in bitmesini beklemek yerine
-yer açıldıkça çalışan bir batch'e katılır. Her modern sunucudaki iş hacmi kolu.
+yer açıldıkça çalışan bir batch'e katılır. Her modern sunucudaki işlem hacmi kolu.
 [↩](#term-continuous-batching){.term-back}
 :::
 
@@ -364,14 +406,14 @@ sonraki adımda onun yerini almasına izin verir.
 Bunu ölçmedim ve bunu açıkça söylemeliyim: tek akışlı yerel bir sunucu yanlış
 alettir ve burada bir sayı uydurmak, bir sayıya kaynak göstermekten daha kötü
 olurdu. Literatürün bildirdiği rakamlar büyük: Orca'nın yazarları aynı gecikme
-bütçesinde naif batch'lemeye göre büyüklük mertebesinde iş hacmi kazançları
+bütçesinde naif batch'lemeye göre büyüklük mertebesinde işlem hacmi kazançları
 ölçüyor [@yu2022orca] ve vLLM, sürekli batch'lemeyi sayfalı önbellek yönetimiyle
 birleştirerek kendinden önceki servis sistemlerine göre 2–4× bildiriyor
 [@kwon2023pagedattention].
 
 İçselleştirmeye değen kısım kat sayısı değil, takas:
 
-| | iş hacmi | tek istek gecikmesi |
+| | işlem hacmi | tek istek gecikmesi |
 |:--|:--|:--|
 | Batch'leme yok | [en kötü]{.con} | [en iyi]{.pro} |
 | Statik batch'leme | daha iyi | [en kötü — en yavaş diziyi bekler]{.con} |
@@ -379,7 +421,7 @@ birleştirerek kendinden önceki servis sistemlerine göre 2–4× bildiriyor
 
 : Batch'lemenin her bir sayıya yaptığı {tbl-colwidths="[28,24,48]"}
 
-[Batch'leme, bedelini tek tek kullanıcıların gecikmeyle ödediği bir iş hacmi
+[Batch'leme, bedelini tek tek kullanıcıların gecikmeyle ödediği bir işlem hacmi
 optimizasyonudur.]{.hl} Her istek makineyi batch arkadaşlarıyla paylaşır;
 dolayısıyla meşgul bir sunucu, istek başına daha ucuz bir sunucu olduğu hâlde
 istek başına daha yavaş bir sunucudur. Ürününüzün bir gecikme SLO'su varsa, bu
@@ -442,15 +484,19 @@ duruyor ve sonraki istek onun önekini paylaşıyor. Bu, barındırılan bir API
 kullandığı *mekanizmanın* aynısı ama aynı *sistem* değil ve üç fark, üretimde
 göreceğiniz sayıyı değiştiriyor.
 
-Tahliye en büyüğü. Yerel bir sunucu varsayılanda model başına tek slot tutuyor,
-dolayısıyla başka bir kullanıcıdan araya giren tek bir istek öneki atıyor — ve
+Tahliye en büyüğü. `ollama` varsayılanda model başına tek slot tutuyor
+(`OLLAMA_NUM_PARALLEL=1`), dolayısıyla başka bir kullanıcıdan araya giren tek bir istek öneki atıyor — ve
 yukarıdaki ölçüm aynı prompt'u arka arkaya iki kez gönderdi; var olan en dostane
-durum. Dönüşümlü istek gönderen iki kullanıcı hiçbir şey görmezdi. İkincisi
+durum. Dönüşümlü istek gönderen iki kullanıcı hiçbir şey görmezdi. vLLM ve
+SGLang gibi sayfalı bloklar üzerine kurulu sunucular aynı anda çok sayıda
+önbellekli öneki tutup istekler arasında paylaşıyor; bu, sorunu yumuşatıyor ama
+ortadan kaldırmıyor. İkincisi
 denetim: bazı barındırılan API'ler asgari bir önek uzunluğunun üstünde otomatik
 önbellekliyor, bazıları açık bir işaret istiyor, yerel bir sunucu ikisini de
 vermiyor. Üçüncüsü fiyat: barındırılan önbelleklenmiş girdi token'ları atlanmıyor,
-indirimli faturalanıyor — ki @sec-servis-maliyet'teki çalışma sayfası tam olarak
-o satıra dayanıyor.
+indirimli faturalanıyor ve bazı sağlayıcılar önbelleği yazan istek için ek
+ücret alıyor. @sec-servis-maliyet'teki çalışma sayfası tam olarak o indirim
+satırına dayanıyor.
 
 153 katı mekanizmanın üst sınırı olarak alın ve gerçek sistemde gerçek isabet
 oranını ölçün.
@@ -487,8 +533,30 @@ bir görevde çıkmazdı.
 
 Sağlayıcınızın üç fiyatıyla — önbelleksiz girdi, önbellekli girdi, çıktı —
 çarpın; elinizde, oynatabileceğiniz bir önbellek isabet oranı terimi içeren
-aylık bir fatura olsun. Aşağıdaki araç tam olarak bu aritmetik ve ikisi birlikte
-hareket etsin diye @sec-servis-yarilar'daki gecikme modeline bağlı.
+aylık bir fatura olsun. Herhangi bir sağlayıcının değil, yalnızca örnek olsun
+diye seçilmiş fiyatlarla — milyon önbelleksiz girdi token'ı başına 1,00 dolar,
+milyon önbellekli token başına 0,10 dolar, milyon çıktı token'ı başına 4,00
+dolar — örnek şöyle çıkıyor:
+
+| satır | aylık token | milyon başına fiyat | aylık maliyet |
+|:--|--:|--:|--:|
+| önbelleksiz girdi (890'ın %40'ı) | 712 M | 1,00 dolar | 712 dolar |
+| önbellekli girdi (890'ın %60'ı) | 1.068 M | 0,10 dolar | 107 dolar |
+| çıktı (53) | 106 M | 4,00 dolar | 424 dolar |
+| **toplam** | | | **1.243 dolar** |
+
+: Çizelgenin çarpılmış hâli, örnek fiyatlarla {tbl-colwidths="[34,22,22,22]"}
+
+Önbellek olmadan aynı trafik 2.204 dolar tutuyor; bunun 1.780 doları girdi.
+Buradan iki şey okunuyor: isabet oranı, çıktı tarafındaki her değişiklikten daha
+değerli; ve önbellek çalışmaya başladığında girdi, *token'ların* %94'ü olduğu
+hâlde *faturanın* ancak üçte ikisi kadar.
+
+Aşağıdaki araç tam olarak bu aritmetik ve ikisi birlikte
+hareket etsin diye @sec-servis-yarilar'daki gecikme modeline bağlı. Ölçülen
+hızları sabit tutuyor; bu yüzden uzun bağlamdaki decode yavaşlamasını yok sayıyor
+ve gerçekte ölçülen 7.400 token'ın ötesine dışdeğerleme yapıyor. Uzun prompt
+ucunu bir alt sınır olarak okuyun.
 
 ::: {.anlp-widget}
 ```{=html}
@@ -568,7 +636,8 @@ html`<p style="font-size:0.88rem; color:var(--fig-muted); margin-top:0.5rem;">
   : html`Önbellek yokken tüm prompt her seferinde yeniden hesaplanıyor.`}
   Ayda 2 milyon istekte bu,
   <b style="color:var(--fig-ink);">${((srvCalc.total * 2e6) / 3600).toLocaleString("tr-TR",
-  {maximumFractionDigits: 0})} makine saati</b> servis demek.
+  {maximumFractionDigits: 0})} makine saati</b> servis demek — istekler teker
+  teker işlenirse; batch'leme bunu böler.
 </p>`
 ```
 :::
@@ -584,15 +653,20 @@ olmayanlar ve takımlar rutin olarak en alttan başlıyor.
 | **Prompt önbellekleme** | prefill'de 153×'e kadar, yukarıda ölçüldü | kararlılığa göre sıralanmış bir prompt | [her zaman, ilk]{.pro} |
 | **Daha küçük model** | her şeyde 3–10× | kalite, ölçülebilir biçimde | değerlendirme dayandığını söylediğinde |
 | **Nicemleme** | bellek ve bant genişliği | bir miktar kalite, göreve bağlı | bağlayıcı kısıt bellek olduğunda |
-| **Spekülatif kod çözme** | öncelikle decode gecikmesi; maliyet servis verimliliğine ve fiyatlandırmaya bağlı | barındırılacak bir taslak model | yavaş yarı *decode* olduğunda — uzun cevaplar. Prefill baskınken uçtan uca yararı sınırlı; token başına API fiyatlandırmasında fatura düşmeyebilir, kendi barındırdığınız sistemde verim kazancı tamamlanan cevap başına maliyeti düşürebilir |
-| **Sürekli batch'leme** | iş hacmi | kullanıcı başına gecikme | sunucu meşgulken, öncesinde değil |
+| **Spekülatif kod çözme** | öncelikle decode gecikmesi; maliyet servis verimliliğine ve fiyatlandırmaya bağlı | barındırılacak bir taslak model | yavaş yarı *decode* olduğunda — uzun cevaplar; prefill baskınken yararı az (ayrıntısı aşağıda) |
+| **Sürekli batch'leme** | işlem hacmi | kullanıcı başına gecikme | sunucu meşgulken, öncesinde değil |
 
 : Altı kol ve her birinin feda ettiği {tbl-colwidths="[22,26,28,24]"}
 
 İkisi birer cümleyi hak ediyor, çünkü ikisi de yaygın biçimde yanlış anlaşılıyor.
 
 **Nicemleme** (quantization) ağırlıkları düşürülmüş hassasiyette saklar — bu
-bölümde ölçülen model Q4_K_M, dört bit ve biraz fazlası. Modern eğitim sonrası
+bölümde ölçülen model Q4_K_M, ağırlık başına ortalama yaklaşık beş bit. Decode
+her adımda her ağırlığı bir kez okuduğu için ağırlık başına daha az bayt, decode
+tavanını da yükseltir; tavan kabaca bant genişliği ÷ ağırlık baytıdır. Bölüm
+başındaki not 380 GB/s'yi, 2,0 GB'lık dosyada saniyede 190 token'dan tam böyle
+çıkardı; aynı çip 6,4 GB'lık fp16 ağırlıklarda saniyede 60 token civarında tavan
+yapardı. Modern eğitim sonrası
 yöntemler tekdüze yuvarlamak yerine *hangi* ağırlıkların hassas kalacağını
 seçiyor: GPTQ katman düzeyinde bir yeniden kurma problemi çözüyor
 [@frantar2023gptq], AWQ ise etkinleştirme dağılımının en önemli dediği küçük
@@ -606,13 +680,15 @@ birkaç token öneriyor; büyük model hepsini tek bir paralel geçişte puanlı
 değiştirilmiş bir reddetme örneklemesi adımı kaçının tutulacağına karar verip
 reddedilen ilk konumu düzeltilmiş bir dağılımdan yeniden örnekliyor
 [@leviathan2023speculative]. "En uzun doğru öneki kabul eder" işe yarar bir
-resim ama tam olarak mekanizma değil: kabul olasılıksaldır ve taslağın *doğru*
-bildiği bir token bile reddedilebilir. Çıktı dağılımının
+resim ve temperature 0'da mekanizmanın tam kendisi: taslak token'lar, büyük
+modelin kendi açgözlü (greedy) seçimiyle örtüştükçe tutulur. Örneklemeyle ise
+yalnızca yaklaşık olarak doğru: kabul olasılıksaldır ve akla yatkın bir taslak
+token bile reddedilebilir. Çıktı dağılımının
 değişmediği kanıtlanmış durumda — bu bir yaklaşıklama değil — ve wall-clock
 süresindeki kazanç, taslak model sık sık aynı fikirde olduğunda tipik olarak
-2–3×. *Yapmadığı* şeye dikkat edin: büyük model hâlâ her token'ı işliyor,
-dolayısıyla FLOP sayısı düşmüyor; token başına API fiyatlandırmasında fatura da
-düşmüyor. Kendi barındırdığınız sistemde maliyet GPU süresini ve verimi izler;
+2–3×. *Yapmadığı* şeye dikkat edin: büyük model hâlâ her token'ı işliyor, üstelik
+reddedilen taslakları da puanlıyor; dolayısıyla FLOP sayısı düşmüyor, biraz
+artıyor. Token başına API fiyatlandırmasında fatura da düşmüyor. Kendi barındırdığınız sistemde maliyet GPU süresini ve verimi izler;
 bu yüzden hızlanma, tamamlanan cevap başına maliyeti düşürebilir. Bunu kendi
 servis yükünüzde ölçün. Öncelikle satın aldığı şey gecikmedir.
 
@@ -623,7 +699,8 @@ belirlediği — Pope ve arkadaşları konuyu düzgünce işliyor [@pope2023effi
 
 ## Sezgi kontrolleri {#sec-servis-sezgi}
 
-Her birini açmadan önce cevaplayın. Dördü bu bölümdeki ölçümlerle çözülüyor —
+Her birini açmadan önce cevaplayın. Dördü bu bölümdeki ölçümler ve hesaplarla
+çözülüyor —
 iki hız, TTFT payı, KV önbelleği aritmetiği ve soğuk bir prefill'in sıcak birine
 karşı maliyeti — son ikisi ise bu bölümün bilerek ölçmediği şeyler, çünkü tek
 akışlı bir dizüstü batch'leme için yanlış alet ve genel bir ölçüt nicemleme
@@ -660,20 +737,20 @@ geçmesi — gerçek ve büyük bir ürün iyileştirmesi, ama bir performans
 iyileştirmesi değil.
 
 Bir takımın bu ikisini karıştırdığının işareti, akış devreye alındığında
-iyileşen bir gecikme panosudur. İyileşmemesi gerekirdi; yalnızca toplam süre
-metriği kımıldar ve o da yalnızca istemci artık saati farklı bir anda durdurduğu
-için.
+iyileşen bir gecikme panosudur. Ne TTFT'nin ne de toplam sürenin değişmesi
+gerekirdi. Sayı düştüyse, büyük olasılıkla istemci saati artık son parçada değil
+ilk parçada durduruyordur.
 :::
 
 ::: {.callout-note collapse="true"}
-## 3. 2 GB'lık bir modelin neden 14 GB belleğe ihtiyacı var?
+## 3. 2 GB'lık bir model neden 16 GB'tan fazla belleğe ihtiyaç duyabilir?
 
 Çünkü ayak izi ağırlıklardan ibaret değil. KV önbelleği penceredeki her token
 için, her katmanda ve her KV head'inde bir anahtar ve bir değer tutuyor.
 
 Bu model fp16'da — 28 katman, 8 KV head, head boyutu 128 — token başına
-112 KiB eder; yani 131.072 token'lık bir pencere, 2,0 GB'lık bir model dosyasına
-karşı 14 GiB önbellek. Ama o oranın neyi karşılaştırdığını söyleyin: dört bitlik
+112 KiB eder; yani 131.072 token'lık bir pencere, 2,0 GB'lık model dosyasının
+üstüne 14 GiB (yaklaşık 15 GB) önbellek. Ama o oranın neyi karşılaştırdığını söyleyin: dört bitlik
 ağırlıklara karşı on altı bitlik bir önbellek. Eşit hassasiyette önbellek
 ağırlıkların 2,3 katı. 8 bitlik bir önbellek, önbellek tarafını kabaca yarıya
 indirir; bilmeye değen ve varsayılan olarak kapalı olan bir kol.
@@ -701,7 +778,7 @@ büyüklük mertebesi ya da daha fazla farklı olmalı; burada ölçüldüğü h
 :::
 
 ::: {.callout-note collapse="true"}
-## 5. Sürekli batch'leme iş hacmini 3× artırdı. Gecikme iyileşti mi?
+## 5. Sürekli batch'leme işlem hacmini 3× artırdı. Gecikme iyileşti mi?
 
 Neredeyse kesinlikle hayır ve muhtemelen istek başına biraz kötüleşti.
 
@@ -727,8 +804,10 @@ yuvarlamadan çok daha azını kaybediyor — GPTQ da AWQ da her şeyi tekdüze
 "hiç" değildir ve kayıp, genel bir ölçütün size söylemeyeceği biçimlerde göreve
 bağlıdır.
 
-Kısıtınız prompt uzunluğuysa nicemleme bunun için hiçbir şey yapmaz: KV
-önbelleği ağırlıklardan ayrı bir tahsistir. Model sığmıyorsa başvurun ve bir
+Kısıtınız prompt uzunluğuysa ağırlık nicemlemesi sorunu küçültmez: KV
+önbelleği kendi kolu olan (yukarıdaki 8 bitlik önbellek) ayrı bir tahsistir;
+yine de ağırlıklardan boşalan bellek daha fazla önbellek tutabilir. Ağırlık
+nicemlemesine model sığmıyorsa başvurun ve bir
 model değişimi için kullanacağınız değerlendirmenin aynısından geçirin.
 :::
 
@@ -754,17 +833,19 @@ anlatan adaylar bakmamıştır.
 
 **S: KV önbelleği neden eşzamanlılığı sınırlayan şeydir?**
 
-Çünkü model boyutuyla değil, token çarpı dizi sayısıyla ölçekleniyor. Ağırlıklar
+Çünkü token çarpı dizi sayısıyla büyüyor, ağırlıklar ise sabit bir maliyet.
+Ağırlıklar
 bir kez yüklenir ve karttaki her istek tarafından paylaşılır; önbellek ise dizi
-başınadır ve üretilen her token'la büyür. Aritmetiği verin — token başına
-$2 \times L \times H_{kv} \times d_{\text{head}}$ — ve gruplanmış sorgu
+başınadır ve her prompt token'ıyla ve üretilen her token'la büyür. Aritmetiği
+verin — token başına $2 \times L \times H_{kv} \times d_{\text{head}}$ değer,
+çarpı değer başına bayt — ve gruplanmış sorgu
 dikkatinin büyük ölçüde onu küçültmek için var olduğunu belirtin. PagedAttention
 sistem tarafındaki cevap: bloklar hâlinde yönetin ki 2.000 token'a yer ayırıp
 200 kullanan bir dizi gerisini israf etmesin.
 
 **S: Batch'leme nerede yardım eder, nerede zarar verir?**
 
-İş hacmine yardım eder, çünkü decode bellek sınırlıdır ve ağırlık taşıması
+İşlem hacmine yardım eder, çünkü decode bellek sınırlıdır ve ağırlık taşıması
 paylaşılır. İstek başına gecikmeye zarar verir, çünkü her dizi artık makineyi
 paylaşmaktadır. Sürekli batch'leme takasın en kötü sürümünü — statik
 batch'lemedeki kuyruk başı tıkanmasını — ortadan kaldırır ama takasın kendisini
@@ -798,7 +879,7 @@ yaptığınıza bağlıdır.
 Bir batch boyutu tavanına, kuyruk uzadığında ne olacağına dair bir kabul
 politikasına, uzun bağlamlı isteklerin kısa olanların önünde oturamaması için
 ayrı bir rotaya ve tek bir küresel sayı yerine rota başına TTFT ölçüm düzeneğine.
-Sonra rahatsız edici kısmı söyleyin: bir p99 SLO'su ile azami iş hacmi doğrudan
+Sonra rahatsız edici kısmı söyleyin: bir p99 SLO'su ile azami işlem hacmi doğrudan
 çatışır ve birine hangisini satın aldığı söylenmelidir.
 
 ## 2026 alet çantası {#sec-servis-araclar}
@@ -806,9 +887,10 @@ Sonra rahatsız edici kısmı söyleyin: bir p99 SLO'su ile azami iş hacmi doğ
 Bir dizüstünde 3B'lik bir modele karşı yaklaşık 150 istek — 20 koşul
 üzerinde her biri beş kez tekrarlanan 130 zamanlanmış çağrı (önbellek koşulu her
 tekrarda bir soğuk bir sıcak çağrı gönderiyor), artı 11 kanarya çağrısı ve atılan
-2 ısınma çağrısı — tam olarak iki şeye ihtiyaç duyuyor; birinci tablo o. İkincisi gerçekte üstünde servis yapacağınız
-şey ve hiçbiri burada kullanılmadı — bu bölümdeki sayılar oranlar ve gerçek bir
-karta geçişte hayatta kalan kısım oranlar.
+2 ısınma çağrısı — tam olarak iki şeye ihtiyaç duyuyor; bunlar aşağıdaki
+birinci tabloda. İkinci tablo gerçekte üstünde servis yapacağınız şeyler. Hiçbiri
+burada kullanılmadı: bu bölümdeki sayılar oranlar ve gerçek bir karta geçişte
+hayatta kalan kısım oranlar.
 
 | kütüphane | kullanılan sürüm | burada ne işe yarıyor |
 |:--|:--|:--|
@@ -824,9 +906,9 @@ Bilmeye değer, yukarıda kullanılmadı:
 |:--|:--|:--|
 | `vllm` | 0.28.0 | referans açık kaynak sunucu: sürekli batch'leme, sayfalı KV önbelleği, önek önbellekleme [@kwon2023pagedattention] |
 | `sglang` | 0.5.18 | yapılandırılmış programlar ve agresif önek yeniden kullanımı çevresinde kurulmuş bir servis çalışma zamanı |
-| `text-generation-inference` | 3.3.7 | HuggingFace'in sunucusu, onların ekosistemine en yakın olanı |
-| `llama.cpp` | b10690 (yuvarlanan) | CPU ve Apple Silicon çıkarımı; `ollama`nın altındaki motor. Yapı başına etiketleniyor, bir tanesini sabitleyin |
-| `tensorrt-llm` | 1.2.1 | iş hacminin son %20'si önemliyse NVIDIA'nın derleyici tabanlı çalışma zamanı |
+| `text-generation-inference` | 3.3.7 | Hugging Face'in sunucusu, onların ekosistemine en yakın olanı; artık bakım modunda ve Hugging Face yeni kurulumlar için vLLM ya da SGLang öneriyor |
+| `llama.cpp` | b10690 (yuvarlanan) | CPU ve Apple Silicon çıkarımı; `ollama`nın üzerine kurulduğu motor (yeni `ollama` sürümleri birçok modeli aynı `ggml` kütüphanesi üzerindeki kendi motorlarıyla da çalıştırıyor). Yapı başına etiketleniyor, bir tanesini sabitleyin |
+| `tensorrt-llm` | 1.2.1 | işlem hacminin son %20'si önemliyse NVIDIA'nın derleyici tabanlı çalışma zamanı |
 | `llmcompressor` | 0.13.0 | servis etmeyi düşündüğünüz bir modele GPTQ ve AWQ nicemlemesi uygulamak [@frantar2023gptq; @lin2024awq] |
 
 : Daha geniş ekosistem, yazım anındaki sürümler {tbl-colwidths="[24,18,58]"}
@@ -925,9 +1007,9 @@ bildiğinizde çok daha kolay değerlendirilir.
 | [vLLM'in sayfalı dikkat (paged attention) tasarım notu](https://docs.vllm.ai/en/latest/design/paged_attention.html) | KV önbelleği sayfalar hâlinde, uygulayan insanlar tarafından anlatılıyor [@kwon2023pagedattention] |
 | [Transformer Inference Arithmetic](https://kipp.ly/transformer-inference-arithmetic/) | prefill/decode asimetrisinin nereden geldiği, iddia edilerek değil türetilerek |
 | [How To Scale Your Model](https://jax-ml.github.io/scaling-book/) | bellek bant genişliği ve aritmetik yoğunluk özenle işlenmiş; @pope2023efficiently'nin kitap boyundaki sürümü |
-| [Databricks'in çıkarım performansı yazısı](https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices) | gerçek donanımda ölçülmüş batch'leme, TTFT ve iş hacmi — bir dizüstünün gösteremeyeceği şey |
-| [`llama.cpp`](https://github.com/ggml-org/llama.cpp) | bu bölümdeki sayıların altındaki motor; CPU ya da Apple Silicon üzerinde servis yapıyorsanız KV önbelleği işleyişini okuyun |
-| [`tensorrt-llm`](https://github.com/NVIDIA/TensorRT-LLM) | iş hacminin son %20'sinin yapı karmaşıklığında neye mal olduğu, ki isteyip istemediğinize karar verebilesiniz |
+| [Databricks'in çıkarım performansı yazısı](https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices) | gerçek donanımda ölçülmüş batch'leme, TTFT ve işlem hacmi — bir dizüstünün gösteremeyeceği şey |
+| [`llama.cpp`](https://github.com/ggml-org/llama.cpp) | bu bölümdeki sayıların altındaki motor ailesi; CPU ya da Apple Silicon üzerinde servis yapıyorsanız KV önbelleği işleyişini okuyun |
+| [`tensorrt-llm`](https://github.com/NVIDIA/TensorRT-LLM) | işlem hacminin son %20'sinin yapı karmaşıklığında neye mal olduğu, ki isteyip istemediğinize karar verebilesiniz |
 | [`llm-compressor`](https://github.com/vllm-project/llm-compressor) | servis etmeyi düşündüğünüz bir modele nicemleme uygulamak, değerlendirme döngüsü de ekli |
 
 : Makalelerin ötesi {tbl-colwidths="[42,58]"}
@@ -948,7 +1030,7 @@ bildiğinizde çok daha kolay değerlendirilir.
 - **Bir istek tek değil, iki işlemdir.** Prefill prompt'u tek bir paralel geçişte
   okur; decode cevabı seri biçimde teker teker token yazar. Burada kabaca
   **saniyede 2.000'e karşı 190 token** ölçüldü — bir token yazmak, bir token
-  okumanın yaklaşık **on bir katına** mal oluyor. Her servis kararı isteklerinizin
+  okumaktan yaklaşık **on bir kat** uzun sürüyor. Her servis kararı isteklerinizin
   hangi yarıdan yapıldığından çıkar.
 
 - **Gecikme genellikle prompt'tur.** 7.427 token bağlamda **wall-clock süresinin
@@ -965,7 +1047,9 @@ bildiğinizde çok daha kolay değerlendirilir.
   7,5 katı, aynı ağırlıkların fp16 hâlinin 2,3 katı, burada fiilen kullanılan
   sekiz bitlik önbellekle dosyanın 4,0 katı. Kurulumunuza uyanı alıntılayın; ama
   "sığar mı?" her hâlükârda bir bağlam uzunluğu sorusudur. O sayının 42 değil 14
-  olması gruplanmış sorgu dikkati sayesinde.
+  olması gruplanmış sorgu dikkati sayesinde. Bir kartı ağırlıklar + önbellek ×
+  eşzamanlı dizi + pay diye boyutlandırın; uzman karışımı bir modelde etkin
+  değil toplam parametreleri sayın.
 
 - **Prompt önbellekleme ilk koldur ve ince bir şey değildir.** Sıcak prefill
   **prompt uzunluğundan bağımsız olarak 12–16 ms'de sabitti**: 4.247 token'da
@@ -973,7 +1057,7 @@ bildiğinizde çok daha kolay değerlendirilir.
   öyleyse prompt'u kararlılığa göre sıralayın ve tepesine yakın oynak hiçbir şey
   koymayın.
 
-- **Batch'leme iş hacmi alır, gecikme öder.** Decode bellek sınırlıdır, dolayısıyla
+- **Batch'leme işlem hacmi alır, gecikme öder.** Decode bellek sınırlıdır, dolayısıyla
   diziler ağırlık taşımasını paylaşabilir; sürekli batch'leme en yavaş diziyi
   beklemek yerine yuvaları dolu tutar [@yu2022orca; @kwon2023pagedattention]. İş
   hacmi kazancını gecikme maliyeti olmadan raporlamak, bir değerlendirmenin
