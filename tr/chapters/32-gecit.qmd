@@ -6,7 +6,7 @@
 ikisi de saniyeler süren hesap: tek bir benzerlik eşiğinin bir önbellek
 isabetini bir hatadan ayırıp ayıramayacağını sormak için `nomic-embed-text`
 üzerinden geçirilen on beş etiketli sorgu çifti ve ilk ölçümün açığa çıkardığı,
-o gömme modelindeki bir kusuru betimleyen bir izleme. Yönlendirme ve güvenilirlik
+o gömme modelindeki bir kusuru inceleyen bir izleme. Yönlendirme ve güvenilirlik
 malzemesi ölçülmek yerine kaynak gösteriliyor — bir yeniden deneme fırtınası bir
 dizüstünde yeniden üretilecek bir şey değil. Yönlendirme argümanı ise yayımlanmış
 cascade (kademeli yönlendirme: önce ucuz model cevaplar, gerekirse daha güçlü
@@ -59,8 +59,9 @@ istek düzeyindeki performansın yaşadığı yer @sec-servis'tir — isteklerin
 *popülasyonunu* yönetilebilir kılar.
 
 Buna karşılık gelen kötü örüntü, ikinci takım var olmadan bir tane kurmaktır; bu
-da sahip olmadığınız problemler karşılığında bir sıçrama, bir arıza kipi ve bir
-nöbet çizelgesi ekler.
+da sahip olmadığınız problemler karşılığında bir ağ sıçraması (çağıranla sağlayıcı
+arasına giren bir sunucu daha), bir arıza kipi ve bir nöbet çizelgesi (gece arıza
+çıktığında onu düzeltmesi gereken biri) ekler.
 
 ## Bütçeler, kotalar ve önceden fiyatlandıramadığınız yarı {#sec-gecit-butce}
 
@@ -70,16 +71,29 @@ orası.
 
 Alışıldık geçit denetimi bir **sanal anahtardır**: gerçek sağlayıcı anahtarına
 eşlenen ve kendi sınırlarını taşıyan, takım başına, servis başına ya da özellik
-başına bir kimlik bilgisi. Rutin olarak karıştırılan, farklı biçimlerde
-başarısız olan üç sınır:
+başına bir kimlik bilgisi. Çağıranlar gerçek anahtarı hiç görmediği için sızan
+bir sanal anahtar tek başına iptal edilebilir, sağlayıcı anahtarı da tek bir
+yerde yenilenir. Rutin olarak karıştırılan, farklı biçimlerde başarısız olan üç
+sınır:
 
 | denetim | neyi sınırlar | sınıra gelindiğinde ne olur |
 |:--|:--|:--|
-| **Hız sınırı** | saniyedeki istek ya da token | istekler düşürülür ya da kuyruğa alınır; kendiliğinden toparlanır |
+| **Hız sınırı** | saniye ya da dakika başına istek ya da token | istekler düşürülür ya da kuyruğa alınır; kendiliğinden toparlanır |
 | **Kota** | dönem başına istek ya da token | çağıran, dönem devredene kadar engellenir |
 | **Bütçe** | dönem başına para | [ilginç olanı]{.hl} |
 
 : Aynı şey olmayan üç sınır {tbl-colwidths="[18,38,44]"}
+
+Hız sınırları genellikle bir **token kovası** (token bucket) olarak kurulur — ve
+buradaki "token" bir LLM token'ı değil, bir geçiş izni demektir. Kova en fazla $B$
+izin tutar ve saniyede sabit $r$ izinle dolar; her istek bir izin alır (dakika
+başına token sınırında ise LLM token'ı kadar izin) ve kovayı boş bulan istek
+reddedilir — tipik olarak HTTP 429 durum koduyla ve ne zaman tekrar gelineceğini
+söyleyen bir `Retry-After` başlığıyla. Dolu bir kova $B$ isteklik bir patlamayı
+bir anda geçirir; uzun bir süre boyunca ise ortalama $r$'yi aşamaz. Sağlayıcılar
+dakika başına istek ve token cinsinden kendi sınırlarını uygular; geçidin
+sınırlarını sağlayıcınınkinin altına koyun ki kimin trafiğinin düşürüleceğine
+sağlayıcı değil geçit karar versin.
 
 Bütçeler ilginç olanı, çünkü doğrudan @sec-servis'in iki yarısından çıkan bir
 asimetri var. **Girdi token'larını istek çalışmadan önce, çıktı token'larını
@@ -105,14 +119,25 @@ geliyor. Genellikle sorun değil — ama bunu söyleyin ki kimse şaşırmasın.
 *bilinir* kılmaz — bir istek tavanın altında herhangi bir yerde durabilir — ama
 sınırlar; ilk seçeneği ucuzlatan da budur: bilinen bir tavana karşı yapılan bir
 rezervasyon, gerçekten göze alabileceğiniz bir rezervasyondur. Takımların atladığı
-seçenek bu.
+seçenek bu. İki şey tavanın dışında kalır: her yeniden deneme yeniden
+faturalanan yeni bir istektir ve çağrı başına araç ücretleri (örneğin barındırılan
+bir web araması) ayrıca fiyatlanır. Akıl yürütme token'ları çıktı olarak
+faturalanır; sağlayıcınızın bunları tavanın içinde sayıp saymadığını kontrol edin,
+çünkü parametrenin adı ve kapsamı API'den API'ye değişir.
 
 Bir gerçekleme ayrıntısı, bunların yük altında ayakta kalıp kalmayacağına karar
 veriyor. Kontrol ile rezervasyon **atomik** olmalı — Redis üzerinde bir Lua
 betiği, bir `SELECT … FOR UPDATE`, koşullu bir yazma — çünkü eşzamanlı $c$ çağıran
-arasında oku-sonra-yaz, $c$'sinin de aynı kalan bütçeyi görmesine ve hepsinin
-geçmesine izin verir. Aşım o zaman bir istek değil $c$ istektir ve tam da
-istemediğiniz anda, trafiğinizle birlikte büyür.
+arasında oku-sonra-yaz, $c$'sinin de aynı kalan bütçeyi görmesine ve bütçede
+yalnızca birine yer olsa bile hepsinin geçmesine izin verir. Aşım o zaman
+eşzamanlı çağıran sayısıyla — yani trafiğinizle — birlikte ve tam da
+istemediğiniz anda büyür.
+
+Bütçeyi zorunlu kılan kütük aynı zamanda maliyet takipçisidir: geçit her
+çağrının token sayılarını model başına bir fiyat tablosuyla paraya çevirir
+(önbelleksiz girdi, önbellekli girdi, çıktı — @sec-servis'teki hesap tablosunun
+üç fiyatı). O tabloyu sürümlü tutun; fiyatlar değişir ve bayat bir tablo her
+raporu sessizce yanlış yapar.
 
 ::: {.column-margin}
 Aynı asimetri bir maliyet panosunun *ne yapabileceğine* de karar veriyor. Girdi
@@ -146,19 +171,39 @@ bileşen o:
 
 - **Jitter'lı üstel backoff.** Backoff, her başarısız denemeden sonra bekleme
   süresini katlayarak uzatmaktır; jitter ise bu beklemeye eklenen rastgeleliktir.
-  Tek başına backoff filoyu yeniden eşzamanlar; eşzamanı bozan şey jitter'dır. Tam
-  olarak 1 s, 2 s, 4 s'de yeniden deneyen istemciler her adımda yeniden bir
-  thundering herd (çok sayıda istemcinin aynı anda yeniden istek göndermesi)
-  oluşturur.
+  Yaygın bir tarif ("full jitter"), $n$. yeniden denemeden önce 0 ile
+  $\min(\text{tavan},\ \text{taban} \cdot 2^n)$ arasında rastgele bir süre bekler.
+  Tek başına backoff, birlikte başarısız olan istemcileri birlikte yeniden
+  denemeye devam ettirir; onları dağıtan şey jitter'dır. Tam olarak 1 s, 2 s,
+  4 s'de yeniden deneyen istemciler her adımda yeniden bir thundering herd (çok
+  sayıda istemcinin aynı anda yeniden istek göndermesi) oluşturur.
 - **Devre kesici.** Bir arıza eşiğinden sonra, hâlâ kapalı olduğunu yeniden keşfetmek
   için gecikme harcamayı sürdürmek yerine, bir soğuma dönemi boyunca o sağlayıcıya
-  göndermeyi durdurun.
+  göndermeyi durdurun. Devre kesici normal işleyişte *kapalıdır* (trafik akar),
+  eşik aşılınca *açılır* (trafik yedeğe gider ya da hemen hata döner), soğuma
+  döneminden sonra *yarı açık* olur: birkaç deneme isteği yeniden kapanıp
+  kapanmayacağına karar verir.
 - **Yeniden deneme bütçesi.** Google iki tane işletiyor [@beyer2016sre] ve
   insanların atladığı ikincisi: istek başına üç denemelik bir tavan *ve* her
   istemcinin kendi isteklerinin ne kadarının yeniden deneme olduğunu izleyip bu
   oran %10'u geçtiğinde yeniden denemeyi bıraktığı, istemci başına bir tavan.
-  İstek başına sınır tek bir çağıranın sabrını sınırlar; filo çapındaki
-  büyütmeyi yalnızca oran sınırlar.
+  Tek başına istek başına tavan, neredeyse her şey başarısız olduğunda yükün 3
+  kata yaklaşmasına yine izin verir — hem de sağlayıcının bunu en az
+  kaldırabileceği anda; oran ise en kötü durumu yaklaşık 1,1 kata indirir.
+
+Üçünün altında iki pratik kural yatar. **Yalnızca ikinci denemede başarılı
+olabilecek olanı yeniden deneyin:** 429'lar, 5xx sunucu hataları ve zaman
+aşımları — varsa `Retry-After`'a uyarak; bozuk bir istek ya da bağlam
+penceresinden uzun bir prompt için dönen 400 değil, çünkü o her seferinde aynı
+biçimde başarısız olur. Ve **yalnızca tek bir katmanda yeniden deneyin.**
+Sağlayıcı SDK'ları zaten varsayılan olarak yeniden dener (OpenAI ve Anthropic
+Python istemcileri iki kez); dolayısıyla her biri üç denemeye izin veren bir SDK,
+bir geçit ve bir uygulama tek bir isteği $3^3 = 27$ denemeye çevirebilir — SRE
+kitabı buna kombinatoryal patlama diyor [@beyer2016sre]. Zaman aşımları da aynı
+özeni ister: bir LLM cevabı meşru olarak bir dakika sürebilir; tek ve kısa bir
+toplam zaman aşımı uzun cevapları keser, cömert bir zaman aşımı ise takılıp
+kalmış bir sağlayıcıyı gizler. Akış (streaming) varsa zaman aşımını ilk token'ın
+beklenmesine ve ayrıca token'lar arasındaki boşluğa koyun.
 
 Bir de LLM geçitlerine özgü bir arıza kipi var ve bu hiç de bir güvenilirlik
 problemi değil:
@@ -199,7 +244,7 @@ Yayımlanan sonuçlar cesaret verici. FrugalGPT bir API kümesi üzerinde cascad
 kuruyor ve en iyi tekil modelin doğruluğuna, o modelin maliyetinin küçük bir
 bölümüyle ulaştığını ya da eşit maliyette doğruluğu artırdığını bildiriyor
 [@chen2023frugalgpt]. RouteLLM tercih verisinden bir yönlendirici öğreniyor ve
-ayarlandığı ölçütlerde güçlü modelin kalitesinin çoğunu korurken büyük maliyet
+değerlendirildiği ölçütlerde güçlü modelin kalitesinin çoğunu korurken büyük maliyet
 azalmaları bildiriyor [@ong2024routellm].
 
 [Ama bu sonuçların her biri bir *sinyal* hakkında bir iddiadır ve yönlendirmenin
@@ -239,7 +284,9 @@ $e$ kesrini aktaran bir cascade, her şeyi büyük modele göndermenin
 $C_{\text{büyük}}$'üne karşı $C_{\text{küçük}} + e \cdot C_{\text{büyük}}$ tutar.
 $e = 0{,}5$ ve 10 katlık bir fiyat oranında bu, büyük modelin faturasının
 $0{,}1 + 0{,}5 = 0{,}6$'sı — gerçek bir tasarruf ve yarıya hiç benzemiyor. Başabaş
-oranı onu kurmadan önce, ölçütünkiyle değil kendi fiyat oranınızla hesaplayın.
+oranı onu kurmadan önce, ölçütünkiyle değil kendi fiyat oranınızla hesaplayın:
+cascade yalnızca $e < 1 - C_{\text{küçük}}/C_{\text{büyük}}$ olduğu sürece para
+kazandırır; bu, 10 katlık oranda $0{,}9$, 2 katlık oranda $0{,}5$ demektir.
 
 **Yönlendirme modeli değiştirir, dolayısıyla @sec-gecit-devretme'deki her
 problemi devralır.** Farklı çıktı biçimi, farklı araç çağırma söz dizimi, farklı
@@ -247,7 +294,7 @@ reddetme davranışı. Yönlendirici, devretmenin kazara yaptığı şeyin kası
 kalıcı bir sürümüdür.
 
 **Yetenek yönlendirmesi kalite yönlendirmesinden kolaydır.** "Bu istek görme
-gerektiriyor", "bu 200k'lık bir pencere gerektiriyor", "bu AB'de kalmalı" hiçbir
+gerektiriyor", "bu 200k token'lık bir bağlam penceresi gerektiriyor", "bu AB'de kalmalı" hiçbir
 şey öngörmeden istekten okuyabileceğiniz özellikler. Aynı zamanda üretimle
 temastan sağ çıkma olasılığı en yüksek yönlendirme kuralları bunlar, çünkü AUROC
 0,667 olabilecek bir sinyale bağlı değiller.
@@ -264,10 +311,11 @@ sıfır değil, *denetlenebilir* — farklı bir iddia: aynı prompt doğru ceva
 yeter ki cevabın dayandığı ve anahtarın yakalamadığı her şey aynı kalmış olsun.
 O liste göründüğünden uzun. Yalnızca takma ad değil model *sürümü*, yoksa sessiz
 bir sağlayıcı yükseltmesi dünkü modeli servis eder. Çözümleme parametreleri,
-yoksa bir sıcaklık değişikliği bayat çıktı servis eder. Kiracı ve çağıranın
-yetkileri, yoksa bir müşterinin cevabını başkasına servis edersiniz. Cevabın
-üzerine kurulduğu her araç sonucu ya da erişilmiş belge. Ve bir TTL'in var olma
-sebebi olan zamanın kendisi — *iade politikamız nedir*, başka hiçbir şey
+yoksa bir sıcaklık değişikliği bayat çıktı servis eder. Kiracı (verisi söz
+konusu olan müşteri kurum) ve çağıranın yetkileri, yoksa bir müşterinin cevabını
+başkasına servis edersiniz. Cevabın üzerine kurulduğu her araç sonucu ya da
+erişilmiş belge. Ve bir TTL'in (*time to live*: bir girdinin süresi dolmadan önce
+ne kadar servis edilebileceği) var olma sebebi olan zamanın kendisi — *iade politikamız nedir*, başka hiçbir şey
 değişmese bile raf ömrü olan bir sorudur. Anahtarı ve TTL'i doğru kurun, risk
 gerçekten yok olsun; yanlış kurun, görünmez olsun — çünkü bayat bir isabet, doğru
 bir isabete birebir benzer.
@@ -328,9 +376,10 @@ aynılıkla ters korele" değil. On beş çift size bir eşik bulamaz ve araman�
 olmayacağını söyleyebilir.
 
 Bu, @sec-gommeler'in zıt anlamlı sözcük sonucunun cümle düzeyindeki kuzeni:
-orada `increase`/`decrease` **0,881** almıştı — `cat`/`dog`'un 0,880'inden
-yüksek. Cümle düzeyinde durum iyileşmiyor, kötüleşiyor: olumsuzlama uzun bir
-cümleye kısa bir token ekliyor ve havuzlama onu ortalayıp yutuyor; böylece
+orada `increase`/`decrease` **0,881** almıştı — `cat`/`dog`'un 0,880'iyle
+aynı düzeyde. Cümle düzeyinde durum iyileşmiyor, kötüleşiyor: olumsuzlama
+birçok token'ın arasına kısa bir token ekliyor ve havuzlama — token vektörlerinin
+ortalamasını alıp tek bir cümle vektörü üretmek — onu ortalayıp yutuyor; böylece
 *kapsanıyor* ile *kapsanmıyor* neredeyse üst üste düşüyor. Onlar ilişkili — model
 zaten bunu yakalamak üzere eğitildi. Aynı zamanda zıtlar ve bir önbellek bunu
 ayırt edemiyor.
@@ -371,9 +420,21 @@ kalıp kalmadığı sınanmadı — önekler küçük harfli olduğu için bu, b
 değil makul bir etkileşim. Bunu karakterize edilmiş bir kusur değil bir gözlem
 sayın ve rapor etmeden önce bir digest sabitleyin.
 
+İki şey bunu bir meraktan fazlası yapıyor. Burada sınanmamış olası bir mekanizma:
+bu model yalnızca küçük harfli (BERT tarzı, "uncased") bir sözcük dağarcığı
+kullanıyor; servis yığını küçük harfe çevirme adımını atlarsa büyük harfle
+başlayan her kelime dağarcığın dışına düşer ve aynı bilinmeyen-kelime token'ına
+dönüşür. Ayrıca aynı belirti yukarı akışta
+[ollama issue #13942](https://github.com/ollama/ollama/issues/13942) olarak
+("nomic-embed-text embedding incorrect for uppercase") raporlanmış: 0.13.1'den
+itibaren görülen ve 0.30 serisinde düzeltilen bir gerileme; burada kullanılan
+0.24.0 bu aralığın içinde. Düzeltme vektörleri de değiştiriyor ve dersin öbür
+yarısı bu: bir gömme modeli ya da sunucu yükseltmesi, anlamsal bir önbelleğin
+sakladığı her vektörü sessizce geçersiz kılar.
+
 Bunların hiçbiri bölümün buradan aldığı şeyi değiştirmiyor, çünkü [o gömme
 modeli üzerine kurulmuş bir anlamsal önbellek, pazartesinin cevabını pazarın
-sorusuna, 1,0 benzerlikte, sonsuza kadar, hiçbir kayda düşmeden servis
+sorusuna, 1,0 benzerlikte, her seferinde, hiçbir kayda düşmeden servis
 ederdi.]{.hl}
 
 Bu, @sec-ozetleme'nin `rouge-score` tokenlaştırıcısıyla ve @sec-metin-veri'nin
@@ -386,7 +447,7 @@ yüksek puanı almasıydı.
 
 | | kalite riski | yeri neresi |
 |:--|:--|:--|
-| Tam eşleşmeli | [denetlenebilir — anahtar ve TTL, cevabın dayandığı her şeyi yakaladığında yok]{.pro} | varsayılan olarak açık, her yerde |
+| Tam eşleşmeli | [denetlenebilir — anahtar ve TTL, cevabın dayandığı her şeyi yakaladığında yok]{.pro} | tekrarlanan bir cevabın kabul edilebildiği her yerde varsayılan olarak açık (kullanıcının örneklenmiş bir cevabı yeniden ürettirdiği yerde değil) |
 | Anlamsal | [sessizce yanlış bir cevap]{.con} | yalnızca kendi trafiğinizde ölçülmüş bir yanlış pozitif oranıyla ve asla sonuç doğuran hiçbir şeyde değil |
 
 : Adı ortak olan iki önbellek {tbl-colwidths="[18,38,44]"}
@@ -408,7 +469,9 @@ en az onun kadar kolay geçer; yalnızca üçüncüsü benzerliğe özgü:
 - **Bir girdiyi neyin geçersiz kıldığına karar verin.** Bir fiyat değişir, bir
   politika güncellenir, bir belge geri çekilir — ve önbelleklenmiş bir cevap,
   üzerinde hiçbir sürüm olmadan servis edilmeye devam eder. Bir girdiyi
-  temizleyen olayın adını koyamıyorsanız o girdi kalıcıdır.
+  temizleyen olayın adını koyamıyorsanız o girdi kalıcıdır. Gömme modelini ya da
+  onun sunucusunu yükseltmek böyle bir olaydır: eski sürümün sakladığı vektörler
+  yenileriyle artık karşılaştırılamaz.
 
 Yine de bir tane kuracaksanız, onu savunulabilir kılan ölçüm kimsenin
 yapmadığıdır: önbellek *isabetlerinden* örnek alın, kaçının gerçekten aynı soru
@@ -425,8 +488,8 @@ ayırt edici bir biçimi vardır: hiçbir şey hata vermez, hiçbir şey kaydedi
 çıktılarınız değişir.
 
 [Sessiz bir model yükseltmesi, sahip olduğunuz her kapıyı atlayan bir bağımlılık
-değişikliğidir.]{.hl} Hiçbir farkta görünmez, kimsenin çalıştırmadığı hiçbir
-testte kalmaz ve sizin değil sağlayıcının takvimine göre gelir.
+değişikliğidir.]{.hl} Hiçbir farkta görünmez, hiçbir test çalıştırmasını
+tetiklemez ve sizin değil sağlayıcının takvimine göre gelir.
 
 Bunun düzeltildiği yer geçittir ve üç parçası vardır:
 
@@ -520,9 +583,10 @@ etmek, ki karşılayabileceğiniz istekleri reddeder — ya da iyimserdir, ki e�
 başına kabaca bir isteklik çıktı kadar aşabilir.
 
 Sanal anahtar başına `max_tokens` belirlemek, bilinmeyen bir nihai maliyeti
-rezerve edilebilir bir üst sınıra çeviren şeydir — sınırladığı çıktı için; ayrı
-fiyatlanan akıl yürütme, araç ücretleri ve yeniden denemeler de rezerve
-edilmeli.
+rezerve edilebilir bir üst sınıra çeviren şeydir — sınırladığı çıktı için.
+Yeniden denemeler ve çağrı başına araç ücretleri onun dışında kalır ve onlar da
+rezerve edilmeli; akıl yürütme token'ları ise ancak sağlayıcınız onları tavana
+dâhil ediyorsa sayılır.
 Bu bölümdeki en ucuz denetim ve en sık boş bırakılanı.
 :::
 
@@ -540,8 +604,9 @@ olarak bir yeniden deneme bütçesi — Google'ın istemcileri, istek başına �
 denemelik tavana ek olarak, yeniden denemeler isteklerinin %10'unu geçtiğinde
 yeniden denemeyi bırakıyor.
 
-İstek başına tavan herkesin uyguladığı ve filo çapındaki büyütmeyi sınırlamayan
-tavandır. Onu yalnızca oran sınırlar.
+İstek başına tavan herkesin uyguladığıdır ve tek başına en kötü durumda yükün 3
+kata yaklaşmasına yine izin verir — birkaç katman ayrı ayrı yeniden deniyorsa daha
+fazlasına. Oran bunu yaklaşık 1,1 kata indirir.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -572,7 +637,7 @@ vermez ve hiçbir şey kaydedilmez.
 İsabetlerden örnek alıp hangi kesrinin gerçekten aynı soru olduğunu elle kontrol
 edin ve bunu bir aralıkla raporlayın. Ayrıca gömme benzerliğinin en önemli olduğu
 yerde anlamı izlemediğini not edin: @sec-gommeler zıt anlamlıların ilişkili
-sözcüklerden yüksek puan aldığını gösterdi ve bunun cümle düzeyindeki hâli
+sözcükler kadar yüksek puan aldığını gösterdi ve bunun cümle düzeyindeki hâli
 yukarıda ölçülü — listenin tepesinde, 0,982'de bir cümle ve onun olumsuzu. Bir
 önbelleğin birbirine karıştırmaması gereken çift tam olarak budur.
 :::
@@ -632,7 +697,8 @@ tek başına backoff filoyu yeniden eşzamanlar; bir devre kesici, ki bir
 kesintiyi yeniden keşfetmek için gecikme ödemeyi bırakasınız; ve trafiğin bir
 kesri olarak bir yeniden deneme bütçesi — Google'ın istemcileri, istek başına üç
 denemelik tavana ek olarak, yeniden denemeler isteklerinin %10'unu geçtiğinde
-yeniden denemeyi bırakıyor.
+yeniden denemeyi bırakıyor. Ardından yalnızca tek bir katmanın yeniden denemesi
+gerektiğini ve bir 400'ün hiç yeniden denenmeye değmediğini ekleyin.
 
 ### Bir tane yayına alıp almadığınızı sınayanlar
 
@@ -651,8 +717,9 @@ yayına aldığı seçenektir.
 Seçmeden önce ölçün. Önce tam eşleşmeli cevap önbelleklemesi — anahtar ilgili
 durumu (kiracı, yetkiler, veri sürümü) kapsıyorsa ve tekrarlanan cevaplar kabul
 edilebilirse; isabet oranı trafiğinizin bir öğleden sonrada ölçebileceğiniz bir
-özelliği. Sonra @sec-servis'teki prompt tarafı kolları, çünkü maliyete girdi
-hâkim. Ancak ondan sonra yönlendirme — ve yönlendirmenin kanıt gerektiren bir
+özelliği. Sonra @sec-servis'teki prompt tarafı kolları, çünkü prompt ağırlıklı
+iş yüklerinde — bir sistem prompt'u artı erişilmiş bağlam — çıktı token başına
+daha pahalı olsa bile faturaya girdi hâkimdir. Ancak ondan sonra yönlendirme — ve yönlendirmenin kanıt gerektiren bir
 iddia olduğunu söyleyin: ucuz modelin doğruluğuna, pahalınınkine ve hangi
 isteğin hangisine ihtiyaç duyduğunu önceden söyleyen bir sinyale ihtiyacınız var.
 Sinyal aynı orandaki rastgele aktarmayı yenmiyorsa yönlendirme hiçbir şey
@@ -774,10 +841,12 @@ dair, onu haklı çıkaran sayıyla birlikte bir paragraf.
    `max_tokens` kadar çıktının maliyeti. O sayının katlanılabilir olup olmadığına
    karar verin ve değilse çıktıyı tavanlayın.
 
-3. **Yeniden deneme fırtınası, kâğıt üstünde.** Bilinen bir istek hızı ve üç
-   denemelik bir yeniden deneme politikası olan bir servis alın. Tüm isteklerin
-   yarısı arızalanmaya başladığında sağlayıcının gördüğü yükü hesaplayın. %10'luk
-   bir yeniden deneme bütçesiyle yeniden hesaplayıp karşılaştırın.
+3. **Yeniden deneme fırtınası, kâğıt üstünde.** Bilinen bir istek hızı ve istek
+   başına en fazla üç deneme politikası olan bir servis alın. Tüm denemelerin
+   yarısı arızalanmaya başladığında (her denemenin bağımsız olarak arızalandığını
+   varsayın), sonra hepsi arızalandığında sağlayıcının gördüğü yükü hesaplayın.
+   %10'luk bir yeniden deneme bütçesiyle yeniden hesaplayıp karşılaştırın. Sonra
+   o da üç kez yeniden deneyen ikinci bir katman ekleyin.
 
 4. **Yedek eşdeğerliği.** Dayandığınız bir prompt'u birincil ve yedek modelinizde
    çalıştırın. Çıktıları karşılaştırın — biçim, uzunluk, reddetmeler, araç çağırma
@@ -852,7 +921,9 @@ On dakika sürüyor ve geri kalanın ne kadar acil olduğuna o karar veriyor.
   trafiğin bir kesri olarak bir yeniden deneme bütçesi. Google istek başına üç
   denemelik bir tavan *ve* yeniden denemeler o istemcinin isteklerinin %10'unu
   geçtiğinde yeniden denemeyi durduran istemci başına bir kural işletiyor —
-  filo çapındaki büyütmeyi sınırlayan ikincisidir.
+  birincisi en kötü durumda yine de yaklaşık 3 kat yüke izin verir, ikincisi
+  bunu yaklaşık 1,1 kata indirir. Yalnızca yeniden denenebilir hataları ve
+  yalnızca tek bir katmanda yeniden deneyin.
 
 - **Devretme bir model değişimidir, dolayısıyla bir değerlendirme problemidir.**
   Farklı biçim, farklı araç çağırma söz dizimi, farklı reddetmeler; birincil
@@ -869,17 +940,20 @@ On dakika sürüyor ve geri kalanın ne kadar acil olduğuna o karar veriyor.
   karşı **AUROC 0,667** ölçüldü. Her zaman rastgele aktarma taban çizgisini
   raporlayın; politika onu yenmiyorsa işi yapan şey aktarma *oranıdır*.
 
-- **Tam eşleşmeli önbellekleme bedava para; anlamsal önbellekleme bir doğruluk
-  kararı.** On beş etiketli çift üzerinde ölçüldüğünde kümedeki en benzer çift
-  **bir cümle ve onun olumsuzu, 0,982'de** çıktı; gerçekten özdeş bir soru ise
-  **0,609** aldı. Sınıflar tümüyle örtüşüyor, dolayısıyla hiçbir tek eşik onları
-  ayırmıyor ve en iyi kesim yine on beşten beşini kaçırıyor.
+- **Tam eşleşmeli önbellekleme, anahtar doğru kurulduğunda neredeyse bedava para;
+  anlamsal önbellekleme bir doğruluk kararı.** On beş etiketli çift üzerinde
+  ölçüldüğünde kümedeki en benzer çift **bir cümle ve onun olumsuzu, 0,982'de**
+  çıktı; gerçekten özdeş bir soru ise **0,609** aldı. Sınıflar o kadar örtüşüyor
+  ki hiçbir tek eşik onları ayırmıyor: en az hatalı kesim hiçbir şeyi
+  önbelleklememek ve bu, gerçekten tekrar eden beş sorunun beşini de kaçırıyor.
 
-- **Önbelleğe güvenmeden önce gömme modelini kontrol edin.** `ollama` 0.24.0
-  altındaki `nomic-embed-text`, büyük harfle başlayan her kelimeyi tek bir sabit
-  token'a eşliyor: *Monday*, *Cat*, *Ankara* ve *XYZZY* bayt bayt aynı vektörleri
-  üretiyor ve *Cat sat on the mat*, *Dog sat on the mat*'e eşit. Küçük harfli
-  metin sorunsuz. Onun üzerine kurulmuş bir önbellek, pazarın sorusuna
+- **Önbelleğe güvenmeden önce gömme modelini kontrol edin.** Bu bölümün
+  düzeneğinde `ollama` 0.24.0 altındaki `nomic-embed-text`, büyük harfle başlayan
+  her kelimeyi tek bir sabit token'a eşledi: *Monday*, *Cat*, *Ankara* ve *XYZZY*
+  bayt bayt aynı vektörleri üretti ve *Cat sat on the mat*, *Dog sat on the
+  mat*'e eşit çıktı. Küçük harfli metin sorunsuzdu. Aynı belirti yukarı akışta da
+  raporlanmış ve sonraki `ollama` sürümlerinde düzeltilmiş — o düzeltme de
+  vektörleri değiştiriyor. Onun üzerine kurulmuş bir önbellek, pazarın sorusuna
   pazartesinin cevabını 1,0 benzerlikte verir ve hiçbir şey kaydetmezdi. Yüzeye
   çıkmasının tek nedeni düşük puan alması gereken bir çiftin en yüksek puanı
   almasıydı.

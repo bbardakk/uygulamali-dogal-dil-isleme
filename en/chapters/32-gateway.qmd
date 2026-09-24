@@ -4,7 +4,7 @@
 **Chapter status: drafted.** Two small measurements, both seconds of compute:
 fifteen labelled query pairs through `nomic-embed-text` to ask whether one
 similarity threshold can separate a cache hit from a bug, and a follow-up that
-characterises a defect in that embedder which the first measurement exposed.
+investigates a defect in that embedder which the first measurement exposed.
 The routing and reliability material is cited rather than measured — a retry
 storm is not something to reproduce on a laptop, and the routing argument rests
 on published cascades plus a signal measurement this book already made in
@@ -55,8 +55,9 @@ That is the whole argument. A gateway does not make any single request better �
 *population* of requests governable.
 
 The corresponding anti-pattern is building one before the second team exists,
-which adds a hop, a failure mode and an on-call rotation in exchange for
-problems you do not have.
+which adds a network hop (one more server between caller and provider), a
+failure mode and an on-call rotation (someone who must fix it at night) in
+exchange for problems you do not have.
 
 ## Budgets, quotas, and the half you cannot price in advance {#sec-gateway-budgets}
 
@@ -66,15 +67,28 @@ architecture stops being free.
 
 The usual gateway control is a **virtual key**: a per-team, per-service or
 per-feature credential that maps to the real provider key and carries limits of
-its own. Three limits, routinely confused, failing differently:
+its own. Because callers never hold the real key, a leaked virtual key can be
+revoked on its own, and the provider key is rotated in one place. Three limits,
+routinely confused, failing differently:
 
 | control | what it bounds | what happens at the limit |
 |:--|:--|:--|
-| **Rate limit** | requests or tokens per second | requests are shed or queued; recovers on its own |
+| **Rate limit** | requests or tokens per second or minute | requests are shed or queued; recovers on its own |
 | **Quota** | requests or tokens per period | the caller is blocked until the period rolls over |
 | **Budget** | money per period | [the interesting one]{.hl} |
 
 : Three limits that are not the same thing {tbl-colwidths="[18,38,44]"}
+
+Rate limits are usually built as a **token bucket** — and here "token" means a
+permit, not an LLM token. A bucket holds at most $B$ permits and refills at a
+steady $r$ permits per second; each request takes one (or, for a token-per-minute
+limit, as many as it has LLM tokens), and a request that finds the bucket empty
+is refused, typically with HTTP status 429 and a `Retry-After` header saying
+when to come back. A full bucket lets a burst of $B$ requests through at once,
+while over any long period the average cannot exceed $r$. Providers enforce
+their own limits in requests and tokens per minute, so set the gateway's limits
+below the provider's: then the gateway, not the provider, decides whose traffic
+is shed.
 
 Budgets are the interesting one because of an asymmetry that comes straight out
 of @sec-serving's two halves. **You know the input tokens before the request
@@ -97,14 +111,25 @@ concurrent caller. Usually fine — but state it, so nobody is surprised.
 **Cap the output.** Set `max_tokens` per virtual key. It does not make the cost
 *known* — a request can stop anywhere below the cap — but it bounds it, which is
 what makes the first option cheap: a reservation against a known ceiling is a
-reservation you can actually afford to make. This is the one teams skip.
+reservation you can actually afford to make. This is the one teams skip. Two
+things fall outside the cap: every retry is a new request billed again, and
+per-call tool fees (a hosted web search, say) are priced separately. Reasoning
+tokens are billed as output; check that your provider counts them inside the
+cap, since the parameter's name and scope differ between APIs.
 
 One implementation detail decides whether any of this holds under load. The
 check and the reservation must be **atomic** — a Lua script on Redis, a
 `SELECT … FOR UPDATE`, a conditional write — because read-then-write across $c$
 concurrent callers lets all $c$ of them see the same remaining budget and all
-of them pass. The overshoot is then $c$ requests, not one, and it grows with
-your traffic exactly when you least want it to.
+of them pass, even when the budget had room for only one. The overshoot then
+grows with the number of concurrent callers — with your traffic, exactly when
+you least want it to.
+
+The same log that enforces the budget is the cost tracker: the gateway turns
+each call's token counts into money with a per-model price table (uncached
+input, cached input, output — the three prices of @sec-serving's worksheet).
+Keep that table versioned, because prices change and a stale one makes every
+report quietly wrong.
 
 ::: {.column-margin}
 The same asymmetry decides what a cost dashboard can *do*. Input cost is
@@ -134,18 +159,40 @@ remedies it describes generalise directly [@beyer2016sre].
 Three controls, and a gateway is the natural home for all three because it is
 the only component that sees the whole population:
 
-- **Exponential backoff with jitter.** Backoff alone re-synchronises the fleet;
-  the jitter is what de-synchronises it. Clients retrying at exactly 1s, 2s, 4s
-  reproduce the thundering herd at every step.
+- **Exponential backoff with jitter.** *Backoff* means waiting longer after
+  each failed attempt; *exponential* means the wait doubles; *jitter* means the
+  wait is randomised. A common recipe ("full jitter") waits a random time
+  between 0 and $\min(\text{cap},\ \text{base} \cdot 2^n)$ before retry $n$.
+  Backoff alone keeps clients that failed together retrying together; the
+  jitter is what spreads them out. Clients retrying at exactly 1s, 2s, 4s
+  reproduce the thundering herd — many clients hitting the provider in the
+  same instant — at every step.
 - **A circuit breaker.** After a threshold of failures, stop sending to that
   provider for a cooling period rather than continuing to spend latency
-  rediscovering that it is still down.
+  rediscovering that it is still down. The breaker is *closed* (traffic flows)
+  in normal operation, *open* (traffic goes to the fallback or fails at once)
+  after the threshold, and *half-open* after the cooling period, when a few
+  trial requests decide whether it closes again.
 - **A retry budget.** Google runs two [@beyer2016sre], and the second is the one
   people skip: a
   per-request cap of three attempts, *and* a per-client cap where each client
   tracks the share of its requests that are retries and stops retrying once that
-  ratio passes 10%. A per-request limit bounds one caller's patience; only the
-  fraction bounds fleet-wide amplification.
+  ratio passes 10%. The per-request cap alone still lets the load approach 3×
+  when nearly everything fails, which is exactly when the provider can least
+  absorb it; the fraction brings the worst case down to about 1.1×.
+
+Two practical rules sit underneath all three. **Retry only what can succeed on
+a second try**: 429s, 5xx server errors and timeouts, honouring any
+`Retry-After` — not a 400 for a malformed request or a prompt longer than the
+context window, which will fail identically every time. And **retry at one
+layer only**. Provider SDKs already retry by default (the OpenAI and Anthropic
+Python clients make two retries), so an SDK, a gateway and an application each
+allowing three attempts can turn one request into $3^3 = 27$ attempts; the SRE book calls
+this a combinatorial explosion [@beyer2016sre]. Timeouts need the same care: an
+LLM response can legitimately take a minute, so a single short total timeout
+cuts off long answers, while a generous one hides a hung provider. With
+streaming, time out on the wait for the first token and, separately, on the
+gap between tokens.
 
 There is also a failure mode specific to LLM gateways, and it is not a
 reliability problem at all:
@@ -182,7 +229,7 @@ The published results are encouraging. FrugalGPT cascades over a set of APIs and
 reports matching the best individual model's accuracy at a small fraction of that
 model's cost, or improving accuracy at equal cost [@chen2023frugalgpt]. RouteLLM learns
 a router from preference data and reports large cost reductions while retaining
-most of the strong model's quality on the benchmarks it was tuned for
+most of the strong model's quality on the benchmarks it was evaluated on
 [@ong2024routellm].
 
 [But every one of those results is a claim about a *signal*, and the signal is
@@ -221,7 +268,9 @@ costs $C_{\text{small}} + e \cdot C_{\text{large}}$ against $C_{\text{large}}$
 for sending everything to the big model. At $e = 0.5$ and a 10× price ratio that
 is $0.1 + 0.5 = 0.6$ of the large model's bill — a real saving, and nothing like
 half. Compute the break-even rate before building it, with your price ratio
-rather than the benchmark's.
+rather than the benchmark's: the cascade saves money only while
+$e < 1 - C_{\text{small}}/C_{\text{large}}$, which is $0.9$ at a 10× ratio and
+$0.5$ at a 2× ratio.
 
 **Routing changes the model, so it inherits every problem from
 @sec-gateway-failover.** Different output format, different tool-call syntax,
@@ -229,7 +278,7 @@ different refusal behaviour. A router is a deliberate, permanent version of the
 thing failover does by accident.
 
 **Capability routing is easier than quality routing.** "This request needs
-vision", "this one needs a 200k window", "this one must stay in the EU" are
+vision", "this one needs a 200k-token context window", "this one must stay in the EU" are
 properties you can read off the request without predicting anything. They are
 also the routing rules most likely to survive contact with production, because
 they do not depend on a signal that might be AUROC 0.667.
@@ -246,10 +295,12 @@ byte-identical previous response. Its quality risk is not zero — it is
 answer only while everything the answer depended on and the key did not capture
 has stayed the same. That list is longer than it looks. The model *version*, not
 just the alias, or a silent provider upgrade serves yesterday's model. The
-decoding parameters, or a temperature change serves stale output. The tenant and
-the caller's permissions, or you serve one customer's answer to another. Any
-tool result or retrieved document the answer was built from. And time itself,
-which is what a TTL is for — *what is our refund policy* has a shelf life even
+decoding parameters, or a temperature change serves stale output. The tenant
+(the customer organisation whose data this is) and the caller's permissions,
+or you serve one customer's answer to another. Any tool result or retrieved
+document the answer was built from. And time itself, which is what a TTL
+(*time to live*: how long an entry may be served before it expires) is for —
+*what is our refund policy* has a shelf life even
 when nothing else changes. Get the key and the TTL right and the risk really is
 gone; get them wrong and it is invisible, because a stale hit looks exactly like
 a correct one.
@@ -309,9 +360,10 @@ anti-correlated with sameness". It is that fifteen pairs cannot find you a
 threshold, and they can tell you the search will not be easy.
 
 This is the sentence-level cousin of @sec-embeddings' antonym result, where
-`increase`/`decrease` scored **0.881** — higher than `cat`/`dog` at 0.880. At
+`increase`/`decrease` scored **0.881** — level with `cat`/`dog` at 0.880. At
 the sentence level it gets worse rather than better: negation adds one short
-token to a long sentence and pooling averages it away, so *is covered* and *is
+token among many, and pooling — averaging the token vectors into one sentence
+vector — averages it away, so *is covered* and *is
 not covered* land nearly on top of one another. They are related, which is what
 the model was trained to capture. They are also opposite, and a cache cannot
 tell.
@@ -351,9 +403,20 @@ collapse survives one is untested, and since prefixes are lowercase it is a
 plausible interaction rather than an idle question. Treat it as an observation,
 not a characterised defect, and pin a digest before you report one.
 
+Two things make it more than a curiosity. A likely mechanism, untested here:
+this model uses a lowercase-only (BERT-style "uncased") vocabulary, so if the
+serving stack skips the lowercasing step, every capitalised word falls outside
+the vocabulary and becomes the same unknown-word token. And the same symptom has
+been reported upstream as
+[ollama issue #13942](https://github.com/ollama/ollama/issues/13942), "nomic-embed-text
+embedding incorrect for uppercase" — a regression reported from 0.13.1 and fixed
+in the 0.30 series, a range that includes the 0.24.0 used here. The fix changes
+the vectors, which is the other half of the lesson: an embedder or server
+upgrade silently invalidates every vector a semantic cache has stored.
+
 None of that changes what the chapter takes from it, because [a semantic cache
 built on that embedder would have served Monday's answer to Sunday's question,
-at similarity 1.000, forever, with nothing in any log.]{.hl}
+at similarity 1.000, every time, with nothing in any log.]{.hl}
 
 It is the same shape as @sec-summarization's `rouge-score` tokenizer and
 @sec-text-as-data's Turkish lowercasing: the tool did not fail, it returned
@@ -365,7 +428,7 @@ So treat the two caches as different features with different bars:
 
 | | quality risk | where it belongs |
 |:--|:--|:--|
-| Exact-match | [controllable — none once the key and TTL capture everything the answer depended on]{.pro} | on by default, everywhere |
+| Exact-match | [controllable — none once the key and TTL capture everything the answer depended on]{.pro} | on by default, wherever a repeated answer is acceptable (not where users ask to regenerate a sampled answer) |
 | Semantic | [a wrong answer, silently]{.con} | only with a measured false-positive rate on your own traffic, and never on anything consequential |
 
 : Two caches that share a name {tbl-colwidths="[18,38,44]"}
@@ -388,7 +451,9 @@ similarity:
 - **Decide what invalidates an entry.** A price changes, a policy is updated,
   a document is retracted — and a cached answer keeps being served with no
   version attached to it. If you cannot name the event that clears an entry,
-  the entry is permanent.
+  the entry is permanent. Upgrading the embedding model or its server is one
+  such event: stored vectors from the old version are no longer comparable
+  with new ones.
 
 If you do build one, the measurement that makes it defensible is the one nobody
 runs: sample the cache *hits*, check by hand how many were genuinely the same
@@ -404,8 +469,8 @@ model an unversioned alias points at, and the failure that follows has a
 distinctive shape: nothing errors, nothing is logged, and your outputs change.
 
 [A silent model upgrade is a dependency change that bypasses every gate you
-have.]{.hl} It appears in no diff, fails no test that nobody ran, and arrives on
-the provider's schedule rather than yours.
+have.]{.hl} It appears in no diff, triggers no test run, and arrives on the
+provider's schedule rather than yours.
 
 The gateway is where this is fixed, in three parts:
 
@@ -499,8 +564,9 @@ which can overshoot by roughly one request's worth of output per concurrent
 caller.
 
 Setting `max_tokens` per virtual key is what turns an unknown final cost into a
-reservable upper bound — for the output it limits; separately priced reasoning,
-tool fees and retries need reserving too.
+reservable upper bound — for the output it limits. Retries and per-call tool
+fees sit outside it and need reserving too, and reasoning tokens only count if
+your provider includes them in the cap.
 It is the cheapest control in this chapter and the one most often left unset.
 :::
 
@@ -516,8 +582,9 @@ so you stop spending latency to rediscover an outage; and a retry budget as a
 *fraction* of traffic — Google's clients stop retrying once retries pass 10% of
 their requests, on top of a three-attempt per-request cap.
 
-The per-request cap is the one everybody implements and it does not bound
-fleet-wide amplification. Only the fraction does.
+The per-request cap is the one everybody implements, and on its own it still
+lets the load approach 3× in the worst case — more if several layers each
+retry. The fraction brings that down to about 1.1×.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -548,7 +615,7 @@ logged.
 Sample the hits and check by hand what fraction were genuinely the same
 question, and report it with an interval. Note also that embedding similarity
 does not track meaning where it matters most: @sec-embeddings showed antonyms
-scoring higher than related words, and the sentence-level version of that is
+scoring as high as related words, and the sentence-level version of that is
 measured above — a sentence and its negation at 0.982, the top of the list.
 That is exactly the pair a cache must not conflate.
 :::
@@ -605,7 +672,8 @@ controls: exponential backoff *with jitter*, because backoff alone
 re-synchronises the fleet; a circuit breaker, so you stop paying latency to
 rediscover an outage; and a retry budget as a fraction of traffic — Google's
 clients stop retrying once retries pass 10% of their requests, on top of a
-three-attempt per-request cap.
+three-attempt per-request cap. Then add that only one layer should retry,
+and that a 400 is not worth retrying at all.
 
 ### Testing whether you have shipped one
 
@@ -623,8 +691,9 @@ serving an untested model is the option nobody chose and many ship.
 Measure before choosing. Exact-match response caching first, where the key captures the relevant state
 — tenant, permissions, data version — and repeated answers are acceptable; its
 hit rate is a property of your traffic you can measure in
-an afternoon. Then the prompt-side levers from @sec-serving, since input
-dominates cost. Only then routing — and say that routing is a claim needing
+an afternoon. Then the prompt-side levers from @sec-serving, since on
+prompt-heavy workloads — a system prompt plus retrieved context — input
+dominates the bill even though output costs more per token. Only then routing — and say that routing is a claim needing
 evidence: you need the cheap model's accuracy, the expensive one's, and a signal
 that says in advance which requests need which. If the signal does not beat
 random escalation at the same rate, routing is buying nothing.
@@ -726,8 +795,9 @@ fail and send the same twenty. Count how many the parser rejects.
 
 The per-key spend table; the overshoot with and without an output cap; the cache
 hit rate, with the isolation and invalidation checks; your embedder sanity check; the parser failure count on the fallback
-path; and one paragraph on whether your fallback should fail open or closed,
-with the number that justifies it.
+path; and one paragraph on whether your fallback should fail open (serve the
+fallback's answer anyway) or closed (return an error), with the number that
+justifies it.
 
 ## Exercises {#sec-gateway-exercises}
 
@@ -741,8 +811,10 @@ with the number that justifies it.
    output if it is not.
 
 3. **The retry storm, on paper.** Take a service with a known request rate and a
-   three-attempt retry policy. Compute the load a provider sees when half of all
-   requests start failing. Recompute with a 10% retry budget and compare.
+   policy of at most three attempts per request. Compute the load a provider
+   sees when half of all attempts start failing (assume each attempt fails
+   independently), then when all of them fail. Recompute with a 10% retry
+   budget and compare. Then add a second layer that also retries three times.
 
 4. **Fallback equivalence.** Run one prompt you rely on against your primary and
    your fallback model. Diff the outputs — format, length, refusals, tool-call
@@ -812,7 +884,9 @@ how urgent the rest of this is.
   plain backoff re-synchronises the fleet; a circuit breaker; and a retry budget
   as a fraction of traffic. Google runs a three-attempt per-request cap *and* a
   per-client rule that stops retrying once retries pass 10% of that client's
-  requests — the second is the one that bounds fleet-wide amplification.
+  requests — the first still allows nearly 3× load in the worst case, the
+  second brings it to about 1.1×. Retry only retryable errors, and at one
+  layer only.
 
 - **A failover is a model swap, so it is an evaluation problem.** Different
   format, different tool-call syntax, different refusals; a parser tuned on the
@@ -828,16 +902,19 @@ how urgent the rest of this is.
   proper probability. Always report the random-escalation baseline; if the
   policy does not beat it, the escalation *rate* is doing the work.
 
-- **Exact-match caching is free money; semantic caching is a correctness
-  decision.** Measured on fifteen labelled pairs, the most similar pair in the
-  set was **a sentence and its negation at 0.982**, while a genuinely identical
-  question scored **0.609**. The classes overlap completely, so no single
-  threshold separates them and the best cut still misses five of fifteen.
+- **Exact-match caching is nearly free money once the key is right; semantic
+  caching is a correctness decision.** Measured on fifteen labelled pairs, the
+  most similar pair in the set was **a sentence and its negation at 0.982**,
+  while a genuinely identical question scored **0.609**. The classes overlap
+  so heavily that no single threshold separates them: the cut with the fewest
+  errors is to cache nothing at all, missing all five genuine repeats.
 
-- **Check the embedder before trusting the cache.** `nomic-embed-text` under
-  `ollama` 0.24.0 maps every capitalised word to one constant token: *Monday*,
-  *Cat*, *Ankara* and *XYZZY* all produce byte-identical vectors, and
-  *Cat sat on the mat* equals *Dog sat on the mat*. Lowercase text is fine. A
+- **Check the embedder before trusting the cache.** In this chapter's setup,
+  `nomic-embed-text` under `ollama` 0.24.0 mapped every capitalised word to one
+  constant token: *Monday*, *Cat*, *Ankara* and *XYZZY* all produced
+  byte-identical vectors, and *Cat sat on the mat* equalled *Dog sat on the
+  mat*. Lowercase text was fine. The same symptom is reported upstream and
+  fixed in later `ollama` releases — and that fix changes the vectors too. A
   cache built on it would answer Sunday's question with Monday's answer at
   similarity 1.000 and log nothing. It surfaced only because a pair that had to
   score low scored highest.
