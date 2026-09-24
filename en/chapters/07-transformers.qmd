@@ -5,7 +5,7 @@
 - explain self-attention as a *learned weighted average* over token representations;
 - read the equation $\operatorname{Attention}(Q,K,V)=\operatorname{softmax}\!\big(QK^{\top}/\sqrt{d_k}\big)\,V$ term by term, and compute every number in it by hand for a three-token sentence;
 - walk one sentence through a complete transformer block — multi-head attention, residual, layer norm, feed-forward — and say what each token gained;
-- describe why multiple heads exist and what different heads specialize in;
+- describe why multiple heads exist and what different heads specialise in;
 - explain why position must be injected explicitly, and compare absolute, learned, RoPE, and ALiBi;
 - explain why the attention mask is the difference between BERT and GPT;
 - estimate a model's parameter count and KV cache size from its shape, and say which one limits you;
@@ -238,6 +238,9 @@ its subject need.
 
 #### Two matrices, or one? {.unnumbered}
 
+This subsection is a deeper aside. On a first reading you can skip to the
+next figure and come back after @sec-attention-worked.
+
 Be careful about what that argument proves. Write the score out and the
 projections collapse:
 
@@ -252,7 +255,8 @@ self-similarity trap, because nothing forces $M$ to be symmetric. So the honest
 claim is not "two matrices are necessary"; it is [two matrices are necessary
 *once you also want the model to be cheap*]{.hl}. Three concrete reasons:
 
-- **Parameters.** In GPT-3-scale terms, $d = 4096$ and $d_k = 128$: one head's
+- **Parameters.** For a 7B-class model (Llama 2 7B: $d = 4096$, 32 heads
+  of $d_k = 128$): one head's
   $W^Q, W^K$ pair costs $2 \times 4096 \times 128 = 1{,}048{,}576$ numbers,
   while a full $M$ costs $4096^2 = 16{,}777{,}216$ — **16× more**. The ratio
   is the same for a whole layer, since you would need one $M$ per head:
@@ -266,9 +270,9 @@ claim is not "two matrices are necessary"; it is [two matrices are necessary
   still cache — you just store $x_j$ itself, since
   $x_i^{\top} M x_j = (M^{\top} x_i) \cdot x_j$ — but what you store is stuck
   at the full width $d$. Factoring puts keys in a $d_k$-wide space of their
-  own, and once they live there you can *shrink that space*: sharing one key
-  head across many query heads takes the cache from $4096$ numbers per token
-  per layer to $1024$. That trick is called GQA, it is the subject of
+  own, and once they live there you can *shrink that space*: letting each key
+  head serve four query heads (8 key heads instead of 32) takes the keys in
+  the cache from $4096$ numbers per token per layer to $1024$. That trick is called GQA, it is the subject of
   @sec-attention-cost, and it is impossible to even state without a separate
   $W^K$.
 
@@ -382,7 +386,7 @@ every score.
 ### Explore: what is a head looking at?
 
 Different attention heads learn different, often interpretable, habits. The
-widget below shows a stylized attention matrix for one sentence. Each **row**
+widget below shows a stylised attention matrix for one sentence. Each **row**
 is a token doing the looking; each **column** is a token being looked at;
 darker means more weight. Switch heads and watch the pattern change —
 especially the row for `it`.
@@ -463,7 +467,7 @@ Plot.plot({
 
 ::: {.callout-tip appearance="simple" icon="false"}
 The ambiguity in the pronoun head is real, and it is the classic
-*Winograd* setup. Only one word changes between these two sentences, and the
+*Winograd* setup. Only the ending changes between these two sentences, and the
 referent of `it` moves from one noun to the other:
 
 - "The robot poured coffee because it was **ready**." → `it` leans to the
@@ -537,6 +541,11 @@ parameters enter the attention calculation at all.
 $$
 Q = XW^Q, \qquad K = XW^K, \qquad V = XW^V
 $$
+
+Keep the shapes in view. $X$ has one row per token, so it is
+$n \times d_{\text{model}}$ (here $3 \times 4$). Each $W$ is
+$d_{\text{model}} \times d_k$ (here $4 \times 2$), so $Q$, $K$ and $V$ are
+$n \times d_k$: still one row per token, now only two numbers wide.
 
 The three matrices encode three different questions. $W^Q$ builds *what am I
 looking for*, $W^K$ builds *what do I advertise*, and $W^V$ builds *what do I
@@ -626,7 +635,7 @@ sampling noise from a 20,000-pair estimate, not a systematic gap. That is the
 whole point: the measured spread of raw scores really does grow as
 $\sqrt{d_k}$, so dividing by $\sqrt{d_k}$ really does flatten it to a constant,
 which the last column confirms across a 256× range of widths. The
-consequence shows up when one token competes against 64 others — here is the
+consequence shows up when 64 random keys compete for one query — here is the
 average weight the *winning* key receives:
 
 | $d_k$ | with $1/\sqrt{d_k}$ | without it |
@@ -687,6 +696,10 @@ an ordinary weighted average, with the weights supplied by step 4.
 $$
 \operatorname{Attention}(Q,K,V) = AV
 $$
+
+The shapes close the loop: $A$ is $n \times n$ (one row of weights per
+token), $V$ is $n \times d_v$, so $AV$ is $n \times d_v$ — one output
+vector per token, the same number of rows we started with.
 
 | token | value **before** attention | output **after** attention |
 |:--|:--|:--|
@@ -890,9 +903,10 @@ html`<div style="font-size:0.85rem;opacity:0.8;margin-top:0.2rem">${
 Two things to try. Turn **causal mask** on and watch the top-right of the
 matrix go to zero — `kedi` can then only see itself, which is the constraint
 that makes a model able to generate text left to right (@sec-model-families).
-Turn **divide by √dₖ** off and watch every weight drift toward the extremes;
-at $d_k=2$ the effect is mild, which is precisely why the problem went
-unnoticed until people built wide heads.
+Turn **divide by √dₖ** off and watch every weight drift toward the extremes.
+At $d_k=2$ the effect is mild; it becomes serious only for wide heads, which
+is why @vaswani2017attention, working with $d_k = 64$, added the scaling in
+the first place.
 :::
 :::
 
@@ -971,7 +985,7 @@ language — *find me an agent and an object* — and it applies that idea to
 every token whether or not it makes sense. A model that could only do this
 would be a very narrow instrument.
 
-The fix is embarrassingly simple: run several heads side by side on the same
+The fix is simple: run several heads side by side on the same
 input, each with its own $W^Q$, $W^K$, $W^V$, and let them specialise.
 
 ### A second head, same sentence
@@ -1110,8 +1124,11 @@ where you started]{.hl}:
 
 $W^O$ then decides how much of each head's report to write back into the model's
 working memory. Ours routes head 1's agent and object content into the
-*animate* and *liquid* dimensions and head 2's action content into the
-*action* dimension:
+*animate* and *liquid* dimensions, head 2's action content into the
+*action* dimension, and a fifth (0.2) of head 2's noun content into both
+*animate* and *liquid* — which is why `kedi`'s animate value below is 0.7646
+rather than head 1's 0.7444. Its last column is all zeros, so nothing is
+written to the fourth dimension:
 
 $$
 W^O=\begin{bmatrix}1&0&0&0\\0&1&0&0\\0&0&1&0\\0.2&0.2&0&0\end{bmatrix}
@@ -1127,7 +1144,8 @@ $$
 ::: {.callout-important appearance="simple" icon="false"}
 **Multi-head attention costs almost nothing extra.** $h$ heads of width
 $d_{\text{model}}/h$ have the same total parameter count and the same
-*matrix-multiply* FLOP count as one head of width $d_{\text{model}}$: the
+*matrix-multiply* FLOP count (FLOP: one floating-point operation, a single
+multiply or add) as one head of width $d_{\text{model}}$: the
 $W^Q$, $W^K$, $W^V$ projections are $3d^2$ either way, $W^O$ adds $d^2$, and
 scoring costs $h \cdot n^2 \cdot (d/h) = n^2 d$ regardless of $h$. Splitting
 into heads buys several independent attention patterns for very close to
@@ -1168,10 +1186,11 @@ vector forever, and a transformer, where its vector is rebuilt from its
 neighbours at every layer.
 
 The `bias` column gained exactly zero, in every row — an artefact of this
-$W^O$, whose bottom row happens to send nothing back to that dimension.
+$W^O$, whose last column is all zeros and so sends nothing back to that
+dimension.
 
-Now that promised return to the constant dimension, because the tidy story
-about it is only two-thirds true. Split the score into the pieces the constant
+Now for the promised return to the constant dimension. The tidy story about
+it is only two-thirds true. Split the score into the pieces the constant
 $c$ contributes, writing each token as $x_i = [z_i, c]$:
 
 $$
@@ -1308,15 +1327,17 @@ on it. Post-norm rescales the stream at every block, so the identity path
 is no longer an identity, and deep post-norm models need a learning-rate
 warmup to train at all [@xiong2020layernorm]. Everything below is pre-norm.
 
-**And in practice, not even layer norm.** Every open-weight model this chapter
-names — Llama, Mistral, Qwen, Gemma — uses **RMSNorm** [@zhang2019root]:
+**And in practice, not even layer norm.** GPT-2 and BERT still use layer norm,
+but every recent open-weight family this chapter names — Llama, Mistral, Qwen,
+Gemma — uses **RMSNorm** [@zhang2019root]:
 
 $$\operatorname{RMSNorm}(x) = \frac{x}{\sqrt{\tfrac{1}{d}\sum_j x_j^2 + \epsilon}} \odot \gamma$$
 
 Two things are gone: the mean subtraction and the shift $\beta$. The claim —
 supported by ablation rather than by theory — is that re-centring was never the
-part that helped; only the re-scaling was. It costs about 15% less arithmetic
-and half the parameters, and it is why a Llama config file has an
+part that helped; only the re-scaling was. It has half the parameters, and
+skipping the mean makes it cheaper to run — its authors report 7–64% shorter
+running times, depending on the model. It is also why a Llama config file has an
 `rms_norm_eps` field and no `layer_norm_eps`. Everything above about *where*
 the normalisation goes applies unchanged; only the function inside the box gets
 simpler.
@@ -1341,8 +1362,9 @@ is wrong. Attention is not a linear function of $x$; the softmax of a
 quadratic form is thoroughly nonlinear.
 
 The real limit is elsewhere. *Given* the weights, the output is a convex
-combination of the value vectors, so it can only ever land inside the convex
-hull of the values it was handed. It can reweight and blend. It cannot compute
+combination of the value vectors (a weighted average with non-negative
+weights that sum to 1), so it can only ever land inside the convex hull of the
+values it was handed — the region "between" them. It can reweight and blend. It cannot compute
 a feature that none of its inputs carried.
 
 So something has to supply a nonlinearity acting on the *content* of a vector,
@@ -1386,8 +1408,8 @@ long document — the mixing can only have come from an attention pattern.
 
 #### Why $d_{\text{ff}} = 4d$? {.unnumbered}
 
-The short answer is that @vaswani2017attention picked 4 and it worked, and a
-decade of models kept it. There is no derivation. But there is a reading that
+The short answer is that @vaswani2017attention picked 4 and it worked, and
+the best-known models of the next few years — BERT, GPT-2, GPT-3 — kept it. There is no derivation. But there is a reading that
 makes the shape make sense: the FFN behaves like a **key–value memory**
 [@geva2021transformer]. Each of the $d_{\text{ff}}$ columns of $W_1$ — the rows of the $W_1^{\top}$ printed below — is a pattern detector, and the matching row of $W_2$ is what gets written to the residual
 stream when that detector fires. Under that reading $d_{\text{ff}}$ is simply
@@ -1409,8 +1431,9 @@ did the field do with that?
 | Llama 3 70B, SwiGLU | 8,192 | 28,672 | 3.50 | $10.5d^2$ |
 | Mistral 7B, SwiGLU | 4,096 | 14,336 | 3.50 | $10.5d^2$ |
 
-Llama 2 picked $\tfrac{8}{3}d \approx 2.67d$, which is exactly the width that
-holds the parameter count at $8d^2$ despite the third matrix. Llama 3 and
+Llama 2 picked $\tfrac{8}{3}d \approx 2.67d$ (rounded up to 11,008, a multiple
+of 256), which is the width that holds the parameter count at $8d^2$ despite
+the third matrix. Llama 3 and
 Mistral then abandoned that discipline and simply spent 31% more. [So neither
 the 4 nor the $8d^2$ is a law.]{.hl} What survived is the *shape* —
 expand well past $d$, apply a nonlinearity, contract back — and the fact that
@@ -1462,7 +1485,7 @@ nouns. Before attention ran, `kedi` and `sütü` both had exactly 0.0 action
 content. Nothing could have answered *"animate* **and** *attached to a verb"*,
 because half the question did not exist yet.
 
-(`içti` is the exception that proves the rule. It started with a little liquid
+(`içti` is a partial exception. It started with a little liquid
 content of its own, so its *liquid + action* detector would have fired weakly
 anyway; attention raised it from 0.1 to 0.9176.)
 
@@ -1716,8 +1739,10 @@ html`<p style="margin:0.4rem 0 0;font-size:0.85rem;">${blkNow.note}</p>`
 ```
 :::
 
-Compare stage 1 with stage 4. Every token leaves the block with the same number of dimensions but a larger norm than it arrived with — norms go from 1.03 to roughly 2.2–2.7 — and,
-more importantly, with content it did not have. `kedi` entered as *animate*
+Compare stage 1 with stage 4. Every token leaves the block with the same
+number of dimensions but a larger norm (length) than it arrived with: norms
+go from 1.03 to roughly 2.2–2.7. More importantly, every token leaves with
+content it did not have. `kedi` entered as *animate*
 and leaves as *animate, attached to an action*. That is one block. Stack
 twelve and each one gets to condition on what the previous eleven worked out.
 
@@ -1752,15 +1777,15 @@ of the *model* is about 46%. At $d = 8192$ the embeddings are a rounding error
 and the model ratio converges back on two thirds. Small models are mostly
 vocabulary; large models are mostly feed-forward.
 
-And two thirds is the *floor*. It assumes the GPT-2 shape: $8d^2$ of
+And two thirds is not a ceiling. It assumes the GPT-2 shape: $8d^2$ of
 feed-forward against $4d^2$ of attention. A Llama-3 block moves in both
 directions at once. Its SwiGLU feed-forward costs $10.5d^2$, and its attention
 costs only $2.5d^2$ — grouped-query attention shrinks $W^K$ and $W^V$ from
 $d \times d$ to $d \times 1024$ (@sec-attention-cost), so that pair costs
 $0.5d^2$ instead of $2d^2$. The feed-forward share is therefore
 $10.5/13 = \mathbf{81\%}$, not the 72% you get by assuming full-width
-attention. Every architectural change of the last few years has moved weight
-*into* this sublayer or *out of* attention, and never the reverse.
+attention. Almost every architectural change of the last few years has moved
+weight *into* this sublayer or *out of* attention, rarely the reverse.
 
 A rule of thumb is only worth having if it reproduces a number you can look
 up. GPT-2 small is public: vocabulary 50,257, $d = 768$, 12 layers, context
@@ -2005,10 +2030,11 @@ $$
 \begin{bmatrix} \cos m\theta_i & -\sin m\theta_i \\
                 \sin m\theta_i & \phantom{-}\cos m\theta_i \end{bmatrix}
 \begin{bmatrix} q_{2i} \\ q_{2i+1} \end{bmatrix},
-\qquad \theta_i = 10000^{-2i/d}
+\qquad \theta_i = 10000^{-2i/d_k}
 $$
 
-Rotating a vector by $m\theta$ and another by $n\theta$ and then taking their
+Here $m$ is the token's position and $d_k$ is the head dimension, since the
+rotation happens inside each head. Rotating a vector by $m\theta$ and another by $n\theta$ and then taking their
 dot product leaves an angle of $(m-n)\theta$. So the attention *score itself*
 becomes a function of the offset — not a side channel added to the embedding
 and hoped to survive the projections, but the score.
@@ -2068,7 +2094,8 @@ different width.
 
 Each head gets its own fixed slope $m$, on a geometric schedule. With eight
 heads the slopes are $\tfrac12, \tfrac14, \tfrac18, \dots, \tfrac{1}{256}$, so
-the head with $m = 0.5$ has accumulated one nat of penalty after 2 tokens and
+the head with $m = 0.5$ has accumulated a penalty of 1 after 2 tokens (a
+score lower by 1, which divides the attention weight by $e \approx 2.7$) and
 is effectively local, while the head with $m = 1/256$ needs 256 tokens to
 accumulate the same penalty and is effectively global. Different heads see
 different distance scales, by construction.
@@ -2209,13 +2236,13 @@ html`<p style="margin:0.4rem 0 0;font-size:0.85rem;">${
   mskKind.startsWith("bidirectional")
     ? "Every token sees the whole sentence, including what comes after it. Excellent representations — and useless for generation, because predicting the next word is trivial when you can already see it."
     : mskKind.startsWith("causal")
-    ? "Strictly lower triangular. Token i sees only tokens 0…i, so \"predict the next one\" is an honest task at every position at once. This is the mask that makes pre-training on raw text work."
+    ? "Lower triangular, diagonal included. Token i sees only tokens 0…i, so \"predict the next one\" is an honest task at every position at once. This is the mask that makes pre-training on raw text work."
     : "The first " + mskPrefix + " tokens see each other in both directions; everything after is causal. Used when there is a fixed instruction or document to encode and a continuation to generate."
 }</p>`
 ```
 :::
 
-Turn on the causal mask and the top-right triangle goes grey. `kedi`, in
+Select the causal mask and the top-right triangle goes grey. `kedi`, in
 position 0, can then attend only to itself. That constraint is the entire
 reason a decoder can be trained on raw text: with it, the model can be asked
 to predict *every* token in a sentence simultaneously without ever seeing the
@@ -2345,8 +2372,9 @@ over what it has generated so far, and then a second attention sublayer called
 **cross-attention** in which [the queries come from the decoder while the keys
 and values come from the encoder]{.hl}. It is the same arithmetic you worked
 through above — the only change is that $Q$ and $K, V$ are computed from two
-different sequences. That is how "attend to the source sentence while writing
-the translation" is expressed.
+different sequences. With $m$ target tokens and $n$ source tokens, the score
+matrix is $m \times n$ — no longer square. That is how "attend to the source
+sentence while writing the translation" is expressed.
 
 ::: {.column-margin}
 Cross-attention is also how most multimodal models attach an image to a
@@ -2380,8 +2408,9 @@ the KV cache is why generation costs what it costs.
 **Encoder-only models are not obsolete.** For classification and retrieval at
 volume, a 110M-parameter BERT-style encoder is often 100× cheaper per document
 than a generative model and just as accurate, because it emits one vector in
-one forward pass instead of decoding token by token. The embedding models
-behind every retrieval system in @sec-rag are encoders. Choosing a 7B decoder
+one forward pass instead of decoding token by token. Most of the embedding
+models behind the retrieval systems in @sec-rag are encoders (a few recent ones
+are decoders adapted to the job). Choosing a 7B decoder
 for sentiment analysis is a common and expensive mistake — and @sec-bake-off
 already showed how often the cheaper representation wins.
 :::
@@ -2395,7 +2424,9 @@ run the thing.
 ### The quadratic term, in bytes
 
 $QK^{\top}$ is $n \times n$. That is the whole problem in one line. Written
-naively, a single head at a single layer must hold that matrix in memory:
+naively, a single head at a single layer must hold that matrix in memory. At
+fp16 (16-bit floating point) each number takes 2 bytes; a GiB is $2^{30}$
+bytes, about 1.07 GB:
 
 | sequence length | entries in $QK^{\top}$ | one score matrix at fp16 |
 |--:|--:|--:|
@@ -2473,6 +2504,14 @@ linear-per-token.
 ::: {#gloss-kv-cache .column-margin .term-gloss}
 **KV cache** — stored keys and values from earlier tokens, so generation does not recompute them. Its size, not the model's, usually decides how many users a GPU can serve. [↩](#term-kv-cache){.term-back}
 :::
+
+This splits a request into two phases with very different characters. The
+prompt is processed all at once, in parallel, exactly as in training, and its
+keys and values fill the cache — this is called *prefill*. After that, each
+new token is one small step (*decode*): little arithmetic per step, but all of
+the model's weights and the whole cache must be read from memory for every
+new token. That is why generation speed is usually limited by memory
+bandwidth rather than by arithmetic, a point @sec-serving builds on.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -2562,9 +2601,10 @@ conversation.]{.hl} This is the arithmetic behind every "why is long context
 so expensive?" question, and it is why serving systems care so much about how
 that memory is partitioned and reused (@sec-serving).
 
-The third row is marked *hypothetical* on purpose: **no 70B-class model you
-can download actually has 64 KV heads.** Llama 2 70B, Llama 3, Mistral and
-their descendants all use 8, and the next section explains why. Redo the
+The third row is marked *hypothetical* on purpose: **today's 70B-class models
+do not have 64 KV heads.** The original LLaMA 65B still used full multi-head
+attention, but Llama 2 70B, Llama 3, Mistral's models and their descendants use
+8, and the next section explains why. Redo the
 arithmetic with $h_{\text{kv}} = 8$ and the 85.9 GB becomes **10.7 GB**. That
 one substitution is the difference between a model that needs a node and a
 model that fits on a card, and it is the single most consequential number in
@@ -2683,7 +2723,8 @@ token goes through all of it. A [mixture of experts](#gloss-mixture-of-experts){
 
 Replace the single feed-forward network in a block with $E$ copies — the
 *experts* — plus a small learned **router** that scores the experts for each
-token and sends it to the best $k$, usually $k = 2$. Only those $k$ run. The
+token and sends it to the best $k$ — $k = 2$ in the example below, $k = 8$
+in many recent models. Only those $k$ run. The
 other $E - k$ sit idle for that token, and a different token in the same
 sentence may take a different pair.
 
@@ -2752,7 +2793,7 @@ sentence may take a different pair.
   <rect x="480" y="86" width="270" height="112" rx="10" class="box-navy"/>
   <text x="494" y="110" class="t-xs t-b">8 EXPERTS, TOP-2 ROUTING, d = 4096</text>
   <text x="494" y="136" class="t-sm">TOTAL 36.5B — all of it must be resident</text>
-  <text x="494" y="158" class="t-sm">ACTIVE 10.7B — this is what sets latency</text>
+  <text x="494" y="158" class="t-sm">ACTIVE 10.7B — this sets per-token compute</text>
   <text x="494" y="182" class="t-xs t-muted">You rent the GPU for the first number.</text>
 
   <line x1="14" y1="266" x2="750" y2="266" class="ln-thin"/>
@@ -2794,8 +2835,8 @@ directly when you cost out self-hosting in @sec-serving.
 The idea is old [@shazeer2017outrageously] and became practical when the
 routing was simplified to one expert per token and the engineering worked out
 at scale [@fedus2022switch]. The hard part in practice is not the routing rule
-but **load balancing**: nothing stops the router from falling in love with
-three experts and starving the rest, which wastes the parameters you paid for
+but **load balancing**: nothing stops the router from sending almost every
+token to the same few experts and starving the rest, which wastes the parameters you paid for
 and can collapse training.
 
 The router itself is a single matrix. For token $x$ it produces
@@ -2821,7 +2862,7 @@ The 29% active fraction in the table above is a property of *this*
 configuration, not of MoE. The direction the field went is **finer
 granularity**: instead of 8 large experts with top-2, use 64–256 narrow experts
 with top-8, plus one or two shared experts that every token visits. Same total,
-far smaller active fraction — which is how a 36B-total model ends up near 3B
+far smaller active fraction — which is how a 35B-total model ends up near 3B
 active rather than 10.7B, as `qwen3.6:35b-a3b` does in @sec-classification.
 When you read a launch post, the ratio to look for is active over total, and
 across shipped models it has ranged from about 30% down to 3%.
@@ -2837,8 +2878,11 @@ spend nine figures on a training run.
 
 The first version of the analysis suggested growing the model much faster than
 the data. It was wrong, in a way that matters and that is worth understanding
-because the error was methodological rather than arithmetical: the learning
-rate schedules were not tuned per run. Redoing it properly gave a different
+because the error was methodological rather than arithmetical: every run used
+the same learning-rate schedule, whatever its number of training tokens. The
+loss at smaller token counts was therefore read off runs whose schedule had
+not finished, and it looked worse than a properly scheduled run would have
+been. Redoing it properly gave a different
 answer — [for a fixed compute budget, parameters and tokens should grow at
 roughly the same rate]{.hl}, about 20 tokens per parameter
 [@hoffmann2022chinchilla]:
@@ -2946,7 +2990,7 @@ $Q$ is what a token is looking *for*; $K$ is what it offers to be found *by*;
 $V$ is what it actually contributes once found. [$Q$ and $K$ together decide
 **where** information moves; $V$ alone decides **what** moves.]{.hl} Tie them
 and a token's advert becomes identical to its query, so the score table is
-forced to be a symmetric Gram matrix. Row normalisation can still produce
+forced to be a symmetric Gram matrix (a table of all pairwise dot products). Row normalisation can still produce
 different weights in the two directions; what a head loses is the ability to
 *choose* them, since both directions read one entry. It also biases every token toward itself, since $x \cdot x$ is
 the largest score in a row unless a neighbour is longer; that second effect is
@@ -2975,12 +3019,12 @@ before FlashAttention, which never materialises it.
 :::
 
 ::: {.callout-note collapse="true"}
-## 4. A mixture-of-experts model has 36B parameters. How much GPU memory do you need, and how fast is it?
+## 4. A mixture-of-experts model has 35B parameters. How much GPU memory do you need, and how fast is it?
 
 Those are two different questions with two different answers, which is the
 entire point of the architecture.
 
-You must hold **all** 36B parameters in memory, because any token might route
+You must hold **all** 35B parameters in memory, because any token might route
 to any expert. But only the top-$k$ experts run per token — about 3B active —
 so latency tracks the small number. [Total parameters set your hardware bill;
 active parameters set your latency.]{.hl}
@@ -3002,8 +3046,8 @@ This is the concrete reason the field moved to RoPE and ALiBi. RoPE encodes
 position as a *rotation*, so the score between two tokens depends only on
 their offset. Measured in @sec-position: the same query-key pair at a fixed
 offset, evaluated at absolute positions 0, 100, 1000 and 5000, gives scores
-that vary by **$2 \times 10^{-13}$** — against a spread of 26 for the raw
-scores. [When position enters only as an offset, there is no row 1,025 to be
+that vary by at most **$5 \times 10^{-13}$** — against a spread of about 26
+when the position vector is added to the embedding instead. [When position enters only as an offset, there is no row 1,025 to be
 missing.]{.hl}
 
 Note what this does *not* buy: extrapolating far beyond the training length
@@ -3056,9 +3100,8 @@ it, and the order gives you away.
    mixes tokens but, given its weights, does so *linearly in the values* — the
    non-linearity it does have lives in how the weights are computed, not in what
    it does with what it moves. The feed-forward sublayer is where each token
-   gets non-linear processing of its own. The feed-forward half applies
-   per-token depth: $W_1$ is a bank of detectors and $W_2$ is what each
-   broadcasts when it fires. Get the proportion right, because most candidates
+   gets non-linear processing of its own: $W_1$ is a bank of detectors and
+   $W_2$ is what each detector broadcasts when it fires. Get the proportion right, because most candidates
    have it backwards: in the standard $d_{\text{ff}} = 4d$ block used
    throughout this chapter, [two thirds of a transformer block's parameters are
    the feed-forward sublayer]{.hl}, not attention. The ratio follows from that
@@ -3080,8 +3123,9 @@ it, and the order gives you away.
    matrix for **one head at one layer** is 18.63 GiB in fp16. Multiply by 32
    heads and 32 layers and the naive version is not slow, it is impossible.
 
-5. **Encoder-only, decoder-only, or encoder-decoder?** The distinction is
-   entirely which entries of the attention matrix are allowed to be non-zero.
+5. **Encoder-only, decoder-only, or encoder-decoder?** Inside self-attention
+   the distinction is which entries of the attention matrix are allowed to be
+   non-zero; an encoder-decoder adds cross-attention between two stacks.
    Encoder-only sees everything both ways and is the right choice when you need
    a representation of a complete text — classification, retrieval, and every
    result in @sec-classification. Decoder-only is causally masked and is what
@@ -3186,7 +3230,7 @@ and covers attention and transformers from the linear algebra up.
    Its fp16 weights are 140 GB, so it is served on a node of four 80 GB
    accelerators — 320 GB total. Using the KV cache calculator, find the
    longest context you can serve to four concurrent users, first with 64 KV
-   heads and then with 8, as every shipped 70B actually has. Report both
+   heads and then with 8, as current 70B-class models have. Report both
    lengths and the ratio between them. Then name every quantity in the cache
    formula that changed and every one that did not.
 10. An announcement describes a model as "120B total parameters, 5B active".

@@ -255,6 +255,9 @@ de güçlü biçimde bağlanabilmesini sağlar; bir fiil ile öznesinin ihtiyac�
 
 #### İki matris mi, bir matris mi? {.unnumbered}
 
+Bu alt bölüm daha derin bir ara not niteliğinde. İlk okumada bir sonraki
+şekle atlayıp @sec-attention-ornek'ten sonra buraya dönebilirsiniz.
+
 Bu argümanın neyi kanıtladığı konusunda dikkatli olun. Skoru açıkça
 yazdığınızda iki izdüşüm tek bir çarpımda birleşir:
 
@@ -269,7 +272,8 @@ tuzağından uzak, çünkü $M$'yi simetrik olmaya zorlayan hiçbir şey yok. O 
 dürüst iddia "iki matris zorunludur" değil; [modelin aynı zamanda ucuz olmasını
 da istediğiniz anda iki matris zorunlu hale gelir]{.hl}. Üç somut gerekçe:
 
-- **Parametreler.** GPT-3 ölçeğinde $d = 4096$ ve $d_k = 128$: tek bir head'in
+- **Parametreler.** 7B sınıfı bir modelde (Llama 2 7B: $d = 4096$, her biri
+  $d_k = 128$ genişliğinde 32 head): tek bir head'in
   $W^Q, W^K$ çifti $2 \times 4096 \times 128 = 1{.}048{.}576$ sayıya mal
   olurken, tam bir $M$ $4096^2 = 16{.}777{.}216$ sayı tutar — **16 kat fazla**.
   Oran, katmanın tamamı için de aynıdır, çünkü her head'e bir $M$ gerekirdi:
@@ -284,9 +288,9 @@ da istediğiniz anda iki matris zorunlu hale gelir]{.hl}. Üç somut gerekçe:
   için doğrudan $x_j$'yi saklarsınız — ama sakladığınız şey tam $d$
   genişliğinde kalmak zorundadır. Çarpanlara ayırma, key'leri kendilerine ait $d_k$
   genişliğinde bir uzaya taşır ve oraya yerleştikleri anda *o uzayı
-  küçültebilirsiniz*: tek bir key head'ini birçok query head'i arasında
-  paylaştırmak, cache'i her katmanda token başına $4096$ sayıdan $1024$'e
-  indirir. Bu numaranın adı GQA'dır; @sec-attention-maliyeti bu konuyu ele
+  küçültebilirsiniz*: her key head'ini dört query head'ine hizmet ettirmek
+  (32 yerine 8 key head), cache'teki key'leri her katmanda token başına $4096$
+  sayıdan $1024$'e indirir. Bu numaranın adı GQA'dır; @sec-attention-maliyeti bu konuyu ele
   alır. Ayrı bir $W^K$ olmadan bu numarayı ifade etmek bile mümkün değildir.
 
 Aynı belirlenemezlik value yolunda da geçerlidir: bir head'in çıktısı residual
@@ -480,7 +484,7 @@ Plot.plot({
 
 ::: {.callout-tip appearance="simple" icon="false"}
 Zamir head'indeki belirsizlik gerçektir ve klasik *Winograd* kurgusudur. Şu
-iki cümle arasında yalnızca tek bir kelime değişir, ama `it`'in gönderimi bir
+iki cümle arasında yalnızca cümlenin sonu değişir, ama `it`'in gönderimi bir
 isimden diğerine kayar:
 
 - "The robot poured coffee because it was **ready**." → `it`, **kahveye**
@@ -548,6 +552,12 @@ yalnızca burada girer.
 $$
 Q = XW^Q, \qquad K = XW^K, \qquad V = XW^V
 $$
+
+Boyutları gözünüzün önünde tutun. $X$'te her token için bir satır vardır;
+yani $X$, $n \times d_{\text{model}}$ boyutundadır (burada $3 \times 4$).
+Her $W$ matrisi $d_{\text{model}} \times d_k$ boyutundadır (burada
+$4 \times 2$); dolayısıyla $Q$, $K$ ve $V$ $n \times d_k$ olur: yine token
+başına bir satır, ama artık yalnızca iki sayı genişliğinde.
 
 Üç matris üç farklı soruyu kodlar. $W^Q$ *ne arıyorum*, $W^K$ *neyi ilan
 ediyorum*, $W^V$ ise *seçilirsem ne teslim ederim* sorusunun cevabını kurar:
@@ -633,7 +643,7 @@ daha geniş head'lerde %0,6'nın altında. Kalan fark, 20.000
 mesele de bu: ham skorların ölçülen yayılımı gerçekten $\sqrt{d_k}$ ile orantılı
 büyüyor, dolayısıyla $\sqrt{d_k}$'ya bölmek onu gerçekten sabit bir değere
 indiriyor; son sütun bunu 256 katlık bir genişlik aralığında doğruluyor.
-Bunun sonucu, bir token 64 başka token'la yarıştığında ortaya çıkıyor —
+Bunun sonucu, 64 rastgele key tek bir query için yarıştığında ortaya çıkıyor —
 aşağıda *kazanan* key'in aldığı ortalama ağırlık var:
 
 | $d_k$ | $1/\sqrt{d_k}$ ile | onsuz |
@@ -695,6 +705,10 @@ ağırlıkları 4. adımdan gelen sıradan bir ağırlıklı ortalama.
 $$
 \operatorname{Attention}(Q,K,V) = AV
 $$
+
+Boyutlar döngüyü kapatır: $A$, $n \times n$ boyutundadır (her token için bir
+ağırlık satırı), $V$ ise $n \times d_v$; dolayısıyla $AV$ de $n \times d_v$
+olur — token başına bir çıktı vektörü, başladığımız satır sayısının aynısı.
 
 | token | attention **öncesi** value | attention **sonrası** çıktı |
 |:--|:--|:--|
@@ -899,8 +913,9 @@ Denemeniz gereken iki şey var. **Nedensel maskeyi** açın ve matrisin sağ üs
 köşesinin sıfıra gidişini izleyin — `kedi` artık yalnızca kendisini görebilir;
 bir modelin metni soldan sağa üretebilmesini sağlayan kısıt da budur
 (@sec-model-aileleri). **√dₖ'ya böl** anahtarını kapatın ve bütün ağırlıkların
-uç değerlere kayışını izleyin; $d_k=2$'de etki hafiftir; sorunun geniş
-head'ler kurulana kadar fark edilmemesinin sebebi de tam olarak budur.
+uç değerlere kayışını izleyin. $d_k=2$'de etki hafiftir; sorun ancak geniş
+head'lerde ciddileşir. @vaswani2017attention'ın $d_k = 64$ ile çalışırken
+ölçeklemeyi en baştan eklemesinin sebebi de budur.
 :::
 :::
 
@@ -1121,8 +1136,11 @@ $d_k = d_{\text{model}} / h$ seçilir]{.hl}:
 
 Sonra $W^O$, her head'in raporunun ne kadarının modelin çalışma belleğine geri
 yazılacağına karar verir. Bizimki, 1. head'in özne ve nesne içeriğini *canlı*
-ve *sıvı* boyutlarına, 2. head'in eylem içeriğini ise *eylem* boyutuna
-yönlendiriyor:
+ve *sıvı* boyutlarına, 2. head'in eylem içeriğini *eylem* boyutuna,
+2. head'in isim içeriğinin beşte birini (0,2) de hem *canlı* hem *sıvı*
+boyutlarına yönlendiriyor — aşağıda `kedi`'nin canlı değerinin 1. head'in
+verdiği 0,7444 değil de 0,7646 çıkmasının nedeni bu. Son sütunu tamamen
+sıfır olduğu için dördüncü boyuta hiçbir şey yazılmıyor:
 
 $$
 W^O=\begin{bmatrix}1&0&0&0\\0&1&0&0\\0&0&1&0\\0{,}2&0{,}2&0&0\end{bmatrix}
@@ -1138,7 +1156,8 @@ $$
 ::: {.callout-important appearance="simple" icon="false"}
 **Multi-head attention neredeyse hiç fazladan maliyet getirmez.**
 $d_{\text{model}}/h$ genişliğinde $h$ head'in toplam parametre sayısı ve
-*matris çarpımı* FLOP sayısı, $d_{\text{model}}$ genişliğinde tek bir head ile
+*matris çarpımı* FLOP sayısı (FLOP: tek bir kayan noktalı işlem, yani bir
+çarpma ya da bir toplama), $d_{\text{model}}$ genişliğinde tek bir head ile
 aynıdır: $W^Q$, $W^K$, $W^V$ izdüşümleri her iki durumda da $3d^2$, $W^O$ buna
 $d^2$ ekler ve skorlama, $h$ ne olursa olsun
 $h \cdot n^2 \cdot (d/h) = n^2 d$ tutar. Head'lere bölmek, birbirinden bağımsız
@@ -1183,8 +1202,8 @@ vektörü vardır; transformer'da ise bu vektör her katmanda komşularından
 yeniden kurulur.
 
 `sabit` sütunu her satırda tam olarak sıfır kazandı — bu, elimizdeki
-$W^O$'nun bir yan ürünü; bu matrisin alt satırı o boyuta tesadüfen hiçbir şey
-geri göndermiyor.
+$W^O$'nun bir yan ürünü; bu matrisin son sütunu tamamen sıfır olduğu için o
+boyuta hiçbir şey geri gönderilmiyor.
 
 Şimdi sabit boyuta söz verdiğimiz dönüşü yapalım, çünkü onunla ilgili derli
 toplu hikâyenin yalnızca üçte ikisi doğru. Skoru, sabit $c$'nin katkıda
@@ -1328,16 +1347,19 @@ blokta yeniden ölçekler, dolayısıyla birim yol artık birim değildir ve der
 post-norm modeller eğitilebilmek için bir öğrenme oranı ısınmasına ihtiyaç
 duyar [@xiong2020layernorm]. Aşağıdaki her şey pre-norm'dur.
 
-**Pratikte ise layer norm bile değil.** Bu bölümün adını andığı her açık
-ağırlıklı model — Llama, Mistral, Qwen, Gemma — **RMSNorm** kullanıyor
+**Pratikte ise layer norm bile değil.** GPT-2 ve BERT hâlâ layer norm
+kullanır; ama bu bölümün adını andığı yeni açık ağırlıklı model ailelerinin
+hepsi — Llama, Mistral, Qwen, Gemma — **RMSNorm** kullanıyor
 [@zhang2019root]:
 
 $$\operatorname{RMSNorm}(x) = \frac{x}{\sqrt{\tfrac{1}{d}\sum_j x_j^2 + \epsilon}} \odot \gamma$$
 
 İki şey gitti: ortalama çıkarma ve $\beta$ kaydırması. Kuramla değil
 ablasyon deneyleriyle desteklenen iddia şu: işe yarayan kısım hiçbir zaman
-yeniden merkezleme değildi, yalnızca yeniden ölçeklemeydi. RMSNorm yaklaşık %15
-daha az aritmetik işlem ve yarı sayıda parametre gerektiriyor; bir Llama
+yeniden merkezleme değildi, yalnızca yeniden ölçeklemeydi. RMSNorm'un
+parametre sayısı layer norm'unkinin yarısıdır; ortalamayı hesaplamadığı için de daha
+hızlı çalışır — yazarları, modele göre %7 ile %64 arasında daha kısa çalışma
+süreleri bildiriyor. Bir Llama
 yapılandırma dosyasında `layer_norm_eps` değil `rms_norm_eps` alanı
 bulunmasının nedeni de bu. Normalizasyonun *nereye*
 konduğuna dair yukarıda söylenen her şey aynen geçerli; yalnızca kutunun
@@ -1363,8 +1385,8 @@ Nedenini net söyleyelim. Sık duyulan *"attention doğrusaldır"* açıklaması
 fonksiyonu değildir — bir karesel formun softmax'ı hiç de doğrusal
 değildir.
 
-Asıl sınır başka yerde. Ağırlıklar *verildiğinde* ise çıktı, value vektörlerinin dışbükey bir bileşimidir: yalnızca kendisine verilen value'ların dışbükey örtüsünün (convex hull) içinde
-kalan noktalar üretebilir. Yeniden ağırlıklandırıp harmanlayabilir; girdilerinin
+Asıl sınır başka yerde. Ağırlıklar *verildiğinde* ise çıktı, value vektörlerinin dışbükey bir bileşimidir (ağırlıkları negatif olmayan ve toplamı 1 olan bir ağırlıklı ortalama): yalnızca kendisine verilen value'ların dışbükey örtüsünün (convex hull), yani onların "arasında" kalan bölgenin içindeki
+noktaları üretebilir. Yeniden ağırlıklandırıp harmanlayabilir; girdilerinin
 hiçbirinde bulunmayan yeni bir özniteliği hesaplayamaz.
 
 Dolayısıyla bir
@@ -1407,8 +1429,8 @@ var — karışma yalnızca bir attention örüntüsünden gelmiş olabilir.
 
 #### Neden $d_{\text{ff}} = 4d$? {.unnumbered}
 
-Kısa cevap: @vaswani2017attention 4'ü seçti, işe yaradı ve sonraki on yılın modelleri
-de onu korudu. Bir türetme yok. Ama bu şekli anlamlı kılan bir okuma var: FFN, bir
+Kısa cevap: @vaswani2017attention 4'ü seçti, işe yaradı ve sonraki birkaç
+yılın en bilinen modelleri — BERT, GPT-2, GPT-3 — de onu korudu. Bir türetme yok. Ama bu şekli anlamlı kılan bir okuma var: FFN, bir
 **key–value bellek** gibi davranır [@geva2021transformer]. $W_1$'in $d_{\text{ff}}$ sütununun her biri — aşağıda basılan $W_1^{\top}$'nin satırları — bir örüntü dedektörüdür ve $W_2$'nin
 eşleşen satırı, o dedektör ateşlendiğinde residual akışa yazılan şeydir. Bu
 okumaya göre $d_{\text{ff}}$ basitçe *bu katmanın kaç şey bilebileceğidir* ve
@@ -1430,8 +1452,9 @@ $3\,d\,d_{\text{ff}}$ tutuyor. Peki araştırmacılar bununla ne yaptı?
 | Llama 3 70B, SwiGLU | 8.192 | 28.672 | 3,50 | $10{,}5d^2$ |
 | Mistral 7B, SwiGLU | 4.096 | 14.336 | 3,50 | $10{,}5d^2$ |
 
-Llama 2, $\tfrac{8}{3}d \approx 2{,}67d$ seçti; bu, üçüncü matrise rağmen
-parametre sayısını $8d^2$'de tutan genişliğin ta kendisi. Llama 3 ve Mistral
+Llama 2, $\tfrac{8}{3}d \approx 2{,}67d$ seçti (256'nın katı olacak şekilde
+11.008'e yuvarlanmış hâliyle); bu, üçüncü matrise rağmen parametre sayısını
+$8d^2$'de tutan genişlik. Llama 3 ve Mistral
 ise bu disiplini bırakıp düpedüz %31 daha fazla parametre harcadı. [Yani ne 4 bir
 yasadır ne de $8d^2$.]{.hl} Değişmeden kalan iki şey var: *şekil* — $d$'yi epeyce aşacak
 kadar genişlet, bir doğrusal olmayanlık uygula, geri daralt — ve bir modelin
@@ -1485,7 +1508,7 @@ bilmediği hiçbir şey söylemiyorlar.
 eylem içeriği tam olarak 0,0'dı, yani hiçbir şey "canlı **ve** bir fiile bağlı"
 sorusunu cevaplayamazdı. Çünkü sorunun yarısı henüz ortada yoktu.
 
-(`içti` ise kaideyi bozmayan istisnadır — kendine ait
+(`içti` kısmi bir istisnadır — kendine ait
 biraz sıvı içeriğiyle başlamıştı, dolayısıyla *sıvı + eylem* dedektörü zaten
 zayıfça ateşlenirdi; attention onu 0,1'den 0,9176'ya çıkardı.)
 
@@ -1776,15 +1799,15 @@ $d = 8192$'de embedding'ler bir yuvarlama hatasına dönüşür ve model oranı 
 yakınsar. Küçük modellerin büyük kısmı sözlükten oluşur; büyük modellerinki ise
 feed-forward'dan.
 
-Üstelik üçte iki *alt sınırdır*. Bu, $4d^2$ attention'a karşı $8d^2$
+Üstelik üçte iki bir tavan değildir. Bu, $4d^2$ attention'a karşı $8d^2$
 feed-forward olan GPT-2 şeklini varsayıyor. Bir Llama-3 bloğu ise bu şekilden iki yönde birden ayrılır: SwiGLU
 feed-forward'ına $10{,}5d^2$, attention'ına ise yalnızca $2{,}5d^2$ harcar —
 grouped-query attention (GQA) $W^K$ ile $W^V$'yi $d \times d$'den $d \times 1024$'e
 küçültüyor (@sec-attention-maliyeti), dolayısıyla o çift $2d^2$ yerine
 $0{,}5d^2$ tutuyor. Feed-forward payı bu yüzden $10{,}5/13 = \mathbf{\%81}$;
-tam genişlikte attention varsayarak bulunan %72 değil. Son birkaç yılın her
-mimari değişikliği ağırlığı bu alt katmanın *içine* ya da attention'ın *dışına*
-taşıdı; hiçbiri tersini yapmadı.
+tam genişlikte attention varsayarak bulunan %72 değil. Son birkaç yılın
+mimari değişikliklerinin neredeyse hepsi ağırlığı bu alt katmanın *içine* ya da
+attention'ın *dışına* taşıdı; tersini yapan pek az oldu.
 
 Bir pratik kural, ancak bakıp doğrulayabileceğiniz bir sayıyı üretiyorsa
 elde tutmaya değer. GPT-2 small herkese açık: sözlük 50.257, $d = 768$, 12
@@ -2040,10 +2063,11 @@ $$
 \begin{bmatrix} \cos m\theta_i & -\sin m\theta_i \\
                 \sin m\theta_i & \phantom{-}\cos m\theta_i \end{bmatrix}
 \begin{bmatrix} q_{2i} \\ q_{2i+1} \end{bmatrix},
-\qquad \theta_i = 10000^{-2i/d}
+\qquad \theta_i = 10000^{-2i/d_k}
 $$
 
-Bir vektörü $m\theta$ kadar, bir başkasını $n\theta$ kadar döndürüp sonra iç
+Burada $m$ token'ın konumu, $d_k$ ise head boyudur; çünkü döndürme her
+head'in içinde yapılır. Bir vektörü $m\theta$ kadar, bir başkasını $n\theta$ kadar döndürüp sonra iç
 çarpımlarını alırsanız geriye $(m-n)\theta$ açısı kalır. Yani attention
 *skorunun kendisi* kaydırmanın bir fonksiyonu hâline gelir — embedding'e
 eklenip izdüşümlerden sağ çıkması umulan bir yan kanal değil, doğrudan skorun
@@ -2105,7 +2129,8 @@ olmasını sağlayan şey tam da budur.
 
 Her head, geometrik bir diziye göre belirlenen kendi sabit $m$ eğimini alır. Sekiz head
 varken eğimler $\tfrac12, \tfrac14, \tfrac18, \dots, \tfrac{1}{256}$ olur;
-yani $m = 0{,}5$ olan head 2 token sonra bir nat ceza biriktirmiş olur ve
+yani $m = 0{,}5$ olan head 2 token sonra 1'lik bir ceza biriktirmiş olur
+(skor 1 azalır, bu da attention ağırlığını $e \approx 2{,}7$'ye böler) ve
 fiilen yereldir, $m = 1/256$ olan head ise aynı cezayı biriktirmek için 256
 token'a ihtiyaç duyar ve fiilen küreseldir. Farklı head'ler, tasarım gereği,
 farklı mesafe ölçeklerini görür.
@@ -2247,13 +2272,13 @@ html`<p style="margin:0.4rem 0 0;font-size:0.85rem;">${
   mskKind.startsWith("çift")
     ? "Her token, kendinden sonra geleni de dahil olmak üzere cümlenin tamamını görür. Mükemmel temsiller — ve üretim için işe yaramaz, çünkü bir sonraki kelimeyi zaten görüyorsanız onu tahmin etmek anlamsızlaşır."
     : mskKind.startsWith("nedensel")
-    ? "Kesinlikle alt üçgensel. i token'ı yalnızca 0…i token'larını görür; böylece \"bir sonrakini tahmin et\" görevi her konumda aynı anda dürüst bir görev olur. Ham metin üzerinde ön eğitimi mümkün kılan maske budur."
+    ? "Köşegen dahil alt üçgensel. i token'ı yalnızca 0…i token'larını görür; böylece \"bir sonrakini tahmin et\" görevi her konumda aynı anda dürüst bir görev olur. Ham metin üzerinde ön eğitimi mümkün kılan maske budur."
     : "İlk " + mskPrefix + " token birbirini iki yönlü görür; sonrası nedenseldir. Kodlanacak sabit bir talimat ya da belge ve üretilecek bir devam olduğunda kullanılır."
 }</p>`
 ```
 :::
 
-Nedensel maskeyi açın, sağ üst üçgen griye döner. 0. konumdaki `kedi` artık
+Nedensel maskeyi seçin, sağ üst üçgen griye döner. 0. konumdaki `kedi` artık
 yalnızca kendisine bakabilir. Bir decoder'ın ham metin üzerinde
 eğitilebilmesinin tek sebebi bu kısıttır: onun sayesinde modelden, cevabı hiç
 görmeden, bir cümledeki *bütün* token'ları aynı anda tahmin etmesi istenebilir
@@ -2383,8 +2408,10 @@ ana kadar ürettiği şey üzerinde self-attention çalıştırır, ardından
 **cross-attention** (çapraz dikkat) adı verilen ikinci bir attention alt
 katmanı gelir: burada [query'ler decoder'dan, key ve value'lar encoder'dan
 gelir]{.hl}. Bu, yukarıda adım adım yaptığınız aritmetiğin aynısıdır — tek fark,
-$Q$ ile $K, V$'nin iki farklı diziden hesaplanmasıdır. "Çeviriyi yazarken
-kaynak cümleye bak" fikri işte böyle ifade edilir.
+$Q$ ile $K, V$'nin iki farklı diziden hesaplanmasıdır. $m$ hedef token ve $n$
+kaynak token varsa skor matrisi $m \times n$ boyutundadır — artık kare
+değildir. "Çeviriyi yazarken kaynak cümleye bak" fikri işte böyle ifade
+edilir.
 
 ::: {.column-margin}
 Çok modlu (multimodal) modellerin çoğu da bir görüntüyü dil modeline
@@ -2419,7 +2446,8 @@ cache açıklar.
 işlerinde, 110M parametreli BERT tarzı bir encoder çoğu zaman belge başına
 üretken bir modelden 100× daha ucuz ve onun kadar isabetlidir; çünkü
 token token çözümleme yapmak yerine tek bir ileri geçişte tek bir vektör verir.
-Her arama sisteminin arkasındaki embedding modelleri encoder'dır (@sec-rag). Duygu analizi
+Arama sistemlerinin arkasındaki embedding modellerinin çoğu encoder'dır
+(@sec-rag); yenilerden birkaçı ise bu işe uyarlanmış decoder'lardır. Duygu analizi
 için 7B'lik bir decoder seçmek yaygın ve pahalı bir hatadır —
 @sec-karsilastirma da ucuz temsilin ne sıklıkla kazandığını zaten
 göstermişti.
@@ -2435,7 +2463,8 @@ belirleyen de bu taraf.
 
 $QK^{\top}$ matrisi $n \times n$ boyutundadır. Bütün sorun tek satırda bu. Naif
 yazıldığında, tek bir katmandaki tek bir head'in bu matrisi bellekte tutması
-gerekir:
+gerekir. fp16'da (16 bitlik kayan noktalı sayı) her sayı 2 byte yer kaplar;
+bir GiB $2^{30}$ byte, yani yaklaşık 1,07 GB'dir:
 
 | dizi uzunluğu | $QK^{\top}$ girdi sayısı | fp16'da tek bir skor matrisi |
 |--:|--:|--:|
@@ -2516,6 +2545,15 @@ başına kareselden token başına doğrusala çevirir.
 ::: {#gloss-kv-cache .column-margin .term-gloss}
 **KV cache** (anahtar-değer önbelleği) — önceki token'lardan saklanan key ve value'lar; böylece üretim onları yeniden hesaplamaz. Bir GPU'nun kaç kullanıcıya hizmet verebileceğine genelde modelin değil, bu önbelleğin boyutu karar verir. [↩](#term-kv-cache){.term-back}
 :::
+
+Bu durum, bir isteği karakteri birbirinden çok farklı iki evreye ayırır.
+Prompt tek seferde, eğitimdeki gibi paralel olarak işlenir ve onun key ile
+value'ları cache'i doldurur;
+buna *prefill* denir. Ardından her yeni token küçük bir adımdır (*decode*):
+adım başına aritmetik azdır, ama her yeni token için modelin bütün ağırlıkları
+ve cache'in tamamı bellekten okunmak zorundadır. Üretim hızının genellikle
+aritmetikle değil bellek bant genişliğiyle sınırlanmasının sebebi budur;
+@sec-servis bu noktanın üzerine kurulur.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -2605,9 +2643,10 @@ katı.]{.hl} "Uzun bağlam neden bu kadar pahalı?" sorusunun arkasındaki aritm
 budur ve servis sistemlerinin bu belleğin nasıl bölümlendiğine ve yeniden
 kullanıldığına bu kadar kafa yormasının sebebi de budur (@sec-servis).
 
-Üçüncü satır bilerek *varsayımsal* diye işaretlendi: **indirebileceğiniz hiçbir
-70B sınıfı modelin gerçekten 64 KV head'i yok.** Llama 2 70B, Llama 3, Mistral
-ve onlardan türeyen modellerin hepsi 8 kullanıyor; sebebini bir sonraki kısım
+Üçüncü satır bilerek *varsayımsal* diye işaretlendi: **bugünün 70B sınıfı
+modellerinde 64 KV head yok.** İlk LLaMA 65B hâlâ tam multi-head attention
+kullanıyordu; ama Llama 2 70B, Llama 3, Mistral'in modelleri ve onlardan
+türeyenler 8 kullanıyor; sebebini bir sonraki kısım
 anlatıyor. Hesabı $h_{\text{kv}} = 8$ ile yeniden yapın: 85,9 GB **10,7 GB'a**
 iner. Bu tek değişiklik, bir düğüm gerektiren modelle tek bir karta sığan model
 arasındaki farktır; bu bölümdeki en belirleyici tek sayı da budur.
@@ -2730,7 +2769,7 @@ gerekmediğini sorar.
 Bir bloktaki tek feed-forward ağının yerine onun $E$ kopyasını, yani
 *uzmanları* koyun. Bunlara, her token için uzmanları skorlayıp token'ı en iyi $k$
 tanesine gönderen küçük, öğrenilmiş bir **router** (yönlendirici) ekleyin;
-genelde $k = 2$ seçilir. Yalnızca o $k$ uzman çalışır. Diğer $E - k$ tanesi o
+aşağıdaki örnekte $k = 2$, yeni modellerin birçoğunda ise $k = 8$. Yalnızca o $k$ uzman çalışır. Diğer $E - k$ tanesi o
 token için boşta kalır ve aynı cümledeki başka bir token farklı bir çift
 seçebilir.
 
@@ -2799,7 +2838,7 @@ seçebilir.
   <rect x="480" y="86" width="270" height="112" rx="10" class="box-navy"/>
   <text x="494" y="110" class="t-xs t-b">8 UZMAN, TOP-2 YÖNLENDİRME, d = 4096</text>
   <text x="494" y="136" class="t-sm">TOPLAM 36,5B — hepsi bellekte durmalı</text>
-  <text x="494" y="158" class="t-sm">AKTİF 10,7B — gecikmeyi belirleyen bu</text>
+  <text x="494" y="158" class="t-sm">AKTİF 10,7B — token başı hesabı belirler</text>
   <text x="494" y="182" class="t-xs t-muted">GPU'yu ilk sayı için kiralıyorsunuz.</text>
 
   <line x1="14" y1="266" x2="750" y2="266" class="ln-thin"/>
@@ -2870,7 +2909,7 @@ Yukarıdaki tablodaki %29'luk aktif oran, MoE'nin değil *bu yapılandırmanın*
 özelliği. Alanın gittiği yön **daha ince taneli uzmanlara** (fine-grained
 experts: daha çok sayıda, daha küçük uzman ağ) doğru: top-2 ile 8 büyük uzman
 yerine, top-8 ile 64–256 dar uzman ve her token'ın uğradığı bir ya da iki
-paylaşılan uzman. Aynı toplam, çok daha küçük aktif oran: toplamı 36B olan bir
+paylaşılan uzman. Aynı toplam, çok daha küçük aktif oran: toplamı 35B olan bir
 modelin aktif parametresi bu sayede 10,7B yerine 3B civarına iner;
 `qwen3.6:35b-a3b` (@sec-siniflandirma) tam olarak bunu yapıyor. Bir lansman
 yazısı okurken bakmanız gereken şey aktif/toplam oranıdır; yayına alınmış
@@ -2888,7 +2927,10 @@ eğitim koşusuna dokuz haneli meblağlar harcamayı göze almasının sebebi bu
 
 Analizin ilk sürümü, modeli veriden çok daha hızlı büyütmeyi öneriyordu.
 Yanlıştı; üstelik önemli ve anlaşılmaya değer bir biçimde yanlıştı, çünkü hata
-aritmetik değil yöntemseldi: öğrenme oranı programları koşu başına ayarlanmamıştı.
+aritmetik değil yöntemseldi: her koşu, kaç token'la eğitildiğine bakılmaksızın
+aynı öğrenme oranı programını kullanmıştı. Bu yüzden daha az token'daki kayıp,
+programı henüz tamamlanmamış koşulardan okunmuş ve düzgün programlanmış bir
+koşunun vereceğinden daha kötü görünmüştü.
 Düzgün biçimde tekrarlandığında farklı bir cevap çıktı — [sabit bir hesap
 bütçesi için parametreler ve token'lar kabaca aynı hızda büyümeli]{.hl},
 parametre başına yaklaşık 20 token [@hoffmann2022chinchilla]:
@@ -3002,8 +3044,8 @@ $Q$, bir token'ın *aradığı* şeydir; $K$, bulunabilmek için *ilan ettiği*
 şeydir; $V$ ise bulunduğunda gerçekte kattığı şeydir. [$Q$ ile $K$ birlikte
 bilginin **nereye** aktığına karar verir; $V$ tek başına **neyin** aktığına
 karar verir.]{.hl} Bunları birbirine bağlarsanız bir token'ın ilanı sorgusuyla
-aynı hâle gelir. Böylece skor tablosu simetrik bir Gram matrisi olmak zorunda
-kalır. Satır normalleştirmesi iki yönde yine de farklı ağırlıklar üretebilir;
+aynı hâle gelir. Böylece skor tablosu simetrik bir Gram matrisi (bütün ikili
+iç çarpımların tablosu) olmak zorunda kalır. Satır normalleştirmesi iki yönde yine de farklı ağırlıklar üretebilir;
 ama iki yön de aynı elemanı okuduğu için head bu ağırlıkları *seçme*
 yeteneğini kaybeder. Bu eşitleme ayrıca her token'ı kendine yönelmeye iter,
 çünkü bir komşu daha uzun değilse $x \cdot x$ satırdaki en büyük skordur; bu
@@ -3032,11 +3074,11 @@ cevaptı; FlashAttention o matrisi hiç somutlaştırmıyor.
 :::
 
 ::: {.callout-note collapse="true"}
-## 4. Bir mixture-of-experts modelinin 36B parametresi var. Ne kadar GPU belleği gerekir ve ne kadar hızlıdır?
+## 4. Bir mixture-of-experts modelinin 35B parametresi var. Ne kadar GPU belleği gerekir ve ne kadar hızlıdır?
 
 Bunlar iki farklı cevabı olan iki farklı soru; mimarinin bütün meselesi de bu.
 
-36B parametrenin **hepsini** bellekte tutmanız gerekir, çünkü herhangi bir token
+35B parametrenin **hepsini** bellekte tutmanız gerekir, çünkü herhangi bir token
 herhangi bir uzmana yönlenebilir. Ama token başına yalnızca en iyi $k$ uzman
 çalışır — yaklaşık 3B aktif — dolayısıyla gecikme küçük sayıya göre şekillenir.
 [Toplam parametre donanım faturanızı, aktif parametre gecikmenizi
@@ -3060,8 +3102,8 @@ Alanın RoPE ve ALiBi'ye geçmesinin somut sebebi budur. RoPE konumu bir *dönd�
 olarak kodlar, böylece iki token arasındaki skor yalnızca aralarındaki kaydırmaya
 bağlı olur. Ölçüm şöyle (@sec-konum): sabit bir kaydırmadaki aynı query-key
 çiftini 0, 100, 1000 ve 5000 mutlak konumlarında değerlendirdiğimizde skorlar
-yalnızca **$2 \times 10^{-13}$** kadar değişiyor; ham skorlarda ise yayılım
-26'dır. [Konum yalnızca bir kaydırma olarak girdiğinde, ortada eksik
+en fazla **$5 \times 10^{-13}$** kadar değişiyor; konum vektörü embedding'e
+eklendiğinde ise yayılım 26 civarındadır. [Konum yalnızca bir kaydırma olarak girdiğinde, ortada eksik
 kalabilecek bir 1.025. satır yoktur.]{.hl}
 
 Bunun neyi *sağlamadığına* dikkat edin: eğitim uzunluğunun çok ötesine
@@ -3116,7 +3158,7 @@ türetin. Mülakatçılar konuyu kavradığınızı mı yoksa ezberlediğinizi m
    doğrusal* biçimde yapar — sahip olduğu doğrusal olmayanlık, taşıdığı şeyi
    işleme biçiminde değil, ağırlıkları hesaplama biçiminde yatar. Her token'ın
    kendine özgü doğrusal olmayan bir işlemden geçtiği yer feed-forward alt
-   katmanıdır. Feed-forward yarısı token başına derinlik uygular: $W_1$ bir
+   katmanıdır: $W_1$ bir
    dedektör bankası, $W_2$ ise her dedektörün tetiklendiğinde yaydığı şeydir. Oranı doğru bilin, çünkü adayların çoğu
    tersini söylüyor: bu bölüm boyunca kullanılan standart
    $d_{\text{ff}} = 4d$ bloğunda [bir transformer bloğunun parametrelerinin üçte
@@ -3249,7 +3291,7 @@ işliyor.
    fp16 ağırlıkları 140 GB, dolayısıyla dört adet 80 GB'lık hızlandırıcıdan
    oluşan bir düğümde — toplam 320 GB — sunuluyor. KV cache hesaplayıcısını
    kullanarak, dört eşzamanlı kullanıcıya sunabileceğiniz en uzun bağlamı önce
-   64 KV head ile, sonra da yayına alınan her 70B'de gerçekte olduğu gibi 8 KV
+   64 KV head ile, sonra da bugünün 70B sınıfı modellerinde olduğu gibi 8 KV
    head ile bulun. İki uzunluğu ve aralarındaki oranı raporlayın. Ardından
    önbellek formülünde değişen ve değişmeyen bütün nicelikleri adlandırın.
 10. Bir duyuru, bir modeli "toplam 120B parametre, 5B aktif" diye tanıtıyor.
