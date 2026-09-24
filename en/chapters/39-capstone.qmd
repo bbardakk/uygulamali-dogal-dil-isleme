@@ -43,30 +43,37 @@ The requirements that shape everything:
 : What the requirements actually constrain {tbl-colwidths="[46,54]"}
 
 [The non-goals are worth more than the goals, and they should be written
-first.]{.hl} This system will not: generate marketing copy, answer questions
-outside orders, shipping and returns, let an agent take any action a human cannot
-undo within one working day — money moves only through the refund service, under
-its ceiling and approval rule — or operate without a human escalation path. Each of those is a
-decision that removes an entire class of failure — and each will be argued
-against by someone who wants one more feature, which is why they are written
-down before anyone is invested.
+first.]{.hl} This system will not:
+
+1. generate marketing copy;
+2. answer questions outside orders, shipping and returns;
+3. let an agent take any action that a human cannot undo within one working
+   day — money moves only through the refund service, under its ceiling and
+   approval rule;
+4. operate without a path for escalating to a human.
+
+Each of those is a decision that removes an entire class of failure. Each will
+also be argued against by someone who wants one more feature, which is why
+they are written down before anyone is invested in the opposite.
 
 ## Seven decisions, and what was rejected {#sec-capstone-decisions}
 
-An architecture decision record is worth writing only if it records the
-alternative honestly. The compressed form — and note that one row below is not
-a technical decision at all, which is the point of putting it in the same
-table:
+An **architecture decision record (ADR)** is a short document that states one
+design decision, the alternatives that were considered, and the consequences.
+It is worth writing only if it records the rejected alternative honestly. The
+table below is the compressed form. Note that its last row is not a technical
+decision at all; it is in the same table on purpose, because it constrains the
+design just as much.
 
 | decision | chosen | rejected, and why |
 |:--|:--|:--|
 | **Model access** | one gateway in front of all providers | direct SDK calls per service — cheaper to start, and then attribution, pinning and rate limits have five implementations (@sec-gateway) |
 | **Where the loop lives** | durable execution with checkpointed state | in-memory loop behind a request handler — fine until a deploy lands mid-conversation (@sec-deployment) |
-| **Retrieval** | hybrid search over the policy corpus, with citations | full-context stuffing of all policies — simpler, and @sec-serving's prefill cost makes it the dominant latency term. Note the alternative this row does *not* reject: BM25 or dense retrieval alone, which @sec-retrieval found beating unweighted rank fusion on its corpus. Measure the single retrievers before assuming the hybrid |
-| **PII** | detect and tokenise reversibly at the boundary | mask destructively — safe and it breaks order lookup (@sec-guardrails) |
+| **Retrieval** | hybrid search over the policy corpus, with citations | full-context stuffing of all policies — simpler, and @sec-serving's prefill cost makes it the dominant latency term. Note the alternative this row does *not* reject: BM25 or dense retrieval alone, which @sec-retrieval found beating unweighted rank fusion on its corpus. Measure the single retrievers before assuming the hybrid, and if one is much stronger, do not fuse them with equal weight |
+| **PII** (personal data) | detect and tokenise reversibly at the boundary | mask destructively — safe and it breaks order lookup (@sec-guardrails) |
 | **Refunds** | agent proposes, service enforces the ceiling, human approves above it | agent calls the refund API with a limit in the prompt — a limit in a prompt is a request (@sec-agent-security) |
 | **Eval** | golden set in the repo, gate on every prompt change | manual spot-checks before release — @sec-production-eval measured what slips through |
-| **Where the provider sits** | a Türkiye-region deployment where one exists, otherwise a standard contract under KVKK Article 9 | "the gateway abstracts it away" — the gateway centralises the choice, it does not make it a technical one (@sec-governance-kvkk) |
+| **Where the provider sits** | a Türkiye-region deployment where one exists, otherwise a standard contract under Article 9 of KVKK, Türkiye's personal-data protection law | "the gateway abstracts it away" — the gateway centralises the choice, it does not make it a technical one (@sec-governance-kvkk) |
 
 : Seven decisions; the rejected column is the one to read
 {tbl-colwidths="[16,34,50]"}
@@ -99,11 +106,13 @@ The path from notebook to production, with the chapter that governs each step:
 3. **Write the tools as APIs, not as prompts** (@sec-tool-design), each with its
    reversibility class attached (@sec-guardrails).
 4. **Build the smallest loop that works** (@sec-agent-anatomy), with all three
-   ceilings set from the start (@sec-deployment).
+   ceilings — on steps, tokens and wall-clock time — set from the start
+   (@sec-deployment).
 5. **Add structured output and validate it** (@sec-decoding) — the validator is
    also the escalation signal in @sec-capstone-budget.
 6. **Instrument before you have a problem** (@sec-observability), including
-   conversation id, both model fields, token counts and your own dimensions.
+   conversation id, both model fields (the model you requested and the model
+   that actually responded), token counts and your own dimensions.
 7. **Gate the prompt on the eval suite** (@sec-production-eval), with a threshold
    set from a measured noise floor rather than a round number.
 8. **Attack it yourself before shipping** (@sec-agent-security), and write down
@@ -120,75 +129,97 @@ arithmetic is the only new thing.
 
 Read the whole section as a **starting estimate, not a validated budget for this
 platform**. Each number came from a different model, a different corpus and a
-different task, and several transfer badly: the PII precision belongs to Turkish
-support text with this book's identifier mix, and the attack and detection rates
+different task, and several transfer badly: the PII precision belongs to a
+synthetic Turkish corpus whose density of look-alike numbers the author chose,
+and the attack and detection rates
 belong to one model with one prompt and one attack set. Treat them as the
 assumptions to write down and then measure first, which is what the closing
 sentence of this section is about.
 
-**Latency.** @sec-serving's split — prefill around 2,000 tokens per second
-against decode at 190 — means a token you *write* takes about eleven times as
-long as a token you *read*, on that hardware. Which half dominates is therefore a question about your own
-ratio rather than a universal fact, and the ratio changes as soon as you make
-the retrieval decision. At 7,427 in and 64 out, the request @sec-serving
-reports as 91% prefill, decode is 8%. At the shape planned for below — a
-thousand tokens of context and a two-sentence Turkish answer, call it 150
-tokens — prefill is 0.50 s and decode is 0.79 s, so **decode is the larger
-term**, and time-to-first-token stops being the thing to optimise. That is a
-consequence of the design, not an argument against it.
+**Latency.** A request has two halves: *prefill* reads the prompt in one
+parallel pass, and *decode* writes the answer one token at a time.
+@sec-serving's split — prefill around 2,000 tokens per second against decode at
+190 — means a token you *write* takes about eleven times as long as a token you
+*read*, on that hardware. Which half dominates is therefore a question about
+your own ratio of prompt to answer, not a universal fact. And the ratio changes
+as soon as you make the retrieval decision. At 7,427 tokens in and 64 out,
+@sec-serving measured 91% of the wall clock before the first token and about 9%
+after it. At the shape this design aims for — a thousand tokens of context and
+a two-sentence Turkish answer, call it 150 tokens — prefill is 0.50 s and
+decode is 0.79 s, so **decode is the larger term**, and time-to-first-token
+stops being the thing to optimise. That is a consequence of the design, not an
+argument against it.
 
 Prompt caching still goes first, because it is free of quality risk: warm
 prefill measured **flat at 12–16 ms regardless of prompt length**. But scale
 the multiplier to your own prefill share rather than carrying the headline. The
 9.0× @sec-serving reports is at 4,247 tokens; at a thousand tokens of context
 and a 150-token answer the same lever is about **1.6×** on the whole request.
+Even 1.6× is a ceiling here. A cache only reuses a byte-identical *prefix*, and
+in this design the retrieved policy passages change with every question, so
+only the stable part — system prompt and tool schemas — is served warm.
 Quote the mechanism, recompute the number.
 
 **Token volume.** @sec-summarization's measurement — **890 prompt tokens
 against 53 generated** — is one shape to plan for, and worth converting before
-using: at eleven-to-one, those 53 output tokens are worth about 583 input ones
-against a prompt of 890, so [sending less saves more than writing less, but
-"almost nothing" overstates it]{.hl}. At
-40,000 conversations a month with a few model calls each, the boilerplate in
-your system prompt is a larger line item than the model you chose.
+using. In *time*, at eleven-to-one, those 53 output tokens are worth about 583
+input ones against a prompt of 890. In *money*, output tokens are typically
+priced at three to five times input (@sec-summarization), so the same 53 are
+worth roughly 160–265 input tokens. Either way, [sending less saves more than
+writing less — but the output side is not negligible]{.hl}. At 40,000
+conversations a month with a few model calls each, every token of boilerplate
+in your system prompt is paid on every call, so it deserves the same scrutiny
+as the choice of model.
 
 **Telemetry.** @sec-observability measured **4.8 spans and 3,167 bytes per run**
-on 301-token prompts, of which **48.3% was prompt and completion text** — and at
-890-token prompts the same structure is **6,163 bytes with 73.4% content**. A
-run there is one agent invocation with its model and tool calls, and a
-conversation can hold several, so write the volume with *r*, the average runs
-per conversation: 40,000 × *r* runs a month. At *r* = 1 that is roughly 190,000
-spans and, with content recorded at that prompt size, about **0.25 GB**; on the
-measured 301-token prompts it is 0.13 GB. Multiply both by *r*; small either way. At a million runs it is 6 GB, and the decision to
-record content is a near-fourfold difference. Decide it deliberately, and sample
-content while keeping it on every error.
+on 301-token prompts, of which **48.3% was prompt and completion text**. Holding
+that structure fixed and scaling the text, it projects **6,163 bytes with 73.4%
+content** at 890-token prompts. A run there is one agent invocation with its
+model and tool calls, and a conversation can hold several, so write the volume
+with *r*, the average runs per conversation: 40,000 × *r* runs a month. At
+*r* = 1 that is roughly 190,000 spans and, with content recorded at that prompt
+size, about **0.25 GB**; on the measured 301-token prompts it is 0.13 GB.
+Multiply both by *r*; the volume is small either way. At a million runs it is
+6 GB, and the decision to record content is a near-fourfold difference. Decide
+it deliberately, and sample content while keeping it on every error.
 
-**Evaluation.** @sec-llm-eval's sizing says 100 items resolves a 13.4-point
-difference and 1,000 resolves 4.8 — so a hundred-item golden set finds broken,
-not better. A gate that compares runs on the same items is what makes small
-regressions visible anyway. @sec-production-eval measured a run-to-run `sd` of
+**Evaluation.** @sec-llm-eval's sizing says that, comparing two systems on
+separate samples at 80% power from an 80% baseline, 100 items resolves a
+13.4-point difference and 1,000 resolves 4.8 — so a hundred-item golden set
+finds broken, not better. A gate that compares runs on the same items is what
+makes small regressions visible anyway. Grow the fifty cases of step 1 above toward
+that hundred: with fifty items scored right or wrong, one item is two points,
+so a one-point threshold would simply mean "block on any lost item". @sec-production-eval measured a run-to-run `sd` of
 **0.26 points** (range 0.60) and used a 1-point threshold, about 4 × `sd`; in its
 resampling that gave **4.3% false blocks** at 100 items and caught a
 review-invisible prompt regression **99.4%** of the time. Those rates illustrate
 how the threshold behaves rather than measure a paired gate — the per-item
 pairings were not stored — so measure your own gate before relying on them.
 
-**Guardrails.** @sec-guardrails' detector numbers set the escalation rate: an
-eleven-digit pattern alone is **40% precise**, and pattern plus checksum-or-context
-reaches **99.1% precision at 93.6% recall**. The residual matters — roughly one
-in fifteen real identifiers is not caught by the union, which is a number to put
-in the DPIA rather than to hide.
+**Guardrails.** @sec-guardrails' detector numbers set the error budget of the
+PII boundary. For Turkish national ID numbers (TCKN), an eleven-digit pattern
+alone is **40% precise**, and pattern plus checksum-or-context reaches **99.1%
+precision at 93.6% recall**. The residual matters — roughly one in fifteen real
+identifiers is not caught by the union. That is a number to put in the data
+protection impact assessment (DPIA, the written risk assessment that data
+protection law expects for risky processing) rather than to hide. And it
+covers only identifiers with a fixed format: names, addresses and free-text
+disclosures were not measured at all.
 
-**Security.** @sec-agent-security's attack success of **92–100%** against an
-agent with an outward tool, and a detection rate of **14.7%** for the one
-detector prompt with a usable false-positive rate, on the three attack framings
-that were demonstrated to work — not a general "best case" — is why the
-architecture separates the agent that reads tickets from the one that can move
-money. That is not a mitigation with a residual rate; it is a pair that has been
-broken — provided the handoff between them is a validated structured payload
-rather than free text the second agent reads as instruction, and the refund
-service authorises against the user rather than against whatever the first agent
-asked for. Two processes alone are not the boundary; the data contract is.
+**Security.** @sec-agent-security measured an attack success of **92–100%**
+against an agent that had an outward tool. Asking a model to detect the attack
+did not rescue it: the one detector prompt with a usable false-positive rate
+caught **14.7%** of the attacks, and that figure covers only the three attack
+framings that were demonstrated to work — it is not a general "best case".
+Those two numbers are why the architecture keeps the agent that reads tickets
+away from anything that can move money. @sec-agent-security calls an untrusted
+input source together with a dangerous tool in the same agent a **pair**, and
+removing the tool **breaks the pair**. That is not a mitigation with a residual
+rate. It holds, however, only if two conditions are met: the handoff to the
+refund service is a validated structured payload rather than free text that
+something downstream reads as an instruction, and the refund service authorises
+against the user rather than against whatever the agent asked for. Separate
+components alone are not the boundary; the data contract is.
 
 **Routing.** @sec-classification measured an LLM's verbalised confidence as a
 detector of its own errors at **AUROC 0.667**, against 0.843 for a fine-tuned
@@ -196,6 +227,24 @@ classifier's own probability on the same task — real signal, and not enough to
 route on blindly. The version of routing that survives
 is the cascade of @sec-governance: answer with the small model, escalate on a
 validator failure rather than on a predicted difficulty.
+
+The whole budget fits in one table, which is also the table the lab and
+exercise 3 ask you to build for your own system:
+
+| budget line | the book's number | chapter | measure first on your system |
+|:--|:--|:--|:--|
+| latency | prefill ≈ 2,000 tok/s, decode ≈ 190 tok/s; 0.50 s + 0.79 s at 1,000 in / 150 out | @sec-serving | your prompt-to-answer ratio |
+| caching | warm prefill 12–16 ms; at most ≈ 1.6× on this shape | @sec-serving | the share of your prompt that is a stable prefix |
+| token volume | 890 prompt tokens against 53 generated | @sec-summarization | tokens per call, calls per conversation |
+| telemetry | 4.8 spans, 3,167 bytes per run; 6,163 projected at 890-token prompts | @sec-observability | runs per conversation (*r*); whether content is recorded |
+| eval size | 100 items → 13.4 points, 1,000 → 4.8 (separate samples) | @sec-llm-eval | the smallest change you need to see |
+| gate | `sd` 0.26; 1-point threshold → 4.3% false blocks at 100 items | @sec-production-eval | your own `sd` and false-block rate |
+| PII | pattern alone 40% precise; union 99.1% precision, 93.6% recall | @sec-guardrails | precision and recall on your own traffic |
+| security | attack success 92–100%; detection 14.7% | @sec-agent-security | your own attack success rate |
+| routing | verbalised confidence AUROC 0.667 against 0.843 | @sec-classification | how often your validator rejects the small model |
+
+: The budget, with the measurement each line still needs
+{tbl-colwidths="[13,39,18,30]"}
 
 [Notice what the budget did not require: a single new experiment.]{.hl} Eight
 chapters of measurement, assembled, produce a design with numbers attached — and
@@ -226,10 +275,10 @@ everything scales linearly and then stops; one that makes the safe path the easy
 path does not.]{.hl}
 
 **Throughout**, cost attribution has to exist from the first agent, because
-@sec-observability's dimensions are expensive to add retrospectively — you can
-join them in later only if some other durable record kept them, and nothing
-recovers what was never written down — and the number a budget review wants is
-cost per resolved ticket, not cost per session.
+@sec-observability's dimensions (user, team, feature, environment) are
+expensive to add retrospectively. You can join them in later only if some other
+durable record kept them, and nothing recovers what was never written down. The
+number a budget review wants is cost per resolved ticket, not cost per session.
 
 ## What breaks {#sec-capstone-retro}
 
@@ -244,15 +293,16 @@ changed in six months is stale, and it still produces a green check.
 
 **Someone will edit a prompt without running the gate**, because the change is
 obviously cosmetic. @sec-production-eval measured a pure reordering costing 3.40
-points of field accuracy — nearly six times the noise floor — with the entire
-regression inside one field.
+points of field accuracy — nearly six times the 0.60-point range of identical
+runs, and thirteen times their `sd` — with the entire regression inside one
+field.
 
 **The PII detector will be tuned on recall and break the product.** At 40%
 precision it masks the order numbers agents need, and the response will be to
 turn it off rather than to fix precision (@sec-guardrails).
 
-**The first serious incident will be an approval queue nobody rejects
-anything in.** A 99% approval rate alone does not show it — a well-targeted gate
+**The first serious incident will be an approval queue in which nobody rejects
+anything.** A 99% approval rate alone does not show it — a well-targeted gate
 should approve almost everything. Planted errors do: if reviewers approve items
 known to be wrong, the queue is a delay wearing oversight's clothes, and nobody
 sees it until someone runs that check (@sec-guardrails).
@@ -263,9 +313,13 @@ measurement — your own attack success rate — rather than an argument.
 
 **Choosing a provider is a legal decision before it is a latency one.** This is
 a Turkish company handling TCKN and IBAN, so a US-hosted provider is a transfer
-abroad under KVKK Article 9, and @sec-governance-kvkk has the consequence: the
-Board has issued no adequacy decision, so the route is the published standard
-contract with its five-business-day notification. If the company is a bank, a
+abroad under KVKK Article 9, and @sec-governance-kvkk has the consequence. When
+that chapter was written, the KVKK Board had issued no adequacy decision for any
+country, so the route is the published standard contract with its
+five-business-day notification; check the Board's page before relying on that.
+Tokenising PII at the boundary does not make the question go away: the
+detector catches identifiers with a fixed format, not names, addresses or what
+customers write about themselves. If the company is a bank, a
 payment institution or an insurer, the sectoral rule cuts above that and the
 question may not be open at all. One gateway in front of all providers helps
 here — it is the single place where that choice is recorded and enforced — but
@@ -274,8 +328,9 @@ review.
 
 **The model will be upgraded underneath you.** @sec-gateway's alias problem: if
 you record only the requested model, you find out weeks later from a quality
-regression. Two attributes do not prevent the upgrade — pinning the version
-does — but they are what lets you *detect and investigate* it the same day
+regression. Recording both the requested and the responded model does not
+prevent the upgrade — pinning the version does — but it is what lets you
+*detect and investigate* it the same day
 (@sec-observability).
 
 What would be done differently, in one line: **write the eval and the attack
@@ -332,14 +387,16 @@ requirement asked for anyway.
 
 In the refund service, enforced in code.
 
-An agent that reads customer messages reads attacker-controlled input, and
+An agent that reads customer messages reads attacker-controlled input — anyone
+can open a ticket and write whatever they like in it — and
 @sec-agent-security measured a planted instruction making an agent call an
 outward tool on **25 runs out of 25**, with a hidden-in-markup variant working
 **23 of 25**. A ceiling written in the prompt is a request to a component the
 attacker also gets to write to.
 
 The stronger move is structural: do not give the ticket-reading agent the refund
-tool at all. That breaks the pair rather than mitigating it, and the cost —
+tool at all. That breaks the pair — untrusted input and dangerous tool in one
+agent — rather than mitigating it, and the cost —
 an extra hop — is the cheapest security you will buy all year.
 :::
 
@@ -437,8 +494,8 @@ tool at all.
 **Q: What would you measure before building it?**
 
 Nothing new, at first — assemble what is known. Prefill-versus-decode to find
-which half your latency is in; prompt and completion token counts, because you
-pay for reading rather than writing; spans and bytes per run before turning
+which half your latency is in; prompt and completion token counts, because on
+prompts this long most of what you pay for is reading, not writing; spans and bytes per run before turning
 content logging on; the eval-set size your target improvement requires; your PII
 detector's precision as well as recall; and your own attack success rate. Where
 the assembled budget has a hole is where the first experiment goes.
@@ -485,8 +542,8 @@ ticket rather than per session, or a feature nobody completes will look cheap.
 ## The 2026 toolbox {#sec-capstone-tools}
 
 This chapter runs nothing, so there is no measurement stack. The second table is
-the assembled set — the tools named across Parts VI and VII, in the order a
-platform adopts them.
+the assembled set — the tools named across Part VI, in the order a platform
+adopts them.
 
 | library | version used | what it is for here |
 |:--|:--|:--|
@@ -523,7 +580,8 @@ number is the honest cost of knowing whether your system works.
 ### Step 3 — assemble the budget from this book's numbers
 
 Latency, token volume, telemetry bytes, eval-set size, guardrail precision,
-attack success. Cite each to its chapter. Where you cannot fill a cell, that is
+attack success — the rows of the budget table in @sec-capstone-budget. Cite
+each to its chapter. Where you cannot fill a cell, that is
 your first experiment — write down what it would take to measure it.
 
 ### Step 4 — write three ADRs with the rejected alternative
