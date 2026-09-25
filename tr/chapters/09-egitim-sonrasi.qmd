@@ -14,24 +14,23 @@ belirleyen aşamalarla.
 
 **Öğrenme hedefleri.** Bu bölümün sonunda şunları yapabileceksiniz:
 
-- bir base model'in (temel model) bir soruya neden başka bir soruyla cevap
-  verdiğini ve supervised fine-tuning'in bunu durdurmak için neyi
-  değiştirdiğini açıklamak;
+- bir temel modelin (base model) bir soruya neden başka bir soruyla cevap
+  verdiğini ve denetimli fine-tuning'in (ince ayar) bunu durdurmak
+  için neyi değiştirdiğini açıklamak;
 - bir eğitim örneğini sohbet şablonu biçiminde yazmak, kaybın hangi token'lar
   üzerinde hesaplandığını ve geri kalanın neden maskelendiğini söylemek;
 - yalnızca bir modelin `config.json`'ına bakarak bir LoRA adaptörünün kaç
   parametre eklediğini ve koşunun ne kadar GPU belleği isteyeceğini hesaplamak;
 - SFT, RLHF, DPO ve GRPO'yu kısaltmalarıyla değil, her birinin talep ettiği
   veriyle birbirinden ayırmak;
-- prompting, retrieval, fine-tuning ve distillation arasında açıkça
-  yazılmış bir karar kuralıyla seçim yapmak;
-- catastrophic forgetting'i (felaket unutması), aynı modeli aynı ayrı tutulmuş
-  benchmark üzerinde fine-tuning'den önce ve sonra değerlendirerek tespit
-  etmek.
+- prompting, erişim (retrieval), fine-tuning ve damıtma
+  (distillation) arasında açıkça yazılmış bir karar kuralıyla seçim yapmak;
+- yıkıcı unutmayı (catastrophic forgetting), aynı modeli aynı ayrılmış
+  benchmark (kıyaslama) üzerinde fine-tuning'den önce ve sonra değerlendirerek tespit etmek.
 
 ## Başka bir soruya cevap veren model {#sec-temel-model-sorunu}
 
-Sorunun tamamı tek bir konuşma turunda. Elinizde bir base model var — 1. aşamanın
+Sorunun tamamı tek bir konuşma turunda. Elinizde bir temel model var — 1. aşamanın
 ham çıktısı, üzerine başka hiçbir şey yapılmamış. Şunu yazıyorsunuz:
 
 ```text
@@ -50,19 +49,20 @@ Ters giden bir şey yok. [Model tam olarak eğitildiği şeyi yaptı; sorun da
 bu]{.hl}. Tek bir amaç üzerinde eğitildi — *bu metin verildiğinde, genellikle
 hangi metin geliyor* — ve açık web'de, sınav sorusuna benzeyen bir satırı
 çoğunlukla başka bir sınav sorusu izler. Model bir çalışma kâğıdını
-tamamlıyor. Metni tamamlamayı bırakıp doğrudan size cevap vermesini istediğinizden haberi bile yok.
+tamamlıyor. Metni tamamlamayı bırakıp doğrudan size cevap vermesini
+istediğinizden haberi bile yok.
 
 ::: {.column-margin}
 Kendiniz deneyin: Hub'da `Llama-3.1-8B` ve `Llama-3.1-8B-Instruct` adlı
-modeller aynı ön eğitim koşusundan geliyor. Birincisi base model. İkincisi bu
+modeller aynı ön eğitim koşusundan geliyor. Birincisi temel model. İkincisi bu
 bölümdeki iki aşamadan geçmiş. Davranış farkı muazzam; maliyet farkı büyük ama
 bu iki model için yayımlanmış değil. Ölçek hakkında fikir vermesi için:
 InstructGPT'nin kendi rakamlarına göre SFT artı PPO 64,9 petaflop/s-gün, ön
-eğitim ise 3.640 petaflop/s-gün tutuyor — yani kabaca %1,8, 56 katlık bir fark; üstelik ödül modeli ve etrafındaki her
-şey bunun dışında.
+eğitim ise 3.640 petaflop/s-gün tutuyor — yani kabaca %1,8, 56 katlık bir
+fark; üstelik ödül modeli ve etrafındaki her şey bunun dışında.
 :::
 
-Aynı base model'e kesinlikle bildiği olgusal bir soru sorun, ama tamamlanacak
+Aynı temel modele kesinlikle bildiği olgusal bir soru sorun, ama tamamlanacak
 bir cümle olarak yazın — `Türkiye'nin başkenti` — doğru cevap verecektir. Yani
 bilgi mevcut. Eksik olan şey bilgi değil. Eksik olan bir *teamül*: birine
 yöneltilen bir sorunun, ondan bir cevap talebi olduğu.
@@ -76,10 +76,10 @@ eğitim yaparak düzeliyor.**
 
 | eksik olan | belirti | neyle düzelir |
 |:--|:--|:--|
-| **bilgi** | sizin belgeleriniz, fiyatlarınız, geçen hafta hakkında kendinden emin biçimde yanlış | retrieval (@sec-rag) |
-| **biçim** | doğru içerik, yanlış şekil: JSON istediğiniz yerde düz yazı | prompting, kısıtlı decode |
+| **bilgi** | sizin belgeleriniz, fiyatlarınız, geçen hafta hakkında kendinden emin biçimde yanlış | erişim, yani retrieval (@sec-rag) |
+| **biçim** | doğru içerik, yanlış şekil: JSON istediğiniz yerde düz yazı | prompting, kısıtlı kod çözme |
 | **davranış** | yanlış *türde* soruyu cevaplıyor; yanlış üslup; reddetmiyor | fine-tuning (bu bölüm) |
-| **maliyet** | doğru, ama çağrı başına fazla yavaş ya da fazla pahalı | distillation, quantization |
+| **maliyet** | doğru, ama çağrı başına fazla yavaş ya da fazla pahalı | damıtma, nicemleme |
 
 Başarısız olan fine-tuning projelerinin çoğu, 1. satırı 3. satırın tekniğiyle
 düzeltme girişimidir.
@@ -88,19 +88,24 @@ düzeltme girişimidir.
 Bölümün sonunda bu tabloya geri dönüp onu bir karar ağacına çevireceğiz. Önce
 mekanizma.
 
-**Neye bakacağız.** Ön eğitimli bir modelin neden yanlış soruyu cevapladığı ve bunu düzelten aşamalar dizisi. Sonra her aşama sırayla, ucuz sürümü pahalı olanın yanında: denetimli fine-tuning ve parametre verimli kuzeni, tercih optimizasyonu, insandan gelmeyen geri bildirim ve damıtma. Son olarak hepsinden daha önemli iki soru — ne zaman fine-tune *yapmamak* gerektiği ve yaptığınızda modelin sessizce neyi unuttuğu.
+**Neye bakacağız.** Ön eğitimli bir modelin neden yanlış soruyu cevapladığı ve
+bunu düzelten aşamalar dizisi. Sonra her aşama sırayla, ucuz sürümü pahalı
+olanın yanında: denetimli fine-tuning ve onun parametre-verimli kuzeni, tercih
+optimizasyonu, insandan gelmeyen geri bildirim ve damıtma. Son olarak
+hepsinden daha önemli iki soru: ne zaman fine-tune *etmemek* gerektiği ve
+yaptığınızda modelin sessizce neyi unuttuğu.
 
 ## Aşamalar gerçekte ne yapıyor {#sec-asama-anatomisi}
 
 [8. bölüm](../chapters/08-on-egitim.html) üç aşamayı ölçeğine göre çizmişti. Aşağıda aynı
-pipeline bu kez *mekanizmaya* göre çizili: her aşama neyi girdi alıyor, hangi
+süreç bu kez *mekanizmaya* göre çizili: her aşama neyi girdi alıyor, hangi
 sinyali optimize ediyor ve hangi ağırlıklara dokunmasına izin var.
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">Aynı üç aşama, neyi optimize ettiklerine göre çizili</div>
 <svg viewBox="0 0 764 470" style="max-width:744px" role="img"
-     aria-label="Üst üste üç panel. Birinci panel, ön eğitim: girdi ham web metni, sinyal o metindeki sonraki token, bütün ağırlıklar güncelleniyor ve sonuç metni devam ettiren bir model. İkinci panel, supervised fine-tuning: girdi bir prompt ve ona eşlenmiş yazılı bir cevap, sinyal yalnızca cevabın sonraki token'ı — prompt maskeleniyor —, bütün ağırlıklar ya da küçük bir adaptör güncelleniyor ve sonuç cevap veren bir model. Üçüncü panel, tercih ayarı: girdi bir prompt ile iki aday cevap ve hangisinin daha iyi olduğunu söyleyen bir etiket, sinyal ikisinin göreli sıralaması, küçük bir adaptör ya da bütün ağırlıklar güncelleniyor ve sonuç üslupta, ret davranışında ve yardımseverlikte bir değişim. Her panelin sağındaki dikey not tipik veri hacmini veriyor: trilyonlarca token, binlerle milyonlar arası örnek ve on binlerce karşılaştırma.">
+     aria-label="Üst üste üç panel. Birinci panel, ön eğitim: girdi ham web metni, sinyal o metindeki sonraki token, bütün ağırlıklar güncelleniyor ve sonuç metni devam ettiren bir model. İkinci panel, denetimli fine-tuning: girdi bir prompt ve ona eşlenmiş yazılı bir cevap, sinyal yalnızca cevabın sonraki token'ı — prompt maskeleniyor —, bütün ağırlıklar ya da küçük bir adaptör güncelleniyor ve sonuç cevap veren bir model. Üçüncü panel, tercih ayarı: girdi bir prompt ile iki aday cevap ve hangisinin daha iyi olduğunu söyleyen bir etiket, sinyal ikisinin göreli sıralaması, küçük bir adaptör ya da bütün ağırlıklar güncelleniyor ve sonuç üslupta, ret davranışında ve yardımseverlikte bir değişim. Her panelin sağındaki dikey not tipik veri hacmini veriyor: trilyonlarca token, binlerle milyonlar arası örnek ve on binlerce karşılaştırma.">
   <defs>
     <marker id="pt-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0.5 L7.5,4 L0,7.5 z" class="head"/>
@@ -127,13 +132,13 @@ sinyali optimize ediyor ve hangi ağırlıklara dokunmasına izin var.
   <text x="452" y="88" class="t-xs">sonraki token</text>
   <text x="452" y="112" class="t-xs t-muted">kayıp bütün token'larda</text>
   <line x1="620" y1="48" x2="620" y2="146" class="ln-thin"/>
-  <text x="636" y="82" class="t-sm t-b">15.6T</text>
+  <text x="636" y="82" class="t-sm t-b">15,6T</text>
   <text x="636" y="100" class="t-xs t-muted">token</text>
 
   <line x1="382" y1="158" x2="382" y2="176" class="ln" marker-end="url(#pt-a)"/>
 
   <rect x="14" y="178" width="736" height="122" rx="10" class="box-warm"/>
-  <text x="30" y="204" class="t-sm t-b t-warm">Supervised fine-tuning</text>
+  <text x="30" y="204" class="t-sm t-b t-warm">Denetimli fine-tuning</text>
   <text x="30" y="226" class="t-xs t-muted">bütün ağırlıklar ya da %0,1'i</text>
   <text x="30" y="246" class="t-xs t-muted">saatler, tek düğüm</text>
   <text x="30" y="274" class="t-xs t-b">→ cevap veren bir model</text>
@@ -185,22 +190,24 @@ bu.
 ::::
 
 2\. ve 3. aşamanın ortak yanına dikkat edin: ikisi de modelin dünya bilgisinin
-esas olarak geldiği yer değil. Bu, supervised fine-tuning'in olgu
+esas olarak geldiği yer değil. Bu, denetimli fine-tuning'in olgu
 *öğretemeyeceği* iddiası değil — öğretebildiği gösterilmiştir ve alan metni
 üzerinde ön eğitime devam etmek bilgi eklemenin standart yollarından biridir.
 İddia ölçek ve güvenilirlikle ilgili. Birkaç milyon token'a dokunan bir
-2. aşama koşusu, milyonlarca kat daha fazla metinden (birkaç milyona karşı 15,6
-trilyon token) kurulmuş bir dünya modelini geniş çaplı ya da güvenilir biçimde revize edemez. [Fine-tuning, tam
-da insanlar onu bilgi güncelleme mekanizması olarak kullanmaya kalktığında
-hayal kırıklığı yaratır]{.hl}. Bu işi yapan mekanizma
-retrieval'dır; @sec-rag de bu yüzden var.
+ikinci aşama koşusu, milyonlarca kat daha fazla metinden (birkaç milyona
+karşı 15,6 trilyon token) kurulmuş bir dünya modelini geniş çaplı ya da
+güvenilir biçimde revize edemez. [Fine-tuning, tam da insanlar onu bilgi
+güncelleme mekanizması olarak kullanmaya kalktığında hayal kırıklığı
+yaratır]{.hl}. Bu işi yapan mekanizma erişimdir (retrieval); @sec-rag de bu
+yüzden var.
 
-## Supervised fine-tuning {#sec-sft}
+## Denetimli fine-tuning {#sec-sft}
 
 ### Tek bir örnek, baştan sona
 
-Bir [supervised fine-tuning](#gloss-supervised-fine-tuning){#term-supervised-fine-tuning .term-ref}
-örneği, bir prompt ile modelin vermiş olmasını istediğiniz cevaptan ibarettir.
+Bir [denetimli fine-tuning](#gloss-supervised-fine-tuning){#term-supervised-fine-tuning .term-ref}
+(supervised fine-tuning, SFT) örneği, bir prompt ile modelin vermiş olmasını
+istediğiniz cevaptan ibarettir.
 Fikrin tamamı bu. Zorluğun tamamı, bunun nasıl yazıya döküldüğüyle
 ilgili ayrıntılarda; bu ayrıntılardan ikisi koşuları sessizce bozuyor.
 
@@ -220,13 +227,14 @@ Bir JSONL dosyasında durduğu hâliyle tek bir Türkçe örnek:
 ]}
 ```
 
-Model bunu görmeden önce bu yapı, modelin [chat template](#gloss-chat-template){#term-chat-template .term-ref}'i
-(sohbet şablonu) tarafından tek bir token dizisine düzleştirilir; bu şablon
-tokenizer'la birlikte gelir ve her model ailesinde farklıdır:
+Model bunu görmeden önce bu yapı, modelin
+[sohbet şablonu](#gloss-chat-template){#term-chat-template .term-ref} (chat
+template) ile tek bir token dizisine düzleştirilir. Bu şablon tokenizer'la
+birlikte gelir ve her model ailesinde farklıdır:
 
 ::: {#gloss-chat-template .column-margin .term-gloss}
-**chat template** (sohbet şablonu) — bir sohbet modelinin üzerinde fine-tune
-edildiği, özel işaret token'ları dahil tam metin biçimi. Modelde değil
+**chat template** (sohbet şablonu) — bir sohbet modeli fine-tune edilirken
+kullanılan, özel işaret token'ları dâhil tam metin biçimi. Modelde değil
 tokenizer'da durur ve yanlışını kullanmak hata vermek yerine kaliteyi
 sessizce düşürür. [↩](#term-chat-template){.term-back}
 :::
@@ -249,13 +257,12 @@ geldiğini öğrenmesinden ibarettir.
 kez ekrana basın. Her model ailesi farklı işaretler kullanıyor ve eğitim ile
 servis arasındaki bir şablon uyuşmazlığı, hiçbir yerde hata mesajı vermeden
 kaliteyi sessizce düşürür — insanların haftalarca veriyi suçlayacağı kadar
-sessizce. Başka her şeyi doğru
-olan bir fine-tune'un beklenenin altında kalmasının açık ara en yaygın sebebi
-budur.
+sessizce. Başka her şeyi doğru olan bir fine-tuning'in beklenenin altında
+kalmasının açık ara en yaygın sebebi budur.
 
 Çıkarım sırasında şablonu `add_generation_prompt=True` ile çağırın: bu, sona
-boş bir assistant başlığı ekler ve modele sıranın artık kendisinde olduğunu
-söyleyen işaret budur. Unutursanız iyi ayarlanmış bir sohbet modeli bile
+boş bir assistant başlığı ekler; modele sıranın artık kendisinde olduğunu
+söyleyen işaret de budur. Unutursanız iyi ayarlanmış bir sohbet modeli bile
 kullanıcının mesajını sürdürmeye kalkabilir.
 :::
 
@@ -272,7 +279,7 @@ elinize geçen budur — 46 gradyan sinyalinizin 40'ı modele **prompt'u üretme
 ```{=html}
 <div class="fig-title">Kayıp maskeleme: gradyanın hangi token'lardan gelmesine izin var</div>
 <svg viewBox="0 0 764 268" style="max-width:744px" role="img"
-     aria-label="Aynı dizi üzerinde iki sıra token kutusu. Yanlış diye etiketlenen üst sıra, kullanıcı prompt'u dahil her token'ı boyuyor ve yanındaki not kırk altı gradyan sinyalinin kırkının modele prompt'u yazmayı öğrettiğini söylüyor. Doğru diye etiketlenen alt sıra yalnızca altı asistan cevabı token'ını boyuyor, geri kalanı soluklaştırıyor ve notu kayba yalnızca cevabın katkı verdiğini söylüyor. İki sıra da aynı token dizisini gösteriyor: bir başlık işareti, Türkçe soru, bir asistan başlık işareti, Olumlu kelimesi ve bir sıra sonu işareti.">
+     aria-label="Aynı dizi üzerinde iki sıra token kutusu. Yanlış diye etiketlenen üst sıra, kullanıcı prompt'u dâhil her token'ı boyuyor ve yanındaki not kırk altı gradyan sinyalinin kırkının modele prompt'u yazmayı öğrettiğini söylüyor. Doğru diye etiketlenen alt sıra yalnızca altı asistan cevabı token'ını boyuyor, geri kalanı soluklaştırıyor ve notu kayba yalnızca cevabın katkı verdiğini söylüyor. İki sıra da aynı token dizisini gösteriyor: bir başlık işareti, Türkçe soru, bir asistan başlık işareti, Olumlu kelimesi ve bir sıra sonu işareti.">
   <text x="14" y="22" class="t-xs t-b t-muted">AYNI 46 TOKEN'LIK DİZİ, İKİ FARKLI KAYIP MASKESİ</text>
 
   <text x="14" y="60" class="t-xs t-b t-rose">✗ kayıp her şeyde</text>
@@ -305,15 +312,15 @@ elinize geçen budur — 46 gradyan sinyalinizin 40'ı modele **prompt'u üretme
 ```
 ::: {.fig-cap}
 Maskeleme, prompt'u modelden gizlemekle ilgili değil. Model yine her prompt
-token'ına attention veriyor; *koşullanmak* zaten bu demek. Maskeleme yalnızca
+token'ına attention (dikkat mekanizması) veriyor; *koşullanmak* zaten bu demek. Maskeleme yalnızca
 hangi konumların "burada başka bir şey tahmin etmeliydin" deme hakkı olduğuna
 karar veriyor.
 :::
 ::::
 
 Pratikte bir `labels` tensörü kurarsınız: `input_ids`'in bir kopyasıdır, ama
-cevaba ait olmayan her konum `-100` yapılmıştır. PyTorch'un cross-entropy'si
-bu değeri *yok say* olarak okur. Modern SFT kütüphaneleri, cevabın nerede
+cevaba ait olmayan her konum `-100` yapılmıştır. PyTorch'un çapraz entropi
+(cross-entropy) kaybı bu değeri *yok say* olarak okur. Modern SFT kütüphaneleri, cevabın nerede
 başladığını söylerseniz bunu sizin yerinize yapıyor; tipik hata, düz bir
 causal-LM eğitim döngüsüne başvurup maskelemeyi unutmaktır. İki ilgili ayrıntı
 daha. Etiketleri kendiniz bir konum kaydırmayın: Hugging Face'in causal-LM
@@ -325,8 +332,8 @@ maskelemektir.
 
 ::: {.column-margin}
 Prompt token'ları üzerinde eğitim yapmanın meşru bir sebebi var: prompt'larınız
-base model'in hiç görmediği bir alandaysa, fazladan sinyal modelin o alanı
-modellemesine yardım eder. Bu bilinçli bir tercihtir ve kopyalanmış bir
+temel modelin hiç görmediği bir alandaysa, fazladan sinyal modelin o alanın
+dilini öğrenmesine yardım eder. Bu bilinçli bir tercihtir ve kopyalanmış bir
 betikten devralınmak yerine koşu notlarınızda gerekçelendirilmelidir.
 :::
 
@@ -343,12 +350,12 @@ yelpaze utanç verici değil, bilgi verici.
 | Tülu 3 [@lambert2025tulu3] | 939.344 prompt | rekabetçi, açık bir tarif |
 
 Son satır asıl emeği gizliyor. Tülu 3 ekibi **23.327.961** aday prompt topladı
-ve bunların 939.344'ünü supervised fine-tuning için tuttu — yirmi dörtte
+ve bunların 939.344'ünü denetimli fine-tuning için tuttu — yirmi dörtte
 birinin altında — ayrıca 425.145'ini tercih ayarına yönlendirdi
 [@lambert2025tulu3]. Yayımlanan ürün, bir toplama çabası olmaktan çok bir
 filtreleme kararı.
 
-İlginç satır LIMA. Yazarları 65B'lik bir LLaMa'yı tam olarak 1.000 özenle
+İlginç satır LIMA. Yazarları 65B'lik bir LLaMA'yı tam olarak 1.000 özenle
 seçilmiş prompt-cevap çifti üzerinde fine-tune etti — 750'si topluluk soru-cevap
 sitelerinden (Stack Exchange, wikiHow, Reddit) toplandı, 250'sini yazarlar
 kendileri yazdı ya da uyarladı — *hiç* pekiştirmeli öğrenme ve
@@ -357,10 +364,11 @@ LIMA'nın cevaplarını karşılaştırmaların %43'ünde eşit ya da daha iyi b
 karşısında %58, RLHF ile eğitilmiş DaVinci003 karşısında %65 [@zhou2023lima].
 
 Küçük bir kümenin bu kadar yol alabilmesinin, LIMA'dan önce, 2021'de FLAN
-çalışmasıyla ortaya konmuş ikinci bir sebebi var: talimat biçiminde yazılmış görevlerden oluşan bir *koleksiyon*
-üzerinde fine-tune edilen bir model, o fine-tune sırasında hiç görmediği
-görevlerde de iyileşiyor [@wei2022finetuned]. SFT'nin kurduğu şey bir cevap
-listesi değil, bir talimatı talimat olarak ele alma alışkanlığı.
+çalışmasıyla ortaya konmuş ikinci bir sebebi var: yönerge biçiminde yazılmış
+görevlerden oluşan bir *koleksiyon* üzerinde fine-tune edilen bir model, o
+fine-tuning sırasında hiç görmediği görevlerde de iyileşiyor
+[@wei2022finetuned]. SFT'nin kurduğu şey bir cevap listesi değil, bir
+yönergeyi yönerge olarak ele alma alışkanlığı.
 
 LIMA yazarları açıklamalarına **Yüzeysel Hizalama Hipotezi** adını
 veriyor: bir modelin bilgisinin ve yeteneğinin neredeyse tamamı ön eğitim
@@ -381,11 +389,11 @@ Hem LIMA hem Tülu 3, emeklerinin büyük kısmını toplamaya değil ayıklamay
 harcadı.
 :::
 
-## Parametre verimli ayarlama {#sec-lora}
+## Parametre-verimli fine-tuning {#sec-lora}
 
 Buraya kadarki her şey, eğitim adımını çalıştırabildiğinizi baştan
 varsaydı. Kabaca bir milyar parametrenin üstündeki her şey için, elinizde olma
-ihtimali yüksek donanımda bunu yapamazsınız — ve sebep model değil.
+ihtimali yüksek donanımda bunu yapamazsınız — ve sebep modelin kendisi değil.
 
 ### Bellek gerçekte nereye gidiyor
 
@@ -420,7 +428,7 @@ tutulduğunda çalışır.
 İki toplamı birbiriyle karşılaştırın. [Modelin kendisi faturanın sekizde biri.
 Optimizer durumu — üç fp32 satırı — dörtte üçü, gradyan da kalan sekizde
 bir.]{.hl}
-[Parametre-verimli ince ayarın](#gloss-parameter-efficient-fine-tuning){#term-parameter-efficient-fine-tuning .term-ref}
+[Parametre-verimli fine-tuning'in](#gloss-parameter-efficient-fine-tuning){#term-parameter-efficient-fine-tuning .term-ref}
 (PEFT) tamamı bu orandan ibaret: bir
 parametreyi dondurun, sekiz taksidinin *yedisi* buharlaşır; geriye yalnızca
 yine de okumanız gereken bf16 ağırlık kalır.
@@ -433,11 +441,11 @@ eğitin, gerisini donmuş bırakın. Genelde *PEFT* diye yazılır.
 :::
 
 Bu aritmetiği yayımlanmış bir rakamla sınayabilirsiniz. QLoRA, 65B'lik bir
-LLaMA'nın 16 bitlik fine-tuning'inin "780 GB'tan fazla GPU belleği gerektirdiğini"
+LLaMA'yı 16 bitte fine-tune etmenin "780 GB'tan fazla GPU belleği gerektirdiğini"
 söylüyor [@dettmers2023qlora]. 780 nereden geliyor?
 
 $$
-65 \times 10^9 \;\text{params} \times 12 \;\text{bytes} = 780 \;\text{GB}
+65 \times 10^9 \;\text{parametre} \times 12 \;\text{bayt} = 780 \;\text{GB}
 $$
 
 Parametre başına on iki bayt — ve makale hangi on iki baytın kastedildiğini
@@ -460,7 +468,7 @@ LoRA makalesinin rakamı ters yönde ilerliyor: GPT-3 175B'de eğitim VRAM'i
 "1,2 TB'tan 350 GB'a" düşüyor [@hu2022lora]. Bitiş noktası temiz —
 
 $$
-175 \times 10^9 \times 2\;\text{bytes} = 350\;\text{GB}
+175 \times 10^9 \times 2\;\text{bayt} = 350\;\text{GB}
 $$
 
 ifadesi yalnızca donmuş bf16 ağırlıkları sayar, *başka hiçbir şeyi* değil.
@@ -487,8 +495,8 @@ $W_0$, her alanı aynı anda kapsayan trilyonlarca token'dan kurulmuş genel
 amaçlı bir öznitelik haritasıdır. *Tek* bir görev için ihtiyaç duyduğunuz
 değişim ise genel amaçlı değildir. Belirli, dar bir ayarlamadır. Hipotez
 [@hu2022lora] şu: bu $\Delta W$ ayarlaması şekil olarak tam bir $d \times k$
-matrisi olsa da, şeklinin düşündürdüğünden çok daha az bilgi taşır — **düşük
-içsel ranka** sahiptir.
+matrisi olsa da, şeklinin düşündürdüğünden çok daha az bilgi taşır — **içsel
+rankı düşüktür**.
 
 Bu doğruysa, onu iki ince matrisin çarpımı olarak yazabilirsiniz:
 
@@ -599,10 +607,10 @@ hangi çarpanın taşıdığı değil.]{.hl}
 
 LoRA üçüncü satırı seçiyor: "$A$ için rastgele bir Gauss ilklemesi ve $B$ için
 sıfır" [@hu2022lora]. Makale bu teamülü belirtiyor ama onu dördüncü
-satıra tercih etmek için gerekçe sunmuyor; bu kitap da sunmayacak. Teamülün kazandırdığı şey, LoRA
-koşularını tam bir fine-tune'a kıyasla kötü bir öğrenme oranına karşı bu
-kadar dayanıklı kılan özellik: her zaman zaten çalışan bir modelden
-başlarsınız.
+satıra tercih etmek için gerekçe sunmuyor; bu kitap da sunmayacak. Teamülün
+kazandırdığı şey, LoRA koşularını tam fine-tuning'e kıyasla kötü bir öğrenme
+oranına karşı bu kadar dayanıklı kılan özellik: her zaman zaten çalışan bir
+modelden başlarsınız.
 
 ### Rank ve alfa: neden iki ayar düğmesi var
 
@@ -628,11 +636,12 @@ bir çarpan; dolayısıyla yaygın $\alpha = 2r$ teamülü "adaptörü 2 ile öl
 demekten öte bir anlam taşımıyor.
 
 Üstelik bu teamül topluluğun, yazarların değil. Yazarlar $\alpha$'yı
-"denediğimiz ilk $r$'ye" ayarlayıp bir daha dokunmadıklarını bildiriyor — bu,
-onu hiç ayarlamadıklarının itirafı; üstelik her rankta $\alpha = r$ demek de
-*değil*: ilk denediğiniz $r = 8$ olduğu için $\alpha$'yı 8'de sabitlerseniz,
-$r = 16$ artık $\alpha/r = 0{,}5$ ile koşar. [$\alpha = 2r$'yi bir sonuç değil, başkasının
-sizin yerinize seçtiği bir varsayılan olarak görün.]{.hl}
+"denediğimiz ilk $r$'ye" eşitleyip bir daha dokunmadıklarını bildiriyor; yani
+onu hiç ayarlamamışlar. Bunun her rankta $\alpha = r$ demek *olmadığına* da
+dikkat edin: ilk denediğiniz $r = 8$ olduğu için $\alpha$'yı 8'de
+sabitlerseniz, $r = 16$ artık $\alpha/r = 0{,}5$ ile koşar. [$\alpha = 2r$'yi
+bir sonuç değil, başkasının sizin yerinize seçtiği bir varsayılan olarak
+görün.]{.hl}
 
 ::: {.callout-tip appearance="simple"}
 **İki düğme, iki soru.**
@@ -665,7 +674,7 @@ yani gerçekten elinize geçecek olan şey bunlar:
 | | + key, output | 8 | 589.824 | %0,533 |
 | | + MLP | 8 | 1.327.104 | %1,200 |
 | Llama 3.1 8B (32 katman, $d$=4096) | q_proj, v_proj | 8 | 3.407.872 | %0,042 |
-| | bütün attention | 8 | 6.815.744 | %0,085 |
+| | bütün attention katmanları | 8 | 6.815.744 | %0,085 |
 | | attention + MLP | 8 | 20.971.520 | %0,261 |
 | Qwen 2.5 7B (28 katman, $d$=3584) | q_proj, v_proj | 8 | 2.523.136 | %0,033 |
 | | attention + MLP | 8 | 20.185.088 | %0,265 |
@@ -673,22 +682,24 @@ yani gerçekten elinize geçecek olan şey bunlar:
 ::: {.column-margin}
 LoRA, parametre açısından verimli tek yöntem değil; yalnızca kazananı. Prompt
 tuning [@lester2021power] girdinin başına eklenen bir avuç *sanal token*
-eğitiyor ve hiçbir ağırlığa dokunmuyor — model büyüdükçe tam fine-tuning'le
+eğitiyor ve hiçbir ağırlığa dokunmuyor — model büyüdükçe tam fine-tuning ile
 rekabet edebilir hâle geliyor ve aynı fikrin uç noktası olarak bilinmeye
 değer.
 :::
 
 ::: {.column-margin}
 Qwen'in `q_proj, v_proj` adaptörleri Llama'nın 3,41M'ine karşılık 2,52M
-ediyor; bunu grouped-query attention'a (@sec-attention-maliyeti) yormak cazip
+ediyor; bunu grouped-query attention'a (GQA;
+@sec-attention-maliyeti) yormak cazip
 — Qwen 2.5 7B, Llama'nın 8'ine karşılık 4 key-value head kullanıyor ve bu
 `v_proj`'u $4096 \times 1024$ yerine $3584 \times 512$'lik bir matris yapıyor.
 Qwen'e 8 KV head verin, sayı 2,64M'ye çıkıyor; yani GQA, 884.736 parametrelik
-farkın yalnızca yaklaşık %13'ünü açıklıyor. Gerisi 4096'ya karşı $d = 3584$ ve 32'ye karşı 28 katman.
+farkın yalnızca yaklaşık %13'ünü açıklıyor. Gerisi 4096'ya karşı $d = 3584$
+ve 32'ye karşı 28 katmandan geliyor.
 :::
 
 İki şey ortaya çıkıyor. Birincisi, **modelin büyük kısmı MLP** ve onu yalnızca
-attention'a takılı bir adaptöre eklemek tablodaki açık ara en büyük sıçrama:
+attention katmanlarına takılı bir adaptöre eklemek tablodaki açık ara en büyük sıçrama:
 BERTurk'te 2,25×, Llama'da 3,08×. Yalnızca `q_proj, v_proj`'dan ölçüldüğünde
 sıçrama daha da büyük — BERTurk'te 4,5×, Llama'da 6,2×, Qwen'de 8,0×.
 İkincisi, buradaki en cömert ayar bile 8B'lik bir modelin %0,3'ünün altında.
@@ -707,7 +718,7 @@ $r = 128$'de bile modelin yüzde birinin üçte ikisini eğitiyorsunuz.
 
 Yukarıdaki aritmetik tek bir yapılandırma için. Sizinki farklı olacak ve
 sayılar, sezginin yetişebileceğinden hızlı değişiyor. Bu yüzden pratik bir
-kurala güvenmek yerine kendi model boyunuzu ve rank'inizi girin, bellek
+kurala güvenmek yerine kendi model boyunuzu ve rankınızı girin, bellek
 ihtiyacını doğrudan okuyun.
 
 ```{ojs}
@@ -723,7 +734,7 @@ viewof loraShare = Inputs.range([0.005, 5], { value: 0.52, step: 0.005, label: "
 ```{ojs}
 //| echo: false
 viewof loraMode = Inputs.select(
-  ["tam fine-tune", "LoRA (bf16 taban)", "QLoRA (4 bit taban)"],
+  ["tam fine-tuning", "LoRA (bf16 taban)", "QLoRA (4 bit taban)"],
   { value: "LoRA (bf16 taban)", label: "Yöntem" }
 )
 ```
@@ -732,7 +743,7 @@ viewof loraMode = Inputs.select(
 //| echo: false
 loraCalc = {
   const N = loraN * 1e9;
-  const trainable = loraMode === "tam fine-tune" ? N : N * loraShare / 100;
+  const trainable = loraMode === "tam fine-tuning" ? N : N * loraShare / 100;
   const frozen = N - trainable;
   const baseBytes = loraMode.startsWith("QLoRA") ? 0.5 : 2;
   const bytes = frozen * baseBytes + trainable * 16;
@@ -756,9 +767,9 @@ html`<table style="width:100%; border-collapse:collapse; font-size:0.95rem">
       <td style="padding:6px 10px; text-align:right; font-weight:600">${loraCalc.gib.toFixed(1).replace(".", ",")} GiB</td></tr>
   <tr><td style="padding:6px 10px">makul olarak sığacağı en küçük kart</td>
       <td style="padding:6px 10px; text-align:right; font-weight:600">${
-        loraCalc.fits ? loraCalc.fits + " GB" : "141 GB'dan fazla"
+        loraCalc.fits ? loraCalc.fits + " GB" : "141 GB'tan fazla"
       }</td></tr>
-  <tr><td style="padding:6px 10px">tam bir fine-tune'a kıyasla</td>
+  <tr><td style="padding:6px 10px">tam fine-tuning'e kıyasla</td>
       <td style="padding:6px 10px; text-align:right; font-weight:600">${
         (loraCalc.full / loraCalc.gib).toFixed(1).replace(".", ",")
       }× az</td></tr>
@@ -770,9 +781,9 @@ bakın. "Sığacağı kart" satırı onlar için %35 pay bırakıyor; bu, ölç�
 sabit değil, bu araç için seçilmiş bir teamül.</p>`
 ```
 
-Varsayılanlar, attention ve MLP üzerinde $r{=}16$ adaptörü olan Llama 3.1 8B
-(8,03B parametre) — 41.943.040 parametre, yani modelin %0,52'si. Tam
-fine-tune: **119,7 GiB**; yaygın 24–80 GB'lık tek GPU yapılandırmalarının
+Varsayılanlar, attention ve MLP katmanları üzerinde $r{=}16$ adaptörü olan
+Llama 3.1 8B (8,03B parametre) — 41.943.040 parametre, yani modelin %0,52'si.
+Tam fine-tuning: **119,7 GiB**; yaygın 24–80 GB'lık tek GPU yapılandırmalarının
 tamamının ötesinde. 141 GB'lık H200'ü ise ancak gerçek bir batch boyutunda
 aktivasyonları da eklediğinizde aşıyor.
 LoRA: **15,5 GiB**, 24 GB'lık bir tüketici kartı. QLoRA: **4,3 GiB**, bir
@@ -794,7 +805,7 @@ Bölümün sonundaki labın, buradaki aritmetiğin öngördüğünden çok daha 
 çarpıcı bir oran ölçmesinin sebebi de aynı.
 :::
 
-### QLoRA: eğitmediğiniz kısmı quantize edin
+### QLoRA: eğitmediğiniz kısmı nicemleyin
 
 Son adım için bir fikir daha gerekiyor. Yukarıdaki LoRA satırında 15,5 GiB'ın
 neredeyse tamamı artık donmuş bf16 taban — adaptörün optimizer durumu bir
@@ -804,17 +815,19 @@ QLoRA [@dettmers2023qlora] tam olarak bunu yapıyor: donmuş ağırlıkları **N
 adlı 4 bitlik bir formatta saklıyor ve her bloğu yalnızca ileri ve geri geçişte
 gerektiği anda bf16'ya geri açıyor. Üç parça işi yürütüyor:
 
-- **4 bit NormalFloat**, 16 seviyesi normal dağılımın quantile'larına (kantil)
+- **4 bit NormalFloat**, 16 seviyesi normal dağılımın kantillerine (quantile)
   yerleştirilmiş bir veri tipi — eğitilmiş ağ ağırlıkları normale yakın
   dağıldığı için seçilmiş, böylece seviyeler ağırlıkların gerçekten bulunduğu
   yere denk geliyor;
-- **çift quantizasyon**, blok başına ölçekleme sabitlerinin kendisini de
-  quantize eder; çünkü blok boyu küçüldükçe bu sabitler toplamın azımsanmayacak
-  bir payını tutmaya başlar;
-- **paged optimizer'lar** (sayfalanmış optimizer'lar), aksi hâlde uzun bir koşuyu tek hamlede öldürecek bellek kullanımı sıçramaları (memory spikes) sırasında optimizer durumunun CPU belleğine taşmasına izin verir.
+- **çift nicemleme** (double quantization), blok başına ölçekleme
+  sabitlerinin kendisini de nicemler; çünkü blok boyu küçüldükçe bu sabitler
+  toplamın azımsanmayacak bir payını tutmaya başlar;
+- **paged optimizer'lar** (sayfalanmış optimizer'lar), aksi hâlde uzun bir
+  koşuyu tek hamlede öldürecek bellek kullanımı sıçramaları (memory spikes)
+  sırasında optimizer durumunun CPU belleğine taşmasına izin verir.
 
 Öne çıkan sonuç: 65B'lik bir modeli fine-tune etmek için gereken bellek, "16
-bitlik, tamamen fine-tune edilmiş bir baseline'a kıyasla çalışma süresini ya da
+bitlik, tamamen fine-tune edilmiş bir baseline'a (taban model) kıyasla çalışma süresini ya da
 tahmin başarımını düşürmeden >780 GB GPU belleğinden &lt;48 GB'a" iniyor
 [@dettmers2023qlora]. Yazarların bu şekilde, tek bir GPU'da 24 saatte eğittiği
 Guanaco 65B, Vicuna benchmark'ında ChatGPT'nin skorunun %99,3'üne ulaştı.
@@ -826,7 +839,7 @@ size küçük bir kartta *hiç olmazsa çalışabilme* imkânı verir; düz LoRA
 zaten sığdığı bir kartta adımı düz LoRA'dan hızlandırmaz.
 :::
 
-### Nöbete kalana kadar kimsenin bahsetmediği avantaj
+### Nöbet tutmaya başlayana kadar kimsenin bahsetmediği avantaj
 
 LoRA'nın, bir şirket içinde eğitim tasarrufundan çok daha önemli olan
 operasyonel bir özelliği var: adaptör **taban ağırlıklara geri kaynaştırılabilir**.
@@ -834,9 +847,8 @@ $h = W_0x + \frac{\alpha}{r}BAx = (W_0 + \frac{\alpha}{r}BA)x$ olduğuna göre b
 toplamı bir kez hesaplayıp sıradan bir model yayına alabilirsiniz. Servis
 hızı orijinalinkiyle birebir aynıdır — makalenin deyişiyle "ek çıkarım
 gecikmesi yok" [@hu2022lora]. LoRA'nın, kalıcı olarak fazladan katman ve
-dolayısıyla fazladan
-gecikme ekleyen eski bottleneck adaptörlerinin [@houlsby2019parameter] yerini
-almasının sebebi de bu.
+dolayısıyla fazladan gecikme ekleyen eski darboğaz (bottleneck)
+adaptörlerinin [@houlsby2019parameter] yerini almasının sebebi de bu.
 
 Ya da hiç *kaynaştırmadan* tabanı bellekte paylaşımlı tutabilir, adaptörleri
 istek başına takıp çıkarabilirsiniz:
@@ -855,9 +867,9 @@ seve fp32 kaydedip beklediğiniz her şeyi ikiye katlar. [Bir adaptör boyu
 söylerken hedef modülleri ve dtype'ı da mutlaka söyleyin]{.hl}; rank tek başına
 neredeyse hiçbir şey anlatmaz.
 
-Cömert uçta bile bin ayrı fine-tune'a sahip bin müşteri, hep birlikte tek bir
-node'a sığıyor. "Fine-tuning"in bir araştırma tekniği olmanın ötesinde bir ürün
-olabilmesinin sebebi bu — ve makalenin 2021'de GPT-3 için aynı noktaya işaret
+Cömert uçta bile, her biri kendi fine-tune edilmiş modelini kullanan bin müşteri hep
+birlikte tek bir düğüme sığıyor. Fine-tuning'in bir araştırma tekniği olmanın
+ötesinde bir ürün olabilmesinin sebebi bu — ve makalenin 2021'de GPT-3 için aynı noktaya işaret
 ettiğini görmek de ilginç: 100 ayrı kopya 35 TB tutarken 100 uyarlanmış model
 350 GB + 35 MB × 100 ≈ 354 GB tutuyor [@hu2022lora].
 
@@ -869,7 +881,6 @@ Tek bir doğru cevabı olmayan bir soru alın:
 
 ```text
 Kredi kartı borcumu nasıl kapatabilirim?
-(How can I pay off my credit card debt?)
 ```
 
 Hedef bir dizge yok. Kabul edilebilir bin tane cevap var ve bunlar
@@ -881,10 +892,10 @@ Denetimli fine-tuning'in hedef bir dizgeye ihtiyacı var. Burada elinizde
 
 Yine de yapabileceğiniz bir şey var: iki aday cevabı bir insana gösterip
 hangisinin daha iyi olduğunu sormak. Çıkan şey bir
-[preference pair](#gloss-preference-pair){#term-preference-pair .term-ref}
-(tercih çifti) ve bir tanesini üretmek, ideal cevabı yazmaktan çok daha kolay
-bir yargı — üstelik iki cevaptan hiçbirini kendisi yazamayacak insanlardan
-büyük ölçekte toplayabileceğiniz bir yargı.
+[tercih çifti](#gloss-preference-pair){#term-preference-pair .term-ref}
+(preference pair). Böyle bir çift üretmek, ideal cevabı yazmaktan çok daha
+kolay bir yargıdır — üstelik iki cevaptan hiçbirini kendisi yazamayacak
+insanlardan büyük ölçekte toplayabileceğiniz bir yargı.
 
 ::: {#gloss-preference-pair .column-margin .term-gloss}
 **preference pair** (tercih çifti) — bir prompt, iki aday cevap ve hangisinin
@@ -904,13 +915,14 @@ yalnızca bir karşılaştırma olarak var olan bir sinyali [@christiano2017deep
 insan geri bildiriminden pekiştirmeli öğrenme (RLHF)
 [@stiennon2020learning; @ouyang2022training], bu karşılaştırmaları
 iki adımda bir eğitim sinyaline dönüştürüyor: önce tercihler üzerinde bir
-[reward model](#gloss-reward-model){#term-reward-model .term-ref} (ödül modeli)
+[ödül modeli](#gloss-reward-model){#term-reward-model .term-ref} (reward model)
 eğitiliyor, sonra dil modeli ona karşı optimize ediliyor.
 
 
 Buradan itibaren pekiştirmeli öğrenmeden iki kelime karşımıza çıkacak.
-**Policy** (politika), eğitilen modelin ta kendisi; yalnızca, o ana kadarki
-metne bakıp bir sonraki token'ı seçen bir kural olarak görülüyor. **KL
+**Policy** (politika; bu bölümde İngilizce adıyla kullanıyoruz), eğitilen
+modelin ta kendisi; yalnızca o ana kadarki metne bakıp bir sonraki token'ı
+seçen bir kural olarak görülüyor. **KL
 ıraksaması** $\mathbb{D}_{\text{KL}}[\pi \,\|\, \pi_{\text{ref}}]$ ise bir
 olasılık dağılımının diğerinden ne kadar uzaklaştığını ölçer: iki dağılım
 aynıysa sıfırdır, ayrıştıkça büyür. Burada policy'nin başladığı modelden ne
@@ -927,7 +939,7 @@ iyidir*'i bir optimizer'ın maksimize edebileceği bir şeye çevirmek için var
 ```{=html}
 <div class="fig-title">RLHF ve aynı anda bellekte ne bulunmak zorunda</div>
 <svg viewBox="0 0 764 456" style="max-width:744px" role="img"
-     aria-label="İki aşamalı bir şema. Soldaki birinci aşamada bir prompt iki aday cevap üretiyor, bir insan daha iyisini seçiyor ve bu karşılaştırma, tek bir skaler puan veren bir reward model eğitiyor. Sağdaki ikinci aşamada, aynı anda bellekte duran dört modelli bir eğitim döngüsü var: eğitilen policy, KL cezasını hesaplamak için kullanılan donmuş referans kopyası, örnekleri puanlayan donmuş reward model ve beklenen getiriyi kestiren value model. Policy bir örnek üretiyor, reward model onu puanlıyor, KL terimi referanstan uzaklaşmayı cezalandırıyor ve PPO policy'yi güncelliyor. Alttaki not, benzer boyutta dört modelin aynı anda tutulması gerektiğini, RLHF'e yöneltilen pratik itirazın da bu olduğunu söylüyor.">
+     aria-label="İki aşamalı bir şema. Soldaki birinci aşamada bir prompt iki aday cevap üretiyor, bir insan daha iyisini seçiyor ve bu karşılaştırma, tek bir skaler puan veren bir ödül modeli eğitiyor. Sağdaki ikinci aşamada, aynı anda bellekte duran dört modelli bir eğitim döngüsü var: eğitilen policy, KL cezasını hesaplamak için kullanılan donmuş referans kopyası, örnekleri puanlayan donmuş ödül modeli ve beklenen getiriyi kestiren değer modeli. Policy bir örnek üretiyor, ödül modeli onu puanlıyor, KL terimi referanstan uzaklaşmayı cezalandırıyor ve PPO policy'yi güncelliyor. Alttaki not, benzer boyutta dört modelin aynı anda tutulması gerektiğini, RLHF'e yöneltilen pratik itirazın da bu olduğunu söylüyor.">
   <defs>
     <marker id="rl-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0.5 L7.5,4 L0,7.5 z" class="head"/>
@@ -944,7 +956,7 @@ iyidir*'i bir optimizer'ın maksimize edebileceği bir şeye çevirmek için var
   <text x="177" y="128" class="t-xs t-mid t-b">bir insan birini seçer</text>
   <line x1="177" y1="136" x2="177" y2="154" class="ln" marker-end="url(#rl-a)"/>
   <rect x="70" y="158" width="214" height="44" rx="8" class="box-rose"/>
-  <text x="177" y="177" class="t-xs t-mid t-b t-rose">REWARD MODEL</text>
+  <text x="177" y="177" class="t-xs t-mid t-b t-rose">ÖDÜL MODELİ</text>
   <text x="177" y="194" class="t-xs t-mid t-muted">metin girer, tek sayı çıkar</text>
 
   <line x1="352" y1="126" x2="376" y2="126" class="ln" marker-end="url(#rl-a)"/>
@@ -958,45 +970,45 @@ iyidir*'i bir optimizer'ın maksimize edebileceği bir şeye çevirmek için var
   <text x="659" y="70" class="t-xs t-mid t-b t-muted">REFERANS</text>
   <text x="659" y="85" class="t-xs t-mid t-muted">donmuş kopya, KL için</text>
   <rect x="408" y="104" width="150" height="40" rx="6" class="box-rose"/>
-  <text x="483" y="122" class="t-xs t-mid t-b t-rose">REWARD MODEL</text>
+  <text x="483" y="122" class="t-xs t-mid t-b t-rose">ÖDÜL MODELİ</text>
   <text x="483" y="137" class="t-xs t-mid t-muted">donmuş, örnekleri puanlar</text>
   <rect x="584" y="104" width="150" height="40" rx="6" class="box-warm"/>
-  <text x="659" y="122" class="t-xs t-mid t-b t-warm">VALUE MODEL</text>
+  <text x="659" y="122" class="t-xs t-mid t-b t-warm">DEĞER MODELİ</text>
   <text x="659" y="137" class="t-xs t-mid t-muted">eğitilir, baseline verir</text>
   <text x="571" y="172" class="t-xs t-mid t-b">PPO güncellemesi yalnızca policy üzerinde</text>
   <text x="571" y="194" class="t-xs t-mid t-muted">ödül − β · KL(policy ‖ referans)</text>
 
   <line x1="14" y1="240" x2="750" y2="240" class="ln-thin"/>
   <text x="14" y="266" class="t-xs t-b">KL terimi neden isteğe bağlı değil</text>
-  <text x="14" y="288" class="t-xs t-muted">Reward model de bir modeldir. Ona karşı yeterince sıkı optimize edin, policy iyi puan alan ama hiçbir insanın</text>
-  <text x="14" y="306" class="t-xs t-muted">yazmayacağı metinler bulur — reward hacking. KL cezası, başladığınız modele bağlanmış bir tasmadır:</text>
+  <text x="14" y="288" class="t-xs t-muted">Ödül modeli de bir modeldir. Ona karşı yeterince sıkı optimize edin, policy iyi puan alan ama hiçbir insanın</text>
+  <text x="14" y="306" class="t-xs t-muted">yazmayacağı metinler bulur — ödül istismarı. KL cezası, başladığınız modele bağlanmış bir tasmadır:</text>
   <text x="14" y="324" class="t-xs t-muted">“daha yüksek puan al”ı “tanınabilir kal”la yarıştırır.</text>
 
   <text x="14" y="360" class="t-xs t-b t-rose">Pratikteki itiraz</text>
-  <text x="14" y="382" class="t-xs t-muted">Benzer boyutta dört model aynı anda bellekte, üstelik üretim eğitim döngüsünün içinde. 70B'lik bir policy için</text>
-  <text x="14" y="400" class="t-xs t-muted">bu bir node değil, bir cluster demektir — ve value model eğitildiği için parametre başına tam 16 baytı taşır.</text>
+  <text x="14" y="382" class="t-xs t-muted">Benzer boyutta dört model aynı anda bellekte; üstelik metin üretimi eğitim döngüsünün içinde. 70B'lik policy için</text>
+  <text x="14" y="400" class="t-xs t-muted">bu bir düğüm değil, bir küme demektir — ve değer modeli eğitildiği için parametre başına tam 16 baytı taşır.</text>
   <text x="14" y="428" class="t-xs t-b">Bu bölümden sonraki her şey, o dört kutudan birini silme denemesidir.</text>
 </svg>
 ```
 ::: {.fig-cap}
-Buradaki ilginç nesne reward model: bir *sıralamayı* — A, B'yi yendi — bir *skalere*
-çeviriyor ve pekiştirmeli öğrenme algoritmasının ihtiyaç duyduğu şey de bu.
-RLHF'in pahalı olan her yanı, bu çeviriciyi kurmuş olmaktan ve sonra onu, donmuş
-bir referansı ve bir değer kestiricisini, policy üretim yaparken hep birlikte
-bellekte tutmak zorunda kalmaktan geliyor. Ortadaki optimizer PPO
+Buradaki ilginç nesne ödül modeli: bir *sıralamayı* — A, B'yi yendi — bir
+*skalere* çeviriyor ve pekiştirmeli öğrenme algoritmasının ihtiyaç duyduğu şey
+de bu. RLHF'in pahalı olan her yanı, bu çeviriciyi kurmuş olmaktan ve sonra
+onu, donmuş bir referansı ve bir değer kestiricisini, policy metin üretirken
+hep birlikte bellekte tutmak zorunda kalmaktan geliyor. Ortadaki optimizer PPO
 [@schulman2017ppo]; dille ilgili bir sebeple değil, kararlılığı için seçilmiş.
 :::
 ::::
 
-Sonuç küçük bir fark değildi. Bu pipeline'dan geçirilen InstructGPT'nin
+Sonuç küçük bir fark değildi. Bu süreçten geçirilen InstructGPT'nin
 1,3B'lik modeli, insan etiketleyicilerin 175B'lik GPT-3'ünkilere tercih ettiği
-çıktılar
-üretti — "100 kat daha az parametreye sahip olmasına rağmen"
+çıktılar üretti — "100 kat daha az parametresi olmasına rağmen"
 [@ouyang2022training]. Üstelik boyuttaki yüz katlık farkı tersine çeviren bu
 aşama ucuzdu. Yazarlar rakamı veriyor: 175B SFT modelini eğitmek 4,9
 petaflop/s-gün, 175B PPO-ptx modelini eğitmek 60 petaflop/s-gün gerektirdi;
-"GPT-3 için 3.640
-petaflop/s-güne kıyasla" [@ouyang2022training]. [Bildirilen SFT ve PPO-ptx maliyetlerinin toplamı, ön eğitim maliyetinin yaklaşık %1,8'i; ödül modelinin eğitimi bu toplama dahil değil.]{.hl}
+"GPT-3 için 3.640 petaflop/s-güne kıyasla" [@ouyang2022training].
+[Bildirilen SFT ve PPO-ptx maliyetlerinin toplamı, ön eğitim maliyetinin
+yaklaşık %1,8'i; ödül modelinin eğitimi bu toplama dâhil değil.]{.hl}
 
 ::: {.column-margin}
 Bu karşılaştırma, bu bölümde eğitim sonrasını ciddiye almak için verilebilecek
@@ -1006,8 +1018,8 @@ yapabileceğini söylediğine *inanmamak* için de en güçlü argüman.
 
 ### DPO: kestirmeyi türetip çıkarmak
 
-Şemaya tekrar bakın ve hangi kutunun vazgeçilmez bir iş yaptığını sorun. Reward
-model yalnızca PPO sırasında örnekleri puanlamak için var. Policy'nin kendi
+Şemaya tekrar bakın ve hangi kutunun vazgeçilmez bir iş yaptığını sorun. Ödül
+modeli yalnızca PPO sırasında örnekleri puanlamak için var. Policy'nin kendi
 olasılıkları bir ödül olarak okunabilseydi, o kutu gereksiz olurdu.
 
 Okunabiliyor. Bu,
@@ -1017,15 +1029,15 @@ değer; çünkü kısa, üstelik onu bilmeden bakınca sonuç akıl almaz görü
 
 ::: {#gloss-direct-preference-optimization .column-margin .term-gloss}
 **direct preference optimization** (doğrudan tercih optimizasyonu) — RLHF'teki
-reward model'in aslında hiçbir zaman ayrı bir nesne olmadığını kanıtladıktan
+ödül modelinin aslında hiçbir zaman ayrı bir nesne olmadığını kanıtladıktan
 sonra, tercih çiftleri üzerinde sıradan bir gradyan adımıyla eğitmek. Genelde
 *DPO* yazılır.
 [↩](#term-direct-preference-optimization){.term-back}
 :::
 
-Kısayola geçmeden önce, onun *etrafından dolandığı* iki hedefe bakalım; çünkü
-aşağıdaki türetim ikisine de yaslanıyor. Birincisi, ödül modeli karşılaştırmalar üzerinde **Bradley–Terry**
-olabilirliğiyle eğitiliyor — bir insanın $y_w$'yi $y_l$'ye
+Kestirmeye geçmeden önce, onun *etrafından dolandığı* iki hedefe bakalım;
+çünkü aşağıdaki türetim ikisine de yaslanıyor. Birincisi, ödül modeli
+karşılaştırmalar üzerinde **Bradley–Terry** olabilirliğiyle eğitiliyor — bir insanın $y_w$'yi $y_l$'ye
 $\sigma(r(x,y_w) - r(x,y_l))$ olasılığıyla tercih ettiği varsayımı. Burada
 $y_w$ tercih edilen (*kazanan*), $y_l$ reddedilen (*kaybeden*) cevap, $\sigma$
 de lojistik fonksiyon. Satrançtaki Elo puanlarını biliyorsanız bu, aynı model:
@@ -1038,7 +1050,8 @@ $$
 Bir prompt içinde yalnızca $r_\phi$'nin *farkları* kısıtlanıyor. Dolayısıyla
 ödüller, $x$'e bağlı toplamsal bir terim dışında tek türlü belirli değil: her
 cevaba aynı $f(x)$'i ekleyin, hiçbir şey değişmez. Bunu "ölçek keyfî" diye
-okumayın. Bağlantı sıcaklığını da buna göre yeniden ölçeklemediğiniz sürece,
+okumayın. Bağlantı (link) fonksiyonunun sıcaklığını da buna göre yeniden
+ölçeklemediğiniz sürece,
 bütün ödülleri iki ile çarpmak modeli değiştirir: $\sigma(1) = 0{,}731$'e
 karşı $\sigma(2) = 0{,}881$. Birkaç satır sonra $Z(x)$ teriminin
 sadeleşmesini sağlayan şey de bu toplamsal serbestlik; çünkü bir prompt'un iki
@@ -1076,7 +1089,7 @@ r(x, y) = \beta \log \frac{\pi^{*}(y \mid x)}{\pi_{\text{ref}}(y \mid x)} + \bet
 $$
 
 [Ödül hiçbir zaman ayrı bir nesne değildi.]{.hl} Herhangi bir policy, referansa
-karşı log-oranı olarak okunduğunda zaten *bir* reward model'dir. Ve o baş belası
+karşı log-oranı olarak okunduğunda zaten *bir* ödül modelidir. Ve o baş belası
 $Z(x)$ — mümkün her cevap üzerinden bir toplam, kimsenin hesaplamamasının
 sebebi de bu — yalnızca prompt'a bağlı; yani *aynı* prompt'a verilen iki cevabı
 karşılaştırdığınız anda sadeleşiyor. Tercih verisinin size verdiği şey de tam
@@ -1100,19 +1113,18 @@ arasındaki *farkın* açılmasını ister. Pratikte DPO sırasında iki olasıl
 tercih edilen cevabın kendi olabilirliği azalıyorsa şaşırmayın.
 
 $\pi_{\text{ref}}$'in ne iş yaptığına dikkat edin, çünkü ileride
-karşılaşacağınız "base model'e asla DPO uygulama" kuralının sebebi o.
+karşılaşacağınız "temel modele asla DPO uygulama" kuralının sebebi o.
 
-DPO'nun kurulumu,
-tercih çiftlerinin referanstan örneklendiğini varsayıyor; bu yüzden makale, ortada
-bir SFT modeli olduğu her durumda $\pi_{\text{ref}} = \pi_{\text{SFT}}$ alıyor.
-SFT modeli yoksa önce *tercih edilen* tamamlamalar üzerinde fine-tuning yapıp
-onu kullanmayı öneriyor. Gerekçesi açık: "erişilemeyen gerçek referans dağılımı
+DPO'nun kurulumu, tercih çiftlerinin referanstan örneklendiğini varsayıyor; bu
+yüzden makale, ortada bir SFT modeli olduğu her durumda
+$\pi_{\text{ref}} = \pi_{\text{SFT}}$ alıyor. SFT modeli yoksa önce *tercih
+edilen* tamamlamalar üzerinde fine-tune edip onu kullanmayı öneriyor. Gerekçesi açık: "erişilemeyen gerçek referans dağılımı
 ile DPO'nun kullandığı $\pi_{\text{ref}}$ arasındaki dağılım kaymasını
 hafifletmek için" [@rafailov2023dpo].
 
-Böylece başarısızlığın kaynağı da tam olarak belli oluyor. [Kayıp hiçbir zaman örnekleme yapmaz —
-base model üzerinde DPO'yu bozan şey, "sıralayamamak" değil, referans ile veri
-arasındaki uyumsuzluktur.]{.hl}
+Böylece başarısızlığın kaynağı da tam olarak belli oluyor. [Kayıp hiçbir
+zaman örnekleme yapmaz — temel model üzerinde DPO'yu bozan şey,
+"sıralayamamak" değil, referans ile veri arasındaki uyumsuzluktur.]{.hl}
 
 ::: {.callout-note appearance="simple" icon="false"}
 **Yerine koymanın gerçekte kazandırdığı.**
@@ -1120,13 +1132,13 @@ arasındaki uyumsuzluktur.]{.hl}
 | | RLHF (PPO) | DPO |
 |:--|:--|:--|
 | bellekteki model sayısı | 4 | 2 (policy + donmuş referans) |
-| ayrı reward model | önce eğitilir, sonra saklanır | yok |
+| ayrı ödül modeli | önce eğitilir, sonra saklanır | yok |
 | eğitim sırasında örnekleme | var, policy her adımda üretir | yok, çiftler sabittir |
 | bir adım nedir | pekiştirmeli öğrenme güncellemesi | sınıflandırma kaybı üzerinde gradyan adımı |
-| ayar yükü | PPO'nun clip aralığı, value loss, GAE, artı $\beta$ | $\beta$, artı öğrenme oranı |
+| ayar yükü | PPO'nun kırpma (clip) aralığı, değer kaybı (value loss), GAE, artı $\beta$ | $\beta$, artı öğrenme oranı |
 
-DPO, uygulayıcıların gerçekten şikâyet ettiği iki şeyi kaldırdı — reward model
-ve üretim döngüsü. Yaklaşık bir yıl içinde bir makaleden varsayılan yönteme
+DPO, uygulayıcıların gerçekten şikâyet ettiği iki şeyi kaldırdı — ödül modeli
+ve eğitim içindeki metin üretme döngüsü. Yaklaşık bir yıl içinde bir makaleden varsayılan yönteme
 dönüşmesinin sebebi de bu.
 :::
 
@@ -1140,12 +1152,13 @@ kendisinin ürettiği verinin — yeniden kullanılan off-policy çiftlere kıya
 gerçek görev sonuçlarını iyileştirdiğini buldu [@lambert2025tulu3].
 :::
 
-### GRPO: bunun yerine value model'i silin
+### GRPO: bunun yerine değer modelini silin
 
-DPO reward model'i siliyor. GRPO [@shao2024deepseekmath] öteki yolu tutuyor:
-pekiştirmeli öğrenmeyi koru, ama *value* model'i sil.
+DPO ödül modelini siliyor. GRPO [@shao2024deepseekmath] öteki yolu tutuyor:
+pekiştirmeli öğrenmeyi koru, ama *değer* modelini (value model) sil.
 
-Value model bir baseline sağlamak için var. Policy-gradient yöntemlerinde ham
+Değer modeli, bir baseline sağlamak için var. Policy gradyanı
+(policy-gradient) yöntemlerinde ham
 ödülü istemezsiniz — bir eylemin **beklenenden** iyi olup olmadığını bilmek
 istersiniz; çünkü 8'lik bir ödül, olağan skorunuz 2 iken başka bir şey, 9 iken
 başka bir şey ifade eder. Bu beklentiyi tahmin eden bir ağ eğitmek standart
@@ -1153,8 +1166,9 @@ başka bir şey ifade eder. Bu beklentiyi tahmin eden bir ağ eğitmek standart
 bir model.
 
 GRPO'nun gözlemi şu: nasıl olsa policy'den örnekleme yapacaksanız, baseline'ı
-ek maliyetsiz elde edebilirsiniz. **Aynı prompt'a** $G$ tane cevap örnekleyin, hepsini
-puanlayın ve beklenti olarak grubun kendi ortalamasını kullanın:
+ek maliyetsiz elde edebilirsiniz. **Aynı prompt'a** $G$ tane cevap
+örnekleyin, hepsini puanlayın ve beklenti olarak grubun kendi ortalamasını
+kullanın:
 
 $$
 A_i = \frac{r_i - \operatorname{mean}(r_1, \ldots, r_G)}{\operatorname{std}(r_1, \ldots, r_G)}
@@ -1171,20 +1185,20 @@ sabit ekler) ve o prompt hiçbir şey öğretmez.
 Soru artık *bu cevap mutlak olarak ne kadar iyi* değil, *bu deneme aynı soruya
 yaptığım diğer denemelerden iyi miydi* oluyor — hem daha kararlı hem de ek
 maliyetsiz bir sinyal. GRPO donmuş referansı ve KL tasmasını yine de tutar;
-ayrıca yine *bir* ödüle ihtiyaç duyar — bir reward model'e ya da, bir sonraki
-bölümün göstereceği gibi, bir denetleyiciye. Makalenin deyişiyle
-(*critic*, value model'in öbür adı) GRPO "critic model'den vazgeçer, bunun yerine
+ayrıca yine *bir* ödüle ihtiyaç duyar — bir ödül modeline ya da, hemen
+aşağıda göreceğimiz gibi, bir doğrulayıcıya. Makalenin deyişiyle (*critic*,
+değer modelinin öbür adı) GRPO "critic modelden vazgeçer, bunun yerine
 baseline'ı grup skorlarından kestirir ve eğitim kaynaklarını belirgin biçimde
 azaltır" [@shao2024deepseekmath]. DeepSeekMath-Instruct 7B üzerinde, yalnızca
-elde zaten bulunan instruction-tuning verisini kullanarak GSM8K'yı %82,9'dan
-%88,2'ye, MATH'i %46,8'den %51,7'ye taşıdı.
+elde zaten bulunan yönerge ile fine-tuning (instruction tuning) verisini kullanarak
+GSM8K'yı %82,9'dan %88,2'ye, MATH'i %46,8'den %51,7'ye taşıdı.
 
 ### Ödül nereden geliyor ve asıl soru neden bu
 
 Bir hamle daha var; alanı en son değiştiren de o oldu. Yukarıdaki her şey,
 ödülün insan karşılaştırmalarından *öğrenildiğini* varsayıyordu. Dolayısıyla
 ödül, öğrenilmiş bir modelin bütün kusurlarını miras alıyordu; kandırılabilir
-olmak da buna dahil.
+olmak da buna dâhil.
 
 Bazı görevlerde ödülü öğrenmeye gerek yok. Cevap bir sayıysa sayıyı kontrol
 edin. Kodsa testleri çalıştırın. DeepSeek-R1-Zero — denetimli bir ısınma olmadan,
@@ -1203,14 +1217,14 @@ ve kod alışılmadık ölçüde şanslı alanlar. @sec-akil-yuruten bu fikri so
 kadar zorlarsanız ne olduğunu izliyor.
 :::
 
-Takas neredeyse net: öğrenilmiş bir reward model her görevi kapsar ve
-hack'lenmesi kolaydır; bir doğrulayıcı neredeyse hiçbir şeyi kapsamaz ve
-hack'lenmesi çok daha zordur — ama ancak şartnamesi ve uygulaması ne kadar
-sağlamsa o kadar. Boşlukları olan bir test takımı, görünen vakalar için sabit
-cevap döndüren bir programı ödüllendirir; gevşek bir cevap ayrıştırıcısı, regex'ine uyan her şeyi
-ödüllendirir (@sec-akil-yuruten bunun pratikte canı yakan hâlini içeriyor).
-İki tür ödül farklı biçimlerde çuvalladığı için üretim reçeteleri ikisini
-birden, verinin farklı altkümelerinde kullanır.
+Takas neredeyse net: öğrenilmiş bir ödül modeli her görevi kapsar ve
+kandırılması kolaydır; bir doğrulayıcı neredeyse hiçbir şeyi kapsamaz ve
+kandırılması çok daha zordur — ama ancak şartnamesi ve uygulaması ne kadar
+sağlamsa o kadar. Boşlukları olan bir test paketi, görünen vakalar için sabit
+cevap döndüren bir programı ödüllendirir; gevşek bir cevap ayrıştırıcısı,
+regex'ine uyan her şeyi ödüllendirir (@sec-akil-yuruten bunun pratikte canı
+yakan hâlini içeriyor). İki tür ödül farklı biçimlerde çuvalladığı için
+üretim reçeteleri ikisini birden, verinin farklı alt kümelerinde kullanır.
 
 ### Elinizdeki veriye göre seçmek
 
@@ -1223,24 +1237,25 @@ toplayabildiğinize dair bir iddiadan ibaret.
 | "hangisi daha iyi" etiketli cevap çiftleri | **DPO** | etiketleme, ama yazma yok |
 | aynısı, artı bir RL döngüsü için bütçe | **RLHF/PPO** | bellekte 4 model, kararsız, açık uçlu görevlerde en yüksek tavan |
 | cevapları *denetlenebilen* prompt'lar | **GRPO + doğrulanabilir ödüller** | bir doğrulayıcı ve bol bol örnekleme |
-| sorgulamanıza izin verilen daha güçlü bir model | **distillation** (@sec-damitma) | çıkarım faturaları ve bir lisans sorusu |
+| sorgulamanıza izin verilen daha güçlü bir model | **damıtma** (@sec-damitma) | çıkarım faturaları ve bir lisans sorusu |
 
 ::: {.callout-tip appearance="simple"}
 **Bir-iki kişilik bir ekip için deneme sırası.** SFT ile başlayın ve orada
 durun. DPO'yu ancak SFT modelinin davranışına dair, çiftler hâlinde ifade
 edebileceğiniz *belirli* bir şikâyetiniz olduğunda ekleyin — "bunu reddetmeliydi",
 "daha kısa olmalıydı". Bir RL döngüsüne ise ancak elinizde bir doğrulayıcı
-varken uzanın; yoksa bir policy'nin yanında bir de reward model bakımını
+varken uzanın; yoksa bir policy'nin yanında bir de ödül modelinin bakımını
 üstlenmiş olursunuz.
 :::
 
-## Constitutional AI ve insan olmayan geri bildirim {#sec-rlaif}
+## Constitutional AI ve insandan gelmeyen geri bildirim {#sec-rlaif}
 
 Yukarıdaki her şeyin darboğazı etiketleme. Constitutional AI (anayasal yapay
 zekâ) [@bai2022constitutional] etiketlemeyi modelin kendisinin sağlayıp
 sağlayamayacağını soruyor.
 
 Yöntemin iki yarısı var. Denetimli yarıda model bir red-team prompt'unu
+(modeli zararlı bir cevaba itmek için bilerek yazılmış bir prompt'u)
 cevaplıyor, sonra **kendi cevabını** yazılı bir ilkeye göre **eleştiriyor**,
 sonra da **düzeltiyor**; düzeltilmiş hâli eğitim hedefi oluyor. RL yarısında ise
 aynı ilkeler zararsızlık için tercih çiftlerini etiketlemekte kullanılıyor ve
@@ -1251,9 +1266,9 @@ hâlâ insanlar etiketledi.)
 ::: {.column-margin}
 Anthropic ekibi zararsızlık deneyleri için 16 ilke yazdı ve her
 eleştiri-düzeltme adımında rastgele birini örnekledi [@bai2022constitutional].
-Rastgele seçimin amacı adillik değildi. Ekip, ilkelerin bir ensemble'ını
-kullanmanın, bütün etiketler için tek bir ilke kullanmaya kıyasla
-preference model'in davranışını belirgin biçimde daha robust (bozulmalara
+Rastgele seçimin amacı adillik değildi. Ekip, ilkelerin bir topluluğunu
+(ensemble) kullanmanın, bütün etiketler için tek bir ilke kullanmaya kıyasla
+tercih modelinin davranışını belirgin biçimde daha sağlam (bozulmalara
 dayanıklı) hâle getirdiğini gördü.
 :::
 
@@ -1265,67 +1280,67 @@ tartışabilir, sürümleyebilir ve bir düzenleyici kuruma teslim edebilirsiniz
 Bunu alternatifiyle karşılaştırın: orada modelin değerleri, birkaç yüz
 taşeronun bir salı günü ne tercih ettiyse ondan ibarettir. Bu değerleri ancak
 bitmiş modeli yoklayarak ortaya çıkarabilirsiniz. Şartnameyi etiketlerin
-içinden alıp bir belgeye taşımak,
-tekniğin daha iyi çalışıp çalışmadığından bağımsız olarak hesap verebilirlikte
-gerçek bir kazanç.
+içinden alıp bir belgeye taşımak, tekniğin daha iyi çalışıp çalışmadığından
+bağımsız olarak hesap verebilirlikte gerçek bir kazanç.
 
-**Netleşmemiş olan:** geri bildirim modelinin kör noktaları, eğitilen modelinkiyle
-aynı; çünkü ikisi sık sık aynı model ya da yakın akrabası. Geri bildirim modeli bir cevabın ince
-bir şekilde yanlış olduğunu fark edemiyorsa, eğitim sinyali de kendinden emin
-biçimde yanlış olur. Döngünün iki tarafının paylaştığı bir yanlılık, ölçek ne
-kadar büyütülürse büyütülsün düzelmez. AI geri bildirimi en iyi sonucu, bir
+**Netleşmemiş olan:** geri bildirim modelinin kör noktaları, eğitilen
+modelinkiyle aynı; çünkü ikisi sık sık aynı model ya da yakın akrabası. Geri
+bildirim modeli bir cevabın ince bir şekilde yanlış olduğunu fark edemiyorsa,
+eğitim sinyali de kendinden emin biçimde yanlış olur. Döngünün iki tarafının
+paylaştığı bir yanlılık, ölçek ne kadar büyütülürse büyütülsün düzelmez. Yapay
+zekâ geri bildirimi en iyi sonucu, bir
 modelin denetleyebileceği özelliklerde verir — bu kaba mı, istenen kısım bunda
 var mı, bu reddediyor mu. En kötü sonucu ise denetlemek için alan uzmanı olmayı
 gerektiren özelliklerde verir.
 
-## Parasını ödeyebileceğiniz bir şeye distillation {#sec-damitma}
+## Parasını ödeyebileceğiniz bir modele damıtma {#sec-damitma}
 
 Şimdiye kadarki her şey modeli *daha iyi* yaptı.
-[Knowledge distillation](#gloss-knowledge-distillation){#term-knowledge-distillation .term-ref}
-(bilgi damıtma) [@hinton2015distilling] ise modeli *daha ucuz* yapıyor ve
-çıkarım faturasından şikâyet eden ekiplerin en sık atladığı teknik.
+[Bilgi damıtma](#gloss-knowledge-distillation){#term-knowledge-distillation .term-ref}
+(knowledge distillation) [@hinton2015distilling] ise modeli *daha ucuz*
+yapıyor ve çıkarım faturasından şikâyet eden ekiplerin en sık atladığı
+teknik.
 
 ::: {#gloss-knowledge-distillation .column-margin .term-gloss}
 **knowledge distillation** (bilgi damıtma) — küçük bir modeli, büyük bir modelin
 çıktılarını yeniden üretecek şekilde eğitmek. Küçük model davranışı miras alır,
-anlayışı değil: öğretmenin yanlış bildiği hiçbir şeyi doğru öğrenemez.
+anlayışı değil: öğretmenin yanıldığı yerde öğrenci hatayı düzeltmez, onu da
+öğrenir.
 [↩](#term-knowledge-distillation){.term-back}
 :::
 
 Kurulum şöyle: büyük bir **öğretmen** çıktı üretir, küçük bir **öğrenci** bu
 çıktıları yeniden üretmek üzere eğitilir. Klasik biçimde öğrenci, öğretmenin
-bütün çıktı dağılımını — "yumuşak hedeflerini" — taklit eder; bu, örnek başına sert
-bir etiketten çok daha fazla bilgi taşır. Öğretmenin *olumlu*'ya %70, *nötr*'e
+bütün çıktı dağılımını — "yumuşak hedeflerini" (soft targets) — taklit eder;
+bu, örnek başına sert bir etiketten çok daha fazla bilgi taşır. Öğretmenin *olumlu*'ya %70, *nötr*'e
 %25, *olumsuz*'a %5 verdiğini bilmek, öğrenciye bu örneğin sınırda olduğunu
 söyler; *olumlu* diyen one-hot bir etiket söylemez.
 
 Üretken modellerde modern biçim daha kaba ama iyi çalışıyor: öğretmene büyük bir
-prompt kümesini cevaplatın, cevapları süzün ve öğrenciyi bunlar üzerinde sıradan
-SFT verisiymiş gibi fine-tune edin. DeepSeek-R1'in yazarları tam olarak bunu
+prompt kümesini cevaplatın, cevapları süzün ve öğrenciyi bunlar üzerinde,
+sıradan SFT verisiymiş gibi fine-tune edin. DeepSeek-R1'in yazarları tam olarak bunu
 yaptı; büyük modellerinden ayıklanmış 800.000 örnekle küçük yoğun modelleri
 eğittiler [@guo2025deepseekr1].
 
 ::: {.callout-note appearance="simple" icon="false"}
-**Distillation ile eğitilmiş bir 1B, prompt'lanmış bir 70B'yi ne zaman yener?** Yetenekte
-değil — doğru cevap başına maliyette. Prompt'lanmış bir 70B her çağrıda uzun bir
-talimat öneki ister ve bunu hem gecikmeyle hem token'la öder. Distillation ile
-eğitilmiş bir öğrencide ise talimat ağırlıklara gömülüdür; öğrenci kısa bir
-prompt'la cevap verir.
-Göreviniz darsa ve hacminiz yüksekse, küçük model daha düşük doğrulukta bile
+**Damıtılmış bir 1B, prompt'lanmış bir 70B'yi ne zaman yener?** Yetenekte
+değil — doğru cevap başına maliyette. Prompt'lanmış bir 70B her çağrıda uzun
+bir yönerge öneki ister ve bunu hem gecikmeyle hem token'la öder. Damıtılmış
+bir öğrencide ise yönerge ağırlıklara gömülüdür; öğrenci kısa bir prompt'la
+cevap verir. Göreviniz darsa ve hacminiz yüksekse, küçük model daha düşük doğrulukta bile
 *doğru* cevap başına genelde daha ucuza gelir; çünkü onu iki kez çalıştırıp
 kontrol etme lüksünüz olur.
 
-Şart, görevin dar olması. Genel amaçlı bir asistanı 1B parametreye distil
-ederseniz elinize daha kötü bir genel amaçlı asistan geçer.
+Şart, görevin dar olması. Genel amaçlı bir asistanı 1B parametreye
+damıtırsanız elinize daha kötü bir genel amaçlı asistan geçer.
 :::
 
 ::: {.callout-warning appearance="simple"}
-**Distil etmeden önce lisansı okuyun.** Barındırılan birçok modelin
+**Damıtmadan önce lisansı okuyun.** Barındırılan birçok modelin
 kullanım koşulları, çıktılarının rakip bir modeli eğitmekte kullanılmasını
 yasaklıyor. Bu teknik değil hukuki bir soru ve geç fark edildiğinde
 projelerin sonunu getirdiği de oldu. Açık ağırlıklı modeller farklı: kimi
-lisanslar buna açıkça
-izin veriyor, kimileri türetilmiş modelin adında atıf yapılmasını istiyor.
+lisanslar buna açıkça izin veriyor, kimileri türetilmiş modelin adında atıf yapılmasını istiyor.
 :::
 
 ## Sürdürülen ön eğitim ve Türkçe meselesi {#sec-surdurulen-on-egitim}
@@ -1335,9 +1350,9 @@ eksik olan şey bir olgu değil bir *dağılım* olduğunda. Az Türkçe görmü
 modelin eksiği, Türkçe hakkında bir olgu değildir. Eksiği, dilin kendisidir.
 
 Bunun aracı **sürdürülen ön eğitim**: temel modeli alıp aşama 1'i bir alan
-derlemi üzerinde, aynı sonraki-token hedefiyle ve hiçbir talimat formatı
-olmadan çalıştırmaya devam etmek [@gururangan2020dont]. Aşamaların arasında
-duruyor — ön eğitimin hedefi, fine-tuning'in bütçesi.
+derlemi üzerinde, aynı sonraki-token hedefiyle ve hiçbir yönerge biçimi
+kullanmadan çalıştırmaya devam etmek [@gururangan2020dont]. Aşamaların
+arasında duruyor — ön eğitimin hedefi, fine-tuning'in bütçesi.
 
 ::: {#gloss-continued-pretraining .column-margin .term-gloss}
 **continued pretraining** (sürdürülen ön eğitim) — mevcut bir temel modelden
@@ -1353,10 +1368,11 @@ fiyatını sizin için zaten çıkardı:
 | yol | ne kazanırsınız | ne ödersiniz |
 |:--|:--|:--|
 | çok dilli bir modeli fine-tune etmek | en hızlı yol; modelin biraz Türkçesi zaten var | tokenizer farkını her token'da, ilelebet ödersiniz |
-| Türkçe bir derlem üzerinde [continued pretraining](#gloss-continued-pretraining){#term-continued-pretraining .term-ref}, sonra SFT | çok daha iyi Türkçe; temel modelin dünya bilgisi korunur | on milyarlarca token; küçük de olsa gerçek bir ön eğitim koşusu |
-| Türkçe öncelikli bir modelle başlamak | en iyi fertility, en iyi morfoloji | yalnızca küçük modeller; daha zayıf dünya bilgisi ve akıl yürütme |
+| Türkçe bir derlem üzerinde [sürdürülen ön eğitim](#gloss-continued-pretraining){#term-continued-pretraining .term-ref}, sonra SFT | çok daha iyi Türkçe; temel modelin dünya bilgisi korunur | on milyarlarca token; küçük de olsa gerçek bir ön eğitim koşusu |
+| Türkçe öncelikli bir modelle başlamak | en iyi fertility (kelime başına en az token), en iyi morfoloji | yalnızca küçük modeller; daha zayıf dünya bilgisi ve akıl yürütme |
 
-Birinci satırdaki fark ölçülebilir bir şey ve biz onu [8. bölümde](../chapters/08-on-egitim.html) ölçtük:
+Birinci satırdaki fark ölçülebilir bir şey ve biz onu
+[8. bölümde](../chapters/08-on-egitim.html) ölçtük:
 Llama 3'ün tokenizer'ı Türkçe kelime başına **2,12** token isterken BERTurk
 **1,59** istiyor. Bu, aynı metin için **%33** daha uzun dizi demek — her eğitim
 adımında, her değerlendirmede ve model kullanımdan kalkana kadar her kullanıcı
@@ -1365,16 +1381,16 @@ bir etkin bağlam penceresi ve cevap başına daha yüksek gecikme olarak çıka
 
 ::: {.callout-tip appearance="simple"}
 **Bütçe gerçeğine dayanıklı karar kuralı.** Göreviniz sınıflandırma ya da
-bilgi çıkarımıysa ve metinleriniz kısaysa Türkçe öncelikli modeli alın — ihtiyacınız
-olan şey dünya bilgisi değil morfoloji ve @sec-lora-lab, 110M parametreli bir
-tanesinin gayet iyi iş çıkardığını gösteriyor. Göreviniz akıl yürütme ya da
-geniş bilgi istiyorsa çok dilli modeli alın ve farkı ödeyin; çünkü
-karşılayabileceğiniz boyutta hiçbir Türkçe öncelikli modelin ihtiyacınız olan dünya
-modeli yok. Sürdürülen ön eğitim ise bu sistemi yıllarca çalıştıracaksanız ve
+bilgi çıkarımıysa ve metinleriniz kısaysa Türkçe öncelikli modeli alın —
+ihtiyacınız olan şey dünya bilgisi değil morfoloji ve @sec-lora-lab, 110M
+parametreli bir tanesinin gayet iyi iş çıkardığını gösteriyor. Göreviniz akıl
+yürütme ya da geniş bilgi istiyorsa çok dilli modeli alın ve farkı ödeyin;
+çünkü karşılayabileceğiniz boyutta hiçbir Türkçe öncelikli modelin
+ihtiyacınız olan dünya modeli yok. Sürdürülen ön eğitim ise bu sistemi yıllarca çalıştıracaksanız ve
 fark bütçenin en büyük kalemi hâline geldiyse devreye girer.
 :::
 
-## Ne zaman fine-tune yapılmaz {#sec-karar-agaci}
+## Ne zaman fine-tune edilmemeli {#sec-karar-agaci}
 
 Bu bölümün büyük kısmı *nasıl* sorusuyla ilgiliydi. Bu kısım ise *yapmalı mı*
 sorusuyla ilgili; bölümden tek bir kısmı hatırlayacaksanız bu kısmı hatırlayın.
@@ -1383,15 +1399,14 @@ Hata biçimi belirli ve yaygın. Bir ekibin, kendi işleri hakkında yanlış ş
 söyleyen bir modeli vardır. Fine-tuning de kulağa "modele işimizi öğretelim"
 gibi gelen tekniktir. Örnekleri toplarlar, bir LoRA koşusu çalıştırırlar ve
 karşılarına **daha akıcı ama tıpatıp aynı derecede yanlış** bir model çıkar —
-çünkü ona
-dokümantasyonlarının *üslubunu* öğretmişlerdir; dokümantasyonun *içeriği* ise
-geri çağrılabilir hiçbir biçimde gradyana girmemiştir.
+çünkü ona dokümantasyonlarının *üslubunu* öğretmişlerdir; dokümantasyonun
+*içeriği* ise geri çağrılabilir hiçbir biçimde gradyana girmemiştir.
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">Hangi teknik ve neden — yukarıdan aşağı yürüyün</div>
 <svg viewBox="0 0 764 636" style="max-width:744px" role="img"
-     aria-label="Sırayla sorulan beş soruluk bir karar ağacı. Birinci soru: eksik olan şey, modelin bilemeyeceği bir olgu mu — belgeleriniz, fiyatlarınız ya da bu hafta olanlar gibi? Öyleyse retrieval kullanın; çünkü olgular üzerinde fine-tuning yapmak akıcı ama hâlâ yanlış bir model üretir. İkinci soru: gerçekten daha iyi bir prompt, few-shot örnekler ya da kısıtlanmış bir çıktı şeması denediniz mi — yirmi gerçek girdi üzerinde? Denemediyseniz önce onu yapın; hiçbir maliyeti yok ve çoğu zaman yetiyor. Üçüncü soru: istediğiniz davranıştan en az birkaç yüz örneğiniz var mı, ya da yazabilir misiniz? Yoksa veriyi toplayın; çoğu zaman dürüst cevap budur. Dördüncü soru: şikâyet modelin ne söylediğiyle mi, yoksa iki kabul edilebilir cevaptan hangisinin daha iyi olduğuyla mı ilgili? Ne söylediğiyle ilgiliyse LoRA ile denetimli fine-tuning yapın. Hangisinin daha iyi olduğuyla ilgiliyse önce denetimli fine-tuning, ardından tercih çiftleri üzerinde DPO yapın. Ayrıca sorulan beşinci soru: model doğru ama fazla yavaş ya da fazla pahalı mı? Öyleyse daha küçük bir modele distil edin ya da quantize edin. Kapanış notu, projelerin çoğunun ilk iki dalda bittiğini söylüyor.">
+     aria-label="Sırayla sorulan beş soruluk bir karar ağacı. Birinci soru: eksik olan şey, modelin bilemeyeceği bir olgu mu — belgeleriniz, fiyatlarınız ya da bu hafta olanlar gibi? Öyleyse erişim (retrieval) kullanın; çünkü olgular üzerinde fine-tune etmek akıcı ama hâlâ yanlış bir model üretir. İkinci soru: gerçekten daha iyi bir prompt, few-shot örnekler ya da kısıtlanmış bir çıktı şeması denediniz mi — yirmi gerçek girdi üzerinde? Denemediyseniz önce onu yapın; hiçbir maliyeti yok ve çoğu zaman yetiyor. Üçüncü soru: istediğiniz davranıştan en az birkaç yüz örneğiniz var mı, ya da yazabilir misiniz? Yoksa veriyi toplayın; çoğu zaman dürüst cevap budur. Dördüncü soru: şikâyet modelin ne söylediğiyle mi, yoksa iki kabul edilebilir cevaptan hangisinin daha iyi olduğuyla mı ilgili? Ne söylediğiyle ilgiliyse LoRA ile denetimli fine-tuning uygulayın. Hangisinin daha iyi olduğuyla ilgiliyse önce denetimli fine-tuning, ardından tercih çiftleri üzerinde DPO yapın. Ayrıca sorulan beşinci soru: model doğru ama fazla yavaş ya da fazla pahalı mı? Öyleyse daha küçük bir modele damıtın ya da nicemleyin. Kapanış notu, projelerin çoğunun ilk iki dalda bittiğini söylüyor.">
   <defs>
     <marker id="dt-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0.5 L7.5,4 L0,7.5 z" class="head"/>
@@ -1407,7 +1422,7 @@ geri çağrılabilir hiçbir biçimde gradyana girmemiştir.
   <text x="382" y="114" class="t-xs t-mid t-muted">belgeleriniz, fiyatlarınız, bu hafta olanlar</text>
   <line x1="612" y1="100" x2="675" y2="100" class="ln"/>
   <rect x="600" y="130" width="150" height="46" rx="8" class="box-accent"/>
-  <text x="675" y="150" class="t-xs t-mid t-b t-accent">RETRIEVAL</text>
+  <text x="675" y="150" class="t-xs t-mid t-b t-accent">ERİŞİM (RAG)</text>
   <text x="675" y="167" class="t-xs t-mid t-muted">fine-tuning değil</text>
   <line x1="675" y1="100" x2="675" y2="126" class="ln" marker-end="url(#dt-a)"/>
   <text x="640" y="92" class="t-xs t-b">evet</text>
@@ -1454,7 +1469,7 @@ geri çağrılabilir hiçbir biçimde gradyana girmemiştir.
   <rect x="384" y="400" width="228" height="60" rx="8" class="box-warm"/>
   <text x="498" y="422" class="t-xs t-mid t-b t-warm">önce SFT, sonra DPO</text>
   <text x="498" y="440" class="t-xs t-mid t-muted">üstüne tercih çiftleri</text>
-  <text x="498" y="454" class="t-xs t-mid t-muted">base model’e asla DPO yok</text>
+  <text x="498" y="454" class="t-xs t-mid t-muted">temel modele asla DPO yok</text>
 
   <line x1="14" y1="492" x2="750" y2="492" class="ln-thin"/>
 
@@ -1463,17 +1478,17 @@ geri çağrılabilir hiçbir biçimde gradyana girmemiştir.
   <text x="194" y="550" class="t-xs t-mid t-muted">bu ayrı bir eksen — diğerlerinden sonra sorun</text>
   <line x1="374" y1="540" x2="404" y2="540" class="ln" marker-end="url(#dt-a)"/>
   <rect x="410" y="510" width="340" height="60" rx="8" class="box-accent"/>
-  <text x="580" y="532" class="t-xs t-mid t-b t-accent">Daha küçük bir modele DISTIL edin ya da quantize edin</text>
-  <text x="580" y="550" class="t-xs t-mid t-muted">ancak doğru olduğunu bildiğinizde — doğruluk distil edilemez</text>
+  <text x="580" y="532" class="t-xs t-mid t-b t-accent">Daha küçük bir modele DAMITIN ya da nicemleyin</text>
+  <text x="580" y="550" class="t-xs t-mid t-muted">ancak doğru olduğunu bildiğinizde — doğruluk damıtılamaz</text>
 
-  <text x="382" y="602" class="t-xs t-mid t-b">Fine-tuning’e yönelen projelerin çoğu 1. ve 2. dallarda biter.</text>
+  <text x="382" y="602" class="t-xs t-mid t-b">Fine-tuning'e yönelen projelerin çoğu 1. ve 2. dalda biter.</text>
   <text x="382" y="622" class="t-xs t-mid t-muted">Geri kalanın çoğu da 3. dalda. Çok az ekip gerçekten algoritma yüzünden tıkanır.</text>
 </svg>
 ```
 ::: {.fig-cap}
 Ağaç maliyete göre, en ucuzdan başlayarak sıralanmış ve 4. sorudan önceki her
 çıkış, bir eğitim işi çalıştır*ma*manın bir yolu. Öneri de bu sıralamanın
-kendisi: bir fine-tune bir bakım taahhüdüdür — temel model her güncellendiğinde
+kendisi: bir fine-tuning bir bakım taahhüdüdür — temel model her güncellendiğinde
 yeniden çalıştırılacak, yeniden değerlendirilecek ve yeniden dağıtılacak bir
 model — o önceki çıkışlar ise değildir.
 :::
@@ -1482,41 +1497,42 @@ model — o önceki çıkışlar ise değildir.
 ::: {.column-margin}
 2\. dal bir formalite değil. "Daha iyi bir prompt denediniz mi", arkasında geniş
 bir literatür olan bir soru — bir derleme, yalnızca metin tabanlı 58 ayrı
-prompting tekniğini katalogluyor [@schulhoff2025prompt]. Önemli olanları ise prompting bölümü (@sec-promptlama) tek tek ele alıyor. Fine-tuning'e başvuran
-ekiplerin çoğu bu tekniklerden ikisini denemiştir.
+prompting tekniğini katalogluyor [@schulhoff2025prompt]. Önemli olanları ise
+prompting bölümü (@sec-promptlama) tek tek ele alıyor. Fine-tuning'e başvuran
+ekiplerin çoğu bu tekniklerden yalnızca ikisini denemiştir.
 :::
 
 ::: {.callout-important appearance="simple"}
 **Ağacın kodladığı iki kural.**
 
-1. **Bilgi için retrieval, davranış için fine-tuning.** Bunlar alternatif değil,
-   birlikte çalışan şeyler. En güçlü yaygın mimaride, *formatınızı ve
-   tonunuzu* öğrenmiş, fine-tune edilmiş bir model, retrieval'la getirilen ve
-   *olgularınızı* sağlayan belgelere dayanarak cevap verir.
-2. **Doğrudan base model'den DPO'ya geçmeyin.** DPO'nun kaybı, policy'yi
+1. **Bilgi için erişim (retrieval), davranış için fine-tuning.** Bunlar
+   alternatif değil, birlikte çalışan şeyler. En güçlü yaygın mimaride,
+   *biçiminizi ve tonunuzu* öğrenmiş, fine-tune edilmiş bir model, erişimle
+   getirilen ve *olgularınızı* sağlayan belgelere dayanarak cevap verir.
+2. **Doğrudan temel modelden DPO'ya geçmeyin.** DPO'nun kaybı, policy'yi
    donmuş bir referansla iki *sabit* tamamlama üzerinden karşılaştırır. En iyi
    sonucu da bu tamamlamalar referansın üretebileceği şeylere benzediğinde verir.
-   Talimat izleyen bir modelin yazdığı tercih verisi için base model zayıf bir
+   Yönerge izleyen bir modelin yazdığı tercih verisi için temel model zayıf bir
    referanstır; eğitim hedefi de gücünü tercihe değil bu uyumsuzluğa harcar.
    Kayıpta bunu yasaklayan hiçbir şey yok — bu, tanımlılık koşulu değil, dağılım
    uyumu hakkında bir tespit — ama işe yarayan reçete önce SFT'dir.
 :::
 
-## Felaket unutması {#sec-unutma}
+## Yıkıcı unutma {#sec-unutma}
 
 Bir maliyet daha var ve hiçbir faturada görünmüyor.
 
-Bir fine-tune ağırlıkları oynatır. Ağırlıklar ise paylaşımlıdır: *bir Türkçe
+Fine-tuning ağırlıkları oynatır. Ağırlıklar ise paylaşımlıdır: *bir Türkçe
 yorumun nasıl sınıflandırılacağını* temsil eden parametreler, aynı zamanda
 *Türkçeyi* de temsil eder. Bu parametreleri tek bir göreve doğru yeterince
 iterseniz modelin diğer yetenekleri bozulur — bu olguya
-[catastrophic forgetting](#gloss-catastrophic-forgetting){#term-catastrophic-forgetting .term-ref}
-(felaket unutması) deniyor [@kirkpatrick2017overcoming] ve büyük dil
-modellerinde sürekli fine-tuning sırasında rutin olarak ortaya çıkıyor
-[@luo2025empirical].
+[yıkıcı unutma](#gloss-catastrophic-forgetting){#term-catastrophic-forgetting .term-ref}
+(catastrophic forgetting) deniyor [@kirkpatrick2017overcoming] ve büyük dil
+modellerinde art arda yapılan fine-tuning'ler (continual fine-tuning) sırasında
+rutin olarak ortaya çıkıyor [@luo2025empirical].
 
 ::: {#gloss-catastrophic-forgetting .column-margin .term-gloss}
-**catastrophic forgetting** (felaket unutması) — yeni bir görev üzerinde eğitim
+**catastrophic forgetting** (yıkıcı unutma) — yeni bir görev üzerinde eğitim
 yapmanın, modelin daha önce üstesinden geldiği görevlerdeki başarımını
 düşürmesi; çünkü aynı ağırlıklar ikisini birden kodluyordu. Eski görevi
 bilerek değerlendirmedikçe görünmez.
@@ -1525,22 +1541,22 @@ bilerek değerlendirmedikçe görünmez.
 
 Tehlikeli olmasının sebebi, bunun gerçekleşmesi değil. Sebep,
 **değerlendirmenizin bunu göstermeyecek olması.** Göreviniz için bir test
-kümesi kurdunuz. Fine-tune'unuz
-o test kümesinde iyileşiyor. Baktığınız her sayı yükseliyor. Düşen şey ise
+kümesi kurdunuz. Fine-tune edilmiş modeliniz o test kümesinde iyileşiyor. Baktığınız her sayı yükseliyor. Düşen şey ise
 ölçmediğiniz her şey ve bunu bir kullanıcıdan öğreniyorsunuz.
 
 ### Kendi modelimiz üzerinde ölçmek
 
-Bunu iddia etmekle yetinmeyebiliriz. [4. bölümdeki](../chapters/04-karsilastirma.html) aynı BERTurk
-modelini ve aynı Türkçe yorum görevini alalım, iki farklı şekilde fine-tune
-edelim ve sonra duygu analiziyle hiç ilgisi olmayan bir soru soralım: *encoder
-Türkçeyi hâlâ ne kadar iyi modelliyor?*
+Bunu iddia etmekle yetinmeyebiliriz.
+[4. bölümdeki](../chapters/04-karsilastirma.html) aynı BERTurk modelini ve
+aynı Türkçe yorum görevini alalım, onu iki farklı şekilde fine-tune edelim
+ve sonra duygu analiziyle hiç ilgisi olmayan bir soru soralım: *encoder
+(kodlayıcı) Türkçeyi hâlâ ne kadar iyi modelliyor?*
 
 Probe (yoklama aracı), orijinal ön eğitim hedefinin kendisi. Ayrılmış Türkçe
 metindeki token'ların %15'ini maskeleyin ve modelin kendi masked-language
-head'inin (çıktı katmanı) cevaplar karşısında ne kadar şaşırdığını ölçün —
-[6. bölümdeki](../chapters/06-dil-modelleri.html) ölçümün aynısı; bu kez
-fine-tune'dan önce ve sonra uygulanıyor.
+head'inin (maskeli dil modelleme çıktı katmanı) cevaplar karşısında ne kadar
+şaşırdığını ölçün — [6. bölümdeki](../chapters/06-dil-modelleri.html)
+ölçümün aynısı; bu kez fine-tuning'den önce ve sonra uygulanıyor.
 
 Sayıların bir anlam taşıyıp taşımadığını tek bir yöntem kararı belirliyor. LoRA
 satırı, adaptör silinerek değil, adaptör **taban ağırlıklara kaynaştırılarak**
@@ -1553,24 +1569,24 @@ head'i ön eğitimden gelen ağırlıklarında dondurulmuşken altındaki encode
 hareket ediyor. Dolayısıyla yükselen kayıp, *encoder'ın o head'den
 uzaklaşmasını* ölçüyor. Bu ölçüm iki şeyi birbirine karıştırır: gerçek dilsel
 bilgi kaybını ve eski head'in artık okuyamadığı bir temsili. İkisi aynı şey
-değil ve bu tasarım onları ayıramaz. Ayıracak olan
-şey, her encoder'ın üstüne yeniden eğitilmiş bir probe (yoklama) ya da encoder'ın
-üzerinde ayarlanmadığı bir Türkçe alt görev olurdu. Tabloyu, "temsil hareket
+değil ve bu tasarım onları ayıramaz. Ayıracak olan şey, her encoder'ın üstüne
+yeniden eğitilmiş bir probe ya da encoder'ın üzerinde ayarlanmadığı bir Türkçe
+alt görev olurdu. Tabloyu, "temsil hareket
 etti ve en çok da eğitim verisinin bulunduğu yerde hareket etti" kanıtı olarak
 okuyun; Türkçenin ne kadarının yok edildiğinin ölçümü olarak değil.
 
 İki probe kümesi var, çünkü farklı sorulara cevap veriyorlar. **Genel
 Türkçe**, paralel bir derlemden alınmış 1.826 cümlelik sıradan düzyazı
 [@zhang2020improving] — yorumlarla da duygu analiziyle de ilgisi yok. **Ayrılmış
-yorumlar** ise yukarıdaki labın test bölümü: fine-tune ile aynı alan; sonucun
-bir alan kayması yan etkisi diye geçiştirilememesi için dahil edildi. Maskeli
+yorumlar** ise aşağıdaki labın (@sec-lora-lab) test bölümü: fine-tuning ile aynı alan; sonucun
+bir alan kayması yan etkisi diye geçiştirilememesi için dâhil edildi. Maskeli
 tensörler bir kez üretilip üç encoder için de yeniden kullanılıyor; yani
 aşağıdaki her fark ağırlıklardan geliyor, başka hiçbir şeyden değil.
 
 | encoder | genel TR kaybı | top-1 | yorumlarda kayıp | top-1 |
 |:--|--:|--:|--:|--:|
 | ön eğitimli, dokunulmamış | 2,523 | %50,7 | 2,660 | %48,3 |
-| tam fine-tune sonrası | 2,837 *(+%12,5)* | %46,4 | 4,564 *(+%71,6)* | %28,9 |
+| tam fine-tuning sonrası | 2,837 *(+%12,5)* | %46,4 | 4,564 *(+%71,6)* | %28,9 |
 | LoRA $r=8$ sonrası, kaynaştırılmış | 2,592 *(+%2,7)* | %49,6 | 3,276 *(+%23,2)* | %42,0 |
 
 ::: {.column-margin}
@@ -1582,26 +1598,25 @@ yüksek top-1 de iyidir; ilk satır ise modelin Hub'dan geldiği hâli.
 
 O tablodaki üç şey, kendilerini tanıtan paragraftan daha değerli.
 
-**Eski output head ile bakıldığında iki uyarlama da daha kötü görünüyor; tam
-fine-tune yaklaşık 4,6 kat daha fazla.** Bu oranın neyi ifade ettiğini açıkça
-söyleyelim: %12,5'e karşı %2,7, donmuş bir output head üzerinden ölçülmüş
-*göreli kayıp artışlarının* oranıdır; bir modelin 4,6 kat daha fazla Türkçe
-unuttuğunun ölçümü değil.
-Görevle hiç ilgisi olmayan metinde tam bir fine-tune, modelin masked-language
-kaybını %12,5 artırıyor, top-1 doğruluğunu da dört puan düşürüyor. Bu,
-dramatik anlamda felaket değil — model hâlâ Türkçe konuşuyor — ama ön eğitim
+**Eski çıktı katmanıyla (output head) bakıldığında iki uyarlama da daha kötü
+görünüyor; tam fine-tuning yaklaşık 4,6 kat daha fazla.** Bu oranın neyi ifade
+ettiğini açıkça söyleyelim: %12,5'e karşı %2,7, donmuş bir çıktı katmanı
+üzerinden ölçülmüş *göreli kayıp artışlarının* oranıdır; bir modelin 4,6 kat
+daha fazla Türkçe unuttuğunun ölçümü değil. Görevle hiç ilgisi olmayan metinde
+tam fine-tuning, modelin masked-language kaybını %12,5 artırıyor, top-1
+doğruluğunu da dört puan düşürüyor. Bu, dramatik anlamda yıkıcı değil — model hâlâ Türkçe konuşuyor — ama ön eğitim
 sırasında parasını ödediğiniz şeyin gerçek, ölçülebilir bir kaybı; üstelik bu
 modele bir daha kimsenin sormayacağı bir görev karşılığında göze alınmış bir
 kayıp.
 
 **LoRA hasarı azaltıyor; ortadan kaldırmıyor.** +%2,7 küçük bir sayı ama sıfır
 değil. Kaynaştırılmış model, başlangıçtaki head üzerinden okunduğunda
-ölçülebilir biçimde daha kötü sonuç veriyor. Parametre verimli ayarlamada unutma
-olamayacağını söyleyen biri, aslında geri alınabilirlik argümanını tekrarlayıp
+ölçülebilir biçimde daha kötü sonuç veriyor. Parametre-verimli fine-tuning'de
+unutma olamayacağını söyleyen biri, aslında geri alınabilirlik argümanını tekrarlayıp
 ona unutma argümanı adını veriyordur.
 
 **Hasar, eğitim verisinin bulunduğu yerde en büyük.** İnsanları şaşırtan satır
-bu: tam fine-tune'un kaybı genel Türkçede %12,5, ayrılmış yorumlarda ise
+bu: tam fine-tuning'in kaybı genel Türkçede %12,5, ayrılmış yorumlarda ise
 **%71,6** artıyor — üzerinde eğitildiği alanda neredeyse altı katı.
 Unutma dediğimiz şey, modelin verinizden *uzaklaşması* değil. Model, tam da
 verinizin en çok dokunduğu temsilleri elinden geldiğince başka bir amaca
@@ -1614,11 +1629,11 @@ kurmadığı probe; çünkü görevin kendi test kümesi dururken gereksiz gör�
 ::: {.callout-important appearance="simple"}
 **Sizin izlediğiniz sayı iyileşirken iki probe'da da sonuç kötüleşti.** Her
 satırda ve her probe kümesinde kayıp yükseldi, top-1 düştü; duygu skoru ise ters
-yöne gitti. Tam fine-tune, labdaki en iyi duygu modeli — 83,90 macro-F1 ile o
-tablonun tepesinde — ama bu probe'da üçünün en zayıfı, hem de iki kümede
-birden. İki olgunun hiçbiri, ötekinin değerlendirmesine bakarak görülemez.
-Tuzağın tam biçimi bu:
-kötüleşen bir model değil, ölçtüğünüz tek şeyde iyileşen bir model.
+yöne gitti. Tam fine-tuning, aşağıdaki labın en iyi duygu modeli — 83,90
+macro-F1 ile oradaki tablonun tepesinde — ama bu probe'da üçünün en zayıfı,
+hem de iki kümede birden. İki olgunun hiçbiri, ötekinin değerlendirmesine
+bakarak görülemez. Tuzağın tam biçimi bu: kötüleşen bir model değil,
+ölçtüğünüz tek şeyde iyileşen bir model.
 :::
 
 ::: {.callout-note appearance="simple" icon="false"}
@@ -1626,17 +1641,17 @@ kötüleşen bir model değil, ölçtüğünüz tek şeyde iyileşen bir model.
 
 Birincisi **geri alınabilirlik** ve deneysel değil, aritmetik bir şey. LoRA'da
 taban ağırlıklara hiç yazılmaz; adaptör ayrı bir matris çiftidir. Adaptör
-dosyasını silin, orijinal model bit düzeyinde birebir geri gelir.
-Tam bir fine-tune'da böyle bir geri alma imkânı yoktur — ön eğitimli
-ağırlıkların tek kopyası ya üzerine
-yazdığınız kopyadır ya da hâlâ Hub'da durandır; tam revizyon hash'ini kayda
-geçirmeniz gerekmesinin sebebi de bu. Bu avantaj garantilidir.
+dosyasını silin, orijinal model bit düzeyinde birebir geri gelir. Tam ince
+ayarda böyle bir geri alma imkânı yoktur — ön eğitimli ağırlıkların tek
+kopyası ya üzerine yazdığınız kopyadır ya da hâlâ Hub'da durandır; tam
+revizyon hash'ini kayda geçirmeniz gerekmesinin sebebi de bu. Bu avantaj
+garantilidir.
 
 İkincisi **kaynaştırılmış modelde unutmanın azalması** ve bu, birinci avantajın
 garantilediği bir şey değil. $W_0 + \frac{\alpha}{r}BA$, $W_0$'dan gerçekten
 farklı bir matristir; onun *daha kötü* bir Türkçe modeli olmasını engelleyen
 hiçbir şey yoktur. Onu sınırlayan şey, güncellemenin katman başına iki
-projeksiyonun rank-$r$ altuzayına hapsedilmiş olması; yani tam bir fine-tune'a
+projeksiyonun rank-$r$ alt uzayına hapsedilmiş olması; yani tam fine-tuning'e
 kıyasla oynayacak çok daha az yer var. Bu makul bir mekanizma, kanıt değil —
 yukarıdaki satırın iddia edilmek yerine ölçülmüş olmasının sebebi tam olarak
 bu.
@@ -1657,7 +1672,7 @@ Pratikte üç alışkanlık neredeyse her şeyi yakalıyor:
 |:--|:--|:--|
 | eğitimden **önce** genel bir benchmark seçip iki kez de çalıştırmak | tek bir değerlendirme koşusu | sorunun var olduğunu |
 | fine-tuning kümenize %5–10 genel veri karıştırmak | biraz daha yavaş yakınsama | hasarın çoğunu |
-| tam fine-tune yerine makul bir rankta LoRA'yı tercih etmek | bizim labımızda macro-F1'in yaklaşık bir puanı | yukarıda ölçülen hasarın kabaca beşte dördünü — artı bir geri alma imkânı |
+| tam fine-tuning yerine makul bir rankta LoRA'yı tercih etmek | bizim labımızda macro-F1'in yaklaşık bir puanı | yukarıda ölçülen hasarın kabaca beşte dördünü — artı bir geri alma imkânı |
 
 ::: {.column-margin}
 Birinci satırdaki kilit ifade "eğitimden önce". Fine-tune edilmiş modelin
@@ -1668,14 +1683,14 @@ ettiğiniz hatalarda iyi göstermek için seçilmiş bir benchmark'tır.
 ## Lab: Türkçe bir görevde LoRA, ölçülmüş hâliyle {#sec-lora-lab}
 
 Yukarıdaki her şey ya aritmetikti ya da başkasının sonucuydu. Bu kısım ikisi de
-değil: [4. bölümdeki](../chapters/04-karsilastirma.html) aynı Türkçe ürün yorumu görevinin, tek bir dizüstü
-GPU'sunda yedi farklı şekilde çalıştırılmış ve sayıları çıktığı gibi
-raporlanmış hâli.
+değil: [4. bölümdeki](../chapters/04-karsilastirma.html) aynı Türkçe ürün
+yorumu görevinin, tek bir dizüstü GPU'sunda yedi farklı şekilde çalıştırılmış
+ve sayıları çıktığı gibi raporlanmış hâli.
 
 Kurulum bilinçli olarak mütevazı, çünkü mesele bunun ulaşılabilir olması.
 BERTurk base (`dbmdz/bert-base-turkish-cased`, 110,6M parametre),
-@sec-karsilastirma bölünmesi — 40.000 eğitim yorumu, 10.000 ayrılmış, seed 42 —
-iki epoch, dizi uzunluğu 128, batch boyu 32, bir Apple M serisi GPU üzerinde.
+@sec-karsilastirma bölünmesi — 40.000 eğitim yorumu, 10.000 ayrılmış,
+rastgelelik tohumu (seed) 42 — iki epoch, dizi uzunluğu 128, batch boyu 32, bir Apple M serisi GPU üzerinde.
 LoRA adaptörleri yalnızca `query` ve `value` üzerinde, $\alpha = 2r$, dropout
 0,05.
 
@@ -1696,10 +1711,10 @@ ayarlamak demek. Bu sayıların üstüne bir şey kuracaksanız, düzeltmeniz ge
 ilk şey de bu.
 :::
 
-| neyi eğittik | eğitilebilir | pay | macro-F1 | F1(olumsuz) | doğruluk | wall-clock süresi | tepe GiB |
+| neyi eğittik | eğitilebilir | pay | macro-F1 | F1(olumsuz) | doğruluk | gerçek süre | tepe GiB |
 |:--|--:|--:|--:|--:|--:|--:|--:|
 | yalnızca baş (doğrusal probe) | 1.538 | %0,001 | 48,37 | 0,00 | 93,68 | 3 dk 35 sn | 0,41 |
-| tam fine-tune | 110.618.882 | %100 | **83,90** | **70,16** | 95,62 | 11 dk 59 sn | 6,07 |
+| tam fine-tuning | 110.618.882 | %100 | **83,90** | **70,16** | 95,62 | 11 dk 59 sn | 6,07 |
 | LoRA $r=1$ | 38.402 | %0,035 | 80,47 | 63,01 | 96,09 | 10 dk 01 sn | 4,32 |
 | LoRA $r=4$ | 148.994 | %0,135 | 80,50 | 62,97 | 96,26 | 9 dk 46 sn | 4,32 |
 | LoRA $r=8$ | 296.450 | %0,267 | 82,69 | 67,23 | 96,50 | 10 dk 04 sn | 4,32 |
@@ -1707,15 +1722,15 @@ ilk şey de bu.
 | LoRA $r=64$ | 2.360.834 | %2,090 | 82,39 | 66,60 | 96,55 | 10 dk 30 sn | 4,37 |
 
 Karşılaştırma için: [4. bölümün](../chapters/04-karsilastirma.html) aynı
-bölünmedeki, yapay sinir ağı kullanmayan en iyi modeli — kelime 1-2 gram
-üzerinde tf-idf, GPU yok — **76,21** macro-F1 ve **56,47** F1(olumsuz)
+bölünmedeki, yapay sinir ağı kullanmayan en iyi modeli — kelime 1-2
+gramları üzerinde tf-idf, GPU yok — **76,21** macro-F1 ve **56,47** F1(olumsuz)
 almıştı.
 
 ::: {.column-margin}
-"Tepe GiB", ileri geçiş grafiği hâlâ bellekteyken gözlenen en büyük canlı tahsis;
-her satır için ayrı bir süreçte ölçüldü. İşletim sisteminin bildirdiği sayı
-değil: MPS sürücüsünün bildirdiği en yüksek bellek kullanımı her satırda yaklaşık 0,7 GiB
-daha yüksek çıkıyor; bu, sütunu kaydırır ama karşılaştırmaların hiçbirini
+"Tepe GiB", ileri geçişin hesaplama grafiği hâlâ bellekteyken gözlenen en
+büyük canlı bellek tahsisi; her satır için ayrı bir süreçte ölçüldü. İşletim
+sisteminin bildirdiği sayı değil: MPS sürücüsünün bildirdiği en yüksek bellek
+kullanımı her satırda yaklaşık 0,7 GiB daha yüksek çıkıyor; bu, sütunu kaydırır ama karşılaştırmaların hiçbirini
 değiştirmez.
 :::
 
@@ -1723,17 +1738,19 @@ değiştirmez.
 
 **1. satır kontrol grubu ve başarısız oluyor.** Encoder'ı dondurup yalnızca
 sınıflandırma başını — 1.538 parametre — eğitmek, macro-F1'i 48,37, doğruluğu
-93,68 olan bir model üretiyor. Bunlar yeni sayılar değil.
-[4. bölümün](../chapters/04-karsilastirma.html) çoğunluk sınıfı baseline'ının tam olarak aynısı. Model
-her seferinde *olumlu* demeyi öğrendi ve %93,68'i olumlu olan bir derlemde bu,
-yerel olarak makul bir davranış. [Eğitilebilir bir başı olan donmuş bir encoder,
-adaptör tabanlı bir yöntem değil doğrusal bir probe'dur ve dengesiz bir görevde
-tek bir sınıfa kilitlenebilir]{.hl} — doğrusal probe'ları "parametre verimli
-fine-tuning" başlığı altına koyup koymadığınız bir adlandırma meselesi; önemli
-olan, hiçbir temsili değiştirmemeleri. Olumsuz sınıftaki F1 tam 0,00. Bu satırı
-okurken yukarıdaki öğrenme oranı çekincesini hesaba katın: satır ortak oranla
+93,68 olan bir model üretiyor. Bunlar yeni sayılar değil;
+[4. bölümün](../chapters/04-karsilastirma.html) çoğunluk sınıfı
+baseline'ının tam olarak aynısı. Model her seferinde *olumlu* demeyi öğrendi ve
+%93,68'i olumlu olan bir derlemde bu, yerel olarak makul bir davranış.
+[Eğitilebilir bir başı olan donmuş bir encoder, adaptör tabanlı bir yöntem
+değil doğrusal bir probe'dur ve dengesiz bir görevde tek bir sınıfa
+kilitlenebilir]{.hl} — doğrusal probe'ları "parametre-verimli fine-tuning"
+başlığı altına koyup koymamanız bir adlandırma meselesi; önemli olan, hiçbir
+temsili değiştirmemeleri. Olumsuz sınıftaki F1 tam 0,00. Bu satırı okurken
+yukarıdaki öğrenme oranı çekincesini hesaba katın: satır ortak oranla
 çalıştırıldı ve düzgün ayarlanmış bir probe — kendi öğrenme oranı, kayıpta
-sınıf ağırlıkları — 48,37'den iyisini yapardı. 1. alıştırma tam olarak bu deney.
+sınıf ağırlıkları — 48,37'den iyisini yapardı. Aşağıdaki "Sıra sizde"
+kısmının ilk alıştırması tam olarak bu deney.
 
 O satır tabloda, çünkü onunla LoRA satırları arasındaki fark bütün argümanın
 kendisi. LoRA, modelin daha küçük bir *parçasını* eğitmek anlamında *daha az*
@@ -1745,11 +1762,11 @@ puanı kazandırıyor. $r=8$'den $r=64$'e çıkmak — sekiz katı parametre —
 *kaybettiriyor*.
 
 O satırdaki karıştırıcı etkene ad koymakta yarar var; çünkü literatürün asıl
-tartıştığı şey bu. $\alpha = 2r$ ile etkin ölçek $\alpha/r$ her rank'te sabit 2;
+tartıştığı şey bu. $\alpha = 2r$ ile etkin ölçek $\alpha/r$ her rankta sabit 2;
 yani bu tarama, sabit bir $\alpha$ altında olacağı gibi kılık değiştirmiş bir
 ölçek taraması *değil*. Ama $\alpha/r$'yi sabit tutmak da bir seçim:
 @kalajdzievski2023rank, $\Theta(1/r)$ ölçeklemesinin rank büyüdükçe gradyanları
-küçülttüğünü ve yüksek rank'te kararlı öğrenmenin $\Theta(1/\sqrt{r})$
+küçülttüğünü ve yüksek rankta kararlı öğrenmenin $\Theta(1/\sqrt{r})$
 istediğini gösteriyor — öngörülen belirti de tam olarak "yüksek rank yardımcı
 olmuyor". Dolayısıyla $r=64$ satırının dürüst okuması şu: *bu ölçekleme
 kuralında rank artık karşılığını vermiyor*. Neredeyse herkes de bu kuralı
@@ -1761,34 +1778,33 @@ yer düz kısım. @sec-lora'daki düşük ranklılık hipotezi de sizi bunu bekl
 yöneltirdi — parametre aritmetiği tek başına bunu söyleyemezdi — ve bu görevde
 rank gerçekten sonradan düşünülecek bir mesele.
 
-**Tam fine-tune kazanıyor ve tek bir sınıf üzerinden kazanıyor.** $r=8$'in
+**Tam fine-tuning kazanıyor ve tek bir sınıf üzerinden kazanıyor.** $r=8$'in
 82,69'una karşı 83,90, bu koşuda 1,21 puanlık bir fark ve farkın geldiği yer
 azınlık sınıfı: F1(olumsuz) 67,23'e karşı 70,16, o sınıfta +2,93 puan. Yine de
-bu, hikâyenin *tamamı* değil — diğer yarıyı geri hesapladığınızda tam
-fine-tune'un çoğunluk sınıfında hafifçe *geride* kaldığını görürsünüz:
-F1(olumlu) 98,15'e karşı 97,64. Bir sınıftaki 2,93 puanlık kazanç ile
-diğerindeki 0,51 puanlık kaybın ortalaması, gördüğünüz 1,21'i veriyor. Ama
-doğruluk sütununa bakın — [her bir LoRA
-koşusu genel doğrulukta tam fine-tune'dan *daha* isabetli]{.hl} (95,62'ye karşı
-96,09–96,58). Tam fine-tuning'in karar sınırını olumsuzlara doğru kaydıracak
+bu, hikâyenin *tamamı* değil — diğer yarıyı geri hesapladığınızda tam ince
+ayarın çoğunluk sınıfında hafifçe *geride* kaldığını görürsünüz: F1(olumlu)
+98,15'e karşı 97,64. Bir sınıftaki 2,93 puanlık kazanç ile diğerindeki 0,51
+puanlık kaybın ortalaması, gördüğünüz 1,21'i veriyor. Ama doğruluk sütununa
+bakın — [her bir LoRA koşusu genel doğrulukta tam fine-tuning'den *daha*
+isabetli]{.hl} (95,62'ye karşı 96,09–96,58). Tam fine-tuning'in karar sınırını olumsuzlara doğru kaydıracak
 kadar özgürlüğü vardı; macro-F1'in ödüllendirdiği, düz doğruluğun cezalandırdığı
 şey de bu. Hangisini istediğiniz bir eğitim kararı değil bir ürün kararıdır ve
 tablo bunu sizin yerinize veremez.
 
 **Üzerinde durulmaya değer sonuç rank 1.** 38.402 eğitilebilir parametre —
 36.864'ü adaptörlerde, 1.538'i baş katmanda, modelin %0,035'i, e-postayla
-gönderebileceğiniz bir dosya — donmuş bir encoder'ı
-48,37'den 80,47 macro-F1'e taşıyor ve [4. bölümün](../chapters/04-karsilastirma.html) tf-idf baseline'ını
-dört puandan fazla geçiyor. LoRA her ne yapıyorsa, bunu kapasiteyle yapmıyor.
+gönderebileceğiniz bir dosya — donmuş bir encoder'ı 48,37'den 80,47
+macro-F1'e taşıyor ve [4. bölümün](../chapters/04-karsilastirma.html) tf-idf
+baseline'ını dört puandan fazla geçiyor. LoRA her ne yapıyorsa, bunu kapasiteyle yapmıyor.
 
-**Dürüst olmak gerekirse, wall-clock süresi (gerçekte geçen süre) sütunu
-hayal kırıklığı.** $r=8$, tam fine-tune'dan 373 kat daha az parametre eğitiyor
+**Dürüst olmak gerekirse, gerçek süre (wall-clock, duvar saatiyle geçen süre)
+sütunu hayal kırıklığı.** $r=8$, tam fine-tuning'den 373 kat daha az parametre eğitiyor
 ve 1,19 kat daha hızlı çalışıyor. Bütün hızlanma bu kadar. LoRA
 optimizer işinden tasarruf ediyor ve 32'lik batch'li 110M'lik bir modelde
 tasarruf edilecek pek optimizer işi yok.
 
 Yalnızca-baş satırı, karşıtlık yoluyla bunun sebebini açıklıyor. 3 dk 35 sn'de
-bitiyor — tam fine-tune'dan 3,3 kat hızlı — çünkü her encoder parametresi donmuş
+bitiyor — tam fine-tuning'den 3,3 kat hızlı — çünkü her encoder parametresi donmuş
 *ve encoder'ın içinde eğitilebilir hiçbir şey yokken*, geri yayılım son katmanda
 duruyor ve ağın içine hiç girmiyor. LoRA'nın adaptörleri ise her bloğun içinde
 oturuyor; dolayısıyla geri geçişin onlara ulaşmak için bütün modeli dolaşması
@@ -1797,7 +1813,7 @@ geçiş kazandırmaz.]{.hl}
 
 **Bellek sütunu ise bölümdeki aritmetiğin gerçekle sınandığı yer.** 16 bayta
 karşı 2 bayt tablosu, LoRA'nın eğitim belleğini kabaca sekiz kat azaltması
-gerektiğini öngörüyordu. Ölçülen azalma ise 1,40 kat — 6,07 GiB'dan
+gerektiğini öngörüyordu. Ölçülen azalma ise 1,40 kat — 6,07 GiB'tan
 4,32 GiB'a. Eksik tasarruf, LoRA'nın hiç dokunmadığı aktivasyonlar. $r=8$'in
 4,32 GiB tepesinden bellekte duran parametreleri — ilk ileri geçişten önce
 ölçülen 0,41 GiB — çıkarın, geriye 3,91 GiB kalıyor. [**LoRA'nın buradaki tepe
@@ -1805,8 +1821,8 @@ belleğinin yaklaşık %90'ı aktivasyon**]{.hl} ve hiçbir rank tercihi bunu
 değiştirmiyor. Bu, QLoRA'nın yazarlarının 7B'de ölçtüğü etkinin aynısı:
 26 MB'lık adaptör parametresine karşı 567 MB'lık girdi gradyanı bulmuşlardı.
 
-Şuna da dikkat edin: tepe bellek rank'ler arasında neredeyse sabit — $r=1$'de
-4,32 GiB, $r=64$'te 4,37 GiB — tam olarak aynı sebeple. Ve 0,41 GiB'daki
+Şuna da dikkat edin: tepe bellek ranklar arasında neredeyse sabit — $r=1$'de
+4,32 GiB, $r=64$'te 4,37 GiB — tam olarak aynı sebeple. Ve 0,41 GiB'taki
 yalnızca-baş satırına bakın: encoder üzerinden geri geçiş yoksa saklanan
 aktivasyon da yoktur; sonuç, bir mertebe daha az bellek ve çalışmayan bir model.
 
@@ -1824,7 +1840,7 @@ gösteridir.
   oranlarını LoRA hakkında genel iddialar gibi aktarmak dürüst olmaz; tablo tam
   da bunu önlemek için var.
 - **Tepe bellek, bir dağılımın yerine geçen tek bir sayı.** Sabit şekilli bir
-  batch'in 30 adımı boyunca görülen en büyük canlı tahsis. Gerçek eğitimde dizi
+  batch'in 30 adımı boyunca görülen en büyük canlı bellek tahsisi. Gerçek eğitimde dizi
   uzunlukları değişkendir, dolayısıyla bellek profilinin bir kuyruğu vardır ve
   gece 3'te koşuyu asıl öldüren şey o kuyruktur. Sütuna satırlar arası bir
   karşılaştırma gözüyle bakın, bir kaynak planlama rakamı gibi değil.
@@ -1834,7 +1850,7 @@ gösteridir.
   sıralama çıkarmayın. Satır başına tek seed'le bu bölüm hangi farkın gürültü
   olduğunu söyleyemez. Söyleyebileceği şey şu: 1. satır ile geri kalan her şey
   arasındaki fark, tablodaki diğer bütün farklardan çok daha büyük; tam
-  fine-tune ile LoRA satırları arasındaki doğruluk–macro-F1 ayrımı da her bir
+  fine-tuning ile LoRA satırları arasındaki doğruluk–macro-F1 ayrımı da her bir
   LoRA satırı için geçerli. (Parametre sayıları ölçüm değil aritmetik
   olduğundan hiçbir seed onları oynatamaz.)
 
@@ -1846,10 +1862,10 @@ gösteridir.
    sınıf ağırlıkları ya da eğitim kümesini yeniden örnekleme. LoRA satırlarına
    ne kadar yaklaştığınızı bildirin. Sonra bunun size ne söylediğini yazın: LoRA
    kazancının ne kadarı temsilden, ne kadarı kalibrasyondan geliyordu?
-2. **Karşılığını vermeyi bırakan rank'i bulun.** $r \in \{1, 2, 4, 8, 16, 32\}$
-   taramasını her biri için üç seed'le yapın. macro-F1'i $\log_2 r$'ye karşı,
-   hata çubuklarıyla çizdirin. Eğrinin düzleştiği rank'i söyleyin ve — asıl
-   önemli kısım bu — hata çubuklarınızın onu bir alttaki rank'ten ayırt edip
+2. **Karşılığını vermeyi bırakan rankı bulun.** $r \in \{1, 2, 4, 8, 16, 32\}$
+   taramasını her biri için üç seed'le yapın. Macro-F1'i $\log_2 r$'ye karşı,
+   hata çubuklarıyla çizdirin. Eğrinin düzleştiği rankı söyleyin ve — asıl
+   önemli kısım bu — hata çubuklarınızın onu bir alttaki ranktan ayırt edip
    edemediğini söyleyin.
 3. **$\alpha = 2r$ geleneğini bilerek bozun.** $r = 8$'i sabitleyin ve
    $\alpha \in \{2, 8, 16, 64\}$ taraması yapın. LoRA kısmındaki (@sec-lora)
@@ -1861,18 +1877,20 @@ gösteridir.
    formülden (@sec-lora) hesaplayın — sonuç `query, value` rakamının 2,5 katıdır
    ve çarpanın neden 2 değil 2,5 olduğunu söyleyebilmelisiniz. Skor
    parametreleri takip ediyor mu?
-5. **Geri almayı kanıtlayın.** LoRA ile fine-tune edin, adaptörü kaydedin, sonra
-   temel modeli yükleyip ağırlıklarını orijinal checkpoint'le tensör tensör
-   karşılaştırın. Birebir aynı olmalılar. Sonra aynısını tam bir fine-tune'dan
-   sonra yapın ve kaç tensörün farklılaştığını bildirin. Bu, felaket unutması
-   kısmının (@sec-unutma) merkezî iddiasını somutlaştıran üç satırlık bir deney.
-6. **Kendi unutmanızı ölçün.** Fine-tune ettiğiniz encoder'ı alın ve
-   felaket unutması kısmındaki (@sec-unutma) masked-language probe'unu, ne sizin
-   ne de fine-tune'un dokunduğu bir alandan gelen Türkçe metin üzerinde
-   çalıştırın. Tam fine-tuning'i LoRA ile karşılaştırın. Sonra fine-tuning
-   kümenize %10 genel Türkçe karıştırıp yeniden ölçün.
-7. **Baseline'ın gidemeyeceği yere gidin.** [4. bölümün](../chapters/04-karsilastirma.html) tf-idf modeli
-   hiç GPU kullanmadan 76,21 macro-F1'e ulaşmıştı. Fine-tune edilmiş modelin
+5. **Geri almayı kanıtlayın.** LoRA ile fine-tune edin, adaptörü kaydedin,
+   sonra temel modeli yükleyip ağırlıklarını orijinal checkpoint'le tensör
+   tensör karşılaştırın. Birebir aynı olmalılar. Sonra aynısını tam ince
+   ayardan sonra yapın ve kaç tensörün farklılaştığını bildirin. Bu, yıkıcı
+   unutma kısmının (@sec-unutma) merkezî iddiasını somutlaştıran üç satırlık
+   bir deney.
+6. **Kendi unutmanızı ölçün.** Fine-tune ettiğiniz encoder'ı alın ve yıkıcı
+   unutma kısmındaki (@sec-unutma) masked-language probe'unu, ne sizin ne de
+   fine-tuning'in dokunduğu bir alandan gelen Türkçe metin üzerinde çalıştırın.
+   Tam fine-tuning'i LoRA ile karşılaştırın. Sonra fine-tuning kümenize %10 genel
+   Türkçe karıştırıp yeniden ölçün.
+7. **Baseline'ın gidemeyeceği yere gidin.**
+   [4. bölümün](../chapters/04-karsilastirma.html) tf-idf modeli hiç GPU
+   kullanmadan 76,21 macro-F1'e ulaşmıştı. Fine-tune edilmiş modelin
    doğru, tf-idf'in yanlış olduğu bir girdi bulun; bir de tersinin geçerli
    olduğu bir girdi. İkincisini bulmak daha zordur ve bulduğunuzda daha
    öğreticidir.
@@ -1880,7 +1898,7 @@ gösteridir.
 **Teslim edilecek:** bizimkiyle aynı sütunlara sahip tek bir tablo, içinde
 kendi sayılarınız ve gerçekten devreye alacağınız en ucuz yapılandırmayı
 adlandıran bir paragraf — hiçbir şeyi devreye almayıp tf-idf baseline'ında
-kalmanın gerekçesi de dahil.
+kalmanın gerekçesi de dâhil.
 
 ## Sezgi kontrolleri {#sec-egitim-sonrasi-sezgi}
 
@@ -1893,7 +1911,7 @@ zihinsel modelin yanlış mühendislik kararı ürettiği bir nokta.
 İkisi de değil ve bu beklentilerle ölçümler arasındaki fark, bu bölümün en
 işe yarar şeyi.
 
-Bellek tarafında: bir parametreyi dondurmak, sekiz taksitinin yedisini ortadan
+Bellek tarafında: bir parametreyi dondurmak, sekiz taksidinin yedisini ortadan
 kaldırır — optimizer durumu eğitim faturasının dörtte üçü, gradyan sekizde
 biri, ağırlığın kendisi sekizde biri. Yani LoRA *optimizer* belleğinin çoğunu
 kaldırır, ama [küçük model boylarında baskın olan şey aktivasyonlardır]{.hl} ve
@@ -1902,12 +1920,12 @@ hiçbir rank tercihi onlara dokunmaz.
 Hız tarafında: $r = 8$, **373 kat daha az parametre** eğitiyor ve **1,19 kat
 hızlı** çalışıyor. Bütün hızlanma bu. LoRA optimizer işinden tasarruf eder ve
 32'lik batch'li 110M'lik bir modelde tasarruf edilecek pek optimizer işi yoktur.
-Teknik, küçük bir fine-tune'un wall-clock süresinde değil; büyük modellerde ve çok
+Teknik, küçük bir fine-tuning'in gerçek süresinde değil; büyük modellerde ve çok
 sayıda adaptörü servis etmede karşılığını verir.
 :::
 
 ::: {.callout-note collapse="true"}
-## 2. Encoder'ı dondurup yalnızca sınıflandırıcı başını eğitmek — bu parametre verimli fine-tuning midir?
+## 2. Encoder'ı dondurup yalnızca sınıflandırıcı başını eğitmek — bu parametre-verimli fine-tuning midir?
 
 Adaptör tabanlı bir yöntem değil, doğrusal bir probe'dur — kimileri
 probe'ları PEFT şemsiyesi altına koyar, kimileri koymaz; hangisini
@@ -1916,8 +1934,9 @@ değiştirmemesidir. Bu görevde ve bu labın kullandığı ortak öğrenme oran
 probe tamamen tek sınıfa kilitleniyor.
 
 Donmuş bir encoder üzerinde 1.538 parametre eğitmek macro-F1 **48,37** ve
-doğruluk **93,68** üretti — tam olarak [4. bölümün](../chapters/04-karsilastirma.html) çoğunluk sınıfı
-baseline'ı; olumsuz sınıftaki F1 ise **0,00**. Model her seferinde *olumlu*
+doğruluk **93,68** üretti — tam olarak
+[4. bölümün](../chapters/04-karsilastirma.html) çoğunluk sınıfı baseline'ı;
+olumsuz sınıftaki F1 ise **0,00**. Model her seferinde *olumlu*
 demeyi öğrendi.
 
 [LoRA modelin küçük bir *parçasını* eğitmez; modelin *her yerinde* az sayıda
@@ -1928,7 +1947,7 @@ geçiyor.
 :::
 
 ::: {.callout-note collapse="true"}
-## 3. Yüksek LoRA rank'i daha çok kapasite demek. Karşılayabildiğiniz en yüksek rank'i mi kullanmalısınız?
+## 3. Yüksek LoRA rankı daha çok kapasite demek. Karşılayabildiğiniz en yüksek rankı mı kullanmalısınız?
 
 Hayır — eğri neredeyse hemen düzleşiyor, sonra hafifçe geri gidiyor.
 
@@ -1942,7 +1961,7 @@ mesele; @sec-lora'daki düşük ranklılık hipotezi de sizi bunu beklemeye yön
 :::
 
 ::: {.callout-note collapse="true"}
-## 4. Tam fine-tune'unuz macro-F1'de LoRA'yı yeniyor ama doğrulukta kaybediyor. Hangisi bozuk?
+## 4. Tam fine-tune edilmiş modeliniz macro-F1'de LoRA'yı yeniyor ama doğrulukta kaybediyor. Hangisi bozuk?
 
 Hiçbiri. Eğitim sonucu kılığına girmiş bir ürün kararına bakıyorsunuz.
 
@@ -1955,13 +1974,13 @@ koşusu genel doğrulukta *daha* isabetli]{.hl} — 95,62'ye karşı 96,09–96,
 Tam fine-tuning'in karar sınırını olumsuzlara doğru kaydıracak kadar özgürlüğü
 vardı. Macro-F1 bunu ödüllendirir, düz doğruluk cezalandırır. Hangisini
 istediğiniz, kaçırılan bir şikâyetin yanlış alarma kıyasla neye mal olduğuna
-bağlıdır. Bu, eşiği bir maliyet matrisinden seçme kısmının (@sec-siniflandirma-maliyetler)
-sorusudur ve hiçbir eğitim tablosu onu sizin
+bağlıdır. Bu, eşiği bir maliyet matrisinden seçme kısmının
+sorusudur (@sec-siniflandirma-maliyetler) ve hiçbir eğitim tablosu onu sizin
 yerinize cevaplayamaz.
 :::
 
 ::: {.callout-note collapse="true"}
-## 5. 65B'lik bir modeli fine-tune etmek için "780 GB'dan fazla" gerekiyor. Bu sayı nereden geliyor?
+## 5. 65B'lik bir modeli fine-tune etmek için "780 GB'tan fazla" gerekiyor. Bu sayı nereden geliyor?
 
 $65 \times 10^9$ parametre × **12 bayt**. Öğretici olan kısım şu: makale bu
 on iki baytın hangileri olduğunu söylemiyor ve iki farklı okuma da hesaba uyuyor.
@@ -1972,7 +1991,7 @@ GB'a çıkıyor; "fazla" ifadesi bu farkı karşılıyor. İkinci okuma: bf16 a�
 bf16 gradyan, fp32 $m$, fp32 $v$, ana kopya yok; "fazla" bu kez aktivasyonları
 karşılıyor.
 
-[İki ayrıştırma da aynı sonuca varıyor: manşet rakamına, yalnızca parametre
+[İki ayrıştırma da aynı sonuca varıyor: manşet rakama, yalnızca parametre
 eğitildiği için var olan durum hâkim.]{.hl} Parametreyi dondurun, o durum ortadan
 kalkar — PEFT'in tek cümlelik gerekçesi de bu.
 :::
@@ -1980,19 +1999,20 @@ kalkar — PEFT'in tek cümlelik gerekçesi de bu.
 ::: {.callout-note collapse="true"}
 ## 6. Fine-tune ettiğiniz model, eskiden yaptığı şeylerde kötüleşti. Ne oldu ve önlenebilir mi?
 
-Felaket unutması; ve bu, yamayla giderebileceğiniz bir hata değil, istediğiniz
+Yıkıcı unutma; ve bu, yamayla giderebileceğiniz bir hata değil, istediğiniz
 şeyin bir *sonucu*.
 
 Dar bir hedef üzerinde gradyan inişi, başka yeteneklerin dayandığı ağırlıkları
 oynatır. Hafifletmelerin hepsi *daha az oynat*'ın birer sürümü: daha düşük
 öğrenme oranı, daha az epoch, PEFT (taban ağırlıklar kayamaz; ama
-@sec-unutma'da ölçüldüğü gibi, kaynaştırılmış model yine de unutabilir) ya da fine-tuning kümesine bir miktar genel veri geri karıştırmak.
+@sec-unutma'da ölçüldüğü gibi, kaynaştırılmış model yine de unutabilir) ya da
+fine-tuning kümesine bir miktar genel veri geri karıştırmak.
 
 Bunun göründüğünden daha önemli olmasının sebebi şu: [unutma, değerlendirmeyi
-akıl ettiğiniz şeyler üzerinden ölçülür]{.hl}. Değerlendirme takımınız yalnızca
-yeni görevi kapsıyorsa, model hiç test etmediğiniz bir yeteneği kaybedebilir ve
-siz de modeli bu hâliyle yayına alırsınız. Regresyon takımını fine-tune'dan
-sonra değil, önce kurun.
+akıl ettiğiniz şeyler üzerinden ölçülür]{.hl}. Değerlendirme paketiniz
+yalnızca yeni görevi kapsıyorsa, model hiç test etmediğiniz bir yeteneği
+kaybedebilir ve siz de modeli bu hâliyle yayına alırsınız. Regresyon test
+paketini fine-tuning'den sonra değil, önce kurun.
 :::
 
 ## Mülakat soruları {#sec-egitim-sonrasi-mulakat}
@@ -2001,33 +2021,33 @@ Fine-tuning, adayların bir tekniği bir kararla en sık karıştırdığı yer.
 Aşağıdaki her cevabın arkasında bir ölçüm ya da bir parça aritmetik var.
 
 ::: {.column-margin}
-Bu alandaki en güçlü sinyal, *ne zaman fine-tune yapılmayacağını* kendiliğinden
-söyleyen adaydır. Prompting, retrieval ve daha iyi bir şema, üretimdeki
-sorunların fine-tuning'den daha fazlasını çözer. Karar ağacının (@sec-karar-agaci)
-var olma sebebi de "fine-tune yapmalı mıyız?" sorusunun
-varsayılan cevabının genelde hayır olması.
+Bu alandaki en güçlü sinyal, *ne zaman fine-tune edilmeyeceğini*
+kendiliğinden söyleyen adaydır. Prompting, erişim ve daha iyi bir
+şema, üretimdeki sorunların fine-tuning'den daha fazlasını çözer. Karar
+ağacının (@sec-karar-agaci) var olma sebebi de "fine-tune etmeli miyiz?"
+sorusunun varsayılan cevabının genelde hayır olması.
 :::
 
 1. **Fine-tuning gerçekte neyi düzeltir, neyi düzeltmez?** *Davranışı* düzeltir
-   — format, üslup, görev çerçevesi, reddetme kalıpları, alana özgü dil düzeyi
-   (register). *Olguları* güvenilir biçimde yerleştirmez; bunu retrieval yapar
-   ve fine-tuning'le enjekte edilmiş bir olguyu güncellemek pahalı, kaynağını
-   göstermek zordur. Meseleyi yerine oturtan çerçeve şu: base model bozuk
-   değildir, başka bir soruyu cevaplıyordur — bu metin verildiğinde, sonra ne
-   gelir. Fine-tuning ona hangi soruyu sorduğunuzu öğretir; yeni cevapları
-   güvenilir biçimde öğretmez ve [fine-tuning, tam da bir ekip onu bilgi
-   güncelleme mekanizması olarak kullandığında hayal kırıklığı yaratır]{.hl}. Sonra işin rahatsız edici
-   yarısını söyleyin: gerçek bir ekibe gelen fine-tuning taleplerinin çoğu için
-   daha iyi bir prompt, retrieval ya da sabit bir etiket şeması daha uygun bir
-   çözümdür.
+   — biçim, üslup, görev çerçevesi, reddetme kalıpları, alana özgü dil düzeyi
+   (register). *Olguları* güvenilir biçimde yerleştirmez; bunu erişim
+   (retrieval) yapar ve fine-tuning ile modele enjekte edilmiş bir olguyu
+   güncellemek pahalı, kaynağını göstermek zordur. Meseleyi yerine oturtan
+   çerçeve şu: temel model bozuk değildir, başka bir soruyu cevaplıyordur — bu
+   metin verildiğinde, sonra ne gelir. Fine-tuning ona hangi soruyu sorduğunuzu
+   öğretir; yeni cevapları güvenilir biçimde öğretmez ve [fine-tuning, tam da bir
+   ekip onu bilgi güncelleme mekanizması olarak kullandığında hayal kırıklığı
+   yaratır]{.hl}. Sonra işin rahatsız edici yarısını söyleyin: gerçek bir ekibe
+   gelen fine-tuning taleplerinin çoğu için daha iyi bir prompt, erişim ya da
+   sabit bir etiket şeması daha uygun bir çözümdür.
 
 2. **LoRA'yı doğrusal cebir bilen birine anlatın.** $W$'yi dondurun ve
    $\Delta W = BA$'yı öğrenin; burada $B$, $d \times r$ ve $A$, $r \times k$
    boyutunda, $r \ll \min(d,k)$. İleri geçiş $Wx + \frac{\alpha}{r}BAx$ olur ve servis
    zamanında $\frac{\alpha}{r}BA$'yı $W$'ye katabilirsiniz; böylece çıkarım fazladan
    hiçbir şeye mal olmaz. Bunu gerçekten kullandığınızı gösteren iki ayrıntı:
-   $A$ rastgele ilkleniyor, $B$ sıfırlanıyor; yani adaptör tam bir no-op olarak
-   başlıyor ve eğitim 0. adımda ön eğitimli modeli sarsamıyor. Ayrıca $\alpha$,
+   $A$ rastgele ilkleniyor, $B$ sıfırlanıyor; yani adaptör hiçbir etkisi
+   olmayan bir işlem (no-op) olarak başlıyor ve eğitim 0. adımda ön eğitimli modeli sarsamıyor. Ayrıca $\alpha$,
    adaptör yolunda bir öğrenme oranı çarpanı gibi davranıyor; $\alpha = 2r$'nin
    bir yasa değil bir gelenek olmasının sebebi de bu.
 
@@ -2046,23 +2066,23 @@ varsayılan cevabının genelde hayır olması.
    iyidir*'i ifade edemez ve yardımseverlik ya da ton gibi niteliklerde yargı
    karşılaştırmalıdır — tercih optimizasyonunun ayrı bir aşama olarak var
    olmasının sebebi tam olarak budur. DPO'nun katkısı, RLHF'in hedeflediği aynı
-   amacı ayrı bir reward model eğitmeden optimize edebileceğinizi göstermesi:
+   amacı ayrı bir ödül modeli eğitmeden optimize edebileceğinizi göstermesi:
    [ödül hiçbir zaman ayrı bir nesne değildi]{.hl}, policy'den geri çıkarılabilir.
    Eklenmeye değer pratik not: DPO, zaten SFT'den geçmiş bir model bekler ve
-   DPO'yu doğrudan base model üzerinde çalıştırmak yaygın ve hayal kırıklığı yaratan bir
-   hatadır.
+   DPO'yu doğrudan temel model üzerinde çalıştırmak yaygın ve hayal kırıklığı
+   yaratan bir hatadır.
 
-5. **Ne zaman fine-tune yap*maz*sınız?** Sorun bilgiyse (retrieval kullanın),
-   sorun formatsa (önce prompt'u ve bir şemayı deneyin), birkaç yüzden az
+5. **Ne zaman fine-tune et*mez*siniz?** Sorun bilgiyse (erişim kullanın),
+   sorun biçimse (önce prompt'u ve bir şemayı deneyin), birkaç yüzden az
    örneğiniz varsa, hedef davranış her ay değişecekse ya da bozabileceğiniz
-   şeyler için bir regresyon takımı kuramıyorsanız. Dağıtım argümanını da
+   şeyler için bir regresyon test paketi kuramıyorsanız. Dağıtım argümanını da
    ekleyin: çok sayıda LoRA adaptörünü servis eden tek bir temel model,
-   operasyonel olarak çok sayıda tam fine-tune'dan kat kat basittir; yani
-   fine-tune *yapacaksanız* adaptör biçiminin, eğitim maliyetiyle hiç ilgisi
-   olmayan bir operasyon avantajı vardır.
+   operasyonel olarak çok sayıda tam fine-tune edilmiş modelden kat kat basittir;
+   yani fine-tune *edecekseniz* adaptör biçiminin, eğitim maliyetiyle hiç
+   ilgisi olmayan bir operasyon avantajı vardır.
 
-6. **Fine-tune yaptınız ve skor kötüleşti. Nasıl hata ayıklarsınız?** Şu
-   sırayla ilerleyin, çünkü kabaca sıklık sırası da bu. Önce chat template'i
+6. **Fine-tune ettiniz ve skor kötüleşti. Nasıl hata ayıklarsınız?** Şu
+   sırayla ilerleyin, çünkü kabaca sıklık sırası da bu. Önce sohbet şablonunu
    kontrol edin: yanlış şablonla eğitmek, modele sunucunun asla göndermeyeceği
    bir formatı öğretir. Sonra modelin çoğunluk sınıfına kilitlenip
    kilitlenmediğine bakın; dengesiz bir görevde bu, makul görünen bir doğruluk
@@ -2078,14 +2098,14 @@ varsayılan cevabının genelde hayır olması.
 Herhangi bir makaleden önce şunu yapın: bir sohbet modelinin tokenizer'ını açın
 ve iki turluk bir konuşma için
 `tokenizer.apply_chat_template(messages, tokenize=False)` çıktısını yazdırın.
-İlk fine-tune'da ters giden her şeyin yarısı o dizgede görünür; bunu yapmak da
+İlk fine-tuning'de ters giden her şeyin yarısı o dizgede görünür; bunu yapmak da
 on saniye sürer.
 
 | kaynak | ne olduğu |
 |:--|:--|
-| [Deep Dive into LLMs like ChatGPT](https://www.youtube.com/watch?v=7xTGNNLPyMI) — Andrej Karpathy | ön eğitimden RLHF'ye üç saat; her eğitim aşamasının davranışının nereden geldiğine dair mevcut en açık anlatım |
+| [Deep Dive into LLMs like ChatGPT](https://www.youtube.com/watch?v=7xTGNNLPyMI) — Andrej Karpathy | ön eğitimden RLHF'e üç saat; her eğitim aşamasının davranışının nereden geldiğine dair mevcut en açık anlatım |
 | [`trl`](https://github.com/huggingface/trl) | tek bir kütüphanede SFT, DPO ve PPO, okunabilir eğiticilerle — her amacın gerçekte neyi eniyilediğini görmenin en hızlı yolu |
-| [`peft`](https://github.com/huggingface/peft) | LoRA ve akrabaları; kaynağı okunacak kadar kısa ve rank'ın gerçekte neyi değiştirdiğini çözüyor |
+| [`peft`](https://github.com/huggingface/peft) | LoRA ve akrabaları; kaynağı okunacak kadar kısa ve rankın gerçekte neyi değiştirdiğini çözüyor |
 | [Interconnects](https://www.interconnects.ai/) — Nathan Lambert | açık tarifler yayımlayan birinden, eğitim sonrası üzerine sürekli ve iyi kaynaklanmış yazılar |
 | [Lil'Log on reward hacking](https://lilianweng.github.io/posts/2024-11-28-reward-hacking/) | her tercih eniyileme yönteminin devraldığı arıza kipi, düzgünce taranmış |
 
@@ -2096,16 +2116,16 @@ on saniye sürer.
 | bu bölümün büyük ölçüde anlattığı teknik | @hu2022lora |
 | tek bir karta sığdırmak | @dettmers2023qlora |
 | LoRA neyin yerini aldı ve gecikme neden önemliydi | @houlsby2019parameter; @lester2021power |
-| talimat izlemeyi standart hâline getiren reçete | @ouyang2022training |
+| yönerge izlemeyi standart hâline getiren reçete | @ouyang2022training |
 | dil modellerinden önce tercihler | @christiano2017deep; @stiennon2020learning |
 | RLHF'in içindeki optimizer | @schulman2017ppo |
-| reward model'i türetip ortadan kaldırmak | @rafailov2023dpo |
-| bunun yerine value model'i silmek | @shao2024deepseekmath |
+| ödül modelini türetip ortadan kaldırmak | @rafailov2023dpo |
+| bunun yerine değer modelini silmek | @shao2024deepseekmath |
 | ölçekte doğrulanabilir ödüller | @guo2025deepseekr1 |
 | her aşaması belgelenmiş açık bir reçete | @lambert2025tulu3 |
 | ne kadar az SFT verisinin yetebileceği | @zhou2023lima |
 | veriyi yazmak yerine üretmek | @wang2023selfinstruct |
-| instruction tuning'in görülmemiş görevlere genellenmesi | @wei2022finetuned |
+| yönerge ile fine-tuning'in görülmemiş görevlere genellenmesi | @wei2022finetuned |
 | etiketleyiciler yerine ilkeler | @bai2022constitutional |
 | bir modeli küçültmek | @hinton2015distilling |
 | daha fazla ön eğitimle bir alana uyarlanmak | @gururangan2020dont |
@@ -2146,7 +2166,7 @@ on saniye sürer.
    ikisini pratikte ayırt edebilecek bir deney önerin ve sonucunu çalıştırmadan
    önce tahmin edin.
 6. Bir ekip, "modelimiz ürünlerimiz için yanlış fiyat veriyor" diyor ve
-   fine-tune istiyor. Karar ağacında (@sec-karar-agaci) onlara beş cümlede,
+   fine-tuning istiyor. Karar ağacında (@sec-karar-agaci) onlara beş cümlede,
    sesli olarak adım adım yol gösterin. Sonra şikâyetlerinin, fine-tuning'in
    *doğru* cevap olduğu varyantını kurun ve bunun hangi veriyi gerektireceğini
    söyleyin.
@@ -2155,18 +2175,18 @@ on saniye sürer.
    DPO arasında karar verin. Her biri için tam olarak neyi, kaç kalem
    toplayacağınızı ve işe yarayıp yaramadığını bir hafta içinde nasıl
    anlayacağınızı söyleyin.
-8. Bir meslektaşınız DPO'nun base model üzerinde başarısız olmasını "model
+8. Bir meslektaşınız DPO'nun temel model üzerinde başarısız olmasını "model
    henüz cevap vermiyor, dolayısıyla sıralanacak bir şey yok" diye açıklıyor.
    $\mathcal{L}_{\text{DPO}}$'ya bakın ve bu açıklamanın neden yanlış olduğunu
    tam olarak söyleyin — kayıp gerçekte neyi örnekliyor, neyi sabit tutuyor?
    Sonra doğru açıklamayı $\pi_{\text{ref}}$ üzerinden verin ve biri buna
    rağmen çalıştırırsa neyi gözlemleyeceğinizi söyleyin.
-9. GRPO, value model'i aynı prompt'tan alınan $G$ örneğin ortalama ödülüyle
-   değiştiriyor. Bu ortalamanın öğrenilmiş bir value model'den
-   *daha kötü* bir baseline olduğu koşulu $G$ ve ödül varyansı cinsinden yazın;
-   sonra bu koşulun geçerli olduğu bir görev tarif edin.
-10. Türkçe bir müşteri destek fine-tune'u için gerçekten çalıştıracağınız unutma
-    değerlendirmesini tasarlayın. Benchmark'ı adlandırın, neden doğru benchmark
-    olduğunu söyleyin ve yayına almayı reddedeceğiniz eşiği belirtin. Sonra
-    eşiğin neden fine-tune edilmiş modelin sonuçlarını görmeden önce yazıya
-    dökülmesi gerektiğini açıklayın.
+9. GRPO, değer modelini aynı prompt'tan alınan $G$ örneğin ortalama ödülüyle
+   değiştiriyor. Bu ortalamanın öğrenilmiş bir değer modelinden *daha kötü*
+   bir baseline olduğu koşulu $G$ ve ödül varyansı cinsinden yazın; sonra
+   bu koşulun geçerli olduğu bir görev tarif edin.
+10. Türkçe bir müşteri destek modelinin fine-tuning'i için gerçekten
+    çalıştıracağınız unutma değerlendirmesini tasarlayın. Benchmark'ı
+    adlandırın, neden doğru benchmark olduğunu söyleyin ve yayına almayı
+    reddedeceğiniz eşiği belirtin. Sonra eşiğin neden fine-tune edilmiş modelin
+    sonuçlarını görmeden önce yazıya dökülmesi gerektiğini açıklayın.
