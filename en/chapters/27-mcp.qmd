@@ -26,7 +26,11 @@ code, each maintained separately and none of them portable.
 MCP's proposition is the one the Language Server Protocol made for editors and
 programming languages, and the specification names the inspiration explicitly:
 [turn *N × M* into *N + M*]{.hl}. Write the tool once as a server; every host
-that speaks the protocol can use it.
+that speaks the protocol can use it. That arithmetic holds at the protocol
+layer: every host and server still has to implement the protocol, the two sides
+may support different revisions or capabilities, and identity, authorization,
+schema semantics and product behaviour can still need adapting between them.
+What disappears is the per-pair plumbing, not all of the integration work.
 
 Three roles carry that:
 
@@ -138,7 +142,10 @@ decides what to attach) and prompts are **user-controlled** (the user picks one,
 for example as a slash-command).
 
 **Clients offer one:** **Elicitation** — a server that needs a missing
-parameter can ask for it, through the host, rather than failing.
+parameter can ask for it, through the host, rather than failing. (Roots and
+Sampling were client features too; as the warning box below says, they are
+still in the specification but deprecated, and the current overview lists only
+Elicitation.)
 
 *How* it asks is the part a 2025 tutorial will get wrong. In revision
 2026-07-28 there is no longer any such thing as a server-initiated JSON-RPC
@@ -192,8 +199,8 @@ connection works at all.
 The base protocol is **JSON-RPC 2.0**: a small, language-neutral convention
 for remote procedure calls in which every message is one JSON object. A
 *request* names a `method`, carries `params` and an `id`; the *response* echoes
-the `id` and carries either a `result` or an `error`. A tool call and its reply
-look like this (the `_meta` block is explained below):
+the `id` and carries either a `result` or an `error`. A tool call looks like
+this (the `_meta` block is explained below):
 
 ```json
 {"jsonrpc": "2.0", "id": 7, "method": "tools/call",
@@ -203,7 +210,11 @@ look like this (the `_meta` block is explained below):
                       "io.modelcontextprotocol/clientInfo": {"name": "my-host",
                                                              "version": "1.0"},
                       "io.modelcontextprotocol/clientCapabilities": {}}}}
+```
 
+and its reply echoes the same `id`:
+
+```json
 {"jsonrpc": "2.0", "id": 7,
  "result": {"resultType": "complete",
             "content": [{"type": "text", "text": "- buy milk\n- ..."}],
@@ -328,32 +339,39 @@ and `search_tickets` stands for your own function:
 
 ```python
 import asyncio
-from typing import Literal
+from typing import Annotated, Literal
+from pydantic import Field
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError   # becomes a result with isError: true
 
 mcp = FastMCP("tickets")
 
 @mcp.tool
-async def find_tickets(status: Literal["open", "pending", "closed"],
-                       limit: int = 20) -> list[dict]:
+async def find_tickets(
+    status: Literal["open", "pending", "closed"],
+    limit: Annotated[int, Field(ge=1, le=100)] = 20,   # bound published in the schema
+) -> list[dict]:
     """Search support tickets by status and return at most `limit` of them.
     Read-only: this tool never creates, edits or closes a ticket."""
-    if not 1 <= limit <= 100:                       # validate at the boundary
-        raise ToolError(f"limit must be between 1 and 100; you sent {limit}.")
     try:                                            # every call gets a deadline
         return await asyncio.wait_for(search_tickets(status, limit), timeout=10)
     except asyncio.TimeoutError:
-        raise ToolError("Search timed out after 10 s. Retry with a smaller limit.")
+        raise ToolError("Search timed out after 10 s; the ticket service is slow. "
+                        "Retry once; if it times out again, tell the user "
+                        "search is unavailable.")
 
 if __name__ == "__main__":
     mcp.run()                                       # stdio transport by default
 ```
 
 The type hints become the published `inputSchema`, so `status` reaches the
-model as an enum rather than a free string. The docstring becomes the
-description, including what the tool does *not* do. Both errors tell the model
-what would have worked.
+model as an enum rather than a free string and `limit` arrives with
+`minimum: 1` and `maximum: 100` — the model sees the bound before it calls, not
+after an error. An out-of-range value is rejected by the library before your
+code runs, as a result with `isError: true` whose message names both the value
+sent and the bound. The docstring becomes the description, including what the
+tool does *not* do. The timeout error, too, tells the model its next step:
+retry once, then tell the user.
 
 ### Authorization, for servers that leave the laptop
 
@@ -472,9 +490,12 @@ server whose tools take a dozen optional filters will be several times that.
 The count also depends on *what the host serialises*. A host that forwards only
 name, description and input schema pays less than one that also forwards the
 optional `title`, `outputSchema` and annotations fields, which recent releases
-of this same server now publish. Use 89 as a
+of this same server now publish. The count depends on the tokenizer as well:
+these definitions were counted with `qwen3.5:9b`'s, and another model's
+tokenizer can give a noticeably different number for the same text. Use 89 as a
 low reference point rather than a guaranteed floor, and measure your own; @sec-tool-design cites a published catalogue
-costing 77,000 tokens of definitions before a single call, which is what the
+costing about 72,000 tokens of definitions (some 77,000 with the rest of the
+starting context) before a single call, which is what the
 other end of the range looks like.
 
 Prompt caching makes a stable prefix much cheaper than the raw count suggests,
@@ -556,7 +577,8 @@ recently.
 ::: {.callout-note collapse="true"}
 ## 1. What problem does MCP actually solve?
 
-*N × M* becomes *N + M*. Before it, every application–tool pair was hand-wired
+*N × M* becomes *N + M* — at the protocol layer; identity, authorization and
+behavioural adaptation do not vanish. Before it, every application–tool pair was hand-wired
 glue that no other application could reuse. It is the Language Server Protocol
 argument, and the specification names that inspiration. The corollary decides
 whether you need it: **if there is only one host, you are paying for
@@ -797,8 +819,9 @@ anything you read.
 
 ## What to remember {#sec-mcp-summary}
 
-- **MCP turns *N × M* integrations into *N + M*.** That is the whole
-  proposition, and the corollary decides whether you need it: with one host,
+- **MCP turns *N × M* integrations into *N + M* at the protocol layer.** That is
+  the core of the proposition (identity, authorization and behavioural
+  adaptation can remain), and the corollary decides whether you need it: with one host,
   you are paying for portability you will not use.
 - **The server never talks to the model.** It exposes capabilities to the host,
   which decides what reaches the model — @sec-agent-anatomy's runtime boundary,
