@@ -32,8 +32,8 @@ through `ollama` 0.24.0.
 ## "Summarize this" is not one task {#sec-summarization-tasks}
 
 Before any modelling there is a specification problem, and it sinks more
-summarization projects than any modelling choice. The word names at least four different
-jobs, and the person asking usually has not decided which:
+summarization projects than any modelling choice. The word names jobs that differ along at least four
+axes, and the person asking usually has not decided which:
 
 | axis | one end | the other end |
 |:--|:--|:--|
@@ -66,7 +66,7 @@ leaderboard.
 modelled on it, because one number computed in two seconds decides whether
 selecting sentences can work here at all. Then the extractive baselines, and
 the ceiling sitting just above them. Then the metric everyone reports — which
-in Turkish is broken in a way nobody notices, and which in any language cannot
+in Turkish is broken in a way that mostly goes unnoticed, and which in any language cannot
 see whether the summary is true. Then a model writing the summaries instead,
 and documents too long to hand it in one piece. And finally two ways of
 measuring truth, one crude and one expensive, that agree about the ranking and
@@ -337,7 +337,7 @@ ones.
 ::: {#gloss-rouge .column-margin .term-gloss}
 **ROUGE** — n-gram overlap against a reference summary, reported as an F1.
 Cheap and reproducible; blind to whether the summary is true, and dependent
-on a tokenizer nobody checks. [↩](#term-rouge){.term-back}
+on a tokenizer few people check. [↩](#term-rouge){.term-back}
 :::
 
 This chapter has three complaints, in increasing order of how much they
@@ -356,7 +356,8 @@ text = text.lower()
 text = re.sub(r"[^a-z0-9]+", " ", text)   # <- everything else is a separator
 ```
 
-`[^a-z0-9]` does not include `ç`, `ğ`, `ı`, `ö`, `ş`, `ü` or `İ`. In Turkish
+`[a-z0-9]` does not include `ç`, `ğ`, `ı`, `ö`, `ş`, `ü` or `İ`, so the negated
+class `[^a-z0-9]` matches them and treats each as a separator. In Turkish
 those are not punctuation; they are letters, and common ones — `ı` alone is
 among the language's most frequent letters. So:
 
@@ -460,8 +461,9 @@ tokenizers.
 What is destroyed is *comparability*. Every Turkish ROUGE number computed with
 the stock `rouge-score` or `evaluate` default — which is most of them — is
 roughly 60% larger than the quantity its readers think it is, by an amount that
-varies with how much a system copies: a random baseline gains 80%, the oracle
-gains 22%.
+varies with a system's genuine overlap with the reference: the absolute gain
+from fragments is similar for every system (5.4 to 8.5 points), so the random
+sentence, with the least real overlap, gains 80% and the oracle gains 22%.
 
 Not all of them, and the exceptions are worth knowing because they are the fix.
 XL-Sum's own authors shipped a fork of `rouge-score` with Unicode-aware
@@ -539,8 +541,8 @@ paper is worth more than any of the tooling.
 
 ### Complaint two: it depends on a normalizer nobody reports
 
-Turkish inflects. `bölgede` and `bölgedeki` are the same word doing the same
-job; ROUGE sees two unrelated tokens. Applying a stemmer before counting
+Turkish inflects. `bölgede` and `bölgedeki` are two forms built on the same
+stem; ROUGE sees two unrelated tokens. Applying a stemmer before counting
 moves every number. ROUGE-1 under three normalizers:
 
 ```text
@@ -670,8 +672,8 @@ handles Turkish:
 
 : Same 500 articles, surface-form normalizer {tbl-colwidths="[38,16,16,16,14]"}
 
-The zero-shot LLM beats every real extractive system by about **4.6 ROUGE-1
-points** and still sits **5.8 below the extractive oracle**. Both halves of
+The zero-shot LLM beats the best real extractive system (lead-2) by **4.6 ROUGE-1
+points**, and the weakest (lead-1) by 6.05, and still sits **5.8 below the extractive oracle**. Both halves of
 that matter: generation is clearly worth it here, and the ceiling on *perfect
 sentence selection* is still above what a 9B model writing freely achieves
 against these references.
@@ -1136,9 +1138,13 @@ it you can afford. That answer is on the clock:
 ```
 
 Nearly six hours to judge 150 article-summary pairs twice, against 20 minutes
-to *generate* 500 summaries with the 9B model. [Judging is more expensive than
-generating]{.hl}, because the judge reads the whole article as well as the
-summary and you run it once per system. Budget for it as an evaluation cost,
+to *generate* 500 summaries with the 9B model. [In this setup judging is far more
+expensive than generating.]{.hl} Input length does not explain it: the
+generator reads the whole article too. The judge is a model three times the
+size (27B against 9B), which accounts for only part of the roughly 28-fold gap
+between 68.3 s per judgement and 2.4 s per summary; the rest most likely comes
+from the length of the judge's output and its thinking setting, which this
+chapter does not break down. And you run the judge once per system. Budget for it as an evaluation cost,
 not an afterthought, and sample rather than judging everything.
 
 ### The biases, and which ones this chapter measured
@@ -1156,7 +1162,8 @@ does not measure the third:
 : Judge biases and what this setup does about them {tbl-colwidths="[18,48,34]"}
 
 Stating the third one plainly rather than waving at it: if you move to a
-pairwise or 1–5 rubric judge, position and length bias both become live, and
+pairwise judge, position bias becomes live, and with a pairwise or 1–5 rubric
+judge, so does length bias; and
 @zheng2023judging's swap test — present both orders, count how often the
 verdict flips — is the measurement to run before believing any of it.
 @sec-llm-eval runs that test, and a padding test for length bias, on these
@@ -1167,8 +1174,10 @@ same two models over Turkish news summaries.
 The engineering questions are the same three every generative feature has,
 and summarization has unusually clean answers to two of them.
 
-**Caching is nearly free money.** With deterministic decoding, a summary is a
-pure function of (document, prompt, model, decoding parameters); with
+**Caching is nearly free money.** With deterministic decoding, a summary is, in
+practice, very nearly a pure function of (document, prompt, model, decoding
+parameters) — GPU batching and floating-point ordering can occasionally change
+the output even at temperature 0; with
 sampling it is not, but once you have accepted one sample there is no reason
 to pay for another. Key a cache on the hash of those four and the same
 document is never summarized twice. Documents are
@@ -1342,7 +1351,7 @@ Because it is cheap, deterministic, reproducible and comparable across
 papers, and because the alternatives are expensive, non-deterministic, or
 model-dependent. It ranks obviously-bad systems below obviously-good ones,
 which is most of what a leaderboard needs. The honest position is to report
-it and never to conclude from it — and to be able to say precisely what it
+it and never to conclude from it alone — and to be able to say precisely what it
 cannot see: faithfulness, and any paraphrase that uses different words.
 
 **Q: Extractive or abstractive?**
@@ -1407,7 +1416,7 @@ Worth knowing about, not used above:
 |:--|:--|:--|
 | `bert-score` | 0.3.13 | embedding-based overlap [@zhang2020bertscore] — survives paraphrase where ROUGE does not, and is still blind to faithfulness |
 | `summac` / `AlignScore` | 0.0.4 / GitHub only | entailment-based faithfulness scoring: does the source entail each summary sentence? The principled version of this chapter's crude proxy |
-| `factscore` | 0.2.0 | decomposes a summary into atomic claims and checks each one, which is what you want when the summary is long |
+| `factscore` | 0.2.0 | decomposes a text into atomic claims and checks each one, which is what you want when the summary is long; by default it checks claims against a knowledge source (Wikipedia), not the source document, so for summary faithfulness you swap in the document as the knowledge source |
 | `evaluate` | 0.4.6 | HuggingFace's metric wrapper — note that its `rouge` metric wraps `rouge-score`, tokenizer and all |
 | `lexrank` / `sumy` | 0.1.0 / 0.13.0 | classical extractive summarizers packaged, when you want LexRank and LSA baselines without writing them |
 | `Trafilatura` | 2.2.0 | stripping boilerplate out of documents before you pay to send them, which @sec-summarization-production says is the real cost lever |
@@ -1580,8 +1589,8 @@ against itself — so also print the tokens.
   actively rewards untruth: the human references assert unsupported content in
   **33–57%** of cases — 95% intervals spanning [26, 65] across the two
   methods — against **3–7%** for a model told to stay in the text.
-  Fine-tuning on such a corpus teaches a model to hallucinate, and the metric
-  will report that as an improvement.
+  Fine-tuning on such a corpus would be expected to teach a model to
+  hallucinate, and the metric would report that as an improvement.
 
 - **Validate a faithfulness metric on copied text.** Lead-2 is quoted verbatim,
   so under identical preprocessing it should introduce no new words and score
@@ -1598,7 +1607,7 @@ against itself — so also print the tokens.
   and the other sees both. Trust the ordering, distrust the rate, and get
   absolute numbers from a sampled human read with an interval.
 
-- **Judging costs more than generating.** 68.3 seconds per judgement against
+- **In this setup, judging costs more than generating.** 68.3 seconds per judgement against
   2.4 seconds per summary. Sample, do not judge everything, and never let a
   model judge its own output.
 
