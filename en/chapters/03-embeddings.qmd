@@ -258,8 +258,9 @@ off the same matrix $C$:
   sentence (18 pairs): $9 \times 14 + 18 = 144$.
 
 Note that $N$ is not the 51 tokens in the corpus; it is the number of
-*pairs*. Because the denominator of PMI is a product of probabilities, the
-thing to divide by is how many pairs were counted, not how many tokens exist.
+*pairs*. All three probabilities — $P(w, c)$, $P(w)$ and $P(c)$ — are estimated
+from the same pair table (the cell, the row sum and the column sum), so all
+three are divided by how many pairs were counted, not how many tokens exist.
 
 Now the actual question: if the two words were sprinkled through the text
 completely independently, how many times would we *expect* them to land next
@@ -498,8 +499,9 @@ shared-context generalisation rather than transitivity — cosine similarity is
 not a transitive relation in the mathematical sense — and note that low-rank
 compression is what makes it decisive rather than what makes it visible.
 
-This is latent semantic analysis [@deerwester1990indexing], and it came before
-word2vec by more than twenty years.
+This is latent semantic analysis [@deerwester1990indexing] applied to a
+word–context matrix; the original LSA applied the same truncated SVD to a
+term–document matrix, and it came before word2vec by more than twenty years.
 
 ```text
 ### compression
@@ -1094,7 +1096,7 @@ clipping only when many updates for the same word are batched together.
 ```
 
 ::: {.fig-cap}
-The left panel asks *which of 400,000 words comes next* — one question with
+The left panel asks *which of 400,000 words is the context word* — one question with
 400,000 answers. The right panel asks *is this pair real?* six times — six
 questions with two answers each. The second is a logistic regression, and it
 is roughly 67,000 times cheaper.
@@ -1404,7 +1406,7 @@ for epoch in range(EPOCHS):
         v = Wc[c]                                              # (B, D)
         u = Wo[targets]                                        # (B, K+1, D)
         score = sigmoid(np.einsum("bkd,bd->bk", u, v))         # (B, K+1)
-        err = (score - labels).astype(np.float32)              # the residual
+        err = (score - labels).astype(np.float32)              # the negated residual
 
         lr = LR0 * max(1e-4, 1 - (epoch * n_batches + b) / (EPOCHS * n_batches))
         gv = np.einsum("bk,bkd->bd", err, u)
@@ -1418,8 +1420,9 @@ E = Wc / (np.linalg.norm(Wc, axis=1, keepdims=True) + 1e-9)
 ```
 
 Look at the line `err = score - labels`. That is *predicted minus observed* —
-the residual of a logistic regression. Every gradient below it is that
-residual times the other vector. If the statistics feels familiar, it should.
+the residual of a logistic regression (observed minus predicted) with its sign
+flipped, which is the form the log-loss gradient uses directly. Every gradient
+below it is that difference times the other vector. If the statistics feels familiar, it should.
 
 ```text
 tokens read: 6794527
@@ -1673,7 +1676,7 @@ engineering:
 
 | | [Counting]{.pro} (PPMI + SVD) | [Predicting]{.pro} (word2vec) |
 |---|---|---|
-| Memory | Holds a $V \times V$ matrix. Stored densely that is 160 billion cells at $V = 400{,}000$ — but nobody stores it densely: the matrix is sparse, and GloVe builds exactly this one, for exactly this vocabulary, to produce the vectors used throughout this chapter. The real cost is that it is a single monolithic artifact, expensive to build and expensive to update | Streams the corpus; memory is $V \times d$ regardless of corpus size |
+| Memory | Holds a $V \times V$ matrix. Stored densely that is 160 billion cells at $V = 400{,}000$ — but nobody stores it densely: the matrix is sparse, and GloVe builds exactly this one, for exactly this vocabulary, to produce the vectors used throughout this chapter. The real cost is that it is a single monolithic artifact, expensive to build and expensive to update | Streams the corpus; memory is $2 \cdot V \times d$ (two tables) regardless of corpus size |
 | Corpus size | Comfortable on small corpora, where every count is precious | Needs a lot of text before the gradient noise averages out |
 | Determinism | [Same input, same output — for an exact solver. Randomized truncated SVD, the default at scale, needs a fixed seed, and singular vectors are only determined up to a sign either way]{.pro} | [Random initialisation and sampling; two runs differ]{.con} |
 | New data | [Recount and refactorize from scratch]{.con} | [Keep training from where you stopped]{.pro} |
@@ -1770,7 +1773,9 @@ its coefficient is zero. And note the cap. A pair seen 100,000 times gets
 exactly the same weight as one seen 100 times, so the most frequent pairs in
 the corpus — which are also the least informative — cannot dominate the fit.
 That is the same instinct as word2vec's subsampling, implemented as a weight
-rather than as a deletion. The exponent is even the same 0.75.
+rather than as a deletion. The exponent is familiar too: 0.75, the same as in
+word2vec's negative-sampling distribution (where it does a different job,
+flattening the noise distribution).
 
 The pretrained vectors are the ones most people reach for when they want
 static embeddings, so we will use them for the rest of the chapter.
@@ -1779,7 +1784,7 @@ static embeddings, so we will use them for the rest of the chapter.
 import numpy as np
 import gensim.downloader as api
 
-g = api.load("glove-wiki-gigaword-100")
+g = api.load("glove-wiki-gigaword-100")   # Wikipedia 2014 + Gigaword 5, 6 billion tokens
 print("vectors:", len(g.index_to_key), " dimensions:", g.vector_size)
 v = g["king"]
 print("king[:8] =", np.round(v[:8], 3))
@@ -1788,7 +1793,6 @@ print("norm:", round(float(np.linalg.norm(v)), 3))
 
 ```text
 vectors: 400000  dimensions: 100
-trained on Wikipedia 2014 + Gigaword 5, 6 billion tokens
 king[:8] = [-0.323 -0.876  0.22   0.253  0.23   0.739 -0.38  -0.353]
 norm: 6.118
 ```
@@ -1914,9 +1918,12 @@ and gains a few points on the same question set.
 The deeper objection is @linzen2016issues'. He shows that a baseline which
 ignores the relation entirely — return the nearest neighbour of `king`, never
 look at `man` or `woman` — already recovers a large share of the reported
-accuracy on some categories. The GloVe neighbour list above shows why: `queen`
-is already `king`'s second-nearest neighbour (0.75) before any arithmetic is
-done. So the headline number measures neighbourhood structure at least as
+accuracy on some categories. On this example it would be wrong — `king`'s
+nearest neighbour is `prince` (0.77) — but the GloVe neighbour list above shows
+how much of the work the structure has already done: `queen` is already
+`king`'s second-nearest neighbour (0.75) before any arithmetic, so the offset
+only has to move it up one place, and in some categories the nearest neighbour
+is already the answer. So the headline number measures neighbourhood structure at least as
 much as it measures a relation. @nissim2020fair make the complementary point
 about how such results get presented. Try a few for yourself:
 
@@ -2011,8 +2018,10 @@ html`<p style="font-size:0.85rem; color:var(--fig-muted); margin-top:0.4rem;">
 The five groups separate cleanly, and countries sit near their capitals.
 Read this with care. The two components are the first two principal components
 <i>of these thirty vectors</i>, not of the full 400,000 — which is part of why
-the groups look so clean, since PCA picks the directions that best separate
-exactly the points it was given. They keep only <b>37.5%</b> of the variance of
+the groups look so clean: PCA uses no group labels, it picks the directions
+that carry the most variance of these thirty points, and because the points
+already come from five distinct clusters, the between-cluster differences land
+on those directions. They keep only <b>37.5%</b> of the variance of
 the 100-dimensional vectors, so distances on the page are a shadow of distances
 in the space. Every number quoted in this chapter is computed in 100
 dimensions, never from a projection like this one.</p>`
@@ -2515,9 +2524,9 @@ independent intervals.
 :::
 
 Read that table carefully, because it is not the result the marketing
-promised. **The sparse chapter-2 baseline wins.** Every dense method loses
-to TF-IDF on this task, and the best of them needs two representations
-concatenated to get close.
+promised. **The sparse chapter-2 baseline is not beaten.** TF-IDF loses to no
+dense method: it clearly beats averaged GloVe, while its gaps to doc2vec (1.4
+points) and to the concatenation (0.8 points) are within noise on one split.
 
 What the dense methods buy is not accuracy, it is the number of coordinates:
 0.820 versus 0.853 with **320 times fewer coordinates**. The real memory
@@ -2872,8 +2881,7 @@ from gensim.test.utils import datapath
 # evaluation look better than it is: the 100,000 rarest GloVe vectors are
 # never allowed to be wrong.
 pear, spear, oov = g.evaluate_word_pairs(datapath("wordsim353.tsv"))
-# SimLex-999 does not ship with gensim; download it and pass it the same way
-pear_s, spear_s, oov_s = g.evaluate_word_pairs("SimLex-999.tsv")
+pear_s, spear_s, oov_s = g.evaluate_word_pairs(datapath("simlex999.txt"))
 score, sections = g.evaluate_word_analogies(datapath("questions-words.txt"))
 ```
 
@@ -3003,7 +3011,7 @@ suggests:
 : Turning a document into one vector {tbl-colwidths="[20,40,40]"}
 
 On the accuracy numbers in this chapter, doc2vec's advantage over averaging
-was 1.9 points and both lost to a TF-IDF baseline from @sec-text-as-data.
+was 1.9 points and neither beat a TF-IDF baseline from @sec-text-as-data.
 That ordering is the honest headline: for document classification,
 **embeddings did not beat counting.** They win at similarity and retrieval,
 where the vocabulary mismatch that breaks TF-IDF is the whole problem.
@@ -3038,8 +3046,8 @@ text.
   word-n-gram embeddings, "on par with deep learning classifiers" while training in minutes
   on a CPU [@joulin2017bag]. Still an excellent first baseline, and still a
   good production answer for high-volume, low-latency text routing.
-- **Retrieval, everywhere.** Every vector database and every RAG pipeline in
-  @sec-rag is running the idea of this chapter — text as coordinates,
+- **Retrieval, everywhere.** Every vector database in @sec-retrieval and every
+  RAG pipeline in @sec-rag is running the idea of this chapter — text as coordinates,
   compared by cosine — with the static vectors swapped for contextual ones.
 
 The through-line: embeddings are how you make discrete things
@@ -3055,7 +3063,7 @@ exactly the specification for the next part of the book.
 
 | Limitation | Evidence from this chapter | Fixed by |
 |---|---|---|
-| One vector per word form | `python` blends Monty, PHP and the snake | Contextual embeddings (@sec-transformers) |
+| One vector per word form | `python` blends Monty Python, the programming language and `flipper` | Contextual embeddings (@sec-transformers) |
 | No word order | *pump failed / valve fine* and its reverse are identical | Sequence models (@sec-language-models) |
 | Out-of-vocabulary words | word2vec raises `KeyError`; 7.3% of Turkish tokens | Composing character n-grams (fastText), or models that work on subword tokens (BPE, WordPiece) |
 | Antonyms look like synonyms | `increase`/`decrease` at 0.881 | Task-supervised fine-tuning |
@@ -3109,8 +3117,8 @@ the size of the corpus, the frequency distribution of words, the training
 objective, the downstream task and memory/index cost all weigh in. The
 intuition is a bias–variance trade-off. Too few
 dimensions and unrelated words are forced to share coordinates
-(underfitting — you saw this in the toy example, where 2 dimensions made
-almost everything similar to everything). Too many and rare words get
+(underfitting — in the toy example, the shared first coordinate inflated
+cosines in 2 dimensions: `king`–`queen` at 0.996). Too many and rare words get
 vectors fitted to their handful of contexts, which is noise, plus you pay
 linearly in memory and search time.
 
@@ -3154,8 +3162,8 @@ fastText, and the reason should be three measurable conditions rather than
 "Turkish is agglutinative": the corpus is small, the morphology is rich and
 the expected out-of-vocabulary rate is high. At 1.46 million tokens this
 chapter measured 138,578 distinct Turkish forms with 50% hapax and 7.3%
-out-of-vocabulary tokens on held-out text; 50,000 tickets is a *smaller*
-corpus than that — and support tickets are a rather different domain from
+out-of-vocabulary tokens on held-out text; at a few dozen tokens per ticket,
+50,000 tickets is a corpus of roughly that size — and support tickets are a rather different domain from
 Wikipedia, so read those figures as a lower bound on the sparsity you will
 face. Word-level
 vectors will therefore be estimated from one or two occurrences for most of
@@ -3211,7 +3219,8 @@ pretrained neighbours, and see whether they are `turbine`-quality or
 ## 6. Embeddings replaced TF-IDF. True or false?
 
 False as stated, and the table in this chapter is the evidence: on 20
-Newsgroups, TF-IDF scored 0.853 and every dense method scored lower. Sparse
+Newsgroups, TF-IDF scored 0.853 and no dense method beat it (averaged GloVe
+was clearly behind, the others within noise). Sparse
 lexical retrieval (BM25) also remains a strong baseline in information
 retrieval, and production systems routinely run lexical and dense retrieval
 together and fuse the rankings, precisely because they fail differently —
@@ -3252,7 +3261,8 @@ networks.**
 Say it is a logistic regression that classifies word pairs as real or
 fabricated, where the linear predictor is the dot product of two learned
 vectors and the vectors are the thing you keep. Write $\sigma(v \cdot u)$,
-point out that `score - labels` is the residual, and add that the single
+point out that `score - labels` is the residual with its sign flipped — the
+difference the log-loss gradient uses — and add that the single
 hidden layer carries no activation function. One caveat worth keeping: an
 ordinary logistic regression fits weights over *fixed* features, and this
 fits both vectors at once. The *score* $v \cdot u$ is bilinear in the two
@@ -3367,8 +3377,8 @@ the `P-101` problem from @sec-text-as-data.
 **Q: You trained embeddings on your own corpus and they are worse than
 pretrained. What happened?**
 
-Most likely too little data — under ten million tokens, the vectors are
-memorising. Check the frequency floor (`min_count`), the number of epochs,
+Most likely too little data — under a few million tokens, rare words' vectors
+are unreliable. Check the frequency floor (`min_count`), the number of epochs,
 and whether you subsampled. Then check the *evaluation*: if you are scoring
 on WordSim-353, you are measuring general-domain relatedness, which your
 domain vectors should be worse at; that is not the same as being worse for
@@ -3446,7 +3456,7 @@ it, and **Advanced** goes into derivations and empirical detail.
 
 - **[Speech and Language Processing](https://web.stanford.edu/~jurafsky/slp3/)**,
   Jurafsky & Martin [@jurafsky2025slp],
-  [Chapter 5, *Vector Semantics and Embeddings*](https://web.stanford.edu/~jurafsky/slp3/5.pdf).
+  [Chapter 5, *Embeddings*](https://web.stanford.edu/~jurafsky/slp3/5.pdf).
   *(Intermediate)* Covers PPMI, SVD, skip-gram and evaluation with more care than any blog
   post, and it is free.
 - **[Stanford CS224N](https://web.stanford.edu/class/cs224n/)**, lectures 1
@@ -3465,15 +3475,16 @@ it, and **Advanced** goes into derivations and empirical detail.
   [the word2vec tutorial](https://radimrehurek.com/gensim/auto_examples/tutorials/run_word2vec.html)
   is the fastest route to a trained model on your own text.
 - **[fastText pretrained vectors](https://fasttext.cc/docs/en/crawl-vectors.html)**
-  [@mikolov2018advances]. *(Beginner)* 157 languages including Turkish, trained on Common
+  [@grave2018learning]. *(Beginner)* 157 languages including Turkish, trained on Common
   Crawl and Wikipedia. Start here rather than training your own.
 - **[The Illustrated Word2vec](https://jalammar.github.io/illustrated-word2vec/)**,
   Jay Alammar [@alammar2019word2vec], and Sebastian Ruder's
   **[On Word Embeddings](https://www.ruder.io/word-embeddings-1/)**
   [@ruder2016wordembeddings]. *(Beginner)* The two best free explanations on the web; the
   first for pictures, the second for the historical map.
-- **[TensorFlow Projector](https://projector.tensorflow.org/)**. *(Beginner)* Loads
-  word2vec and GloVe in the browser with PCA, t-SNE and UMAP. Look up your
+- **[TensorFlow Projector](https://projector.tensorflow.org/)**. *(Beginner)* Shows a
+  ready-made word2vec set in the browser with PCA, t-SNE and UMAP; other vectors,
+  GloVe included, you can load yourself as TSV. Look up your
   own domain terms and inspect the neighbourhoods.
 
 ## Exercises
