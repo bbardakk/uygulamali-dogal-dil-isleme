@@ -141,7 +141,7 @@ gen_ai.operation.name        chat, execute_tool, invoke_agent, ...
 gen_ai.provider.name         who served it
 gen_ai.request.model         what you asked for
 gen_ai.response.model        what answered — not always the same
-gen_ai.usage.input_tokens    the cost that dominates (chapter 31)
+gen_ai.usage.input_tokens    the dominant cost in prompt-heavy workloads (chapter 31)
 gen_ai.usage.output_tokens
 gen_ai.conversation.id       what stitches a session together
 gen_ai.agent.name            which agent, when you have several
@@ -150,10 +150,13 @@ gen_ai.input.messages        the prompt — see "Sensitive data in telemetry"
 gen_ai.output.messages       the completion
 ```
 
-Two of those deserve a closer look. `gen_ai.response.model` differs from
-`gen_ai.request.model` whenever an alias (a name such as "latest") resolves to a
-dated version — which is @sec-gateway's pinning problem, visible in your traces
-if you record both and invisible if you record one. And `gen_ai.conversation.id` is what turns a pile
+Two of those deserve a closer look. Call through an alias (an unversioned name
+such as "latest") and `gen_ai.request.model` records the alias while
+`gen_ai.response.model` records the dated version that answered, so under an
+alias the two always differ. The signal is `gen_ai.response.model` changing
+while `gen_ai.request.model` stays put, which is what happens when the provider
+moves the alias to a new version — @sec-gateway's pinning problem, visible in
+your traces if you record both and invisible if you record only the request. And `gen_ai.conversation.id` is what turns a pile
 of spans into a session you can replay.
 
 The metrics are similarly formulaic, and one of them should look familiar:
@@ -344,16 +347,18 @@ tenant, feature, and environment.
 work.** Span attributes are *not* inherited in OpenTelemetry: writing `user.id`
 on the root span does not put it on any child, and nothing in the SDK or the
 protocol propagates it. What propagates with the context is **Baggage**. So set
-the keys in baggage at the root, and install a span processor that copies those
-baggage keys onto every span it sees — `BaggageSpanProcessor` in the
-`opentelemetry-python` contrib packages does exactly this. Environment is the
+non-identifying keys such as team and feature in baggage at the root, and install
+a span processor that copies those baggage keys onto every span it sees —
+`BaggageSpanProcessor` in the `opentelemetry-python` contrib packages does
+exactly this. Keep the user id out of baggage, because baggage also travels
+*out* of your process on every outgoing call; attach it with your own span
+processor that reads it from in-process state (in Python, a `contextvars`
+variable set at the root). Step 3 of the lab builds both. Environment is the
 exception: it belongs on the **Resource** — the set of attributes that
 describes the service producing the telemetry — which *is* attached to every
 span the SDK emits. Some backends roll attributes up to the trace level and give
 the impression that inheritance happened; that is a backend feature, not the
-specification. One warning before you put a user id in baggage: baggage also
-travels *out* of your process, on every outgoing call, and Step 3 of the lab
-shows what to do about it.
+specification.
 
 [The number worth reporting is not spend, it is spend per unit of value.]{.hl}
 Cost per session flatters a feature nobody finishes (abandoned sessions are
@@ -370,7 +375,7 @@ inspiration. A workable one:
 1. **Find the session.** From a user report, `gen_ai.conversation.id` — which
    is why the id must reach your support tooling and not only your dashboard.
 2. **Find the run.** One trace per run, ordered by time. If the complaint is
-   "it was wrong", the run is the one before the complaint.
+   "it was wrong", the run is usually the one just before the complaint.
 3. **Read the tool spans first, not the model spans.** What the agent *did* is
    in `gen_ai.tool.name` and its arguments, and it is far quicker to scan than
    the prompts.
@@ -408,8 +413,8 @@ designed for latency histograms.
 Three consequences that follow, and they are engineering work rather than
 policy statements:
 
-**Redact at the boundary, before export.** A span processor that scrubs before
-the exporter is the only place it can be done once. Redacting in the backend
+**Redact at the boundary, before export.** A single scrubbing step that runs
+before export is the only place it can be done once. Redacting in the backend
 means it was transmitted; redacting per instrumentation means five
 implementations — the same argument @sec-gateway made for one shared choke
 point, applied to telemetry. One practical catch: in the Python SDK a span is
@@ -485,11 +490,13 @@ observability" and "we know whether it works" are different claims.
 ::: {.callout-note collapse="true"}
 ## 4. Why record both the requested and the responded model?
 
-Because they differ exactly when it matters.
+Because only the pair shows when the version behind an alias changes.
 
 `gen_ai.request.model` is what you asked for; `gen_ai.response.model` is what
-answered. When an unversioned alias resolves to a dated version — @sec-gateway's
-silent-upgrade problem — the second changes and the first does not. Record both
+answered. Under an alias they always differ; what matters is change over time.
+When the provider moves an unversioned alias to a new dated version —
+@sec-gateway's silent-upgrade problem — the second changes and the first does
+not. Record both
 and the upgrade appears in your traces on the day it happens; record one and you
 find out from an output-quality regression weeks later.
 
@@ -587,8 +594,11 @@ structure on everything, and keeping content on errors.
 
 **Q: How do you keep personal data out of your traces?**
 
-Redact before export, in a span processor, so it happens once for every
-instrumentation rather than five times differently. Then say the two things
+Redact before export, in a wrapper around the exporter or in a redaction
+processor on a Collector inside your own network, so it happens once for every
+instrumentation rather than five times differently. (In the Python SDK a span
+processor's end hook cannot modify the span, so the scrubbing cannot live
+there.) Then say the two things
 people miss: telemetry inherits the same residency and retention obligations as
 the database, because it is a copy of the same data; and content sampling is a
 privacy control as well as a cost one, which makes it an easy decision to
@@ -616,7 +626,7 @@ Worth knowing about, not used above:
 | project | version | when you would reach for it |
 |:--|:--|:--|
 | `opentelemetry-sdk` | 1.44.0 | the tracing SDK itself; the vendor-neutral floor everything else builds on |
-| `opentelemetry-instrumentation` | 0.65b0 | auto-instrumentation packages, including the GenAI ones — note the pre-release version, which matches the conventions' own maturity |
+| `opentelemetry-instrumentation` | 0.65b0 | the auto-instrumentation machinery (the `opentelemetry-instrument` command and base classes); the GenAI instrumentations ship as separate packages such as `opentelemetry-instrumentation-openai-v2` — note the pre-release version, which matches the conventions' own maturity |
 | `openinference-instrumentation` | 0.1.59 | Arize's instrumentation for LLM frameworks, OTel-compatible |
 | `arize-phoenix` | 20.4.0 | an open-source trace UI you can run locally, useful while learning what to record |
 | `langfuse` | 4.15.1 | LLM-focused tracing with evaluation and prompt management attached |
@@ -643,20 +653,20 @@ explaining the bill.
 
 ### Step 3 — add your own dimensions
 
-User, team, feature, environment. Put the first three in baggage at the root,
+User, team, feature, environment. Put team and feature in baggage at the root,
 install a baggage span processor, and confirm they appear on every child span —
 if they do not, the processor is missing, because span attributes do not
-propagate on their own. Environment goes on the Resource.
+propagate on their own. Attach the user id with a second span processor that
+reads it from in-process state (in Python, a `contextvars` variable set at the
+root), which never leaves the process. Environment goes on the Resource.
 
 Then check where that baggage goes. Baggage travels in an HTTP header on every
 outbound call the context reaches, including calls to your model provider and to
-third-party tools, so a user id in baggage is a user id you are sending to them.
-Redacting spans before export does not close that path — it is a different
-channel. Configure the propagator so baggage is not injected on external calls,
-or keep anything identifying out of baggage and attach it with a span processor
-that reads it from in-process state (in Python, a `contextvars` variable set at
-the root), which never leaves the process. Then produce cost per feature for a
-day.
+third-party tools, so anything in baggage is something you are sending to them —
+which is why the user id stays out of it. Redacting spans before export does not
+close that path — it is a different channel. If team and feature should not
+leave either, configure the propagator so baggage is not injected on external
+calls. Then produce cost per feature for a day.
 
 ### Step 4 — produce cost per unit of value
 
@@ -673,7 +683,10 @@ of this lab.
 
 ### Step 6 — redact, and prove it
 
-Add a span processor that scrubs personal data before export. Send a request
+Add a step that scrubs personal data before export: a wrapper around the
+exporter, or a redaction processor on a Collector inside your own network. In
+Python a span processor's end hook will not do, because the span is read-only
+there. Send a request
 containing an email address and a phone number, then search your backend for
 both. Finding either is a failed step, not a finding.
 
@@ -691,8 +704,9 @@ redaction happens before export.
    your content sampling rate and write down the reasoning.
 
 2. **Find the alias.** Record `gen_ai.request.model` and
-   `gen_ai.response.model` for a week against a hosted provider. Report whether
-   they ever diverged, and what you would have noticed if they had.
+   `gen_ai.response.model` for a week against a hosted provider. Report which
+   dated version the alias resolved to, whether `gen_ai.response.model` changed
+   during the week, and what you would have noticed if it had.
 
 3. **Cost per resolved task.** Produce two rankings of your features — by cost
    per session and by cost per resolved task. Explain any feature that changes
@@ -729,7 +743,7 @@ counted on a specific day.
 |:--|:--|
 | [`semantic-conventions-genai`](https://github.com/open-telemetry/semantic-conventions-genai) | the specification itself, in its current home; read the stability badges before depending on any attribute name |
 | [OpenTelemetry tracing concepts](https://opentelemetry.io/docs/concepts/signals/traces/) | spans, context propagation and the model everything above assumes you already have |
-| [The trace SDK specification](https://opentelemetry.io/docs/specs/otel/trace/sdk/) | where span processors are defined — the hook redaction has to use to happen before export |
+| [The trace SDK specification](https://opentelemetry.io/docs/specs/otel/trace/sdk/) | where span processors and exporters are defined — the hooks where redaction can happen before export, and in which of them the span is still mutable |
 | [Sampling](https://opentelemetry.io/docs/concepts/sampling/) | head and tail sampling as the spec defines them; tail sampling is what lets you keep full traces, content included, for every error |
 | [`opentelemetry-python`](https://github.com/open-telemetry/opentelemetry-python) | the SDK, and the place to read what a span processor actually looks like |
 | [`openinference`](https://github.com/Arize-ai/openinference) | instrumentation for the common agent frameworks, when you would rather not write spans by hand |
@@ -761,9 +775,9 @@ counted on a specific day.
   for an agent. Getting this right is what
   makes someone else's dashboard work on your traces.
 
-- **Record the responded model as well as the requested one.** They diverge
-  exactly when an alias silently resolves to a new version — @sec-gateway's
-  problem — and two attributes turn an invisible dependency change into a
+- **Record the responded model as well as the requested one.** When the version
+  behind an alias silently changes, the requested model stays the same and the
+  responded one changes — @sec-gateway's problem — and two attributes turn an invisible dependency change into a
   visible one.
 
 - **@sec-serving's measurements are standard metrics.**
@@ -785,7 +799,8 @@ counted on a specific day.
   Structure on every run, content on a small share and on every error; since a
   sampler keeps or drops whole traces, that takes a content-stripped path for
   everything plus a tail-sampled full path. Redact
-  before export, in a span processor, so it happens once rather than five times
+  before export, in a wrapper around the exporter or on a Collector inside your
+  network, so it happens once rather than five times
   differently — and remember that telemetry inherits the same residency and
   retention obligations as the database it copies from.
 
