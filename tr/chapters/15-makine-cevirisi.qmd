@@ -3,11 +3,12 @@
 ::: {.callout-note appearance="simple" icon="false"}
 **Bölüm durumu: çevrildi.** Kaynak metin:
 [İngilizce 15. bölüm](../../en/chapters/15-machine-translation.html). Bu
-sayfadaki her sayı WMT16 newstest2016 Türkçe–İngilizce üzerinde ölçüldü — her
-yönde 3.000 profesyonelce çevrilmiş cümle çifti. Test kümesini `sacrebleu`'nun
+sayfadaki her sayı WMT16 newstest2016 Türkçe–İngilizce üzerinde ölçüldü (WMT,
+her yıl düzenlenen Makine Çevirisi Konferansı'dır; newstest2016 onun 2016 haber
+test kümesi) — her yönde 3.000 profesyonelce çevrilmiş cümle çifti. Test kümesini `sacrebleu`'nun
 kendisi indirdi; böylece küme yalnızca tarif edilmiyor, adı ve sürümüyle kesin
 olarak belirleniyor. Bir tablo aksini söylemedikçe sistemler ilk 1.000 cümlede
-puanlandı. Örneklem büyüklüğü deneye göre değişiyor: çözümleme taraması ilk 500
+puanlandı. Örneklem büyüklüğü deneye göre değişiyor: çözümleme (decoding) taraması ilk 500
 cümleyi kullanıyor, morfolojik bozma deneyi alt kümelerini ilk 1.000 cümleden
 çekiyor, LLM ile birebir karşılaştırma ise ilk 400 cümleyi kullanıyor; çünkü
 bütçeyi cümle başına bir saniye harcayan 9B'lik bir model belirliyor. Her tablo
@@ -21,8 +22,8 @@ GPU'da, LLM ise `ollama` 0.24.0 üzerinden.
 
 **Öğrenme hedefleri.** Bu bölümün sonunda:
 
-- attention mekanizmasını doğuran görevin neden çeviri olduğunu ve
-  attention'ın hangi darboğazı kaldırdığını açıklayabilirsiniz;
+- attention (dikkat mekanizması) fikrini doğuran görevin neden çeviri olduğunu
+  ve attention'ın hangi darboğazı kaldırdığını açıklayabilirsiniz;
 - sohbete değil çeviriye uygun bir çözümleme stratejisi seçebilir ve aynı
   ayarın neden birinde doğru, diğerinde yanlış olduğunu söyleyebilirsiniz;
 - BLEU'yu elle hesaplayabilir, neyi görüp neyi göremediğini tam olarak
@@ -31,10 +32,10 @@ GPU'da, LLM ise `ollama` 0.24.0 üzerinden.
   davrandığını, iddia etmek yerine niceliklendirebilirsiniz;
 - ölçülmüş kalite, gecikme ve maliyet üzerinden özel bir MT modeli ile bir LLM
   arasında karar verebilirsiniz;
-- translate-train (eğitim verisini çevirip modeli hedef dilde eğitme),
-  translate-test (girdiyi kullanım sırasında modelin diline çevirme) veya
-  hiçbiri arasında seçim yapabilir ve
-  hataların her birinde nerede biriktiğini söyleyebilirsiniz.
+- translate-train (çeviri ile eğitim: eğitim verisini çevirip modeli hedef
+  dilde eğitme), translate-test (çeviri ile test: girdiyi kullanım sırasında
+  modelin diline çevirme) ya da hiçbiri arasında seçim yapabilir ve her
+  birinde hataların nerede biriktiğini söyleyebilirsiniz.
 
 ## Attention çeviriden çıktı {#sec-makine-cevirisi-dikkat}
 
@@ -48,9 +49,9 @@ uzunlukta vektöre** sıkıştıran bir encoder RNN ile, çeviriyi yalnızca o
 vektörden üreten bir decoder RNN'den oluşuyordu.
 
 Zarif bir tasarımdı ve işe yaradı — ama yalnızca bir noktaya kadar ve o
-noktaya ulaşmak kolaydı. Decoder'ın kırk kelimelik bir cümle hakkında
-bileceği her şey, dört kelimelik bir cümle hakkında bileceği şeyle aynı sayıda
-float'a sığmak zorundaydı.
+noktayı bulmak zor değildi. Decoder'ın kırk kelimelik bir cümle hakkında
+bileceği her şey, dört kelimelik bir cümle hakkında bileceği her şeyle aynı
+sayıda kayan noktalı sayıya (float) sığmak zorundaydı.
 
 Belirti açıktı: [kaynak cümleler uzadıkça çeviri kalitesi hızla
 düşüyordu]{.hl}. Üstelik belirli bir biçimde düşüyordu: model cümlenin başını
@@ -58,22 +59,22 @@ iyi çeviriyor, sonra kaynaktan uzaklaşıp savruluyordu. Çünkü sabit boyutlu
 vektör uzun bir cümlenin bütün ayrıntılarını taşıyamaz; kaybolan ayrıntılar da
 decoder'ın ilerleyen adımlarda ihtiyaç duyacağı ayrıntılardır.
 
-@bahdanau2015neural'ın çözümü sıkıştırmayı bırakmaktı. Her kaynak token'ı için
-bir vektör tutun ve decoder'ın her çıktı adımında bunların tamamı üzerinde
-ağırlıklı bir ortalama hesaplamasına izin verin — ağırlıklar o anda üretmeye
-çalıştığı şeye bağlı olsun.
+@bahdanau2015neural'ın çözümü sıkıştırmayı bırakmaktı: her kaynak token'ı için
+ayrı bir vektör tutmak ve decoder'ın her çıktı adımında bu vektörlerin hepsinin
+ağırlıklı ortalamasını almasına izin vermek. Ağırlıklar da decoder'ın o anda
+üretmeye çalıştığı şeye bağlıdır.
 
-İşte attention budur. Burada bu kadar açıkça doğru bir fikir olmasının nedeni,
-çevirinin bu mekanizmanın birebir yansıttığı bir özelliğe sahip olmasıdır: **çıktı
+İşte attention budur. Fikrin çeviride bu kadar açıkça doğru olmasının nedeni,
+çevirinin bu mekanizmanın birebir yansıttığı bir özelliği olmasıdır: **çıktı
 kelimeleri girdi kelimelerine karşılık gelir**. Decoder *Istanbul* ürettiğinde
 işe yarar bilgi tek bir kaynak konumda yoğunlaşmıştır ve ağırlığını oraya
 yoğunlaştırabilen bir ortalama, sabit bir özetten daha iyi bir arayüzdür.
 
 ::: {.column-margin}
 İlk attention makalelerinin kelime hizalamalarına benzeyen hizalama ısı
-haritaları yayımlayabilmesinin nedeni budur — ve transformer attention head'lerini (katman içinde paralel çalışan attention
-birimleri) açıklama olarak okuma girişimlerinin sonradan hayal kırıklığı
-yaratmasının da. Bir çeviri encoder-decoder'ında attention ağırlıklarını hizalama
+haritaları yayımlayabilmesinin nedeni budur; transformer attention
+head'lerini (katman içinde paralel çalışan attention birimleri) açıklama
+olarak okuma girişimlerinin sonradan hayal kırıklığı yaratmasının nedeni de. Bir çeviri encoder-decoder'ında attention ağırlıklarını hizalama
 olarak yorumlamanın gerekçesi görevin kendi yapısıdır. 24 katmanlı bir dil
 modelinde ise bu yorum bir hipotezdir ve genellikle yanlış çıkar.
 :::
@@ -117,8 +118,8 @@ kelime hizalaması üzerine kuruludur. (Çeviri bellekleri de yakın akrabasıd�
 *cümle* düzeyinde hizalanmış çiftleri saklarlar.)
 
 Hangi kaynak kelimelerin hangi hedef kelimeleri ürettiğini söyleyemeyen bir
-sistem bir insan çevirmen tarafından denetlenemez. Düzenlemeye tabi
-yerelleştirmede ise bu denetim katı bir gerekliliktir.
+sistemi hiçbir insan çevirmen denetleyemez. Düzenlemeye tabi yerelleştirmede
+ise bu denetim vazgeçilmez bir koşuldur.
 
 **Nöral MT** hattı tek bir eğitilmiş modelle değiştirdi. Yeniden sıralamayı ve
 akıcılığı neredeyse anında düzeltti; istatistiksel çıktı, istatistiksel bir
@@ -144,8 +145,8 @@ belirler; dolayısıyla her metriğin tam olarak neyi saydığını bilmeye değ
 ### BLEU elle
 
 [BLEU](#gloss-bleu){#term-bleu .term-ref} [@papineni2002bleu], modified n-gram
-precision (her n-gram sayımı referanstaki sayımla sınırlanmış kesinlik) üzerine
-kuruludur. Bu kesinlik n = 1..4 için hesaplanır, dört değerin geometrik
+precision (kırpılmış n-gram kesinliği: her n-gram sayımı referanstaki sayımla
+sınırlanır) üzerine kuruludur. Bu precision n = 1..4 için hesaplanır, dört değerin geometrik
 ortalaması alınır ve sonuç bir kısalık cezasıyla çarpılır. Tanımın tamamı budur
 ve çözümlü bir örneğe sığar.
 
@@ -160,12 +161,13 @@ alanın varsayılan metriği ve aynı anlamı farklı kelimelerle veren her doğ
 Örneğe geçmeden önce tanımdaki iki kavramı açalım. *Modified* (kırpılmış)
 precision, adaydaki bir n-gram'ın referansta geçtiğinden daha fazla kez puan
 alamaması demektir. Kırpma olmasaydı *the the the the* adayı, *the cat sat on
-the mat* referansına karşı kusursuz bir unigram kesinliği alırdı; kırpmayla
-yalnızca referanstaki iki *the* sayılır ve kesinlik 2/4 olur. *Kısalık cezası*
-ise kesinliğin tek başına az konuşmayı ödüllendirmesi yüzünden vardır: dört
+the mat* referansına karşı kusursuz bir unigram (tek kelimelik n-gram)
+precision değeri alırdı; kırpmayla
+yalnızca referanstaki iki *the* sayılır ve precision 2/4 olur. *Kısalık cezası*
+ise precision'ın tek başına az konuşmayı ödüllendirmesi yüzünden vardır: dört
 doğru kelimeden oluşan dört kelimelik bir aday, yirmi kelimelik bir referansa
-karşı bile kusursuz kesinlik alır. $p_n$
-kırpılmış n-gram kesinliği, $c$ adayın uzunluğu, $r$ referansın uzunluğu
+karşı bile kusursuz precision alır. $p_n$
+kırpılmış n-gram precision'ı, $c$ adayın uzunluğu, $r$ referansın uzunluğu
 olmak üzere:
 
 $$
@@ -174,14 +176,14 @@ $$
 \text{BP} = \begin{cases} 1 & c > r \text{ ise} \\ e^{\,1 - r/c} & c \le r \text{ ise} \end{cases}
 $$
 
-Logaritmaların ortalamasının üsteli, dört kesinliğin geometrik ortalamasından
+Logaritmaların ortalamasının üsteli, dört precision değerinin geometrik ortalamasından
 başka bir şey değildir; sonuç genellikle 100 ile çarpılır. Bir test kümesinin
 tamamında BLEU, cümle puanlarının ortalaması **değildir**: eşleşen ve toplam
 n-gram sayıları ile $c$ ve $r$ uzunlukları önce bütün cümleler üzerinde
 toplanır, formül bir kez uygulanır. Bu bölümdeki her tablo bu *derlem düzeyi*
 BLEU'yu raporluyor. Aşağıdaki gibi tek cümlelik bir puan öğretim amaçlıdır ve
-herhangi bir n-gram derecesinde hiç eşleşme olmadığında smoothing gerektirir,
-çünkü $\log 0$ tanımsızdır.
+herhangi bir n-gram derecesinde hiç eşleşme olmadığında smoothing (düzleştirme:
+sıfır sayımlara küçük bir pay verme) gerektirir, çünkü $\log 0$ tanımsızdır.
 
 ```text
 REF: In Istanbul , heavy rain caused flooding on Monday evening .   (11 tokens)
@@ -255,7 +257,7 @@ bleuScore = {
 //| echo: false
 Inputs.table(bleuScore.rows, {
   columns: ["n", "matched", "total", "precision"],
-  header: {n: "derece", matched: "eşleşen", total: "adayda", precision: "kesinlik"},
+  header: {n: "derece", matched: "eşleşen", total: "adayda", precision: "precision"},
   format: {precision: v => v.toFixed(4)},
   width: {n: 90, matched: 90, total: 110, precision: 100},
   rows: 4})
@@ -272,8 +274,8 @@ token, referans ${bleuScore.rlen}) × geometrik ortalama
 **Doğru bir çeviri için 50,27.** Puanı iki şey düşürdü. İkisini de adlandırmaya
 değer, çünkü sürekli tekrarlanırlar:
 
-- *in Istanbul*'u taşımak, taşımanın sınırlarından geçen her n-gram'ı bozdu.
-  Unigram'lar zarar görmedi; 4-gram'lar gördü.
+- *in Istanbul* öbeğini taşımak, taşınan öbeğin sınırından geçen her n-gram'ı
+  bozdu. Unigram'lar zarar görmedi; 4-gram'lar gördü.
 - `Heavy`, `heavy` ile eşleşmedi; `in` de `In` ile eşleşmedi. BLEU varsayılan
   olarak büyük-küçük harfe duyarlıdır. Yalnızca bu, on unigram'dan ikisini ve
   iki bigram'ı (*heavy rain*, *in Istanbul*) kaybettirdi. Yukarıdaki küçük harf
@@ -290,10 +292,9 @@ girer girmez yeniden görünür hâle geliyor.
 
 ::: {.column-margin}
 Yeniden üretin, tam olarak 50,27 alırsınız — ama yalnızca hangi BLEU olduğunu
-söylerseniz. Tokenization, büyük-küçük harf ve smoothing (sıfır n-gram sayımları
-için yapılan düzeltme) ayarlarının hepsi sayıyı
-değiştirir; `sacrebleu`'nun var olma nedeni ve @post2018call'ün yazılmak zorunda
-kalmasının nedeni budur: imzası olmayan bir BLEU puanı başka bir BLEU puanıyla
+söylerseniz. Tokenization, büyük-küçük harf ve smoothing ayarlarının hepsi
+sayıyı değiştirir; `sacrebleu`'nun var olma nedeni ve @post2018call'un yazılmak
+zorunda kalmasının nedeni budur: imzası olmayan bir BLEU puanı başka bir BLEU puanıyla
 karşılaştırılabilir değildir. İmzayı her zaman raporlayın. Bu kural bizi de
 bağlıyor. Bu bölümdeki her BLEU, varsayılan ayarlarıyla `sacrebleu` 2.6.0 ile
 hesaplandı: `case:mixed | tok:13a | smooth:exp | nrefs:1`. Her chrF ise
@@ -302,16 +303,16 @@ hesaplandı: `case:mixed | tok:13a | smooth:exp | nrefs:1`. Her chrF ise
 tokenization'ında kesme işareti kelimeyi bölmez; dolayısıyla `İstanbul'da` tek
 bir token'dır ve ekte yapılan bir değişiklik token'ın tamamını bozar. `intl`'de
 ise kesme işareti kelimeyi böler ve aynı değişiklik daha azını bozar. Bu yüzden
-morfem bozma deneyi (@sec-makine-cevirisi-turkce) bir `tok:13a` sonucudur.
+morfolojik bozma deneyi (@sec-makine-cevirisi-turkce) bir `tok:13a` sonucudur.
 Deneyi `intl` ile yeniden koşmak yapmaya değer bir alıştırmadır ve sayıyı
 değiştirecektir.
 :::
 
 ### Metrik ailesi ve her birinin gördüğü
 
-BLEU'nun kör noktaları ölçmeyi bırakmak için bir neden değil, yalnızca başka
-nelerin mevcut olduğunu bilmek için bir neden. İşte gördükleri şey ve
-maliyetleri birlikte artan dört seçenek:
+BLEU'nun kör noktaları ölçmeyi bırakmayı gerektirmez; yalnızca başka hangi
+seçeneklerin olduğunu bilmeyi gerektirir. Aşağıda, gördükleri de maliyetleri de
+sırayla artan dört seçenek var:
 
 | metrik | birim | gördüğü | kaçırdığı |
 |:--|:--|:--|:--|
@@ -324,23 +325,24 @@ maliyetleri birlikte artan dört seçenek:
 
 ::: {#gloss-chrf .column-margin .term-gloss}
 **chrF** — karakter n-gram'ları üzerinde bir F-skoru. Uzunluk cezası
-eklenmiş salt bir kesinlik ölçüsü olan BLEU'nun aksine chrF kesinliği *ve*
-duyarlılığı birleştirir ve duyarlılığı $\beta$ kat ağırlıklandırır;
+eklenmiş salt bir precision ölçüsü olan BLEU'nun aksine chrF precision'ı *ve*
+recall'u (duyarlılık) birleştirir ve recall'a $\beta$ kat ağırlık verir;
 `sacrebleu`'nun varsayılanı 1'den 6'ya kadar uzunluktaki karakter n-gram'ları
-üzerinde $\beta = 2$, yani chrF2. Eksik bir eki fark etmesinin sebebi o duyarlılık terimi; eklemeli bir
-dilin sürekli ürettiği durum da tam olarak bu. [↩](#term-chrf){.term-back}
+üzerinde $\beta = 2$, yani chrF2. Eksik bir eki fark etmesini sağlayan o recall
+terimidir; eklemeli bir dilin sürekli ürettiği durum da tam olarak budur.
+[↩](#term-chrf){.term-back}
 :::
 
 ::: {#gloss-comet .column-margin .term-gloss}
 **COMET** — nöral bir metrik: kaynak, hipotez ve referanstan insan kalite
-yargılarını tahmin etmek üzere ince ayarlanmış bir model. İnsan yargılarıyla
-BLEU'dan çok daha yüksek korelasyon gösterir ve eğitildiği yargıların her
-yanlılığını da devralır.
+yargılarını tahmin etmek üzere fine-tuning (ince ayar) ile eğitilmiş bir
+model. İnsan yargılarıyla BLEU'dan çok daha yüksek korelasyon gösterir ve
+eğitildiği yargıların her yanlılığını da devralır.
 [↩](#term-comet){.term-back}
 :::
 
 İnsan değerlendirmesinin iki ana biçimi var ve ikisini ayırt etmeye değer.
-**Doğrudan Değerlendirme'de (Direct Assessment, DA)** değerlendiriciler her
+**Doğrudan değerlendirmede (Direct Assessment, DA)** değerlendiriciler her
 çeviriye 0–100 arasında bir puan verir; çok sayıda değerlendiriciyle
 yapılabilecek kadar ucuzdur ve yaygın kullanılan COMET modelleri tam da bu
 puanları tahmin etmek üzere eğitilmiştir. **MQM**'de ise eğitimli çevirmenler
@@ -358,10 +360,11 @@ olması gerektiğine dair güncel rehberdir.
 Bu bölüm o kuralın yalnızca üçte ikisine uyuyor. Eksik kalan nöral metriği
 bölümün bir zayıflığı olarak not edin. Aşağıdaki her tablo BLEU ile chrF2
 raporluyor, nöral metrik raporlamıyor. Bunun nedeni, buradaki her şeyin CUDA
-GPU'su olmayan tek bir dizüstü bilgisayarda koşmuş olması (MT modeli Apple'ın
-MPS arka ucunu kullanıyor). COMET orada da çalışırdı, yalnızca yavaş; bu
-yavaşlık da nöral metriklerin gerçek bedelidir, onlara karşı bir argüman değil. Aşağıdaki sıralamaları geçici
-sayın ve birine dayanarak karar vermeden önce bir COMET sütunu ekleyin.
+GPU'su olmayan tek bir dizüstü bilgisayarda çalıştırılmış olması (MT modeli
+Apple'ın GPU arka ucu MPS'i, yani Metal Performance Shaders'ı kullanıyor).
+COMET orada da çalışırdı, yalnızca yavaş; bu yavaşlık da nöral metriklerin gerçek bedelidir, onlara karşı bir argüman
+değil. Aşağıdaki sıralamaları geçici sayın ve bunlardan birine dayanarak karar
+vermeden önce bir COMET sütunu ekleyin.
 
 ## Çeviri için çözümleme {#sec-makine-cevirisi-cozumleme}
 
@@ -380,8 +383,9 @@ puanladığı dizidir. Bu yüzden çeviri **beam search** (ışın araması) kul
 her adımda tek bir en iyi token'a karar vermek yerine en iyi *k* kısmi
 hipotezi tutar ve hepsini genişletir.
 
-`opus-mt-tc-big-tr-en` ile newstest2016 tr-en'in 500 cümlesi üzerinde çözümleme
-uzayının tamamı:
+Helsinki-NLP'nin OPUS derlemi üzerinde eğittiği, yalnızca çeviri yapan
+Marian tabanlı `opus-mt-tc-big-tr-en` modeliyle newstest2016 tr-en'in 500
+cümlesi üzerinde çözümleme uzayının tamamı şöyle:
 
 ```text
 kind      value    BLEU    chrF  len ratio  ms/sent
@@ -445,10 +449,11 @@ Verinin gösterdiği şey ise getirinin sert biçimde azalması:
 Tek bir fazladan beam, ondan sonraki altmış iki beam'in toplamda kazandırdığı
 kadar kazandırıyor. Ama bu sonucu başka bir yerde kullanmadan önce, üzerinde
 neyin *yapılmadığına* dikkat edin. Bunlar 500 cümlede ölçülmüş 0,6 puanlık
-BLEU farkları ve ikisi de test edilmedi. 500 cümle üzerinde eşleştirilmiş bir
-bootstrap, her birinin çevresinde kabaca bir puanlık bir BLEU aralığı verir.
-İki fark da, iki kısım önce tam da bu amaçla atıf yaptığımız
-@kocmi2024navigating'in verdiği eşiklerin altında kalıyor. **Bu tablonun
+BLEU farkları ve ikisi de anlamlılık testinden geçirilmedi. 500 cümle üzerinde
+eşleştirilmiş bir bootstrap (cümleleri yeniden örnekleyerek güven aralığı
+çıkaran yöntem), her birinin çevresinde kabaca bir puanlık bir BLEU
+aralığı verir. İki fark da, yukarıda metrikleri tartışırken tam da bu amaçla
+atıf yaptığımız @kocmi2024navigating'in verdiği eşiklerin altında kalıyor. **Bu tablonun
 savunulabilir okuması, hiçbir beam genişliğinin komşularından ölçülebilir
 biçimde daha iyi olduğunun gösterilmediğidir.** Bu, ham sayıların davet
 ettiğinden daha temkinli bir iddiadır ve yazıya geçirilmesi gereken de
@@ -486,7 +491,7 @@ BLEU chrF'in on dört katı hareket ediyor ve çıktı *uzunluğuyla* birlikte
 hareket ediyor. İki metriğin ayrışması tek başına hangisinin haklı olduğunu
 çözmez — sabit duran bir chrF, kalitenin korunduğunun kanıtı değildir. Buradaki
 okumayı güvenli kılan şey üçüncü satır: uzunluk oranı chrF ile değil BLEU ile
-birlikte oynuyor ve BLEU'nun kısalık cezası ile kesinlik paydasının tepki
+birlikte oynuyor ve BLEU'nun kısalık cezası ile precision paydasının tepki
 verdiği mekanizma tam olarak bu. Kesin cevabı bir insan ya da MQM kontrolü
 verir; uzunluk oranı ise bunun kontrol etmeye değer olduğunun ucuz kanıtı.
 [Uzunluk cezasını BLEU'ya göre ayarlarsanız, sisteminizi biraz daha kısa çıktı
@@ -535,9 +540,8 @@ referansın kendisi — ve **tam olarak bir morfemlik hata** sokun; iki dilde de
 anlamsal hata: bulunma hâli çıkma hâline dönüşsün, *in X* *from X* olsun.
 
 Türkçede bu bir ektir: `İstanbul'da` → `İstanbul'dan`. Değişikliğin gövdeyi
-bozmadığından, yalnızca eke dokunduğundan emin olmak için sadece açık bir kesme
-işareti taşıyan kelimeler bozuldu; bu kelimelerde morfem sınırı belirsiz
-değildir. İngilizcede ise bir edattır: `in` → `from`.
+bozmayıp yalnızca eke dokunduğundan emin olmak için bozma, açık bir kesme
+işareti taşıyan kelimelerle sınırlandı; bu kelimelerde morfem sınırı bellidir. İngilizcede ise bir edattır: `in` → `from`.
 
 **Bu eşleştirme hakkında tablonun gösteremediği iki şey var ve ikisi de
 bu alt bölümün BLEU iddiasının aleyhine çalışıyor.**
@@ -548,8 +552,8 @@ değiştiriliyor ve bunların bir kısmı yalnızca yanlış değil, dilbilgisi
 açısından bozuk hâle geliyor.
 
 İkincisi, iki satır aynı cümlelerden gelmiyor. Filtreler bağımsız çalıştı,
-yani 264 Türkçe cümleye karşı 997 İngilizce cümle var ve Türkçe taraf cümle
-başına bir düzenleme alırken İngilizce taraf büyük olasılıkla birden fazla
+yani koşulu sağlayan 264 Türkçe cümleye karşı 997 İngilizce cümle var ve
+Türkçe taraf cümle başına bir düzenleme alırken İngilizce taraf büyük olasılıkla birden fazla
 alıyor.
 
 İki etki de *İngilizce* bozmayı daha ağır hâle getiriyor; yani BLEU
@@ -558,9 +562,9 @@ cezasının buna rağmen daha büyük çıkması sonucun kendisi; kesin çarpan�
 tasarımın belirleyebileceği bir şey değil. Aynı yanlılık chrF okumasının ise
 *lehine* çalışıyor: İngilizce cümle başına tek düzenleme olsaydı İngilizce chrF
 cezası küçülür, aşağıdaki 0,57 de yükselirdi. Bu yüzden karşılaştırmanın
-tamamını keşifsel sayın. Güvenilecek sürüm, İngilizce tarafı aynı 264 çiftin İngilizce
-yarısında ve her cümlede yalnızca ilk eşleşmeyi değiştirerek çalıştırmak;
-burada düzeltilecek ilk şey de bu.
+tamamını keşifsel sayın. Güvenilecek sürüm, İngilizce tarafı aynı 264 çiftin
+İngilizce yarısında ve her cümlede yalnızca ilk eşleşmeyi değiştirerek
+çalıştırmaktır; burada düzeltilecek ilk şey de budur.
 
 ```text
                               BLEU      chrF     BLEU/chrF     n
@@ -582,8 +586,8 @@ yapmak on bir karakterlik bir kelimeye bir karakter ekler; `in`'i `from` yapmak
 iki karakterlik bir kelimeyi dört karakterlikle değiştirir. Karakter düzeyinde
 Türkçe hata gerçekten daha küçüktür ve chrF bunu söyler.
 
-**İki metrik arasındaki uyuşmazlık Türkçede iki katından fazla** — 4,89'a karşı
-2,37. Operasyonel olarak önemli olan sayı budur. İngilizcede BLEU bu hataya
+**İki metrik arasındaki uyuşmazlık Türkçede iki kattan da büyük** — 4,89'a
+karşı 2,37. Operasyonel olarak önemli olan sayı budur. İngilizcede BLEU bu hataya
 chrF'in yaklaşık iki buçuk katı ceza keser; Türkçede ise neredeyse beş katı.
 Dolayısıyla iki metrik Türkçe sistemleri daha kolay farklı sıralar ve
 [hangi metriği seçtiğiniz hangi sistemi yayına alacağınıza karar verebilir]{.hl}.
@@ -596,7 +600,7 @@ tablodan:
 ```{=html}
 <div class="fig-title">Aynı hata Türkçede neden daha pahalı — ve chrF neden katılmıyor</div>
 <svg viewBox="0 0 764 392" style="max-width:744px" role="img"
-     aria-label="Türkçe, İngilizcenin üç kelimeyle yazdığını tek kelimeye paketler; bu yüzden kelime düzeyinde bir metriğin daha az yuvası olur ve her hataya daha çok yükler, karakter düzeyinde bir metrik ise daha az yükler.">
+     aria-label="Türkçe, İngilizcenin üç kelimeyle yazdığını tek kelimeye paketler; bu yüzden kelime düzeyinde bir metriğin daha az yuvası olur ve her hataya daha ağır ceza keser; karakter düzeyinde bir metrik ise daha hafif ceza keser.">
 
   <text x="16" y="14" class="t-xs t-muted">TEK BİR ANLAM VE KELİME DÜZEYİNDE BİR METRİĞİN EŞLEŞTİREBİLECEĞİ TOKEN SAYISI</text>
   <text x="16" y="46" class="t-xs t-muted">TR</text>
@@ -609,7 +613,7 @@ tablodan:
   <text x="110" y="82" class="t-sm t-mono t-mid">from</text>
   <text x="238" y="82" class="t-sm t-mono t-mid">your</text>
   <text x="367" y="82" class="t-sm t-mono t-mid">house</text>
-  <text x="448" y="46" class="t-xs">tek token ve içinde eşleştirilecek hiçbir şey yok</text>
+  <text x="448" y="46" class="t-xs">tek token; içinde eşleşecek parça yok</text>
   <text x="448" y="82" class="t-xs">üç token, artı aralarındaki n-gram'lar</text>
 
   <path d="M14 104 L 750 104" class="ln-thin"/>
@@ -663,7 +667,7 @@ tablodan:
   <rect x="439" y="346" width="71" height="12" rx="3" class="box-accent"/>
   <text x="518" y="356" class="t-xs t-mono t-accent">-5,34</text>
 
-  <text x="16" y="384" class="t-xs">Anlamda birebir aynı değişiklik. BLEU Türkçeye İngilizcenin 1,18 katını, chrF ise 0,57 katını yüklüyor.</text>
+  <text x="16" y="384" class="t-xs">Anlamda birebir aynı değişiklik. BLEU Türkçeye İngilizcedekinin 1,18 katı, chrF ise 0,57 katı ceza kesiyor.</text>
 </svg>
 ```
 
@@ -693,8 +697,8 @@ birkaç sıra tümüyle dilbilgiseldir. İngilizce çok daha az harekete izin ve
 
 Kelime n-gram metriği açısından sonuç @sec-makine-cevirisi-degerlendirme'nin
 zaten gösterdiğidir: bir öbeği taşımak anlamı bozmaz, ama yer değiştirme
-noktasından geçen her n-gram'ı yok eder. Bir öbeği yeniden sıralayan doğru bir
-İngilizce başka anlatım **50,27** aldı (büyük-küçük harf etkisi çıkarılınca
+noktasından geçen her n-gram'ı yok eder. Bir öbeğin yerini değiştiren doğru bir
+İngilizce çeviri **50,27** aldı (büyük-küçük harf etkisi çıkarılınca
 57,81). Yeniden sıralamanın ara sıra rastlanan bir şey değil, olağan bir üslup
 tercihi olduğu bir dilde çevirmenin meşru varyasyonu her seferinde bu oranda
 cezalandırılır.
@@ -706,9 +710,9 @@ yumuşatır) ve insan yargıları üzerinde eğitilmiş bir modelle puanlayın.
 ## Çevirmen olarak LLM'ler {#sec-makine-cevirisi-llm}
 
 Genel amaçlı bir model, çevirmen olması istenmeden de çeviri yapabilir. Soru
-çalışıp çalışmadığı değil, neye mal olduğu ve nerede kazandığı; işte doğrudan
-karşılaştırma: zero-shot prompt'lanmış `qwen3.5:9b`'ye karşı `opus-mt-tc-big`,
-birebir aynı 400 cümlede. `opus-mt-tc-big` aslında her yön için bir tane
+çalışıp çalışmadığı değil, neye mal olduğu ve nerede kazandığı. İşte doğrudan
+karşılaştırma: zero-shot (örneksiz) prompt'lanmış `qwen3.5:9b`'ye karşı
+`opus-mt-tc-big`, birebir aynı 400 cümlede. `opus-mt-tc-big` aslında her yön için bir tane
 olmak üzere iki modeldir (`-tr-en` ve `-en-tr`); ikisi de 237M parametrelidir
 ve başka hiçbir şey yapmaz.
 
@@ -718,7 +722,8 @@ neye mal olduğunu ölçtü — aynı model ve aynı cümlelerde beam 4'te 30,17
 karşı sıcaklık 1,0'da 14,34 — ve `ollama` varsayılan olarak örnekleme yapar.
 Genel yedek ayarı sıcaklık 0,8 ile top-$k$ 40'tır, ama kütüphanedeki bir model
 kendi ayarlarıyla gelebilir: `qwen3.5:9b` kaydı, bu yazının yazıldığı sırada
-sıcaklık 1,0, top-$k$ 20, top-$p$ 0,95 ve 1,5 presence penalty listeliyor.
+sıcaklık 1,0, top-$k$ 20, top-$p$ 0,95 ve 1,5 değerinde bir presence penalty
+(daha önce geçmiş token'ları cezalandıran ayar) listeliyor.
 İstek bunları geçersiz kılmadıysa LLM satırı, Marian modelinin BLEU'sunun
 yarısını götüren sıcaklığın ta kendisiyle örneklendi; bunu biraz yumuşatan tek
 şey, çekilişi en olası token'larla sınırlayan top-$k$ ve top-$p$
@@ -729,17 +734,17 @@ yayımlanırsa yorumlanabilir. Yayımlanmadı ve bu eksiği
 kapatmak bölümün size olan borcu: çözümleyici sabitlenerek yeniden
 çalıştırılana kadar o satırı bu modelin tavanı değil, *bir* ölçümü olarak görün.
 
-**Ve numerical precision'ı (ağırlıkların sayısal gösterimi, yani bit
-genişliği) belirtin.** `ollama`, etiketsiz bir modeli varsayılan olarak
-4 bit'e nicemlenmiş sunar; `opus-mt-tc-big` ise `transformers` üzerinden
-nicemlenmemiş çalışıyor. Yani asıl karşılaştırma "237M'ye karşı 9B" değil,
-"nicemlenmemiş 237M'ye karşı 4 bit'lik 9B". Nicemlemenin, model morfolojik
+**Sayısal hassasiyeti de (ağırlıkların kaç bitle tutulduğunu) belirtin.**
+`ollama`, etiketsiz bir modeli varsayılan olarak 4 bitlik nicemlemeyle sunar;
+`opus-mt-tc-big` ise `transformers` üzerinden nicemlenmemiş çalışıyor. Yani
+asıl karşılaştırma "237M'ye karşı 9B" değil, "nicemlenmemiş 237M'ye karşı 4
+bitlik 9B". Nicemlemenin, model morfolojik
 olarak zengin bir dili *üretmek* zorunda olduğunda daha çok zarar vermesi
 akla yatkın; bu da maliyetini farkın en büyük olduğu en-tr sütununa koyardı —
 ama bu burada ölçülmedi. Örnekleme de nicemleme de LLM'in puanını aşağı
 çekiyor; dolayısıyla 6 BLEU'luk rakam, iki modelin kendi arasındaki farkı
-küçük göstermekten çok büyük gösteriyor olabilir. Aşağıda ele alınan
-kontaminasyon ise ters yönde çekiyor.
+küçük göstermekten çok büyük gösteriyor olabilir. Aşağıda ele alınan ölçüt
+bulaşması (benchmark contamination) ise ters yönde çekiyor.
 
 ```text
 wmt16 tr-en                          BLEU    chrF   s/sentence
@@ -765,13 +770,14 @@ bırakmak 2,09 alıyor, yani yukarıdaki sayılar tesadüfi örtüşmeyi değil 
 newstest2016 2016'dan beri kamuya açık — `sacrebleu`'nun içinde, GitHub'da,
 HuggingFace datasets'te, referans çevirileriyle birlikte. 2020'lerin bir web
 taramasıyla eğitilmiş herhangi bir LLM'in onu görmüş olması makul ve bu
-kontaminasyon LLM'in puanını *şişirir*. Yani bu, aşağıdaki sonucu hiçbir
-şekilde zayıflatmıyor: özel model, kıyas kümesinin rakip modelin eğitim
-verisinde bulunma olasılığına **rağmen** kazanıyor. Özel modelin tarafı daha
+bulaşma LLM'in puanını *şişirir*. Yani bu, aşağıdaki sonucu hiçbir şekilde
+zayıflatmıyor: özel model, benchmark'ın (kıyaslama kümesinin) rakip modelin
+eğitim verisinde bulunma olasılığına **rağmen** kazanıyor. Özel modelin tarafı daha
 temiz — Helsinki-NLP, WMT test kümelerini OPUS-MT eğitiminden dışlıyor — ama
 buradaki "zero-shot" *prompt'ta örnek yok* demek, *bu veriyi hiç görmedi* demek
-değil. Kontamine olmayan bir sayıya ihtiyacınız varsa modelinizin kesim
-tarihinden sonra yayımlanmış bir test kümesi kullanın.
+değil. Bulaşmadan etkilenmemiş bir sayıya ihtiyacınız varsa modelinizin bilgi
+kesim tarihinden (eğitim verisinin bittiği tarihten) sonra yayımlanmış bir
+test kümesi kullanın.
 
 Saniyelere gelince: @sec-makine-cevirisi-cozumleme'deki `ms/sent` sütunuyla aynı
 şekilde ölçülmediler; aynı modelin aynı beam genişliğinde orada 80 ms, burada
@@ -797,8 +803,8 @@ zordur. [MT kalitenizin simetrik olduğunu asla varsaymayın — iki yönü de
 **Her iki model için de Türkçeye çeviri daha zor.** Hedef değişince opus-mt
 32,33'ten 23,13'e düşüyor. Bunun bir kısmı gerçek zorluk, bir kısmı
 @sec-makine-cevirisi-turkce'nin ölçüm yapaylığı: hedef dil BLEU'ya %22,5 daha az
-token verdiğinde aynı kalitedeki çeviri daha düşük puan alır. Bu yanlılığa sahip
-olmayan chrF çok daha az düşüyor — 60,08'den 57,41'e. Aynı kontrol bir önceki
+token verdiğinde aynı kalitedeki çeviri daha düşük puan alır. Bu yanlılığı
+taşımayan chrF çok daha az düşüyor — 60,08'den 57,41'e. Aynı kontrol bir önceki
 madde için de geçerli: chrF'te LLM'in açığı İngilizceye 1,76, Türkçeye 3,74;
 yani farkın iki katına çıkması yalnızca BLEU'nun Türkçeye sertliğinden
 kaynaklanmıyor.
@@ -806,7 +812,7 @@ kaynaklanmıyor.
 ### Özel modelin veremediği, bir LLM'in verdiği şeyler
 
 Tablo LLM'i her ölçütte daha kötü gösteriyor. Cümle düzeyinde haber çevirisinde
-gerçekten de öyle. Yine de bir LLM'i tercih etmenin nedenleri bu kıyas kümesinin
+gerçekten de öyle. Yine de bir LLM'i tercih etmenin nedenleri bu benchmark'ın
 ifade edemeyeceği şeylerdir, çünkü WMT birbirinden bağımsız cümlelerin listesidir:
 
 - **Belge bağlamı.** Cümle düzeyinde özel bir model her cümleyi bağımsız çevirir
@@ -828,8 +834,8 @@ ifade edemeyeceği şeylerdir, çünkü WMT birbirinden bağımsız cümlelerin 
   `opus-mt` yoktur ve birini eğitecek veri de yoktur. Önce denemeye değer bir
   ara seçenek de var: M2M-100
   ([Fan vd., 2021](https://jmlr.org/papers/v22/20-1307.html)) ve NLLB-200
-  ([NLLB Team, 2022](https://arxiv.org/abs/2207.04672)) gibi *yoğun çok
-  dilli* özel modeller, tek bir modelle 100 ila 200 dil arasında doğrudan
+  ([NLLB Team, 2022](https://arxiv.org/abs/2207.04672)) gibi *çok sayıda dili
+  kapsayan* (massively multilingual) özel modeller, tek bir modelle 100 ila 200 dil arasında doğrudan
   çeviri yapar. Bir LLM'den hâlâ çok daha küçüktürler; ama yayına almadan önce
   lisansı okuyun: NLLB-200 ağırlıkları yalnızca ticari olmayan kullanım için
   yayımlandı.
@@ -848,7 +854,8 @@ arasındaki farktır.
 
 ## Düşük kaynaklı çeviri {#sec-makine-cevirisi-dusuk-kaynak}
 
-Türkçe–İngilizce düşük kaynaklı değildir; OPUS'ta milyonlarca çift var. Ama
+Türkçe–İngilizce düşük kaynaklı değildir; açık paralel derlemleri bir araya
+getiren OPUS koleksiyonunda milyonlarca çift var. Ama
 sektörde karşınıza çıkan çeviri problemlerinin çoğu öyledir: kimsenin veri
 yayımlamadığı bir dil çifti ya da — çok daha sık — kimsenin veri yayımlamadığı
 bir *alan*. Hukuk Türkçesi, klinik Türkçe ve tek bir şirketin iç sözcük dağarcığı,
@@ -867,23 +874,23 @@ modelin öğrenmesi gereken tek şey hedef tarafı üretmektir ve hedef taraf ge
 insan metnidir.
 
 Yöntemin püf noktası da işe yaramasının nedeni de bu asimetridir: [gürültülü
-yarı, modelin gürbüz olmasına izin verilen girdi tarafındadır; temiz yarı ise
-ona ne yazacağı öğretilen çıktı tarafında.]{.hl}
+yarı, modelin hatalara dayanıklı olabileceği girdi tarafındadır; temiz yarı ise
+modele ne yazacağının öğretildiği çıktı tarafında.]{.hl}
 
 Bilmeye değer, yakından ilişkili iki yöntem:
 
-- **Alan içi çiftlerle ince ayar.** Birkaç bin gerçek alan içi çift, genellikle
+- **Alan içi çiftlerle fine-tuning.** Birkaç bin gerçek alan içi çift, genellikle
   büyük miktarda sentetik veriyi yener. Bir şey üretmeden önce bunları çeviri
   belleklerinden toplayın.
 - **Terminoloji enjeksiyonu.** Alan uyarlaması sıklıkla bir akıcılık problemi
   değil bir sözcük dağarcığı problemidir: sizin kurum diliniz *stock* iken model
   *hisse*yi *share* diye çevirir. Bu, yeniden eğitim nedeni değil, çözümlemede
-  veya prompt'ta uygulanacak bir kısıttır — ve @sec-makine-cevirisi-llm'in gerçek
-  bir üstünlüğe sahip olduğu yerdir.
+  veya prompt'ta uygulanacak bir kısıttır — ve @sec-makine-cevirisi-llm'de ele
+  aldığımız LLM'lerin gerçekten üstün olduğu yer de burasıdır.
 
 ::: {.column-margin}
 Terminoloji kayması bir çeviri projesini iptal ettiren kusurdur ve
-@sec-makine-cevirisi-degerlendirme'deki her metriğe görünmezdir: modelin kelimesi
+@sec-makine-cevirisi-degerlendirme'deki metriklerin hiçbiri onu göremez: modelin kelimesi
 de sizin kelimeniz de makul çevirilerdir, dolayısıyla genel bir referansla
 hesaplanan BLEU farkı göremez. Doğrudan ölçün — sözlüğünüzü alın ve sistemin
 sizin teriminizi kaç kez kullandığını sayın.
@@ -952,7 +959,7 @@ bir kısmına mal olur.
 
 Burada ölçüldü: *aynı* anlamsal hata — bulunma hâlinin çıkma hâline dönmesi —
 Türkçede 14,90 BLEU, İngilizcede 12,65 BLEU'ya mal oluyor. On bir puanlık
-farkınızın bir kısmı metriktir.
+farkınızın bir kısmı metrikten kaynaklanıyor.
 
 İki dilde de hemen hemen aynı miktarda malzeme gören chrF'i (1,29'luk kelime
 oranına karşılık 1,02'lik karakter oranı) ve bir nöral metriği raporlayın. Sonra
@@ -1001,7 +1008,7 @@ yükseliyor" ifadesi yalnızca nokta kestirimlerini tarif ediyor, fazlasını de
 Muhtemelen hayır. Uzunluk cezasını 0,2'den 2,0'a taramak BLEU'yu 1,26 puan,
 chrF'i 0,09 puan oynatıyor; çıktı uzunluk oranı ise 1,007'den 1,041'e gidiyor.
 
-BLEU, kısalık cezası ve kesinlik paydası üzerinden kaç kelime ürettiğinize tepki
+BLEU, kısalık cezası ve precision paydası üzerinden kaç kelime ürettiğinize tepki
 veriyor. Ayarı BLEU'ya göre yapmak sisteminize biraz daha kısa çıktı üretmeyi
 öğretir. Bir
 değişiklik BLEU'yu oynatıp chrF'i sabit bırakıyorsa, bunu iyileşme saymadan önce
@@ -1013,10 +1020,10 @@ bir metrik yapaylığından şüphelenin. Hangisinin geçerli olduğunu
 ## 5. 9B'lik bir LLM mi, 237M'lik özel bir model mi?
 
 Birebir aynı cümlelerde ölçüldü: özel model İngilizceye 3 BLEU, Türkçeye 6 BLEU
-farkla ve 41–164 kat hızda kazanıyor. Cümle düzeyinde haber çevirisinde ve bu
+farkla ve 41–164 kat daha hızlı çalışarak kazanıyor. Cümle düzeyinde haber çevirisinde ve bu
 değerlendirme kurulumunda, ölçülen her eksende özel model daha iyi seçimdir.
 
-Ölçütün ifade edemediği bir şeye ihtiyacınız olduğunda LLM'e başvurun: zamirler
+Benchmark'ın ifade edemediği bir şeye ihtiyacınız olduğunda LLM'e başvurun: zamirler
 ve üslup için belge bağlamı, prompt'ta bir sözlük, kimsenin model yayımlamadığı
 bir dil çifti. Bunlar gerçek ihtiyaçlardır ama bu tablo onları gösteremez —
 WMT birbirinden
@@ -1065,9 +1072,9 @@ aynı okumanın derin bir dil modelinde tutmamasının nedeni budur.
 n = 1'den 4'e modified n-gram precision, geometrik ortalama, çarpı kısalık
 cezası. Bir örneği elle hesaplayabilmeli ve bir test kümesinde sayımların
 formül uygulanmadan önce cümleler üzerinde toplandığını söyleyebilmelisiniz.
-Sonra göremediklerini söyleyin: her doğru başka anlatım, meşru bir yeniden
-sıralama ile yanlış bir sıralama arasındaki fark ve — varsayılan olarak —
-büyük-küçük harfte farklılaşan her şey. Bir öbeği taşıyan doğru bir İngilizce
+Sonra göremediklerini söyleyin: farklı kelimelerle kurulmuş her doğru çeviri,
+meşru bir yeniden sıralama ile yanlış bir sıralama arasındaki fark ve —
+varsayılan olarak — büyük-küçük harfte farklılaşan her şey. Bir öbeği taşıyan doğru bir İngilizce
 çeviri 50 alıyor.
 
 **S: Ne zaman BLEU raporlamazsınız?**
@@ -1107,8 +1114,8 @@ model ailesi ve derlemde Türkçeden 32,33'e karşı Türkçeye 23,13.
 
 Geri çeviri. Neden işe yaradığını da söyleyebilmelisiniz: kaba bir ters yön
 sistemi eğitin, tek dilli *hedef* metninizi onunla kaynağa çevirin ve sentetik
-taraf girdi olacak şekilde o çiftlerle eğitin. Gürültülü yarı,
-gürbüzlüğün beklendiği girdi tarafındadır. İnsan elinden çıkan temiz yarı ise
+taraf girdi olacak şekilde o çiftlerle eğitin. Gürültülü yarı, modelin
+hatalara dayanıklı olması beklenen girdi tarafındadır. İnsan elinden çıkan temiz yarı ise
 çıktı tarafındadır; model ne yazacağını orada öğreniyor. Ardından ilk olarak ne
 deneyeceğinizi söyleyin: bir çeviri
 belleğinde birkaç bin gerçek alan içi çift bulmak — bunlar genellikle büyük
@@ -1125,7 +1132,7 @@ Bu bölümdeki her şey aşağıdaki sürümlerle tek bir dizüstü bilgisayarda
 | `torch` | 2.13.0 | üzerinde çalıştığı MPS arka ucu |
 | `ollama` | 0.24.0 | birebir karşılaştırma için `qwen3.5:9b`'yi varsayılan nicemlemesi `Q4_K_M` ile sunmak |
 
-: Bu sayıların çıktığı yığın. Python 3.14.5, Apple Silicon
+: Bu sayıların elde edildiği yazılım yığını. Python 3.14.5, Apple Silicon
 {tbl-colwidths="[22,16,62]"}
 
 Bilmeye değer, yukarıda kullanılmadı:
@@ -1137,7 +1144,7 @@ Bilmeye değer, yukarıda kullanılmadı:
 | `sentencepiece` | 0.2.2 | bu modellerin üzerine kurulduğu alt kelime sözlüğü (@sec-metin-veri) |
 | `sacremoses` | 0.2.0 | Moses tokenizer ve truecaser; eski MT sonuçlarını yeniden üretirken hâlâ gerekli |
 | `stanza` | 1.14.0 | girdiniz cümle değil belge olarak geldiğinde Türkçe için cümle bölme ve morfolojik çözümleme |
-| `nltk` | 3.10.3 | kendi BLEU'su var ve `sacrebleu`'nunkiyle eşleşmiyor — @post2018call'ün neden yazılmak zorunda kaldığının canlı bir örneği |
+| `nltk` | 3.10.3 | kendi BLEU'su var ve `sacrebleu`'nunkiyle eşleşmiyor — @post2018call'un neden yazılmak zorunda kaldığının canlı bir örneği |
 
 : Daha geniş ekosistem, yazıldığı andaki sürümler {tbl-colwidths="[22,14,64]"}
 
@@ -1174,7 +1181,7 @@ metriğiniz çeviri kalitesinden başka bir şeyi yakalıyordur — ortak özel 
 sayılar ya da sandığınızdan yakın bir dil çifti — ve yukarıdaki her sayının
 yeniden okunması gerekir.
 
-### Adım 5 — kod çözücüyü tarayın
+### Adım 5 — çözümleme ayarlarını tarayın
 
 Beam 1, 4, 16 ve 0,7 sıcaklıkta örnekleme. BLEU'yu cümle başına saniyeye karşı
 çizin. @sec-makine-cevirisi-cozumleme'nin tablosunu kendi verinizde yeniden
@@ -1227,8 +1234,8 @@ paragraf.
    kullanarak açıklayın.
 
 6. **Geri çeviri yapın.** Alanınızda 2.000 tek dilli cümle alın, hazır bir
-   modelle kaynak dile çevirin ve sentetik çiftlerle ince ayar yapın. Gerçek,
-   ayrı tutulmuş (held-out) bir küme üzerindeki değişimi raporlayın — ve alanda
+   modelle kaynak dile çevirin ve modeli sentetik çiftlerle fine-tune edin.
+   Gerçek, ayrılmış (held-out) bir küme üzerindeki değişimi raporlayın — ve alanda
    işe yarayıp alan dışında zarar verip vermediğini kontrol edin.
 
 7. **Translate-test hata yayılımı.** Bir sınıflandırma görevi alın, test
@@ -1240,7 +1247,7 @@ paragraf.
 
 Önce BLEU imzanızı yazdırın. Bir sayıyı hangi tokenizer, büyük-küçük harf
 işlemi ve smoothing'in ürettiğini söyleyemiyorsanız o sayı başkasınınkiyle
-karşılaştırılamaz — @post2018call'ün argümanının tamamı budur.
+karşılaştırılamaz — @post2018call'un argümanının tamamı budur.
 
 | kaynak | ne olduğu |
 |:--|:--|
@@ -1248,7 +1255,7 @@ karşılaştırılamaz — @post2018call'ün argümanının tamamı budur.
 | [OPUS-MT](https://github.com/Helsinki-NLP/Opus-MT) | bu bölümde 9B'lik bir LLM'i yenen özel modeller, eğitim tarifleriyle birlikte yayımlanmış |
 | [Stanford CS224N](https://web.stanford.edu/class/cs224n/) | makine çevirisi dersleri; attention'ın icat edildiği MT probleminden türetilişi dâhil |
 | [The Annotated Transformer](https://nlp.seas.harvard.edu/annotated-transformer/) | mimarinin çalıştırılabilir kod hâli, bir çeviri görevi etrafında yazılmış |
-| [ACL Anthology](https://aclanthology.org/) | her WMT bulgular makalesi, ücretsiz — ortak görev raporları alanın her yılki durumunu dürüstçe gösterir |
+| [ACL Anthology](https://aclanthology.org/) | WMT'nin her yılki bulgular (findings) makalesi, ücretsiz — ortak görev raporları alanın her yılki durumunu dürüstçe gösterir |
 | [Coding a Transformer from scratch in PyTorch](https://www.youtube.com/watch?v=ISNdQcPhsts) — Umar Jamil | encoder–decoder çeviriyi baştan sona kurar; bu bölümün özel modellerinin hâlâ kullandığı mimari |
 
 : Makalelerin ötesi {tbl-colwidths="[42,58]"}
@@ -1273,24 +1280,24 @@ karşılaştırılamaz — @post2018call'ün argümanının tamamı budur.
 - **Attention bir çeviri hatasının onarımıydı.** Encoder-decoder RNN bütün bir
   cümleyi tek bir sabit vektöre sıkıştırıyordu ve uzun cümlelerde kalite sert
   biçimde düşüyordu. Her kaynak token'ı için bir vektör tutmak bunu düzeltti.
-  Artık her şeyi çalıştıran mimari orada başladı.
+  Bugün her şeyi çalıştıran mimari orada doğdu.
 
 - **BLEU, doğru bir çeviriye 50,27 veriyor** — tek bir öbeği taşıdığı ve iki
-  kelimede büyük-küçük harfte ayrıştığı için. Kısalık cezalı
-  modified n-gram precision'dan başka bir şey değildir; başka anlatımı ya da
-  anlamı göremez, meşru bir yeniden sıralamayı yanlış olandan ayıramaz. Raporlayın, asla yalnızca onun üzerinden
-  sıralamayın ve imzasını her zaman verin.
+  kelimede büyük-küçük harfte ayrıştığı için. BLEU, kısalık cezalı modified
+  n-gram precision'dan başka bir şey değildir; aynı anlamı farklı kelimelerle
+  veren çeviriyi de anlamı da göremez, meşru bir yeniden sıralamayı yanlış
+  olandan ayıramaz. Raporlayın, asla yalnızca onun üzerinden sıralamayın ve
+  imzasını her zaman verin.
 
-- **Bu derlemde İngilizce/Türkçe kelime token'ı oranı 1,29.** Aynı içerik İngilizcede 1,29 kat fazla
-  kelime token'ı ama yalnızca 1,02 kat fazla karakter gerektiriyor; yani kelime
-  n-gram metriğinin Türkçede %22,5 daha az yuvası var ($1 - 1/1{,}29$) ve her
-  hata orantılı olarak daha pahalı. Her dile karşılaştırılabilir bir hata sokan keşifsel
-  bir deneyde (iki dilde farklı cümle alt kümeleriyle) BLEU Türkçede
-  **14,90**, İngilizcede **12,65** puan kesiyor; chrF ise **3,05**'e karşı
-  **5,34** puan. İki metrik Türkçede **4,89**, İngilizcede **2,37** kat
-  ayrışıyor —
-  seçtiğiniz metriğin hangi sistemi yayına alacağınıza karar verebilmesinin
-  nedeni bu.
+- **Bu derlemde İngilizce/Türkçe kelime token'ı oranı 1,29.** Aynı içerik
+  İngilizcede 1,29 kat fazla kelime token'ı ama yalnızca 1,02 kat fazla
+  karakter gerektiriyor; yani kelime n-gram metriğinin Türkçede %22,5 daha az
+  yuvası var ($1 - 1/1{,}29$) ve her hata orantılı olarak daha pahalı. Her
+  dile karşılaştırılabilir bir hata sokan keşifsel bir deneyde (iki dilde
+  farklı cümle alt kümeleriyle) BLEU Türkçede **14,90**, İngilizcede **12,65**
+  puan kesiyor; chrF ise **3,05**'e karşı **5,34** puan. BLEU cezası chrF
+  cezasının Türkçede **4,89**, İngilizcede **2,37** katı — seçtiğiniz metriğin hangi
+  sistemi yayına alacağınıza karar verebilmesinin nedeni bu.
 
 - **BLEU'yu diller arasında asla karşılaştırmayın.** "Türkçe 23, Almanca 34
   alıyor" zorluk hakkında bir ifade değildir; metrik her cümlenin farklı bir
@@ -1302,9 +1309,9 @@ karşılaştırılamaz — @post2018call'ün argümanının tamamı budur.
 
 - **Yaygın kanıyı tekrarlamadan önce kontrol edin.** "Beam search laneti"
   burada hiç görünmedi — BLEU beam 64'e kadar monoton biçimde yükseldi ve
-  uzunluk oranı sabit kaldı. Görünen şey, sert biçimde azalan getiriler: beam
-  1→2 +0,61, beam 2→64 ise
-  yedi kat hesaplama karşılığında +0,57 kazandırıyor.
+  uzunluk oranı sabit kaldı. Görünen şey, sert biçimde azalan getiriler:
+  beam 1→2 +0,61, beam 2→64 ise yedi kat hesaplama karşılığında +0,57
+  kazandırıyor.
 
 - **chrF sabit kalırken gelen bir BLEU artışı, metrik yapaylığından şüphelenmek
   için bir sebeptir.** Uzunluk cezasını taramak BLEU'yu 1,26, chrF'i 0,09 puan
@@ -1313,8 +1320,8 @@ karşılaştırılamaz — @post2018call'ün argümanının tamamı budur.
   kısa çıktı üretmeyi öğretir.
 
 - **237M'lik özel bir model 9B'lik bir LLM'i iki yönde de yendi**; İngilizceye 3,
-  Türkçeye 6 BLEU farkla ve 41–164 kat hızda. Ölçütün ifade edemediği bir şeye
-  ihtiyacınız olduğunda LLM'e başvurun: belge bağlamı, sözlük uyumu, üslup ya da
+  Türkçeye 6 BLEU farkla ve 41–164 kat daha hızlı. Benchmark'ın ifade
+  edemediği bir şeye ihtiyacınız olduğunda LLM'e başvurun: belge bağlamı, sözlük uyumu, üslup ya da
   kimsenin model yayımlamadığı bir çift.
 
 - **İki yönü de ölçün.** Aynı model ailesi ve derlemde Türkçeden 32,33, Türkçeye
