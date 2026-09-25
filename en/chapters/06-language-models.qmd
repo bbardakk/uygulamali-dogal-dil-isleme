@@ -2,7 +2,8 @@
 
 ::: {.callout-note appearance="simple" icon="false"}
 **Chapter status: drafted.** Every number on this page was produced by
-running the code shown, on one machine, with PyTorch 2.13.0, NumPy 2.5.2
+running the code written for this chapter, of which only the core pieces
+(the bigram counts, the neural model and its loss) are shown, on one machine, with PyTorch 2.13.0, NumPy 2.5.2
 and pandas 3.0.5 on Python 3.14.5. The n-gram models are plain Python
 dictionaries and need no libraries at all; the neural model trains in
 about two minutes on a laptop GPU. The corpus and the split are those of
@@ -26,7 +27,7 @@ each other.
 - explain how a neural language model shares statistical strength through
   embeddings, say precisely which n-gram failure that fixes and which it
   leaves untouched, and name the two bottlenecks that recurrent models
-  inherit and @sec-transformers removes.
+  carry and @sec-transformers removes.
 
 ## The question chapter 4 could not answer
 
@@ -90,9 +91,13 @@ Before celebrating, look at *why* it got them apart.
 
 The model has never seen `kötü fiyat` *or* `fiyat kötü` in 858,000 tokens, so
 it has no direct evidence about bad prices at all — both sentences lean
-entirely on the interpolated lower-order term for one bigram. What tips the balance is mostly that
-`iyi fiyat` ("good price") is a stock Turkish phrase, seen 112 times, while its
-counterpart in sentence `b`, `kötü fiyat`, was never seen at all.
+entirely on the interpolated lower-order term for one bigram. What tips the balance is not one
+phrase but a tally of collocations, which the bigram surprisals in the widget
+below spell out: `kalite iyi` (7 sightings against 1 for `kalite kötü`) and
+`iyi fiyat` ("good price", 112 against 0 for `kötü fiyat`) each favour `a` by
+about five bits, while the 25 sightings of `fiyat iyi` — against none of
+`fiyat kötü` — win about seven bits back for `b`, and the end-of-review token
+another 0.8. The net is about 1.6 bits: the factor of three in the table.
 
 So [the model has learned a collocation, not a meaning]{.hl}. It prefers
 sentence `a` because that word order *sounds like* the reviews it read. That
@@ -463,7 +468,9 @@ figures from two papers usually cannot be compared at all.
 ```
 
 Each bar is one token's **surprisal**, $-\log_2 P(w \mid h)$, measured on
-the models built in this chapter. A bar of 10 means the model gave that
+the models built in this chapter. The models are Kneser-Ney smoothed
+(smoothing comes a few sections later), which is why a bigram never seen in
+training, such as `fiyat kötü`, gets 13.9 bits rather than infinity. A bar of 10 means the model gave that
 word a probability of about 1 in 1,000. Switch the context length and
 watch which bars collapse — that is precisely what the extra context
 bought.
@@ -717,7 +724,7 @@ $$
 
 For the statistically minded: it is the posterior mean under a symmetric
 Dirichlet prior with $\alpha_i = 1$ for every word — a flat prior over all possible next-word
-distributions, which on average treats every word as equally likely. The total concentration is therefore $V$, not 1, and
+distributions, which on average treats every word as equally likely. Because each of the $V$ words gets one pseudo-count, the total concentration is $V$, not 1, and
 the MAP estimate under that prior would be the unsmoothed MLE instead. It is
 perfectly respectable, and on this corpus it is worse than useless:
 
@@ -804,8 +811,8 @@ Here $h'$ is the context $h$ with its oldest word dropped, so the second term
 is the same formula one order down, applied recursively.
 
 ::: {#gloss-backoff .column-margin .term-gloss}
-**backoff** — when the long context has never been seen, drop a word off
-the front and ask the shorter context instead. Interpolation always
+**backoff** — when a word has never been seen after the long context, drop a
+word off the front and ask the shorter context instead. Interpolation always
 blends; backoff only falls back when it has to. [↩](#term-backoff){.term-back}
 :::
 
@@ -839,7 +846,11 @@ $$P_{\text{KN}}(w) = \frac{N_{1+}(\bullet w)}{N_{1+}(\bullet\bullet)},$$
 the number of distinct words that $w$ has ever followed, over the total number
 of distinct bigram types. That is the `Francisco` rule, written down:
 `Francisco` has followed almost only one distinct word, so its continuation
-probability is tiny however often it occurs. (The discount $d$ is a constant
+probability is tiny however often it occurs. The same substitution is made at
+every order below the highest, not only the lowest: in the lower steps of the
+recursion, continuation counts replace the raw counts (for example
+$N_{1+}(\bullet\, h\, w)$ in place of $c(h, w)$); the unigram level is simply where
+the idea is clearest. (The discount $d$ is a constant
 between 0 and 1, tuned on the dev set or estimated from how many n-grams occur
 once and twice; values around 0.75 are typical.)
 
@@ -867,8 +878,8 @@ information the model cannot reach.
 
 And a trigram at 333.5 means that after reading two words of a Turkish
 review, the model is still about as uncertain as if it were picking
-at random from 333 equally likely words. That is the ceiling of the
-counting era, and it took thirty years of ingenuity to get there.
+at random from 333 equally likely words. That is the ceiling of
+counting on this corpus, and it took thirty years of ingenuity to get there.
 
 ::: {.column-margin}
 Kneser-Ney was not beaten by cleverness so much as by scale. Google's
@@ -1229,8 +1240,8 @@ quality.]{.hl} (The exception is the `drop=0.2` run: it has exactly as many
 parameters as the second row, 9,590,478, and differs from it only in
 regularisation — raising dropout alone moved test perplexity from 429.0 to
 362.6.) The largest model tried, with
-five words of context and 19.4 million parameters, is the worst thing on the
-page at 548.8 — worse than every interpolated and Kneser-Ney n-gram model in the
+five words of context and 19.4 million parameters, is the worst model in the
+sweep at 548.8 — worse than every interpolated and Kneser-Ney n-gram model in the
 smoothing table. The winner is the smallest model tried: two words
 of context, 32-dimensional embeddings, a 128-unit hidden layer.
 
@@ -1528,7 +1539,7 @@ would you actually deploy?
 | Gives you embeddings | [no]{.con} | [yes, free]{.pro} |
 | Adding data | [retrain in seconds]{.pro} | [retrain in minutes]{.con} |
 | Returns from more data (expected, not measured here) | [flattening — 4- and 5-grams already add nothing]{.con} | [expected to keep improving]{.pro} |
-| Debuggable | [inspect the counts]{.pro} | [inspect nothing]{.con} |
+| Debuggable | [inspect the counts]{.pro} | [no counts to read; only probabilities and embedding neighbours]{.con} |
 
 : What each model is actually for, on 38,000 Turkish reviews {tbl-colwidths="[30,35,35]"}
 
