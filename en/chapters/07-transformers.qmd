@@ -7,7 +7,7 @@
 - walk one sentence through a complete transformer block — multi-head attention, residual, layer norm, feed-forward — and say what each token gained;
 - describe why multiple heads exist and what different heads specialise in;
 - explain why position must be injected explicitly, and compare absolute, learned, RoPE, and ALiBi;
-- explain why the attention mask is the difference between BERT and GPT;
+- explain how the attention mask sets the structural difference between BERT-style and GPT-style self-attention, and what else (training objective, use) separates the two;
 - estimate a model's parameter count and KV cache size from its shape, and say which one limits you;
 - name the techniques that make long contexts affordable — KV cache, GQA/MQA, FlashAttention;
 - separate a mixture-of-experts model's total parameters from its active ones, and say which decides your hardware bill;
@@ -48,9 +48,10 @@ $$
 $$
 
 That softmax row is exactly the set of weights in the weighted average. A
-statistician's translation: for every token, the model runs a tiny,
-data-dependent regression over the whole sentence deciding *which other
-tokens are informative right now*.
+statistician's translation: for every token, the model takes a data-dependent
+weighted average over the whole sentence — closer to Nadaraya–Watson kernel
+regression than to fitting coefficients — deciding *which other tokens are
+informative right now*.
 
 ### The shape of the whole model
 
@@ -617,7 +618,8 @@ $$
 $$
 
 This step looks like fussy bookkeeping and is not. A dot product of two random
-$d_k$-dimensional vectors has a standard deviation that grows like
+$d_k$-dimensional vectors (independent components with zero mean and unit
+variance) has a standard deviation that grows like
 $\sqrt{d_k}$, so without the division the scores get systematically larger as
 heads get wider — and softmax reacts to *absolute* size. Measured over 20,000
 random pairs:
@@ -1485,9 +1487,10 @@ nouns. Before attention ran, `kedi` and `sütü` both had exactly 0.0 action
 content. Nothing could have answered *"animate* **and** *attached to a verb"*,
 because half the question did not exist yet.
 
-(`içti` is a partial exception. It started with a little liquid
-content of its own, so its *liquid + action* detector would have fired weakly
-anyway; attention raised it from 0.1 to 0.9176.)
+(`içti` did start with a little liquid content of its own, but not enough:
+pushed through the same normalisation, its raw embedding gives the *liquid +
+action* detector a pre-activation of about −0.20, below threshold. After
+attention it is 0.9176.)
 
 Which is the point of the whole layer. [The FFN is reading features that
 attention created one sublayer earlier, and that is the whole reason the two
@@ -1812,7 +1815,7 @@ away. Restore them and the count closes completely:
 So the rule is not an approximation with unexplained slop; it is an exact
 count with three named terms deleted. Trust it for capacity planning, and
 remember which terms you dropped when someone asks why your number and the
-model card differ in the last five digits.
+model card differ in the last six digits.
 
 ::: {.column-margin}
 Notice what the table does *not* contain: an output projection back to the
@@ -2088,9 +2091,11 @@ $$
 \text{score}(i, j) = \frac{q_i \cdot k_j}{\sqrt{d_k}} - m\,(i - j)
 $$
 
-The penalty is subtracted *after* the $\sqrt{d_k}$ scaling, not before — which
-matters, because it is what makes the slopes $m$ transferable across models of
-different width.
+The penalty is subtracted *after* the $\sqrt{d_k}$ scaling, not before. That
+is our reading of why it matters rather than a claim the paper makes: added
+before the division, the effective slope would be $m/\sqrt{d_k}$ and would
+change with head width; added after, the same slopes $m$ mean the same thing
+in models of different width.
 
 Each head gets its own fixed slope $m$, on a geometric schedule. With eight
 heads the slopes are $\tfrac12, \tfrac14, \tfrac18, \dots, \tfrac{1}{256}$, so
@@ -2243,8 +2248,8 @@ html`<p style="margin:0.4rem 0 0;font-size:0.85rem;">${
 :::
 
 Select the causal mask and the top-right triangle goes grey. `kedi`, in
-position 0, can then attend only to itself. That constraint is the entire
-reason a decoder can be trained on raw text: with it, the model can be asked
+position 0, can then attend only to itself. That constraint is what lets a
+decoder be trained on raw text efficiently, in a single parallel pass: with it, the model can be asked
 to predict *every* token in a sentence simultaneously without ever seeing the
 answer, which turns one document into thousands of training signals.
 
@@ -2377,9 +2382,12 @@ matrix is $m \times n$ — no longer square. That is how "attend to the source
 sentence while writing the translation" is expressed.
 
 ::: {.column-margin}
-Cross-attention is also how most multimodal models attach an image to a
-language model: the image encoder produces keys and values, the language model
-supplies the queries. We come back to this in @sec-multimodal.
+Some multimodal models attach an image this way — Flamingo
+[@alayrac2022flamingo] lets the language model look at the image through
+cross-attention, with the image encoder producing keys and values. Most open
+vision-language models instead project image tokens straight into the language
+model's input sequence [@liu2023visual]. We come back to both in
+@sec-multimodal.
 :::
 
 ### Why decoder-only won
@@ -2408,9 +2416,10 @@ the KV cache is why generation costs what it costs.
 **Encoder-only models are not obsolete.** For classification and retrieval at
 volume, a 110M-parameter BERT-style encoder is often 100× cheaper per document
 than a generative model and just as accurate, because it emits one vector in
-one forward pass instead of decoding token by token. Most of the embedding
-models behind the retrieval systems in @sec-rag are encoders (a few recent ones
-are decoders adapted to the job). Choosing a 7B decoder
+one forward pass instead of decoding token by token. Most high-volume retrieval
+systems (@sec-retrieval) still run encoder embedding models, although the top
+of the embedding leaderboards is increasingly held by decoders adapted to the
+job. Choosing a 7B decoder
 for sentiment analysis is a common and expensive mistake — and @sec-bake-off
 already showed how often the cheaper representation wins.
 :::
@@ -2606,9 +2615,12 @@ do not have 64 KV heads.** The original LLaMA 65B still used full multi-head
 attention, but Llama 2 70B, Llama 3, Mistral's models and their descendants use
 8, and the next section explains why. Redo the
 arithmetic with $h_{\text{kv}} = 8$ and the 85.9 GB becomes **10.7 GB**. That
-one substitution is the difference between a model that needs a node and a
-model that fits on a card, and it is the single most consequential number in
-this chapter.
+one substitution is the difference between a single 32k-context request whose
+cache is larger than an entire 80 GB card (85.9 GB) and one that fits in an
+eighth of it (10.7 GB). The weights still need a node — 140 GB in fp16 — but on
+the four-card node of exercise 9 the room left over holds eight times as many
+concurrent requests at the same context. It is the single most consequential
+number in this chapter.
 
 ::: {.anlp-widget}
 ```{=html}
@@ -2832,7 +2844,8 @@ most misread number in open-weight model announcements, and it matters
 directly when you cost out self-hosting in @sec-serving.
 :::
 
-The idea is old [@shazeer2017outrageously] and became practical when the
+The idea goes back to the early 1990s; its sparse, gated form for large
+language models is due to @shazeer2017outrageously, and it became practical when the
 routing was simplified to one expert per token and the engineering worked out
 at scale [@fedus2022switch]. The hard part in practice is not the routing rule
 but **load balancing**: nothing stops the router from sending almost every
@@ -2869,20 +2882,23 @@ across shipped models it has ranged from about 30% down to 3%.
 
 ## Scaling laws and what they predict {#sec-scaling-laws}
 
-Transformers turned out to have a property that almost nothing else in machine
-learning has: [make them bigger and their loss falls in a way you can predict
-in advance.]{.hl} Loss follows a power law in parameters, in data, and in
+Transformers turned out to show, unusually cleanly and over an unusually wide
+range, a property that is not unique to them — LSTMs follow power laws too,
+only with a worse constant [@kaplan2020scaling]: [make them bigger and their
+loss falls in a way you can predict in advance.]{.hl} Loss follows a power law in parameters, in data, and in
 compute — a straight line on log-log axes over many orders of magnitude
 [@kaplan2020scaling]. That predictability is the reason anyone was willing to
 spend nine figures on a training run.
 
 The first version of the analysis suggested growing the model much faster than
 the data. It was wrong, in a way that matters and that is worth understanding
-because the error was methodological rather than arithmetical: every run used
-the same learning-rate schedule, whatever its number of training tokens. The
-loss at smaller token counts was therefore read off runs whose schedule had
-not finished, and it looked worse than a properly scheduled run would have
-been. Redoing it properly gave a different
+because the error was methodological rather than arithmetical. The Chinchilla
+authors' explanation is that every run used the same learning-rate schedule,
+whatever its number of training tokens, so the loss at smaller token counts
+was read off runs whose schedule had not finished. Later re-analyses point to
+further causes — how the last layer's compute is counted, warmup length, and
+optimiser settings not re-tuned for scale — so treat the schedule as one
+reason, not the whole story. Redoing it properly gave a different
 answer — [for a fixed compute budget, parameters and tokens should grow at
 roughly the same rate]{.hl}, about 20 tokens per parameter
 [@hoffmann2022chinchilla]:
