@@ -4,9 +4,11 @@
 **Chapter status: drafted.** The measurements here are small on purpose —
 about 150 short requests against a 3B model on a laptop, a few minutes in
 total. They are enough because what matters is a ratio whose *sign and cause*
-are the same on every machine — prefill is compute-bound, decode is
+are the same on every machine, at least for single or small-batch inference
+as here — prefill is compute-bound, decode is
 bandwidth-bound (limited by how fast weights can be read from memory, not by
-arithmetic). The magnitude does not transfer, and the chapter says where
+arithmetic). With large enough batches decode can become compute-bound too;
+@sec-serving-batching works out where. The magnitude does not transfer, and the chapter says where
 it stops transferring rather than pretending otherwise. Everything that needs a GPU fleet to observe is
 cited rather than claimed. Every condition is measured five times and reported
 as a median; the conditions are run in shuffled order, so drift cannot pile up
@@ -56,9 +58,9 @@ so the whole prompt goes through the network as one batched matrix
 multiplication — the hardware is busy and the work is compute-bound.
 
 **Decode** writes the answer. Token *n+1* cannot be computed until token *n*
-exists, so each one is a separate pass over the whole model, and the machine
-spends most of its time moving weights from memory rather than multiplying
-them.
+exists, so each one is a separate pass over the whole model, and — as long as
+the batch is small — the machine spends most of its time moving weights from
+memory rather than multiplying them.
 
 That asymmetry is the chapter's foundation, and it is easy to measure. Six
 prompt lengths, each with its own text so nothing is cached, generating 32
@@ -303,9 +305,11 @@ you have committed 14 GiB (about 15 GB) before the first request.
 
 The 8 KV heads against 24 attention heads in that arithmetic are
 **grouped-query attention**, and they are the reason the number is 14 GiB
-rather than 42 — three heads share each key-value pair. It is a
-memory-bandwidth optimisation that shows up as a serving cost, which is a
-recurring shape: architecture choices from @sec-transformers reappear here as
+rather than 42 — three heads share each key-value pair. It shrinks the
+per-request KV cache (and the cache bytes decode reads each step);
+@sec-attention-cost does the same arithmetic for a 70B-class model, 10.7 GB per
+request at 32k instead of 85.9 GB under hypothetical full multi-head attention.
+It is a recurring shape: architecture choices from @sec-transformers reappear here as
 line items.
 
 **Sizing a card, all together.** The memory a server needs is roughly
@@ -360,7 +364,9 @@ about $B = 74$.
 
 Prefill is the same formula with the prompt length in place of $B$. For the
 4,247-token prompt above, at fp16, that is an intensity of 4,247 — more than an order of
-magnitude past the ridge, which is exactly why prefill is compute-bound and
+magnitude past the ridge. (That ridge is for an H100; on the Apple Silicon chip
+measured here peak compute is far lower relative to bandwidth, and four-bit
+weights raise the intensity further, so the gap is larger still.) That is exactly why prefill is compute-bound and
 decode is not, and why the two halves of the table behave so differently.
 
 That number is also the honest boundary on the claim that follows.
@@ -539,15 +545,17 @@ Two things to read off it: the hit rate is worth more than any change on the
 output side, and once the cache works, input is about two thirds of the *bill*
 even though it is 94% of the *tokens*.
 
-The widget below is that arithmetic, wired to the latency model from
-@sec-serving-halves so both move together. It holds the measured rates
+The widget below computes the time side of that worksheet — seconds per
+request and machine-hours per month, not dollars — wired to the latency model
+from @sec-serving-halves so both move together; multiply by your own prices for
+the bill. It holds the measured rates
 fixed, so it ignores the decode slowdown at long context and extrapolates
 beyond the 7,400 tokens actually measured; read its long-prompt end as a lower
 bound.
 
 ::: {.anlp-widget}
 ```{=html}
-<div class="widget-title">Latency and cost, on the numbers measured above — move the prompt, watch what happens</div>
+<div class="widget-title">Latency and machine time, on the numbers measured above — move the prompt, watch what happens</div>
 ```
 
 ```{ojs}
@@ -648,7 +656,8 @@ Two deserve a sentence each, because both are widely misunderstood.
 **Quantization** stores weights at reduced precision — the model measured in
 this chapter is Q4_K_M, about five bits per weight on average. Because decode
 reads every weight once per step, fewer bytes per weight also raise the decode
-ceiling, roughly bandwidth ÷ weight bytes: that is how the opening note got
+ceiling, roughly bandwidth ÷ weight bytes at short context (at long context the
+KV-cache bytes read each step add to the denominator): that is how the opening note got
 380 GB/s from 190 tokens per second on a 2.0 GB file, and the same chip would
 top out near 60 tokens per second on the 6.4 GB fp16 weights. Modern post-training methods
 choose *which* weights to keep precise rather than rounding uniformly: GPTQ
@@ -964,7 +973,9 @@ for your configured window; and the paragraph from step 6.
 
 5. **TTFT against context.** Plot time to first token against prompt length for
    your setup, over at least five lengths. Fit a line. Use the slope to predict
-   TTFT at a context length you have not tested, then test it.
+   TTFT at a context length you have not tested, then test it. Because
+   prefill's attention part grows faster than prompt length, a linear fit
+   underestimates TTFT at long context; report the departure from linearity.
 
 6. **The output-length myth.** Find a place where someone proposed saving money
    by asking the model for shorter answers. Using the input/output ratio you
@@ -1041,9 +1052,9 @@ once you know your own ratio.
   generated in this book's own summarization measurement — a token ratio, which
   becomes nearer 3:1 or 4:1 once output tokens are priced higher. Asking for
   shorter answers saves little; sending less saves a lot. Boilerplate removal
-  beats model selection, and it is the one form of "send less" with no quality
-  risk — dropping retrieved context or few-shot examples is a quality decision
-  and belongs in the eval.
+  is the one form of "send less" with no quality risk; switching models may save
+  more, but it is a quality decision — as is dropping retrieved context or
+  few-shot examples — and belongs in the eval.
 
 - **Order the levers by what they cost you.** Removing genuinely redundant
   tokens and reusing a cached prefix carry no quality risk and go first;
