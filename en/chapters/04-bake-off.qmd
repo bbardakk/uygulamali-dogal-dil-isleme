@@ -523,8 +523,8 @@ schemes = {
   "tf-idf":          TfidfVectorizer(min_df=2, sublinear_tf=True, token_pattern=PAT, **LOC),
   "tf-idf 1-2 gram": TfidfVectorizer(min_df=2, sublinear_tf=True,
                                      ngram_range=(1, 2), token_pattern=PAT, **LOC),
-  "tf-idf char 3-5": TfidfVectorizer(min_df=3, sublinear_tf=True,
-                                     analyzer="char_wb", ngram_range=(3, 5), **LOC),
+  "tf-idf char_wb 3-5": TfidfVectorizer(min_df=3, sublinear_tf=True,
+                                        analyzer="char_wb", ngram_range=(3, 5), **LOC),
 }
 clf = LogisticRegression(max_iter=2000, class_weight="balanced", random_state=42)
 ```
@@ -605,7 +605,7 @@ any of it — the repair is to delete the mark from the text you were given,
 not to lowercase it differently.
 
 Why fix it anyway? Because the reader copying this code will not have that
-corpus. The measured difference is:
+corpus. A small illustration of the difference:
 
 ```text
 'İYİ'.lower()  ->  'i̇yi̇'  ->  under [a-zçğıöşü]+  ['i', 'yi']   split in two
@@ -698,9 +698,10 @@ can be told apart from *good*. [↩](#term-bigram){.term-back}
 :::
 
 **[Bigrams](#gloss-bigram){#term-bigram .term-ref} are the largest gain available in round 1: +4.3 macro-F1 over word
-unigram TF-IDF, +2.7 over raw counts.** (Not the largest in the chapter — that
-is the 14.6 points embeddings take from counts at 250 labels. This is the
-largest available once the label budget is fixed.)
+unigram TF-IDF, +2.7 over raw counts.** (Not the largest gaps in the chapter — the two
+families are 14.8 points apart, and embeddings lead counts by 14.6 points at
+250 labels. This is the largest gain available within the counting family
+once the label budget is fixed.)
 One important mechanism behind the gain is probably negation — we did not
 ablate it separately, so that is a hypothesis; bigrams also pick up multi-word
 sentiment phrases, product names and collocations. The negation side is worth
@@ -708,8 +709,13 @@ seeing. `değil` ("not")
 as a unigram is a strong negative feature on its own, but `beğendim` ("I
 liked it") and `beğenmedim` ("I did not like it") are already separate
 unigrams thanks to Turkish morphology — the negation is a *suffix*, inside
-the word. What bigrams add is the multi-word version: `tavsiye etmem`
-("I do not recommend"), `memnun kalmadım` ("I was not satisfied"). Turkish
+the word. What bigrams add is negation built with a separate word: `iyi
+değil` ("not good"), `güzel değil` ("not nice"). `değil` is negative on its
+own, but only a bigram sees *what* it negates. (In pairs like `tavsiye etmem`
+("I do not recommend") or `memnun kalmadım` ("I was not satisfied") the
+negation is still a suffix — `etmem` and `kalmadım` are strong negative
+unigrams in the table below; the bigram's contribution there is to attach the
+`tavsiye` or `memnun` context to it.) Turkish
 puts some negation in the morphology, where a bag of words gets it for free,
 and some in the syntax, where it needs bigrams.
 
@@ -735,7 +741,7 @@ kaliteli     +4.32  (good quality)   kalmadım     -5.33  (I was not [satisfied]
 Every one of those is defensible to a domain expert in a sentence, and two of
 them are genuinely informative about the domain rather than about language:
 `iade` ("refund") is a negative signal because people who return things are
-unhappy, and `fakat`/`ama` ("however", "but") are negative because a Turkish
+unhappy, and `fakat` ("however") is negative because a Turkish
 review that contains a contrastive conjunction is usually about to complain.
 Nobody wrote those rules down. They fell out of 40,000 labels.
 
@@ -812,7 +818,7 @@ gap between the families here (76.21 against 61.39) is enormous and safe, while 
 resolvable by this design at all: 73.51 against 71.95, 71.95 against 70.39, and
 61.39 against 61.36 are all inside it.
 
-One comparison is settled properly later in the chapter: one sparse–dense
+One comparison is tested later in the chapter, at least on accuracy: one sparse–dense
 pair — plain word TF-IDF against averaged fastText — gets a McNemar test on
 paired predictions, $\chi^2 = 684.2$. Note what that
 test is about — McNemar compares the two methods' *error rates*, so it settles
@@ -864,7 +870,7 @@ measurement above is precisely **"static embeddings trained from scratch on
 0.9M tokens lose to counts extracted from the same 40,000 documents"** — not
 "static embeddings lose to counting". Pre-trained Turkish vectors would be
 expected to lift the dense curve; this chapter did not measure by how much, and
-@sec-embeddings' exercise 6 is where you find out.
+exercise 13 is where you find out.
 
 What does *not* depend on corpus size is the averaging defect. No amount of
 training data makes `kalite iyi fiyat kötü` and `kalite kötü fiyat iyi` stop
@@ -888,7 +894,7 @@ storage, and this chapter's own table is the counter-example.
 
 Put that as a ratio and it depends on which sparse model you compare against.
 Against the best-scoring one — word unigrams *and* bigrams, 101,659 columns —
-it is a 1,017-fold compression for a 19% relative loss. Against
+it is a 1,017-fold reduction in dimensions for a 19% relative loss. Against
 plain word tf-idf and its 30,195 columns it is 302-fold, which is the figure
 in the summary table later in this chapter.
 
@@ -958,8 +964,11 @@ hızlıcana  (colloquial "nice and fast")
   fastText   hızlıca, hızlıda, hızlısı, hızlıydı, hızlı
 ```
 
-That is a clean win, exactly as advertised [@bojanowski2017enriching]. Every
-unseen form lands next to its own stem family.
+On coverage that is a clean win, exactly as advertised
+[@bojanowski2017enriching]: every unseen form lands next to its own stem
+family. But note that the first neighbour of `kargolanmamış` ("not yet
+shipped") is `kargolanmış` ("shipped"), which has lost the negative suffix —
+the first sign of the flaw shown below.
 
 Now the finding that makes this chapter worth writing. Compare the two models
 on words that are *in* both vocabularies:
@@ -998,8 +1007,9 @@ as a hypothesis: a two-word example cannot establish it, and the systematic
 version is the prefix test described in the previous paragraph, which this
 chapter did not run.
 
-Which is why, having solved the out-of-vocabulary problem completely,
-fastText scores **61.36** where word2vec scores **61.39**. Coverage went to
+If that hypothesis is right, it also explains why, having solved the
+out-of-vocabulary problem completely, fastText scores **61.36** where word2vec
+scores **61.39**. Coverage went to
 100%; macro-F1 was effectively unchanged in this run — a gap of 0.03 points,
 well inside the noise this chapter measures on itself.
 
@@ -1121,19 +1131,22 @@ leaderboard above. The interesting question is what the 272 look like.
   "çok sessiz çalışıyor makina ."      "makina" — colloquial for "makine"
 
 ### tf-idf right, averaged fastText wrong
-  "sıkıcı edebi yonu cok zayif"        gold negative — ft says positive
+  "sıkıcı edebi yonu cok zayif"        gold negative — fastText says positive
   "koku ne çok kötü ne çok iyi"        gold negative — "neither… nor…"
-  "cok guzel! kedi bayildi buna"       gold positive — ft says negative
+  "cok guzel! kedi bayildi buna"       gold positive — fastText says negative
 ```
 
 These are examples, not a systematic categorisation: classifying all 272
 would make the claims much stronger, and this chapter did not do it. The dense
 wins are exactly the promised ones: misspellings and missing
 diacritics, where a count vector sees an unknown column and a subword model
-sees a familiar shape. The dense losses are the promised ones too — the
+sees a familiar shape. One of the dense losses is the promised kind too — the
 second example is a `ne … ne …` construction ("neither very bad nor very
 good") in which the individual words give mixed signals and the *structure*
-carries the decision.
+carries the decision. But the picture is not that clean: the other two losses
+are also texts with missing diacritics, so missing diacritics alone do not
+hand fastText the win. These six examples illustrate both kinds; they do not
+show which side wins and why.
 
 That points at a representational failure consistent with the classification gap, and it is testable directly.
 
@@ -1336,7 +1349,7 @@ fixed training size, and a paired bootstrap over the test set.
   <text x="704" y="114" class="t-xs t-end t-muted">learns everything from labels</text>
 
   <line x1="70" y1="312" x2="710" y2="312" class="ln-thin"/>
-  <text x="70" y="326" class="t-xs t-muted">FEWER THAN ~1,500 LABELS → COORDINATES.   MORE → COUNTS.   THE METHODS DID NOT CHANGE; THE BUDGET DID.</text>
+  <text x="70" y="326" class="t-xs t-muted">ON THIS DATA: UNDER ~1,500 LABELS → COORDINATES.  MORE → COUNTS.  SAME METHODS, DIFFERENT BUDGET.</text>
 </svg>
 ```
 
@@ -1390,8 +1403,8 @@ generalises to nothing.
 The embedding models started somewhere else entirely. They read all 903,190
 tokens of unlabelled text before any label existed, so word2vec, for example,
 already places `kalitesiz`, `dandik` and `dayanıksız` in the same region (the
-neighbour lists above). Sixteen labels
-is then enough to learn *which side of a boundary that region falls on* — one
+neighbour lists above). Sixteen negative examples (and 234 positive ones)
+are then enough to learn *which side of a boundary that region falls on* — one
 decision in 100 dimensions instead of thirty thousand.
 
 ::: {.column-margin}
@@ -1448,8 +1461,8 @@ MB and 301 non-zeros per document, for 70.39 macro-F1 — worse than plain
 word tf-idf at 9.7 MB — fifteen times the memory for a lower macro-F1. (The
 bag-of-words matrix has the same sparsity pattern and therefore the same size;
 only the tf-idf row appears in the table.) They are the right tool when spelling is the problem
-(and they were the *best* sparse method at 1,000 labels, where they beat word
-TF-IDF by 3.2 points), but they are not a free upgrade.
+(and at 1,000 labels, where they beat word TF-IDF by 3.2 points, they were
+the better of the two sparse methods on the learning curve), but they are not a free upgrade.
 
 **doc2vec must run gradient descent to vectorise a new document.** 1.73
 seconds for 10,000 reviews, against 0.11 for averaging — a 16-fold difference,
@@ -1680,7 +1693,8 @@ They would move the numbers and not the shape. That first clause is an
 expectation, not a measurement — neither variant was run here, and the
 reasoning below is why you would expect it, not evidence that it holds.
 
-Larger vectors and pretrained Turkish embeddings [@mikolov2018advances] would
+Larger vectors and pretrained Turkish embeddings
+[@grave2018learning] would
 be expected to lift the dense curve — probably a few points, and more at the
 left edge where extra pretraining data matters most. What they cannot do is fix
 averaging — but separate the two results, because only one of them is a
@@ -1691,9 +1705,8 @@ vectors could put `beğendim` and `beğenmedim` further apart. Pretraining might
 move those numbers and might move the crossover with them. This chapter did not
 measure by how much, and neither claim above should be read as settled.
 
-The honest way to settle it is @sec-embeddings' exercise 6, which is now well
-specified: rerun this chapter's script with 300-dimensional pretrained
-vectors and report whether the crossover moves past your actual label budget.
+The way to settle it is exercise 13: rerun this chapter's script with
+300-dimensional pretrained vectors and report whether the crossover moves past your actual label budget.
 That is the only version of the question that affects a decision.
 :::
 
@@ -1792,8 +1805,8 @@ change your answer. An answer with no number is an opinion; an answer with no
 | resource | what it is |
 |:--|:--|
 | [Let's build GPT: from scratch, in code](https://www.youtube.com/watch?v=kCc8FmEb1nY) — Andrej Karpathy | two hours that take you from nothing to a working language model; the best possible companion to a bake-off, because you stop treating any of these as black boxes |
-| [Hugging Face NLP course](https://huggingface.co/learn/nlp-course) | free and runnable; it starts from the transformer models this book reaches in Part II, so read it as the next step after this chapter's classical baselines |
-| [`fasttext`](https://github.com/facebookresearch/fastText) | the linear model that keeps winning on latency; worth having in every bake-off you run |
+| [Hugging Face LLM Course](https://huggingface.co/learn/llm-course) | formerly the NLP Course; free and runnable; it starts from the transformer models this book reaches in Part II, so read it as the next step after this chapter's classical baselines |
+| [`fasttext`](https://github.com/facebookresearch/fastText) | the linear model that keeps winning on latency; worth having in every bake-off you run (the repository has been archived since 2024: the package works but is unmaintained) |
 | [scikit-learn text feature guide](https://scikit-learn.org/stable/modules/feature_extraction.html) | the pipeline conventions this chapter's round 1 uses, with the cross-validation machinery next to them |
 | [Chip Huyen's blog](https://huyenchip.com/blog/) | on picking baselines and deciding when a model is good enough to ship |
 
@@ -1893,3 +1906,10 @@ past this chapter, and **Research** is open-ended.
     curve, draw 20 stratified subsamples and report the mean and a 95%
     interval for each representation. Report the crossover as a distribution
     rather than a single number — and put bigram TF-IDF on the curve too.
+13. **Rerun with pretrained vectors.** *(Advanced)* Replace round 2's
+    from-scratch vectors with the 300-dimensional pretrained Turkish fastText
+    vectors [@grave2018learning] and redraw
+    the learning curve on the same test set. First predict at which end the
+    dense curve will rise more and which way the crossover will move. Then
+    measure it, and report whether the crossover moves past your actual label
+    budget. Did the cosine of the `kalite iyi fiyat kötü` pair change?
