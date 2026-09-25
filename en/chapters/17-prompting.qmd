@@ -216,7 +216,13 @@ Three rules that follow:
    of an admission, because you left the model no legal way to say no.
 2. **Put the constraint where it binds.** An instruction 800 tokens above the
    input competes with the input for attention. Constraints that must hold go
-   close to the end.
+   close to the end. The rule is about *long* inputs: in long contexts models
+   use material at the start and end better than in the middle
+   [@liu2024lost], and @sec-context-engineering-compaction shows why restating
+   the goal at the end is nearly free. On this chapter's short reviews, the
+   `review first` variant — which moves the instruction towards the end — came
+   last; an untested difference on 150 items does not refute the rule, but it
+   is a reminder that the rule does not automatically transfer to short inputs.
 3. **Make the contract machine-checkable, then check it.** A schema you do not
    validate is a comment. @sec-decoding is where the enforcement machinery
    lives — grammars, JSON Schema, and the measurement of what constraining
@@ -248,8 +254,11 @@ Three of them do change what the labels *are*, and that turns out to be
 informative rather than a flaw in the design: `A`/`B` and `1`/`0` strip the
 labels of meaning entirely, and `olumlu`/`olumsuz` changes their language. Hold
 that in mind for the table — the semantically empty `A`/`B` finishes **second**,
-ahead of the meaningful Turkish pair by more than ten points. The model is not
-reading the labels as words. It is reading them as slots.
+ahead of the meaningful Turkish pair by more than ten points. That suggests the
+meaning of the label word is not decisive here — yet `olumlu`/`olumsuz`, which
+differs from `positive`/`negative` only in the labels' language, trails it by 12
+points, so the words still matter. The two findings together want an
+explanation, and the label-bias discussion below is one candidate.
 
 | variant | what it changes against `baseline` |
 |:--|:--|
@@ -358,8 +367,8 @@ Plot.plot({
 
 ```{ojs}
 //| echo: false
-md`The dashed line is the plain \`baseline\` prompt. Note that the three
-best variants differ from it *only* in how the two labels are spelled or how
+md`The dashed line is the plain \`baseline\` prompt. Note that the four
+best variants (third and fourth tied) differ from it *only* in how the two labels are spelled or how
 the instruction is laid out — and that the role prefix, the most reproduced
 pattern in circulation, comes 11th of 12.`
 ```
@@ -453,7 +462,8 @@ prompt — and that estimating it on a content-free input (such as `N/A`) and
 dividing it out substantially reduces the variance across prompt formats. The
 fix needs the model's probabilities for the label tokens, not just the text it
 returns; @sec-decoding shows how to read them. So the honest version of this section's result is:
-**before calibration the prompt is worth 14.67 points.** How much of that
+**before calibration the observed prompt spread is 14.67 points** — in a design
+where sampling noise alone can produce roughly 10. How much of that
 survives *after* is the experiment to run next, and reporting each variant's
 $P(\text{predict positive})$ on a balanced set — which should be 50% and
 almost certainly is not — is the one-column diagnostic that would have shown
@@ -465,13 +475,13 @@ Both of those readouts describe the same 150 reviews, cut two different ways:
 ```{=html}
 <div class="fig-title">The same 150 reviews, cut two ways — and the 42 that decide the question</div>
 <svg viewBox="0 0 764 308" style="max-width:744px" role="img"
-     aria-label="Of 150 balanced reviews, all twelve prompt variants agree on 104 (69.3%) and disagree on 46 (30.7%). Comparing only the best and worst variant, 108 reviews get the same answer from both and 42 differ; of those 42, the best prompt is right on 32 and the worst on 10, which McNemar separates at p = 0.0009.">
+     aria-label="Of 150 balanced reviews, all twelve prompt variants agree on 104 (69.3%) and disagree on 46 (30.7%). Comparing only the best and worst variant, 108 reviews get the same answer from both and 42 differ; of those 42, the best prompt is right on 32 and the worst on 10, which McNemar separates at an uncorrected p = 0.0009.">
 
   <text x="16" y="20" class="t-xs t-muted">ALL TWELVE VARIANTS ON THE SAME 150 REVIEWS — WHERE THEY AGREE, AND WHERE THE PROMPT DECIDES</text>
 
   <rect x="16" y="32" width="507.52" height="42" rx="5" class="box"/>
   <text x="269.76" y="49" class="t-b t-mid">104 reviews — all twelve variants give the same answer</text>
-  <text x="269.76" y="66" class="t-sm t-muted t-mid">69.3% — the model has an opinion</text>
+  <text x="269.76" y="66" class="t-sm t-muted t-mid">69.3% — all twelve variants agree</text>
 
   <rect x="523.52" y="32" width="224.48" height="42" rx="5" class="box-accent"/>
   <text x="635.76" y="49" class="t-b t-accent t-mid">46 reviews</text>
@@ -501,8 +511,8 @@ Both of those readouts describe the same 150 reviews, cut two different ways:
   <text x="32" y="216" class="t-sm t-b">Why the pairing matters</text>
   <g class="t-sm">
     <text x="32" y="240">Throwing away the 108 grey reviews is</text>
-    <text x="32" y="258">what turns two overlapping confidence</text>
-    <text x="32" y="276">intervals into McNemar p = 0.0009.</text>
+    <text x="32" y="258">what turns two overlapping intervals</text>
+    <text x="32" y="276">into McNemar p = 0.0009 (uncorrected).</text>
   </g>
 </svg>
 ```
@@ -540,9 +550,9 @@ Instruction language did almost nothing; label language did more than any
 formatting change. "Does language matter?" is not one
 question, and the two halves of it gave opposite answers on the same model.
 
-[The variable everyone argues about was noise where they argue about it, and the
-largest effect in the experiment was two words nobody thinks of as a
-variable.]{.hl}
+[The variable everyone argues about was too small to measure where they argue
+about it (at most about two points), and the largest difference in the experiment
+came from two words nobody thinks of as a variable.]{.hl}
 
 Three consequences, and the third is the one that changes how you work:
 
@@ -589,18 +599,21 @@ prompt without it). *You are an experienced customer-feedback analyst* is the
 most reproduced prompting pattern in circulation, and on this task it cost
 three points.
 
-**Politeness cost 2.67 points** (four reviews of 150). *Lütfen… Teşekkürler* is harmless-looking and
-it is not free.
+**Politeness cost 2.67 points** (a net four reviews of 150). *Lütfen… Teşekkürler* is harmless-looking,
+and here at least it did not help.
 
-Neither result generalises — that is the point. They are two more variables
-that a competent reader would call irrelevant and the model does not. The
+Neither result generalises, and neither is significant even on this sample: net
+differences of 5 and 4 reviews in 150 cannot reach the 5% level on an exact
+McNemar test even if every disagreement went the same way (the smallest possible
+two-sided $p$ is 0.0625 and 0.125). They are observations on this sample, not
+established findings. The
 lesson is not "never use a role prefix"; it is that [you cannot tell which
 prompt is better by reading them]{.hl}, and the belief that you can is what
 this whole section is arguing against.
 
 ## Making prompt work reviewable {#sec-prompting-eval}
 
-If the prompt is a component and its effect is 14.67 points, it needs the
+If the prompt is a component and its observed spread is 14.67 points, it needs the
 machinery any other component gets. Four pieces, in the order they pay off.
 
 ### 1. Pin down reproducibility first
@@ -669,9 +682,11 @@ McNemar exact            p = 0.0009
 ```
 
 Comparing two accuracy figures with overlapping confidence intervals would
-have called that inconclusive. The paired test calls it decisively, from the
-same 150 documents, because it throws away the 108 items both prompts agree
-on — which carry no information about the difference.
+have called that inconclusive. The paired test can see, on the same 150
+documents, a difference the unpaired comparison cannot, because it throws away
+the 108 items both prompts agree on — which carry no information about the
+difference. (That holds if you chose the pair before looking; if you picked best
+and worst afterwards, you need the multiple-comparison correction shown above.)
 
 ### 4. Version the template, not the string
 
@@ -702,6 +717,8 @@ with a measurement rather than an argument.
 You do not know, because you have not separated the model from the prompt.
 Measured on one model, one task and twelve semantically identical prompts, the
 spread was **14.67 points** — three times the gap you are trying to interpret.
+Part of that observed spread is sampling noise (roughly 10 points of it could
+come from noise alone at 150 items), but the same noise sits in your 5 points.
 
 Run both models over a *set* of prompts and compare the distributions. If that
 is too expensive, at least run each model on two or three prompts and report
@@ -711,7 +728,10 @@ the range. A single-prompt comparison is a statement about the prompts.
 ::: {.callout-note collapse="true"}
 ## 2. Your reviewer says "moving the input above the instruction is a no-op." Are they right?
 
-Semantically yes, empirically no: it cost **4.00 points** here (79.33% → 75.33%).
+Semantically yes; empirically you cannot rely on it. Here the score fell
+**4.00 points** (79.33% → 75.33%; a net six reviews of 150). No paired test is
+reported for this pair, so the drop is not established — but you cannot predict
+its sign by reading, and you have to measure it.
 
 That is the whole argument for treating prompts as testable components. No
 reviewer can predict that by reading, because there is nothing to read — the
@@ -726,19 +746,27 @@ problem.
 On this task it came 11th of 12, at 76.00% against 79.33% for the same prompt
 without it.
 
-Do not over-read that either — it is one task and one model, and the point is
-not that role prefixes are bad. The point is that the most-reproduced pattern
-in prompting lost to its own baseline here, and nobody would have guessed the
-sign. Measure it on your task; it takes one extra run.
+Do not over-read that either — it is one task and one model, and a net
+difference of five reviews in 150 cannot be significant at the 5% level. The
+point is not that role prefixes are bad. The point is that the most-reproduced
+pattern in prompting failed to beat its own baseline here, and the sign could
+not be guessed in advance. Measure it on your task: one extra run and a paired
+test on a large enough set.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Your few-shot examples have wrong labels. How bad is that?
 
-Less bad than you would think, which tells you something about what
-demonstrations are for. @min2022rethinking randomised the labels in the
+It depends on *how* they are wrong. Randomly noisy labels are less bad than you
+would think, which tells you something about what demonstrations are for.
+@min2022rethinking randomised the labels in the
 demonstrations and most of the benefit survived, because what the examples
 mainly convey is the *format and the label space* rather than the mapping.
+
+But random labels and systematically flipped labels are not the same thing.
+Task learning is real and grows with scale [@pan2023incontext], and large enough
+models can follow a flipped mapping in the demonstrations and fall below chance
+(Wei et al., 2023). Fix wrong labels as soon as you know about them.
 
 Practical readings: do not spend a week hand-curating examples before checking
 whether examples help at all; and if your task's difficulty is in the mapping
@@ -831,7 +859,8 @@ it was larger than the sampling interval.
 Treat the prompt as a versioned component: template in the repository, version
 logged with every output, a frozen evaluation set, and a delta reported with
 every change. Then say why review is not enough — a semantically empty edit
-cost 4 points here and no reviewer would have predicted it.
+lowered the score by 4 points here (on 150 items, untested for significance)
+and its sign could not have been predicted by reading.
 
 **Q: Your evaluation results changed and nothing was deployed. What happened?**
 
@@ -1021,7 +1050,9 @@ will land differently once you have seen your own spread.
 - **The prompt is part of the model.** Twelve prompts that a competent reader
   would call the same instruction spanned **14.67 accuracy points** on one
   model and one task — 75.33% to 90.00%. That is not a writing difference; it
-  is a component with an effect size.
+  is a component to be measured — though sampling noise alone could produce
+  roughly 10 points of that observed spread, and the accuracy-free evidence is
+  the disagreement rate in the next point.
 
 - **On 30.7% of items, the answer changed across the twelve variants.** All
   twelve agreed on only 69.3% of the reviews; two variants disagreed on a
@@ -1041,15 +1072,18 @@ will land differently once you have seen your own spread.
   prompt each is a statement about prompts. Compare over a set of prompts and
   report the distribution.
 
-- **The folklore variable was noise and the ignored one was the effect.**
-  @sec-classification measured English-versus-Turkish instructions at
-  **+0.54, $p = 0.54$** on this same model. Bullet formatting, here, was
-  worth eight points. The role prefix — the most reproduced pattern in
-  circulation — came 11th of 12 and cost 3.33 points against its own baseline.
+- **The folklore variable was too small to detect, and the ignored ones were
+  larger on this sample.** @sec-classification measured English-versus-Turkish
+  instructions at **+0.54 (95% upper bound +2.25; $p = 0.54$)** on this same
+  model. Bullet formatting, here, moved the score eight points on 150 items. The
+  role prefix — the most reproduced pattern in circulation — came 11th of 12,
+  3.33 points behind its own baseline: too small a gap to be significant on its
+  own, but its sign could not be predicted.
 
 - **You cannot tell which prompt is better by reading them.** That is the whole
   case for treating prompt changes as a testing problem: a semantically empty
-  edit cost 4.00 points, and no reviewer would have predicted the sign.
+  edit lowered the score by 4.00 points (untested for significance), and its
+  sign could not be predicted by reading.
 
 - **Check reproducibility before you measure anything.** Locally, temperature 0
   gave identical output on every repeat with or without a seed, and so did a
