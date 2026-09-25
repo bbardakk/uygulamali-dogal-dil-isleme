@@ -2,19 +2,19 @@
 
 ::: {.callout-note appearance="simple" icon="false"}
 **Bölüm durumu: çevrildi.** Kaynak metin:
-[İngilizce 25. bölüm](../../en/chapters/25-context-engineering.html). Ölçümler
-`ollama` 0.24.0 üzerinden `qwen3.5:9b`'yi, gerçek Türkçe haberlerin içine
-gömülmüş uydurma olgularda çalıştırıyor; böylece doğru bir cevap ancak
-bağlamdan gelmiş olabilir. Bu bölüm, @sec-ajan-anatomisi'ndeki bir bulgunun
+[İngilizce 25. bölüm](../../en/chapters/25-context-engineering.html). Ölçümlerde
+`qwen3.5:9b`, `ollama` 0.24.0 üzerinden, gerçek Türkçe haberlerin içine
+gömülmüş uydurma olgularla sınandı; böylece doğru bir cevap ancak bağlamdan
+gelmiş olabilir. Bu bölüm, @sec-ajan-anatomisi'teki bir bulgunun
 doğal sonucudur: transkript, ajanın durumunun *kendisidir*. Çalıştırmalar
 arasında neyin kaldığını @sec-bellek ele alıyor. Uzun bağlam deneyini yeniden
 koşarsanız bir tekrarlanabilirlik notu: `ollama`, sunulan `num_ctx`'ten (bağlam
-uzunluğu ayarı) uzun bir prompt'u sessizce kırpar ve hiçbir uyarı vermez. Bu
+uzunluğu ayarı) uzun bir prompt'u (istemi) sessizce kırpar ve hiçbir uyarı vermez. Bu
 ayarı en uzun koşulunuzun üstünde açıkça belirleyin ve sunulan uzunluğu
 varsaymak yerine doğrulayın. Sessizce 4 bine kesilmiş 11 bin token'lık bir
 prompt artık uzun bağlam koşulu değildir; kesinti bir iğneyi (aranan olguyu)
-de silmiş olabilir. Bu durumda ne düz bir eğri ne de bir düşüş göründüğü
-anlama gelir. Yazılım: NumPy 2.5.2, Python 3.14.5.
+de silmiş olabilir. Bu durumda ne düz bir eğriye ne de bir düşüşe
+güvenebilirsiniz. Yazılım: NumPy 2.5.2, Python 3.14.5.
 :::
 
 **Öğrenme hedefleri.** Bu bölümün sonunda:
@@ -26,12 +26,17 @@ anlama gelir. Yazılım: NumPy 2.5.2, Python 3.14.5.
 - sıkıştırma (compaction: geçmişi özetleyip gereksiz ayrıntıları çıkararak
   bağlamı küçültme), bağlam yalıtımı (context isolation: alt görevi ayrı
   bağlamda çalıştırma) ve tam zamanında erişim (just-in-time retrieval: bilgiyi
-  ihtiyaç doğduğunda getirme) tekniklerini, her birinin bedelini bilerek
-  bilinçli uygulayabilirsiniz;
+  ihtiyaç doğduğunda getirme) tekniklerini ve dosya sistemini dış bellek olarak
+  kullanmayı, her birinin bedelini bilerek bilinçli uygulayabilirsiniz;
 - bir ajanın token kullanımını doğruluk kaybetmeden ciddi biçimde
   kısabilirsiniz.
 
 ## Kap değil, bütçe {#sec-baglam-muhendisligi-butce}
+
+Önce ayrımı koyalım: prompt tasarımı (@sec-promptlama) tek bir talimatın nasıl
+yazılacağıyla ilgilenir; bağlam mühendisliği ise her model çağrısında pencereye
+*neyin* girdiğini — sistem prompt'u, araç tanımları, erişilen belgeler, geçmiş
+— ve neyin dışarıda kaldığını yönetir.
 
 Pencere genellikle bir kapasite olarak tarif edilir: *200 bin token, yani 200
 bin token sığdırabilirsiniz*. Bu çerçeve önemli bir noktada yanlıştır: tek
@@ -74,25 +79,34 @@ saymadan görünmez.
 ### Aritmetiği değiştiren tek şey {#sec-baglam-muhendisligi-cache}
 
 Bu hesabı kullanmadan önce bir çekinceyi belirtelim. Sağlayıcılar bir prompt'un
-**önekini** önbelleğe alır (prompt önbellekleme, *prompt caching*): değişmemiş
+**ön ekini** önbelleğe alır (prompt önbellekleme, *prompt caching*): değişmemiş
 bir sistem prompt'u ve araç bloğu, sonraki çağrıda yeniden gönderildiğinde ilk
 çağrı fiyatının bir kesriyle faturalanır ve *prefill*'in (ilk çıktı token'ından
 önce prompt'u okuyan geçişin) çoğunu atlar — @sec-servis, önbellekteki bir
-önekle prefill süresini prompt uzunluğundan bağımsız olarak 12–16 ms'de sabit
+ön ekle prefill süresini prompt uzunluğundan bağımsız olarak 12–16 ms'de sabit
 ölçtü. Yani "her token her çağrıda yeniden gönderilir" ifadesi *token'lar*
 için tam olarak doğru, *fatura* için yalnızca kısmen.
 
-Neden yalnızca *önek*? Çünkü attention (dikkat mekanizması) *nedensel* (causal)
+Neden yalnızca *ön ek*? Çünkü attention (dikkat mekanizması) *nedensel* (causal)
 çalışır: *i*. token için saklanan anahtar ve değerler, yani
-@sec-attention-maliyeti'ndeki KV önbelleği, kendisinden önceki her token'a
+@sec-attention-maliyeti'daki KV önbelleği, kendisinden önceki her token'a
 bağlıdır. Tek bir token'ı değiştirirseniz ondan sonraki her şey yeniden
 hesaplanmak zorundadır; ondan öncesi ise olduğu gibi yeniden kullanılabilir.
 Pratik kurallar bu tek olgudan çıkar (mekanizma @sec-servis-onbellek'te
-anlatılıyor). Önek bayt bayt aynı olmalıdır; sistem prompt'unun
+anlatılıyor). Ön ek bayt bayt aynı olmalıdır; sistem prompt'unun
 başına yakın bir zaman damgası ya da kullanıcı adı, altındaki her şey için
 önbelleği sessizce kapatır. Ayrıca bir önbellek kaydı varsayılan olarak birkaç
 dakika kullanılmayınca silinir ve bazı sağlayıcılar önbelleğe yazmak için ek
 ücret alır.
+
+::: {.column-margin}
+Kısa bir sistem prompt'unda hiç önbellek isabeti görmüyorsanız önce iki şeye
+bakın. Sağlayıcıların çoğu önbelleğe almak için asgari bir ön ek uzunluğu ister
+(tipik olarak bin token ve üstü; kesin eşik sağlayıcıya ve modele göre
+değişir). Bazı API'lerde de önbellek kesme noktasını istekte açıkça
+işaretlemeniz gerekir. İkisi için de kullandığınız sağlayıcının belgelerine
+bakın.
+:::
 
 Etkinin büyüklüğünü bir örnek somutlaştırır. Sistem prompt'u ve araç tanımları
 toplam 5.000 token olan, 10 model çağrılık bir ajan çalıştırması düşünün ve
@@ -100,29 +114,29 @@ toplam 5.000 token olan, 10 model çağrılık bir ajan çalıştırması düş�
 göre değişir): önbelleğe yazma normal girdi fiyatının 1,25 katı, önbellekten
 okuma 0,1 katı. Önbelleksiz, sabit kısım 10 × 5.000 = 50.000 girdi token'ının
 fiyatına mal olur. Önbellekle 1,25 × 5.000 + 9 × 0,1 × 5.000 = 10.750 token'ın
-fiyatına — yani tam olarak aynı token'lar için yaklaşık 4,7 kat daha ucuz.
+fiyatına — yani aynı token'lar için yaklaşık 4,7 kat daha ucuz.
 
 Bundan iki sonuç çıkıyor ve ikisi de token kesmenin, ham sayının düşündürdüğünden
 daha az kazandırdığını gösteriyor. Sabit maliyetler göründüklerinden ucuzdur;
 dolayısıyla sistem prompt'unu budamak, token sayısını adım sayısıyla çarparak
 bulunan rakamdan daha az kazandırır. Ve **sıkıştırma önbelleği geçersiz
-kılar**: bir bağlamın ortasını yeniden yazmak, önbellekteki öneki o noktadan
+kılar**: bir bağlamın ortasını yeniden yazmak, önbellekteki ön eki o noktadan
 itibaren kullanılamaz hâle getirir; yani sıkıştırmadan sonraki ilk çağrı,
 yeniden yazılan noktadan sonraki her şey için tam fiyat — varsa yazma
 ücretiyle birlikte — öder. Bağlamı yapabildiğiniz yerde yalnızca ekleme
-yapılan (append-only) biçimde tasarlayın — durağan önek, büyüyen sonek, en
-sonda yeniden ifade edilmiş görev — ve sık sık küçük adımlarla değil, seyrek
+yapılan (append-only) biçimde tasarlayın — durağan ön ek, büyüyen son ek, en
+sonda yinelenen görev — ve sık sık küçük adımlarla değil, seyrek
 olarak büyük adımlarla sıkıştırın.
 
 **Neye bakacağız.** Önce uzun bağlamların gerçekten bozulup bozulmadığına: bu
 bölümün kendi ölçümü hiçbir şey bulmuyor, yayımlanmış benchmark'lar
 (kıyaslamalar) ise bir çöküş buluyor — ve bu uyuşmazlığın nedeni, o alt
 bölümdeki en işe yarar şey. Sonra dört tekniğe: sıkıştırma, yani neyi
-kaybedeceğinizi önceden seçtiğiniz kayıplı bir sıkıştırma problemi; yalıtım,
+kaybedeceğinizi önceden seçmeniz gereken kayıplı bir özetleme problemi; yalıtım,
 yani çoğu zaman elinizdeki en büyük kaldıraç; her şeyi önden yüklemek yerine
 tam zamanında erişim; ve transkriptin taşıyamayacağı bilgiyi koymak için bir
 yer olarak dosya sistemi. Son olarak da bunların hepsinin yine de başarısız
-olduğu duruma bakacağız: veri zaten hiçbir zaman metin değildi.
+olduğu duruma bakacağız: verinin aslında hiç metin olmadığı duruma.
 
 ## Uzun bağlam gerçekten bozuluyor mu? {#sec-baglam-muhendisligi-curume}
 
@@ -132,7 +146,7 @@ Yukarıdaki bütçe argümanı parayla ilgili. İkinci ve daha gürültülü bir
 
 @sec-rag bunu sınadı ve hiçbir şey bulmadı: 640 sorgu, on altı koşul, 16.775
 token'a kadar, **her bağlam boyutunda ve her konumda %100**. Bu bölüm için daha
-zor bir yerel sürüm çalıştırdım — bulunup toplanacak bir değil iki uydurma rakam
+zor bir yerel sürüm çalıştırdık — bulunup toplanacak bir değil iki uydurma rakam
 — ve eğri yine esasen düzdü:
 
 ```text
@@ -148,20 +162,25 @@ qwen3.5:9b, 60 tasks, two invented figures to find and sum
 
 Altmış dikkat dağıtıcılı koşul, on ikilikten *yüksek* puan aldı. Bu monoton
 olmayan biçim gürültüyle tutarlı, ama gürültü olduğunu kanıtlamıyor — içeriğin
-ya da konumun gerçek bir etkisi de monoton olmak zorunda değil. Aralıklar
-büyük ölçüde örtüşüyor, ama örtüşen aralıklar bir test değildir; o yüzden
-gerçek bir test yapalım. En büyük fark, 0'a karşı 12 dikkat dağıtıcı (60/60'a
-karşı 53/60), aynı 60 görev üzerinde; dolayısıyla doğru araç
+ya da konumun gerçek bir etkisi de monoton olmak zorunda değil. Kısacası 78 kat
+token eklemek, bu örneklemin saptayabileceği bir fark yaratmadı — ki bu,
+koşulların eşdeğer olduğunun kanıtı değildir — ve ortadaki çukur, 60 görevin
+her iki yönde de ayırt edebileceği sınırın tam üstünde.
+
+::: {.callout-note collapse="true"}
+## İstatistik ayrıntısı: ortadaki çukur anlamlı mı?
+
+Aralıklar büyük ölçüde örtüşüyor, ama örtüşen aralıklar bir test değildir; o
+yüzden gerçek bir test yapalım. En büyük fark, 0'a karşı 12 dikkat dağıtıcı
+(60/60'a karşı 53/60), aynı 60 görev üzerinde; dolayısıyla doğru araç
 eşleştirilmiş (paired) testtir: yedi uyuşmazlığın hepsi aynı yöne gidiyor ve
 kesin (exact) McNemar testi iki yönlü $p = 2 \times 2^{-7} = 0{,}0156$
 veriyor. (İki koşulu bağımsız örneklemler sayan Fisher'ın kesin testi 0,013
 veriyor — burada sonuç yakın, ama veriyi yanlış modelliyor.) Dört
 karşılaştırma için Bonferroni eşiği 0,0125'tir; fark iki testte de bu eşiği
-geçemiyor, o yüzden bunu bir sonuç diye öne sürmeyeceğim. Manşetin dayandığı
-karşılaştırma, yani 0'a karşı 60 dikkat dağıtıcı, p = 0,50 veriyor. Kısacası
-78 kat token eklemek, bu örneklemin saptayabileceği bir fark yaratmadı — ki
-bu, koşulların eşdeğer olduğunun kanıtı değildir — ve ortadaki çukur, 60
-görevin her iki yönde de ayırt edebileceği sınırın tam üstünde.
+geçemiyor, o yüzden bunu bir sonuç diye öne sürmüyoruz. Manşetin dayandığı
+karşılaştırma, yani 0'a karşı 60 dikkat dağıtıcı, p = 0,50 veriyor.
+:::
 
 ### Kolay test neden hiçbir şey bulmuyor
 
@@ -170,8 +189,8 @@ hâlâ pencereye sığsa bile, girdi büyüdükçe modelin doğruluğu azalır. 
 çürümesinin folklor olduğu sonucuna varmak rahat olurdu. Değil. Terimi
 yaygınlaştıran rapor olan @hong2025contextrot, 18 öncü modeli bilerek basit
 tutulmuş görevlerde, ilan edilen pencerelerin içinde kalan uzunluklarda koşturdu
-ve deneylerinin hepsinde girdi büyüdükçe performansın bozulduğunu buldu. Benim
-iki deneyim onu bir değil iki nedenle kaçırdı.
+ve deneylerinin hepsinde girdi büyüdükçe performansın bozulduğunu buldu. Bu
+iki deney onu bir değil iki nedenle kaçırdı.
 
 Önce basit olan neden: 11.048 token, yayımlanmış benchmark'ların manşetteki
 düşüşleri raporladığı uzunluğun yaklaşık üçte biri; yani bu deney onların
@@ -179,7 +198,7 @@ düşüşleri raporladığı uzunluğun yaklaşık üçte biri; yani bu deney on
 değerlendirmelerin çoğu, o uzunluğa *ulaştığında bile* etkiyi aynı nedenle
 kaçırır.
 
-**İki testim de birebir eşleşmeye izin verdi.** İkisi de
+**İki test de birebir eşleşmeye izin verdi.** İkisi de
 *needle-in-a-haystack* (NIAH, samanlıkta iğne) testiydi: tek bir olgu — *iğne*
 — uzun bir dolgu metninin — *samanlığın* — içine saklanır ve modelden onu
 bulması istenir. Soru `ZRG-14` içeriyordu; iğne de. Attention, sorguda zaten
@@ -188,22 +207,23 @@ tam da bu koltuk değneğini kaldırmak için kuruldu — iğneleri soruyla asga
 sözcüksel örtüşme paylaşıyor, dolayısıyla model ilişkiyi eşleştiremiyor,
 çıkarsamak zorunda kalıyor — ve sonuç çarpıcı: **128K bağlam iddia eden 13
 modelin 11'i, 32K token'da kısa bağlamdaki kendi baseline'larının (taban
-puanlarının) yarısının altına düşüyor**. GPT-4o **%99,3'ten %69,7'ye**
-iniyor.
+puanlarının) yarısının altına düşüyor**. Yarının üstünde kalan iki
+istisnadan biri olan GPT-4o bile **%99,3'ten %69,7'ye** iniyor.
 
 @hsieh2024ruler aynı yere farklı bir yönden varıyor ve tuzağı açıkça
 belirtiyor: modeller sade needle-in-a-haystack'te neredeyse kusursuz puanlar
-gösterirken, **görev çok adımlı izleme ya da toplama gerektirir gerektirmez
+gösterirken, testi aramanın ötesine — çok adımlı izlemeye ve toplulaştırmaya
+(aggregation) — genişleten benchmark'ta **neredeyse hepsinde bağlam uzadıkça
 büyük düşüşler ortaya çıkıyor**. 32K veya fazlasını iddia eden 17 model içinde
 yalnızca yarısı 32K'da tatmin edici performansı koruyor.
 
-Dürüst bir sentez, iki sonucun her birinden tek başına daha yararlıdır:
+İkisini birleştiren bir sentez, her birinden tek başına daha yararlıdır:
 
 | ne ölçtüğünüz | ne bulacağınız |
 |:--|:--|
-| Sorguda geçen nadir bir dizgiyi bulmak | burada sınanan uzunluklarda bozulma ya yok ya da çok az; benim testlerimin ve sade NIAH'ın ölçtüğü budur |
-| Bilgiyi dizgi eşleşmesiyle değil *anlamla* bulmak | kademeli bozulma; en büyüğü ölçüldüğü yerde: 13 modelin 11'i kısa bağlam baseline'ının yarısının altına 32K'**da** iniyor, orada başlamıyor [@modarressi2025nolima] |
-| Birkaç olgu üzerinden izleme ya da onları toplama | büyük bozulma, daha erken başlıyor [@hsieh2024ruler] |
+| Sorguda geçen nadir bir dizgiyi bulmak | burada sınanan uzunluklarda bozulma ya yok ya da çok az; buradaki iki testin ve sade NIAH'ın ölçtüğü budur |
+| Bilgiyi dizgi eşleşmesiyle değil *anlamla* bulmak | kademeli bozulma; en büyüğü ölçüldüğü yerde: 32K'ya gelindiğinde 13 modelin 11'i kısa bağlam baseline'ının yarısının altına inmiş oluyor; düşüş orada başlamıyor, daha önce başlıyor [@modarressi2025nolima] |
+| Birkaç olgu üzerinden izleme ya da onları toplulaştırma | büyük bozulma, daha erken başlıyor [@hsieh2024ruler] |
 
 : Üç görev, aynı pencere hakkında üç farklı cevap {tbl-colwidths="[46,54]"}
 
@@ -237,15 +257,16 @@ yeniden ölçeklenerek (Position Interpolation, YaRN — @sec-konum) ve uzun
 girdiler üzerinde görece kısa bir ek eğitimle 128K'ya uzatılır. Bu işe yarar,
 ama model uzun mesafelerin kısa mesafelere göre çok daha az örneğini
 görmüştür ve kalite mesafeyle düşme eğilimindedir. *Kapasite, yetkinlik değil*
-ifadesinin altında yatan mekanizma budur.
+ifadesinin altında yatan olası mekanizma budur.
 
 Yayımlanmış bir sonuç ters yönü gösteriyor ve akılda tutmaya değer.
 @shi2023large, aritmetik problem metinlerine eklenen alakasız cümlelerin
 doğruluğu ciddi biçimde düşürdüğünü buldu — üstelik suçlanacak bir uzunluk
-artışı olmadan. Benim dikkat dağıtıcılarım doğruluktan hiçbir şey
-götürmedi, onlarınki çok şey götürdü — fark görevde. Dikkat dağıtıcılar iş bir
-şeyi *bulmak* olduğunda ucuzdur, *akıl yürütmek* olduğunda pahalıdır; çünkü
-akıl yürütürken neyin ilgili olduğuna karar vermek gerekir, bulmada gerekmez.
+artışı olmadan. Bizim dikkat dağıtıcılarımız doğruluktan hiçbir şey
+götürmedi, onlarınki çok şey götürdü — fark görevde. Dikkat dağıtıcılar iş
+birebir bir dizgiyi *bulmak* olduğunda ucuzdur, *akıl yürütmek* olduğunda
+pahalıdır; çünkü akıl yürütürken neyin ilgili olduğuna karar vermek gerekir,
+birebir eşleşmede gerekmez.
 
 Sizi rahatlatacak olan yaygın test — needle-in-a-haystack — tam da tasarımına
 gömülü sözcüksel örtüşme yüzünden kolay olan testtir. Bu alt bölümden
@@ -255,8 +276,8 @@ değerlendirin; asla birebir eşleşmelerle değil**, çünkü birebir eşleşme
 sürümü geçer ve size hiçbir şey söylemez.
 
 ::: {.column-margin}
-Bu, @sec-rag'in dersinin gerçek paraya mal olduğu bir yerde yeniden ifadesi: her
-şeyin geçtiği bir test, test değildir. Yerel deneyim küçük — tek bir 9B model,
+Bu, @sec-rag'nin dersinin gerçek paraya mal olduğu bir yerde yeniden karşımıza
+çıkması: her şeyin geçtiği bir test, test değildir. Yerel deney küçük — tek bir 9B model,
 60 görev, 11 bin token'a kadar — ve yayımlanmış sonuçla *kolay durum hakkında*
 uyuşuyor; bu deneyin kanıtlayabileceği en fazla şey de budur. Zor durumun
 kanıtı yayımlanmış benchmark'lardır ve bunlar hiçbir dizüstü bilgisayarın
@@ -267,7 +288,7 @@ ulaşamayacağı bir ölçekte çalıştırıldı.
 
 ```{=html}
 <div class="fig-title">İki biçim: hangisini göreceğiniz göreve bağlı</div>
-<svg viewBox="0 0 764 314" style="max-width:744px" role="img" aria-label="Sol: bu bölümün sıfırdan altmış dikkat dağıtıcı belgeye kadar düz doğruluk eğrisi. Sağ: NoLiMa'nın GPT-4o için yayımlanmış düşüşü; kısa bağlamda yüzde 99,3'ten 32K'da yüzde 69,7'ye.">
+<svg viewBox="0 0 764 314" style="max-width:744px" role="img" aria-label="Sol: bu bölümün sıfırdan altmış dikkat dağıtıcı belgeye kadar düz doğruluk eğrisi. Sağ: NoLiMa'nın en iyi modellerinden GPT-4o için yayımlanmış düşüşü; kısa bağlamda yüzde 99,3'ten 32K'da yüzde 69,7'ye.">
   <line x1="382" y1="16" x2="382" y2="246" class="ln-thin"/>
 
   <text x="26" y="28" class="t-xs t-b t-muted">BİREBİR EŞLEŞME — qwen3.5:9b, BU BÖLÜM</text>
@@ -307,8 +328,8 @@ ulaşamayacağı bir ölçekte çalıştırıldı.
   <text x="480" y="188" class="t-xs t-muted t-mid">kısa</text>
   <text x="640" y="188" class="t-xs t-muted t-mid">32K</text>
   <text x="560" y="204" class="t-xs t-muted t-mid">bağlam uzunluğu</text>
-  <text x="392" y="224" class="t-xs t-b t-rose">ÇÖKÜŞ: 32K'DA %99,3'TEN %69,7'YE</text>
-  <text x="392" y="239" class="t-xs t-muted">13 modelin 11'i baseline'ının yarısının altına düştü</text>
+  <text x="392" y="224" class="t-xs t-b t-rose">EN İYİLERDEN BİRİNDE BİLE: 32K'DA %99,3 → %69,7</text>
+  <text x="392" y="239" class="t-xs t-muted">13 modelin 11'i yarının altına düştü; GPT-4o düşmedi</text>
 
   <rect x="26" y="262" width="712" height="44" rx="4" class="chip"/>
   <text x="382" y="280" class="t-xs t-b t-mid">BU PANELLER ARASINDA DEĞİŞEN ŞEY PENCERE DEĞİL — GÖREV</text>
@@ -329,8 +350,8 @@ sağdakini. Kolay test, neredeyse herkesin çalıştırdığıdır.
 
 @sec-ajan-anatomisi transkriptin yalnızca büyüdüğünü ortaya koydu.
 [**Sıkıştırma**](#gloss-compaction){#term-compaction .term-ref} bu konuda
-yaptığınız şeydir ve alışılmadık bir özelliği olan kayıplı bir sıkıştırma
-problemidir: **neyi kaybedeceğinizi siz seçersiniz ve bunu neye ihtiyaç
+yaptığınız şeydir; özünde, alışılmadık bir özelliği olan bir kayıplı veri
+sıkıştırma (lossy compression) problemidir: **neyi kaybedeceğinizi siz seçersiniz ve bunu neye ihtiyaç
 duyulacağını bilmeden önce seçersiniz.**
 
 ::: {#gloss-compaction .column-margin .term-gloss}
@@ -344,29 +365,45 @@ başına değeri çok farklı olan parçaları vardır:
 
 | transkriptin parçası | nasıl tutulur | neden |
 |:--|:--|:--|
-| **Görev** — kullanıcının gerçekte sorduğu | her zaman birebir ve sona yakın yeniden ifade edilerek | kısadır, optimize edilen hedefin ta kendisidir ve geçmiş baskın hâle geldiğinde kaybolan şey odur |
+| **Görev** — kullanıcının gerçekte sorduğu | her zaman birebir; sona yakın bir yerde de yinelenerek | kısadır, optimize edilen hedefin ta kendisidir ve geçmiş baskın hâle geldiğinde kaybolan şey odur |
 | Ajanın verdiği **kararlar** ve gerekçeleri | özetlenerek | *neyin* kararlaştırıldığı gerekir; onu üreten müzakere genellikle gerekmez |
 | Hâlâ canlı olan **araç sonuçları** | birebir | bunlar cevabın bağlı olduğu olgulardır. Bir sayıyı özetlemek onu kaybetmenin yoludur |
 | Zaten aşılmış ya da tüketilmiş **araç sonuçları** | düşürün ya da tek satıra indirin | reddettiğiniz on arama sonucu, reddettiğiniz andan itibaren saf maliyettir |
-| Zaten atlatılmış **hatalar** | stack trace'i (yığın izini) düşürün, öğrettiği tek satırı tutun | @sec-ajan-anatomisi'nin vurguladığı nokta: eskimiş bir hata, modeli yol açtığı kafa karışıklığına doğru koşullamayı sürdürür — ama "tarih alanı ISO-8601 istiyor", bunun tekrarını önleyen cümledir ve sekiz token eder |
+| Zaten atlatılmış **hatalar** | stack trace'i (yığın izini) düşürün, öğrettiği tek satırı tutun | @sec-ajan-anatomisi'ün vurguladığı nokta: eskimiş bir hata bağlamda durdukça modeli yol açtığı karışıklığa doğru çekmeye devam eder — ama "tarih alanı ISO-8601 istiyor", bunun tekrarını önleyen cümledir ve sekiz token eder |
 
 : Her token aynı değerde değildir {tbl-colwidths="[26,18,56]"}
 
-Bunu kurmadan önce bilinmeye değer üç kusur biçimi var.
+Bunu kurmadan önce bilmeniz gereken üç kusur biçimi var.
 
 **Sayıları özetlemek.** Bir özetleyici, *bütçe 4.318 liradır*'ı memnuniyetle
 *bütçe konuşuldu*'ya çevirir. Nihai cevabın içermesi gereken her değer,
 sıkıştırmadan umutla değil kuralla muaf tutulmalıdır — en güvenli uygulama,
 düzyazının yanında yapılandırılmış bir `facts` listesi tutar ve onu asla
-özetlemez.
+özetlemez. Biçim ve özetleyiciye verilecek talimat şöyle basit olabilir:
+
+```text
+facts (özetlenmez, olduğu gibi kopyalanır):
+  [{"key": "butce", "value": "4.318 TL", "source": "adım 7"},
+   {"key": "teslim_tarihi", "value": "2026-03-14", "source": "adım 12"}]
+
+özetleyici talimatı:
+  Aşağıdaki geçmişi en fazla 150 token'la özetle.
+  Verilen kararları ve gerekçelerini tek cümleyle koru.
+  Reddedilen arama sonuçlarını ve çözülmüş hataları at;
+  bir hatadan çıkan dersi tek satırla bırak.
+  Sayı, tarih ve kimlik yazma: onlar facts listesinde.
+```
 
 **Görevi sıkıştırıp yok etmek.** Geçmiş büyüdükçe özgün istek uzun bir bağlamın
 ortasına doğru kayar. @liu2024lost bunun neye mal olduğunu ölçtü: bir erişim
 görevinde doğruluk, ilgili malzeme girdinin başında ya da sonunda olduğunda en
-yüksek ve ortada belirgin biçimde bozuluyor. Benim iğne testim bunu yeniden
-üretmedi — her konumda %100 — ve nedeni başka hiçbir şey bulamamasıyla aynı:
-birebir bir dizgi eşleşmesi nerede durduğuna bağışıktır. Hedefi bağlamın sonunda
-yeniden ifade etmek neredeyse bedavadır ve sorunu ortadan kaldırır.
+yüksek ve ortada belirgin biçimde bozuluyor. @sec-rag'deki iğne testi bunu
+yeniden üretmedi — her konumda %100 — ve nedeni başka hiçbir şey
+bulamamasıyla aynı: birebir bir dizgi eşleşmesi nerede durduğuna bağışıktır.
+Hedefi bağlamın sonunda yinelemek neredeyse bedavadır — görev kısadır ve sona
+eklendiği için önbellekteki ön eki bozmaz — ve görevin ortada kaybolmasını büyük
+ölçüde önler. Ortada kalan *kanıt* sorununu ise çözmez; onun çaresi, bu
+bölümün geri kalanının konusu olan seçmek ve azaltmaktır.
 
 **Tekrarlandıkça ek bilgi kaybettiren (non-idempotent) sıkıştırma.** Bir özetin
 özetini almak her seferinde daha çok bilgi kaybettirir ve uzun süren ajanlar
@@ -383,7 +420,7 @@ Pratikte işleyen örüntü üç katmanlı bir penceredir:
                                  olgu listesi birebir tutularak
   [ son N adım                ]  birebir, çünkü sonraki kararın asıl konusu
                                  yakın zamandaki ayrıntıdır
-  [ yeniden ifade edilen görev]  en sonda, böylece hiç ortada kalmaz
+  [ yinelenen görev           ]  en sonda, böylece hiç ortada kalmaz
 ```
 
 N'yi seçmek, cevabı ucuza bulunan ampirik bir sorudur: değerlendirmenizi N = 3, 5 ve
@@ -419,13 +456,15 @@ Kazanç 40 bin token değildir. Ebeveyn tarafında kabaca
 $(40{.}000 - 200) \times M$'dir; burada $M$, **ebeveynin döngüsünde kalan
 model çağrısı sayısıdır**. Bu brüt bir rakamdır: alt ajanın kendi 40 binlik
 okuması, sabit prompt'u ve çıktısı, varsa önbellek fiyatlandırması da bundan
-düşülmeli. Bu hesabı bir fatura değil, açıklayıcı bir kaba taslak sayın. $M$'nin
-ne kadar büyük olduğu, @sec-ajan-anatomisi'nin varsaymak yerine ölçtüğü bir
+düşülmeli. Örneğin ebeveynin döngüsünde 10 çağrı kaldıysa brüt kazanç
+$(40{.}000 - 200) \times 10 = 398{.}000$ token'dır. Bu hesabı bir fatura
+değil, açıklayıcı bir kaba taslak sayın. $M$'nin
+ne kadar büyük olduğu, @sec-ajan-anatomisi'ün varsaymak yerine ölçtüğü bir
 şeye bağlı. Adımlar bağımsız olduğunda model araç çağrılarını batch (toplu)
-hâlinde gönderiyor: orada beş arama 2,0 model çağrısına indi ve büyüme karesel
+hâlinde gönderiyor: o bölümün deneyinde beş arama 2,0 model çağrısına indi ve büyüme karesel
 olmaya yaklaşmadı bile. Adımlar gerçekten sıralı olduğunda — *n*. adım
 *n*−1'in sonucuna ihtiyaç duyduğunda — çarpan adım sayısıdır ve yalıtım
-kazancı en büyük değerine ulaşır. Yalıtım en çok, tam da batch'lemenin yardım
+kazancı en büyük değerine ulaşır. Yalıtım en çok, tam da batchlemenin yardım
 edemediği yerde kazandırır.
 
 Bedeli de aynı ölçüde gerçektir ve genellikle küçümsenir:
@@ -441,25 +480,28 @@ Bedeli de aynı ölçüde gerçektir ve genellikle küçümsenir:
   olarak kullanırsa, ortaya hata mesajı üretmeyen bir kusur biçimi çıkar. Bu
   konuya ayrılmış bölüm @sec-cok-ajanli.
 
-Uygulanmaya değer sezgisel kural: **alt görevin girdileri büyük ve çıktısı
+Uygulanacak sezgisel kural: **alt görevin girdileri büyük ve çıktısı
 küçükse yalıtın.** Arama, tarama, süzme, doğrulama. Ebeveynin ayrıntıya ihtiyacı
 olacaksa yalıtmayın — gidiş dönüşün bedelini ödersiniz, sonra ayrıntıyı yine
-istersiniz.
+istersiniz. Kuralın nerede tersine döndüğünü @sec-cok-ajanli modelliyor:
+200 token'lık sonuçlar üreten altı adım, üç ajan olarak **1,20 kat** pahalıya
+geliyor, çünkü ajan başına sabit maliyet fazladan ödeniyor; 3.000 token'lık
+sonuçlar üreten yirmi dört adım ise üçte iki tasarruf sağlıyor.
 
 ## Tam zamanında erişim, önceden yüklemeyi yener {#sec-baglam-muhendisligi-jit}
 
 Bir ajan kurarken içgüdü, ihtiyaç duyabileceğini yüklemektir: şema, belgeler,
-son kayıtlar, kullanıcının geçmişi. Bir kusur biçimi eksilir ve hazırlık gibi
-hissettirir.
+son destek talepleri (ticket), kullanıcının geçmişi. Bu, bir hata kaynağını ortadan kaldırıyor
+gibi görünür ve hazırlıklı olmak gibi gelir.
 
 Ama bu, her çağrıda her şeyin bedelini ödemek demektir. Alternatif — ajana
 getirme *yeteneği* verip ihtiyaç duyduğunu getirmesine izin vermek — neredeyse
-her zaman daha ucuzdur ve @sec-rag'in ölçümü buna inanmak için iyi bir
+her zaman daha ucuzdur ve @sec-rag'nin ölçümü buna inanmak için iyi bir
 nedendir: bir belge yerine seksen belge, birebir aynı doğruluk için 148 kat
-girdiye mal oldu. Önceden yükleme (eager loading), bu takası her istekte
-sessizce yapmaktır.
+girdiye mal oldu. Önceden yükleme (eager loading), bu ödünleşimi (trade-off)
+her istekte sessizce kabul etmektir.
 
-Tam zamanında erişimi işleten iki şey var ve ikisi de @sec-arac-tasarimi'nin
+Tam zamanında erişimi işleten iki şey var ve ikisi de @sec-arac-tasarimi'ün
 konusu:
 
 - **Ajanın neyin mevcut olduğunu bilmesi gerekir.** Açıklaması ne zaman
@@ -471,7 +513,7 @@ konusu:
   olur ve çoğu işaretçinin gösterdiği içerik hiç getirilmez.
 
 Bedeli **gecikmedir**: veriye ihtiyaç duyan adımlarda, önceden yüklemede
-ödemeyeceğiniz ek bir gidiş dönüş. Bu gerçek bir takastır ve bariz bir orta
+ödemeyeceğiniz ek bir gidiş dönüş. Bu gerçek bir ödünleşimdir ve bariz bir orta
 yolu vardır — neredeyse her istekte gereken bir iki şeyi önceden yükleyin,
 kalan her şeyi talep üzerine getirin. Bunu bir alışkanlık değil bir karar hâline
 getiren şey, isabet oranını ölçmektir: isteklerin %15'inde kullanılan bir şeyi
@@ -490,14 +532,14 @@ Bu, daha uzun bir pencereden, kapasiteyle hiç ilgisi olmayan nedenlerle daha
 iyidir:
 
 - **Sıkıştırmadan sağ çıkar.** Bir dosyaya yazılan her şey, transkript
-  özetlendikten sonra hâlâ oradadır; bu da onu tam olarak sıkıştırmanın yok
+  özetlendikten sonra hâlâ oradadır; bu da onu tam da sıkıştırmanın yok
   ettiği olguların doğal evi yapar.
 - **Adreslenebilirdir.** Ajan her şeyi yeniden okumak yerine bir bölümü yeniden
   okuyabilir; doğrusal bir transkript bunu sunamaz.
 - **Siz de inceleyebilirsiniz.** Bir dosya, hata ayıklarken incelenebilecek
   kalıcı bir kayıttır; bir transkript ise bir samanlıktır. Uzun bir çalıştırma
   ters gittiğinde nedenini genellikle notlar dosyasında bulursunuz.
-- **Çalıştırma bittikten sonra da kalır.** Bu bölüm burada sözü @sec-bellek'e
+- **Çalıştırma bittikten sonra da kalır.** Bu bölüm burada sözü @sec-bellek'ya
   bırakıyor; orada konu, bir çalıştırmanın *içinde* değil çalıştırmalar
   *arasında* neyin kalması gerektiği.
 
@@ -511,7 +553,7 @@ sonraki bir adım dosyanın tamamını değil, tek bir alanı okuyabilsin.
 Yukarıdakilerin hepsine bir çekince ekleyelim, çünkü iyi kurulmuş bir bağlam
 hattı bile burada başarısız olur.
 
-@sec-rag'in makinesi — parçala, göm, eriş — bilginin *yerel anlamı olan metin*
+@sec-rag'nin makinesi — parçala, göm, eriş — bilginin *yerel anlamı olan metin*
 olduğunu varsayar: kendi başına, belgedeki anlamıyla kabaca aynı şeyi ifade eden
 bir pasaj. Üç yaygın durum bu varsayımı doğrudan çiğner ve hiçbir miktarda
 parçalama onları onarmaz:
@@ -530,11 +572,12 @@ parçalama onları onarmaz:
 
 Kural: **verinin yapısı olduğunda ajana yapıyı sorgulamanın bir yolunu verin.**
 Yukarıdaki sorgu biçimleri için — toplamalar, join'ler, bu işlevin çağıranlarını
-izlemek — gerçek bir şema üzerinde bir `run_sql` aracı satırları gömmekten,
-bir `grep` ve `read` araç çifti de bir kod tabanını gömmekten iyidir. Bu, o
-sorgu biçimleri hakkında bir iddia; genel bir sıralama değil: *yeniden
+izlemek — gerçek bir şema üzerinde bir `run_sql` aracı satırları embedding'e
+(gömme vektörüne) çevirmekten, bir `grep` ve `read` araç çifti de bir kod
+tabanını embedding'e çevirmekten iyidir. Bu, o sorgu biçimleri hakkında bir
+iddia; genel bir sıralama değil: *yeniden
 denemeleri nerede ele alıyoruz?* gibi bir sorunun grep ile aranacak birebir
-bir dizgisi yoktur ve gömme tabanlı aramanın iyi olduğu şey tam da budur.
+bir dizgisi yoktur ve embedding tabanlı aramanın iyi olduğu şey tam da budur.
 Gerçek sistemlerin çoğu ikisine de ihtiyaç duyar. Bu bir bağlam mühendisliği
 kararıdır, çünkü hangi bilginin bağlam penceresine gireceğini belirler; sizin
 verinizde çalışan bir ajanla yalnızca demoda çalışan bir ajan arasındaki fark
@@ -553,7 +596,7 @@ Hayır; birbirine karıştırılması kolay iki ayrı nedenle. **Maliyet** neden
 koşulsuza yakındır: her token her model çağrısında yeniden gönderilir,
 dolayısıyla düzenlemediğiniz bir bağlam sonsuza kadar ödediğiniz bir faturadır —
 @sec-rag birebir aynı doğruluk için 148 kat girdi ölçtü. Prompt önbellekleme,
-önekin değişmeyen kısmını indirimli faturalar; asıl paranın *değişen* kısımda
+ön ekin değişmeyen kısmını indirimli faturalar; asıl paranın *değişen* kısımda
 harcanmasının nedeni de budur. **Yetenek** nedeni koşulludur ama
 gerçektir: bir pencere bir kapasitedir, bir yetkinlik değil ve @hsieh2024ruler,
 32K veya fazlasını iddia eden 17 modelin yalnızca yarısının 32K'da dayandığını
@@ -565,12 +608,12 @@ buldu.
 
 Göreviniz hakkında neredeyse hiçbir şey. NIAH, modelin soruda zaten bulunan
 nadir bir dizgiyi eşleştirmesine izin verir; ki bu attention'ın yaptığı en kolay
-şeydir — @sec-rag'in çalıştırması her boyutta ve her konumda düz %100
+şeydir — @sec-rag'nin çalıştırması her boyutta ve her konumda düz %100
 döndürdü, bu bölümün daha zor yerel sürümü ise bağlam uzunluğuna bağlı hiçbir
 eğilim göstermeden %88,3 ile %100 arasında kaldı.
 @modarressi2025nolima tam o koltuk değneğini kaldırdı ve **13 modelin 11'i 32K'da
-kısa bağlam baseline'ının yarısının altına düştü**; GPT-4o %99,3'ten %69,7'ye
-indi. Birebir eşleşmelerle değil, yeniden ifade edilmiş sorularla sınayın.
+kısa bağlam baseline'ının yarısının altına düştü**; istisnalardan biri olan
+GPT-4o bile %99,3'ten %69,7'ye indi. Birebir eşleşmelerle değil, yeniden ifade edilmiş sorularla sınayın.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -580,7 +623,7 @@ Kategori bazında saymak — sistem prompt'u, araç tanımları, erişilen belge
 araç sonuçları, geçmiş. Saymak erdemli olduğu için değil, en büyük kategori
 çoğu zaman başta tahmin edilen kategori olmadığı için. Sabit maliyetler
 (sistem prompt'u, araç tanımları) döngüdeki her adımla çarpılır; bu yüzden
-token sayıları göründüğünden büyüktür. Ama önbelleğe alınan bir önek bu
+token sayıları göründüğünden büyüktür. Ama önbelleğe alınan bir ön ek bu
 tekrarları indirimli faturalar. Kategorileri yalnızca token'a göre değil,
 ölçülen maliyete göre sıralayın.
 :::
@@ -603,9 +646,9 @@ yanlış bir sonucu fark edemez.
 Sayılar, tanımlayıcılar ve nihai cevabın içermek zorunda olduğu her şey. Bir
 özetleyici *bütçe 4.318 liradır*'ı, bunu yaptığına dair hiçbir sinyal vermeden
 *bütçe konuşuldu*'ya çevirir. Düzyazının yanında yapılandırılmış bir olgu listesi
-tutun ve onu kuralla sıkıştırmadan muaf tutun. Korunmaya değer bir şey daha:
-özgün görev, ortaya kaymaya bırakılmak yerine bağlamın sonunda yeniden ifade
-edilmiş hâlde.
+tutun ve onu kuralla sıkıştırmadan muaf tutun. Korunması gereken bir şey daha:
+özgün görev, ortaya kaymaya bırakılmak yerine bağlamın sonunda yinelenmiş
+hâlde.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -633,7 +676,7 @@ bölümün ölçümleriyle cevaplanabilen sorular eklendi.
 
 İki argümanı ayırın, çünkü güçleri farklı. Maliyet koşulsuza yakındır:
 transkript her model çağrısında yeniden gönderilir, dolayısıyla düzenlenmemiş
-bir bağlam adım sayısıyla çarpılır — prompt önbellekleme değişmeyen bir öneki
+bir bağlam adım sayısıyla çarpılır — prompt önbellekleme değişmeyen bir ön eki
 indirimli faturalar ama bağlamın yeniden yazılmış ortasına indirim uygulamaz;
 sıkıştırmanın bedava olmamasının nedeni de budur — ve @sec-rag, seçmeyi atladığınızda birebir aynı doğruluk
 için 148 kat girdi token'ı ölçtü. Yetenek koşulludur ama belgelenmiştir: iddia
@@ -648,7 +691,7 @@ nadir bir dizgi paylaşıyor, dolayısıyla model çıkarsama yapmıyor, yalnız
 eşleştiriyor. Yapabiliyorsanız karşıt sonucu kaynağıyla anın —
 @modarressi2025nolima sözcüksel örtüşmeyi kaldırdı ve 13 modelin 11'i 32K'da kısa
 bağlam baseline'ının yarısının altına düştü. Sonra pratikte ne yapılacağını
-söyleyin: yeniden ifade edilmiş sorularla ve çok olgulu toplama görevleriyle
+söyleyin: yeniden ifade edilmiş sorularla ve çok olgulu toplulaştırma görevleriyle
 değerlendirin, çünkü gerçek görevler bu biçimdedir.
 
 **S: Bir ajanın bağlamında gerçekte ne büyüyor ve neden göründüğünden pahalı?**
@@ -656,12 +699,12 @@ değerlendirin, çünkü gerçek görevler bu biçimdedir.
 Transkript büyür, hem de hiç küçülmeden: her karar ve her gözlem eklenir,
 hiçbir şey çıkarılmaz. Göründüğünden pahalıdır, çünkü her model çağrısı
 hepsini yeniden gönderir; dolayısıyla toplam maliyet, son uzunluk değil,
-büyüyen bir serinin toplamıdır — @sec-ajan-anatomisi'nin gösterdiği gibi,
+büyüyen bir serinin toplamıdır — @sec-ajan-anatomisi'ün gösterdiği gibi,
 sıralı adım sayısına göre kabaca karesel. Araç tanımları gibi sabit
 maliyetlerin orantısız biçimde önemli olmasının nedeni budur: çalıştırma
 başına değil *çağrı* başına ödenirler.
 
-### Bir tane yayına alıp almadığınızı sınayanlar
+### Gerçekten bir ajan yayına alıp almadığınızı sınayanlar
 
 **S: Bir ajan bütçesinin üç katına mal oluyor. Düzeltmeyi anlatın.**
 
@@ -713,7 +756,7 @@ Bilmeye değer, yukarıda kullanılmadı:
 : Daha geniş ekosistem, yazıldığı andaki sürümler {tbl-colwidths="[24,16,60]"}
 
 İhtiyaç duyacağınız diğer üç araç `tiktoken`, `RULER` ve `NoLiMa`. Bunlar
-sürümleriyle değil bağlantılarıyla @sec-baglam-muhendisligi-derinlesme'de yer
+sürümleriyle değil bağlantılarıyla @sec-baglam-muhendisligi-derinlesme'te yer
 alıyor.
 
 ## Lab: bir ajanın token kullanımını doğruluk kaybetmeden kısın {#sec-baglam-muhendisligi-lab}
@@ -738,7 +781,7 @@ görmenizdir.
 
 Sistem prompt'u ve araç tanımları *her* çağrıda yeniden gönderilir, dolayısıyla
 token'ları adım sayısıyla çarpılır. Fatura ise ayrı bir konu: önbelleğe
-alınan bir önek, ilk çağrı fiyatının bir kesriyle faturalanır (bkz.
+alınan bir ön ek, ilk çağrı fiyatının bir kesriyle faturalanır (bkz.
 @sec-baglam-muhendisligi-cache). Bu yüzden onları ilk sıraya koymadan önce
 önbellek isabet oranına ve token fiyatlarına bakın. Ölçülen maliyette gerçekten
 ağır basıyorlarsa bu genellikle en ucuz büyük tasarruftur: kimsenin
@@ -746,7 +789,7 @@ kullanmadığı araçları budayın ve birikmiş talimatları silin.
 
 ### Adım 3 — araçların döndürdüğünü kısın
 
-@sec-arac-tasarimi'ne göre bütün kayıtlar yerine görevin ihtiyaç duyduğu alanları
+@sec-arac-tasarimi'e göre bütün kayıtlar yerine görevin ihtiyaç duyduğu alanları
 döndürün. Yeniden ölçün. *Biçimi* de kontrol edin: ajanın yalnızca iki satırını
 okuduğu 40 satırlık bir sonuç sayfalanmalıdır.
 
@@ -782,7 +825,7 @@ tutacağınıza dair bir cümleyi.
    kategorinin en büyük olacağını yazın. Çoğu insan yanılıyor.
 2. **Adımlarla çarpın.** Sistem prompt'unuzu ve araç tanımlarınızı alın ve token
    sayılarını çalıştırma başına ortalama model çağrısı sayısıyla çarpın. O
-   sayı, onları budamanın token cinsinden değeridir; önek önbelleğe
+   sayı, onları budamanın token cinsinden değeridir; ön ek önbelleğe
    alınıyorsa faturadaki tasarruf daha küçüktür.
 3. **NIAH testinizi yeniden ifade edin.** Uzun bağlam değerlendirmeniz varsa
    soruları, cevaplarla ayırt edici hiçbir kelime paylaşmayacak şekilde yeniden
@@ -815,7 +858,7 @@ gerçekten ihtiyacınız olduğunu gösterir.
 | [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) — Anthropic | çevredeki mimari ve ek düzenekleri ne zaman *eklememek* gerektiği |
 | [`RULER`](https://github.com/NVIDIA/RULER) | iddia edilen bağlam uzunluğunu etkin olandan ayıran benchmark; kendi modelinizde çalıştırılabilir |
 | [`NoLiMa`](https://github.com/adobe-research/NoLiMa) | sözcüksel örtüşme olmadan kurulmuş iğne kümesi — sade NIAH yerine örnek alınacak değerlendirme |
-| [`tiktoken`](https://github.com/openai/tiktoken) | token'ları dürüstçe saymak; buradaki her şeyin birinci adımı. Yalnızca OpenAI'ın tokenizer'larını içerir; başka modeller için modelin kendi tokenizer'ını ya da API'nin raporladığı token sayılarını kullanın |
+| [`tiktoken`](https://github.com/openai/tiktoken) | token'ları doğru saymak; buradaki her şeyin birinci adımı. Yalnızca OpenAI'ın tokenizer'larını içerir; başka modeller için modelin kendi tokenizer'ını ya da API'nin raporladığı token sayılarını kullanın |
 | [`langgraph`](https://github.com/langchain-ai/langgraph) | biriken bir liste yerine açık bir nesne olarak durum; bu da sıkıştırmayı bir tasarım kararı yapar |
 
 : Makalelerin ötesi {tbl-colwidths="[42,58]"}
@@ -841,29 +884,29 @@ gerçekten ihtiyacınız olduğunu gösterir.
 - **Kesmeden önce sayın.** Kategori bazında token'lar — sistem prompt'u, araç
   tanımları, erişilen belgeler, araç sonuçları, geçmiş. En büyük kategori çoğu
   zaman başta tahmin edilen kategori değildir. Sabit maliyetler çalıştırma
-  başına değil *çağrı* başına ödenir; ama önbelleğe alınan önek indirimli
+  başına değil *çağrı* başına ödenir; ama önbelleğe alınan ön ek indirimli
   faturalanır, bu yüzden kategorileri ölçülen maliyete göre sıralayın.
 - **İddia edilen bir bağlam uzunluğu bir kapasitedir, bir yetkinlik değil.** 32K
   veya fazlasını iddia eden 17 model içinde yalnızca yarısı 32K'da dayandı
   [@hsieh2024ruler].
 - **Needle-in-a-haystack kolay testtir; modeliniz onu geçecektir.**
-  @sec-rag'in erişim koşusu her konumda ve boyutta %100 aldı; bu bölümün 60
+  @sec-rag'nin erişim koşusu her konumda ve boyutta %100 aldı; bu bölümün 60
   görevlik sürümü ise monoton bir düşüş olmadan %88,3 ile %100 arasında kaldı
   — ikisi de soruyla nadir bir dizgi paylaşan bir iğneyle. O örtüşmeyi
   kaldırın, **13 modelin 11'i 32K'da kısa bağlam baseline'ının yarısının
-  altına düşüyor**; GPT-4o %99,3'ten %69,7'ye iniyor [@modarressi2025nolima].
-  Yeniden ifade edilmiş sorularla değerlendirin.
+  altına düşüyor**; istisnalardan biri olan GPT-4o bile %99,3'ten %69,7'ye
+  iniyor [@modarressi2025nolima]. Yeniden ifade edilmiş sorularla değerlendirin.
 - **Yalıtım, *biçim doğruysa* en büyük kaldıraçtır.** Kendi bağlamındaki okuma
   ağırlıklı bir alt görev kırk bin token yerine bir paragraf döndürür ve kazanç,
   o rakamın ebeveynin döngüsündeki kalan her çağrıyla çarpımıdır.
-  @sec-cok-ajanli bunun nerede tersine döndüğünü modelledi: 200 token'lık sonuçlar
-  üreten altı adım, üç ajan olarak **1,20 kat** pahalıya geldi — çünkü ajan
+  @sec-cok-ajanli bunun nerede tersine döndüğünü modelliyor: 200 token'lık sonuçlar
+  üreten altı adım, üç ajan olarak **1,20 kat** pahalıya geliyor — çünkü ajan
   başına sabit maliyet üç kez fazladan ödeniyor; 3.000 token'lık sonuçlar üreten
-  yirmi dört adım ise üçte iki tasarruf sağladı. Büyük girdi, küçük çıktı, çok
+  yirmi dört adım ise üçte iki tasarruf sağlıyor. Büyük girdi, küçük çıktı, çok
   sayıda kalan adım — üçü birden yoksa tasarruf da yok.
 - **Sıkıştırma kayıplıdır ve kaybı önceden siz seçersiniz.** Görevi ve canlı
   araç sonuçlarını birebir tutun, kararları özetleyin, tüketilmiş sonuçları ve
-  çözülmüş stack trace'lerini düşürün — aynı hatanın tekrarını önleyeceği yerde tek
+  çözülmüş hataların stack trace'lerini düşürün — aynı hatanın tekrarını önleyeceği yerde tek
   satırlık bir ders bırakarak. Cevabın gerektirdiği değerleri birebir koruyun.
 - **Payload yerine tanımlayıcıyı tercih edin.** Bir işaretçi on token'a, bir
   belge iki bin token'a mal olur ve çoğu işaretçinin gösterdiği içerik hiç
