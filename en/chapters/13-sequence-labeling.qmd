@@ -191,8 +191,8 @@ mentions affected                      1,397   (5.3%)
   'İtalya'       {LOC: 55, ORG:  1}
 ```
 
-Some of this is real ambiguity — *Türkiye* beat *İtalya* is the football
-federation, not the landmass — and some is annotation noise. Either way,
+Some of this is real ambiguity — *Türkiye* beat *İtalya* is the national
+football team, not the landmass — and some is annotation noise. Either way,
 for 5.3% of mentions the same string has appeared with another label, so the
 model has to guess which one applies here.
 
@@ -262,8 +262,7 @@ What both readings do support: a benchmark with 13% leakage does not just
 inflate scores. It inflates them *unevenly*, and the systems it flatters most
 are the ones that will disappoint you in production.
 
-One number in that table deserves a second look before you read the gap column
-at all. A dictionary that has memorised every training string ought to score
+Go back to the table: one number in it deserves a second look. A dictionary that has memorised every training string ought to score
 near 100 on sentences it has seen verbatim, and it scores 77.54. The missing
 twenty-two points are the two nuisances from earlier in this section arriving
 together: longest match fires on strings that are entities *somewhere* in
@@ -349,7 +348,7 @@ multi-token spans, including two of the same type back to back.
   <text x="10" y="166" class="t-xs t-muted">which is why two adjacent people are B-PER B-PER, and stay two people</text>
 
   <path d="M10 182 L 754 182" class="ln-thin ln-dash"/>
-  <text x="10" y="202" class="t-xs t-b t-muted">THE GRAMMAR THIS CREATES — WHAT MAY FOLLOW I-PER</text>
+  <text x="10" y="202" class="t-xs t-b t-muted">THE GRAMMAR THIS CREATES — WHAT I-PER MAY FOLLOW</text>
 
   <rect x="14"  y="212" width="112" height="40" rx="6" class="box-accent"/>
   <text x="70"  y="229" class="t-xs t-mid t-b t-accent">B-PER</text>
@@ -411,7 +410,8 @@ CRF                                    0                            0
 fine-tuned BERTurk                    49                           90
 ```
 
-[The CRF emitted no illegal transition at any budget; the fine-tuned
+[The CRF, at the one budget it was trained on (20,000 sentences), emitted no
+illegal transition; the fine-tuned
 transformer — the best model in this chapter, at 91.92 span F1 — emits 139 of
 them.]{.hl} That inversion — the weaker model is the well-formed one —
 surprises people, and the reason is structural rather than a matter of
@@ -432,8 +432,8 @@ unseen pairs too, so they can learn negative weights.) Then
 [Viterbi decoding](#gloss-viterbi-decoding){#term-viterbi-decoding .term-ref} [@viterbi1967error]
 returns the best-scoring *path* rather than the best label at each step, so an
 illegal transition has to pay for itself out of the emission scores of the
-whole rest of the sentence. It never does: across 10,000 test sentences and
-every label budget in this chapter, the CRF emitted zero. **That is a measured
+whole rest of the sentence. In this run it never did: across 10,000 test
+sentences, the CRF emitted zero. **That is a measured
 outcome, not a theorem.** The scores are finite, so the path is improbable
 rather than impossible; if you need the guarantee instead of the empirical
 zero, "Making the grammar structural instead of learned" below is how to get it.
@@ -479,7 +479,9 @@ same CRF predictions, two decoders
   strict  (a stray I- is dropped)      F1 85.45
 ```
 
-On the transformer's 139 malformed transitions it would not be a tie. When
+On the transformer's 139 malformed transitions the two decoders return different
+numbers of spans, so their F1 diverges; we did not measure that pair — measure it
+on your own model. When
 you compare your numbers against a paper's, the decoder is one of the things
 that has to match.
 
@@ -498,7 +500,12 @@ turn $-\infty$ into `nan` in edge cases, for example when every path through a
 position is ruled out. The finite penalty makes an illegal path lose in any
 realistic score range; it does not make it mathematically impossible. If you
 want the true constraint, remove the invalid transitions and start states
-from the search space rather than pricing them.
+from the search space rather than pricing them. The code below is the
+finite-penalty version; for the true constraint at inference, set
+`NEG = float("-inf")` and the rest runs unchanged. In practice the two agree:
+with log-probability scores, any illegal path can be turned into a legal one by
+rewriting the offending `I-X` as `B-X`, at the cost of one token's
+log-probability gap — tens in realistic models, not $10^4$.
 
 ``` python
 import torch
@@ -881,7 +888,7 @@ which is often the one that says "organisation" (*Takımı*, "team"). And the
 `w.hasapos` feature is doing real work: in Turkish orthography an apostrophe
 separates a suffix from a proper noun (or from a number or abbreviation, as
 in *1919'da*), so it is a strong signal that the preceding characters are a
-name — a piece of orthographic luck other languages do not get.
+name — a piece of orthographic luck few languages offer so regularly.
 
 ## Fine-tuning an encoder {#sec-sequence-labeling-encoder}
 
@@ -923,7 +930,14 @@ Read the top row again. [At 200 labelled sentences, a fine-tuned transformer
 scores 3.14 span F1 — while a dictionary of memorised strings scores
 55.26.]{.hl}
 
-That is not a bug, and it is the most useful thing in this chapter. At 200
+The two sides are not matched: that dictionary holds 16,591 phrases built from
+all 20,000 sentences. Someone with only 200 labelled sentences could build a
+list of roughly 265 entities, and it would score below 55.26; we did not
+measure where. What this row really stands for is having a ready-made list
+(provinces, a product catalogue).
+
+The encoder's 3.14, on the other hand, is not a bug, and it is the most useful
+thing in this chapter. At 200
 sentences the model has seen roughly 265 entities spread over six entity tags
 plus `O`; the classification head is randomly initialised; and at batch size 16,
 three epochs is **39 gradient updates**.
@@ -947,7 +961,7 @@ Token accuracy is 63.43% — barely above the everything-is-`O` floor of
 picks up almost no entities at all (recall 1.90), and the few it does are
 mostly wrong.
 
-The crossover against the CRF sits between **2,000 and 5,000** labelled
+The crossover against the 20,000-sentence CRF sits between **2,000 and 5,000** labelled
 sentences: at 2,000 the encoder is still a point behind (84.23 against
 85.45), and by 5,000 it is nearly three ahead. So [somewhere around two and a
 half thousand labelled sentences of BERTurk buy what twenty thousand
@@ -956,10 +970,12 @@ reduction in annotation ($20{,}000 / 5{,}000$ to $20{,}000 / 2{,}000$). That is
 the range the measured crossover actually supports, it is the honest case for
 pre-training on this task, and it is smaller than the folklore suggests. Be exact about what that
 comparison is: a **label-efficiency** claim, in which the encoder's budget
-varies while the CRF's stays at 20,000. It is not a claim that the encoder wins
-at a matched budget — at a matched 2,000 sentences the CRF is the one in front
-in the row above. Below that crossover the
-classical pipeline is not a fallback; it is the better model.
+varies while the CRF's stays at 20,000. It is not a matched-budget comparison: the CRF
+was trained only on 20,000 sentences, so this table does not say whether a
+2,000-sentence CRF would lead or trail the encoder. What it says is that below
+that crossover the 20,000-sentence classical pipeline is not a fallback; it is
+the better model. Training the CRF at the same six budgets is the table's second
+missing measurement.
 
 The `illegal` column is worth a second look, because it says something the F1
 column does not. Well-formedness is *learned* here, not guaranteed: illegal
@@ -967,7 +983,7 @@ BIO transitions peak at 3,739 once the model starts emitting entity tags at
 all, then fall steadily as it picks up the grammar from data.
 
 And they never reach zero. Even at 20,000 sentences and 91.92 F1, the tagger
-emits 139 sequences that IOB2 forbids. The CRF emitted none at any budget,
+emits 139 sequences that IOB2 forbids. The 20,000-sentence CRF emitted none,
 because Viterbi prices the whole sequence and a transition with no supporting
 feature never earned its place in the winning path here. If you want the guarantee
 rather than the empirical zero, mask the forbidden transitions before decoding
@@ -1064,7 +1080,7 @@ the question you care about.
 
 **Token accuracy** counts every token, including the 61% that are `O`.
 Predicting `O` everywhere already scores 61.36, so the informative range of
-this metric is the thirty-odd points between 61 and the low 90s — and it gets
+this metric is the thirty-five or so points between 61 and the high 90s — and it gets
 worse, not better, on realistic corpora where most sentences contain no
 entity at all. It is the metric that makes a model look finished when it is
 not.
@@ -1122,8 +1138,8 @@ as useful as a perfect one, and reporting only exact match will make you
 reject models your users would have preferred.
 
 The alternatives are the MUC-style partial-credit schemes [@chinchor1993muc]
-and the entity-type
-/ partial / exact breakdown that `nervaluate` implements. Use them when they
+and the strict / exact
+/ partial / entity-type breakdown that `nervaluate` implements. Use them when they
 match your consumer, and *say which you used* — a paper reporting 90 under
 partial credit is not beating a paper reporting 88 under exact match.
 :::
@@ -1152,7 +1168,7 @@ gold span **2.68 tokens for `ORG` against 2.26 for `PER` and 1.61 for
 five-token window cannot see all of a long one from its first word, and a model that can
 still has to decide where it stops.
 
-Report macro-F1 alongside micro when your types are this uneven. Here they
+Report macro-F1 alongside micro when performance is this uneven across types. Here they
 are close (85.34 macro against 85.45 micro) only because the three types
 happen to be similarly sized; in a schema with one rare type and one common
 one they diverge sharply, exactly as @sec-classification showed for document
@@ -1207,6 +1223,9 @@ Before any results, a bug worth more than the results. The same schema, the
 same model, the same server — two endpoints:
 
 ```text
+prompt: "What is the capital of France?"
+schema: {"answer": integer}
+
 POST /api/generate   with format=<schema>
   -> {"answer": 1}
 
@@ -1239,7 +1258,9 @@ blaming on your prompt.
 ::: {.column-margin}
 Note also *what* the constrained call returned: `{"answer": 1}`. Paris is not
 an integer, so grammar-constrained decoding produced something schema-valid
-and semantically worthless. [A schema guarantees shape, never
+and semantically worthless. Nor did the schema offer a legal way to say "this
+question has no integer answer" (a nullable field, say); the model was forced
+to produce a number. [A schema guarantees shape, never
 truth.]{.hl} @sec-decoding is where the machinery behind this lives — how
 grammars constrain sampling, and what they cost.
 :::
@@ -1306,6 +1327,17 @@ aligner **barely moves the score**, from 60.57 to 60.29 F1. Recall rises
 (60.82 to 61.11) and precision falls (60.33 to 59.50), because the recovered
 mentions were mostly wrong anyway. So check the alignment — and do not expect
 it to be the explanation for a disappointing number.
+
+State the protocol behind these numbers, too: unalignable mentions were left
+out of the precision denominator — not silently, since their rate is reported
+above (the second option in question 6 of @sec-sequence-labeling-intuition).
+That protocol is also why precision falls: the 27 recovered mentions enter the
+denominator for the first time, and most are wrong. Under the other protocol,
+counting unalignable mentions as false positives, back-calculating from these
+numbers gives roughly 59.9 F1 for the naive aligner and 60.2 for the corrected
+one. The difference stays under a point, but its direction flips: the recovered
+mentions were already counted as false positives there, and four of them become
+true positives.
 
 The four genuinely unalignable mentions are all suffix-boundary confusions
 rather than invention: the model returned `Çin Halk Cumhuriyeti` where the
@@ -1544,7 +1576,7 @@ most common suffixes on mentions
   -in   227    -a    201    -nin  195    -ya   182
 ```
 
-[One mention in six carries a case suffix welded onto the name.]{.hl} And the
+[One mention in six carries a suffix (mostly a case suffix) attached with an apostrophe.]{.hl} And the
 surface forms multiply per entity:
 
 ```text
@@ -1564,8 +1596,8 @@ build on top — a frequency ranking, a co-occurrence graph, an alert on
 The Turkish-specific first step is cheap and worth doing before anything
 clever: **split on the apostrophe and keep the stem.** It is not a general
 solution — plenty of inflected mentions carry no apostrophe, and the
-apostrophe convention is not universally followed — but it collapses 10.3% of
-surface forms for one line of code.
+apostrophe convention is not universally followed — but it cuts the number of distinct
+surface forms by 10.3% for one line of code.
 
 Beyond that, the pipeline is the standard one: generate candidate entries
 from a knowledge base by string similarity, then rank the candidates with
@@ -1647,7 +1679,9 @@ the Viterbi search at decode time is.
 
 Measured, on this corpus: fine-tuning on 200 sentences with the full-budget
 recipe (three epochs, 39 updates) gives **3.14 span F1**. A dictionary of
-memorised strings gives **55.26**. A longer schedule would do better; how much
+memorised strings gives **55.26** — but that dictionary was built from all
+20,000 sentences; one built from your 200 would hold a few hundred phrases and
+score lower, which this chapter did not measure. A longer schedule would do better; how much
 better is the measurement to make before you decide.
 
 At that budget the encoder has seen a few hundred entities across six entity
@@ -1657,8 +1691,10 @@ against a CRF trained on the full 20,000 sentences arrives somewhere between
 **2,000 and 5,000** labelled sentences: at 2,000 the encoder is still a point
 behind (84.23 against 85.45) and by 5,000 it is nearly three ahead.
 
-So: gazetteer first, then a CRF, and fine-tune once you are past a few thousand
-labelled sentences. The general lesson is that "just fine-tune a transformer"
+So: gazetteer first if you have a ready-made list, and fine-tune once you are
+past a few thousand labelled sentences. In between, a CRF is cheap and the first
+thing to try, but this chapter did not measure a CRF trained on a small budget;
+check that ordering on your own data. The general lesson is that "just fine-tune a transformer"
 is advice with a budget attached, and the budget is rarely stated.
 :::
 
@@ -1751,7 +1787,7 @@ score assumes. Anyone who answers "F1" and stops has evaluated nothing.
 
 **Q: Your NER model does well offline and badly in production. Walk through it.**
 
-Ordered by cost, and the first three are not the model:
+Ordered by cost, and the first four are not the model:
 
 1. **Tokenization mismatch.** Offline you evaluated on pre-tokenized gold
    tokens; production tokenizes raw text with a different splitter, so the
@@ -1806,7 +1842,7 @@ Worth knowing about, not used above:
 
 | library | current version | when you would reach for it |
 |:--|:--|:--|
-| `spaCy` | 3.8.16 | the pragmatic default for production NER pipelines: fast, has Turkish support, and ships tokenizer, tagger and entity ruler as one deployable object |
+| `spaCy` | 3.8.16 | the pragmatic default for production NER pipelines: fast, has a Turkish language class and tokenizer (no official trained Turkish pipeline; trained ones are community-built), and ships tokenizer, tagger and entity ruler as one deployable object |
 | `spacy-llm` | 0.7.4 | the schema-guided path of @sec-sequence-labeling-llm inside a spaCy pipeline, so you can mix a prompt-driven component with a trained one |
 | `GLiNER` | 0.2.28 | zero-shot NER from type *names* rather than a prompt [@zaratiana2024gliner] — encoder latency instead of generation latency; see @sec-sequence-labeling-llm |
 | `nervaluate` | 1.2.1 | the MUC-style partial-credit breakdown when exact match is the wrong contract for your consumer |
@@ -1829,7 +1865,9 @@ not measure it, which is the reason this chapter's zero-shot section has a
 ## Lab: extraction on a budget you actually have {#sec-sequence-labeling-lab}
 
 The premise of this lab is the measurement in @sec-sequence-labeling-encoder:
-at small label budgets the learned model loses to the list. The lab is
+at small label budgets the learned model loses to a list built from 20,000
+sentences; whether it loses to one built from your own training half is what
+this lab measures. The lab is
 therefore not "fine-tune a transformer" — it is "find out what your budget
 buys, before spending it".
 
@@ -1953,7 +1991,7 @@ later number should be read.
 | memorisation versus generalisation in NER | @elangovan2021memorization |
 | linking a mention to an actual entity | @hoffart2011robust |
 | relation extraction, the task after this one | @zhang2017position |
-| extraction at industrial scale | @wu2020scalable |
+| scalable entity linking with dense retrieval | @wu2020scalable |
 
 : The primary sources {tbl-colwidths="[46,54]"}
 
@@ -1970,31 +2008,34 @@ later number should be read.
   one asks whether the record came out right.
 
 - **Audit the corpus before you trust the score.** WikiANN Turkish has
-  **13.06% of its test set verbatim in training**, and the leakage bonus
-  falls monotonically with how much a system memorises: **+26.50** for a
+  **13.06% of its test set verbatim in training**, and the raw leakage
+  bonus falls as a system's tendency to memorise falls: **+26.50** for a
   gazetteer, **+16.25** for the CRF (99.81 leaked against 83.56 clean),
-  **+7.65** for the fine-tuned encoder. That gap is a diagnostic, not a
-  measurement of memorisation: a large one means look harder. Hash your test
+  **+7.65** for the fine-tuned encoder. Normalised by the headroom above the
+  clean half, the order changes (the CRF tops it at 99%). That gap is a
+  diagnostic, not a measurement of memorisation: a large one means look harder. Hash your test
   inputs — it is four lines.
 
-- **The classical baseline is not a formality.** A gazetteer scores **55.26**
-  from a Python dictionary; a CRF with hand features scores **85.45** in
+- **The classical baseline is not a formality.** A gazetteer built from 20,000
+  sentences scores **55.26** from a Python dictionary; a CRF with hand features scores **85.45** in
   **18.5 seconds on a CPU**. Fine-tuned BERTurk needs 2,000 to 5,000 labelled
   sentences to match the CRF trained on 20,000, and reaches **91.92** on the
   full budget — a real saving, and a real threshold below which the
-  transformer is simply the worse model.
+  transformer is worse than the 20,000-sentence CRF. A CRF trained
+  at the same small budget was not measured.
 
 - **With the default recipe, 200 labelled sentences bought single-digit span
   F1** — 3.14 in our single run of three epochs (39 updates), a schedule that
   starves small budgets, so read the order of magnitude rather than the
   decimals. At that budget the fine-tuned encoder learned to say `O`, and a
-  memorised list beat it by fifty points. "Just fine-tune a transformer" is
+  list memorised from 20,000 sentences beat it by fifty points (one built from
+  200 would lead by less, if at all; we did not measure it). "Just fine-tune a transformer" is
   advice with a budget — and a training schedule — attached; ask what they are.
 
 - **Decoding is a decision you are making whether or not you know it.** A
   softmax tagger at full budget emitted **139 illegal BIO transitions**
-  across 10,000 sentences — and 3,739 at the 500-sentence budget. The CRF
-  emitted zero at every budget, because Viterbi scores whole sequences and a
+  across 10,000 sentences — and 3,739 at the 500-sentence budget. The 20,000-sentence
+  CRF emitted zero, because Viterbi scores whole sequences and a
   forbidden transition with no supporting features did not make the winning
   path. That is an empirical zero, not a guarantee; remove the transitions from
   the search if you need one. What your evaluation does with those 139 changes your
