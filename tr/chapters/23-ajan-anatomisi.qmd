@@ -15,17 +15,17 @@ Python 3.14.5.
 
 - asgari ajan döngüsünü (agent loop) — model, araç çağrısı, gözlem, model — sıfırdan
   yazabilir ve her satırın ne işe yaradığını adlandırabilirsiniz;
-- döngünün *durumunun* ne olduğunu ve bunun neden zor kısım olduğunu
+- döngünün *durumunun* ne olduğunu ve bunun neden işin zor kısmı olduğunu
   söyleyebilirsiniz;
 - bir görev daha çok adım gerektirdikçe ajanın güvenilirliğinin nasıl
-  bozulduğunu, bir his değil bir ölçüm üzerinden öngörebilirsiniz;
-- bir görevin ne zaman ajan istediğine ve ne zaman sabit bir hattın daha güvenli
-  mühendislik olduğuna karar verebilirsiniz.
+  bozulduğunu bir hisse değil bir ölçüme dayanarak öngörebilirsiniz;
+- bir görevin ne zaman ajan istediğine, ne zaman sabit bir hattın (pipeline)
+  daha güvenli bir mühendislik tercihi olduğuna karar verebilirsiniz.
 
 ## Döngü ve başka hiçbir şey {#sec-ajan-anatomisi-dongu}
 
 Bir ajan sihir değildir: [bir
-[**ajan döngüsüdür**](#gloss-agent-loop){#term-agent-loop .term-ref} — işlevlere
+[**ajan döngüsüdür**](#gloss-agent-loop){#term-agent-loop .term-ref} — fonksiyonlara
 erişimi olan bir dil modelinin etrafındaki bir while döngüsü]{.hl}.
 
 ::: {#gloss-agent-loop .column-margin .term-gloss}
@@ -35,8 +35,8 @@ araç sonucu kaydı) eklenir ve model yeniden seçer. Model araç çağırmayı
 bıraktığında biter. [↩](#term-agent-loop){.term-back}
 :::
 
-Diğer her şey — planlama, bellek, düzenleme — o döngünün etrafındaki
-mühendisliktir. İşte hiçbir şey çıkarılmadan tamamı:
+Diğer her şey — planlama, bellek, düzenleme (orchestration) — o döngünün
+etrafındaki mühendisliktir. İşte hiçbir şey çıkarılmadan tamamı:
 
 ```python
 def agent(question, tools, model, max_steps=10):
@@ -50,7 +50,7 @@ def agent(question, tools, model, max_steps=10):
             return reply.content
 
         messages.append(reply.model_dump())       # 4. kararı hatırla
-        for call in reply.tool_calls:             # 5. çalışma zamanı hareket eder
+        for call in reply.tool_calls:             # 5. çalışma zamanı harekete geçer
             try:
                 args = json.loads(call.arguments) # dict değil, JSON dizgisi
                 result = tools[call.name](**args)
@@ -67,24 +67,24 @@ Ajan budur. `def` dâhil on dört ifade; sayın. Karşılaşacağınız framewor
 (ajan geliştirmeyi kolaylaştıran yazılım çatılarının) altında yatan desen bu
 döngü. (Yorumlardaki numaralar aşağıdaki tartışma için etiketlerdir, ifade
 sırası değil.) Framework'lerin eklediği şey çoğunlukla 1, 4 ve 7 numaralı
-satırlar hakkında görüşler; artı on dört ifadelik bir döngüde olmayan durum
-yönetimi, doğrulama, zamanlama ve kurtarma.
+satırlar hakkındaki görüşlerdir; bunlara, on dört ifadelik bir döngüde
+bulunmayan durum yönetimi, doğrulama, zamanlama ve kurtarma eklenir.
 
-Oradaki üç ayrıntı süs değil. Birincisi argümanlar. OpenAI uyumlu bir uçta
-`call.arguments` bir JSON *dizgisi* olarak gelir; dolayısıyla `**call.arguments`
-`TypeError` fırlatır. Bu `try` içinde olduğu için model, çalışma zamanının kendi
-hatasını kendi çağrısının suçuymuş gibi gösteren bir hata mesajı alır. Tersi
-tuzak da var: Ollama'nın yerleşik `/api/chat` uç noktası ve Anthropic'in
+Oradaki üç ayrıntı süs değil. Birincisi argümanlar. OpenAI uyumlu bir uç
+noktada `call.arguments` bir JSON *dizgisi* olarak gelir; dolayısıyla
+`**call.arguments` `TypeError` fırlatır. Bu hata `try` bloğunun içinde
+oluştuğu için model, aslında çalışma zamanındaki bir kusurdan doğan hatayı
+kendi çağrısının suçuymuş gibi gösteren bir mesaj alır. Tersi tuzak da var: Ollama'nın yerleşik `/api/chat` uç noktası ve Anthropic'in
 Messages API'si argümanları zaten ayrıştırılmış bir nesne olarak verir; orada
 hatayı fırlatan `json.loads` olur. İstemcinizin hangisini döndürdüğüne bakın.
-İkincisi, `tool_call_id` paralel araç çağrısını ifade edilebilir kılan şeydir:
-tek turda beş sonuç geri gelir ve hangisinin hangisini yanıtladığını yalnızca
-id söyler. Üçüncüsü, istisna `messages`'ı taşır, çünkü bütçe tetiklendiğinde ne
-yapmaya karar verirseniz verin, bunu ancak transkript `raise`'den sağ çıkarsa
-yapabilirsiniz.
+İkincisi, paralel araç çağırmayı mümkün kılan şey `tool_call_id`'dir: tek
+turda beş sonuç geri gelir ve hangisinin hangi çağrıyı yanıtladığını yalnızca
+bu id söyler. Üçüncüsü, istisna `messages`'ı taşır, çünkü adım bütçesi
+dolduğunda ne yapmaya karar verirseniz verin, bunu ancak transkript `raise`'den
+sağ çıkarsa yapabilirsiniz.
 
-Mesajların biçimi sağlayıcının protokolüdür; ayrıntıda farklıdır, fikirde
-değil. Her şeyden önce modele araç listesi gönderilir: her araç için bir ad,
+Mesajların biçimini sağlayıcının protokolü belirler; biçimler ayrıntıda
+farklıdır, fikirde değil. Her şeyden önce modele araç listesi gönderilir: her araç için bir ad,
 bir açıklama ve argümanları için bir JSON Schema — @sec-cozumleme-arac-arg'ın
 kısıtladığı şemaların aynısı. Yukarıda kullanılan OpenAI tarzı biçimde asistan
 mesajı bir `tool_calls` listesi taşır ve her sonuç, eşleşen `tool_call_id` ile
@@ -97,7 +97,7 @@ değişir.
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">Döngü ve her kusurun nerede yaşadığı</div>
+<div class="fig-title">Döngü ve kusurların ortaya çıktığı yerler</div>
 <svg viewBox="0 0 764 320" style="max-width:744px" role="img"
      aria-label="Bir ajan döngüsünün şeması. Bir soru, sistem prompt'unu ve kullanıcı mesajını tutan bir transkript kutusuna giriyor. Transkriptten modele bir ok gidiyor. Model ya çalışma zamanına giden araç çağrıları üretiyor ya da araç çağrısı üretmiyor; ikincisi döngüden çıkıp cevabı döndürüyor. Çalışma zamanı her çağrıyı yürütüyor ve sonucu ya da bir hata dizgisini transkripte geri ekliyor; ok modele dönüyor ve döngüyü kapatıyor. Etiketler işlerin ters gittiği dört yeri işaretliyor: çıkış bir model kararıdır ve hiçbir şey görevin tamamlanıp tamamlanmadığını kontrol etmez; transkript yalnızca büyür, dolayısıyla maliyet model çağrısı sayısıyla artar ve hatalar hiç unutulmaz; çalışma zamanı tek güvenlik sınırıdır çünkü model yürütmek yerine argüman üretir; ve bir adım bütçesi kendi başına sonlanmayan bir döngüyü yakalar.">
 
@@ -142,42 +142,44 @@ değişir.
 
   <text x="10" y="262" class="t-xs t-b t-muted">İŞLERİN TERS GİTTİĞİ YERLER</text>
   <text x="10" y="280" class="t-xs t-rose t-b">çıkış bir tahmindir</text>
-  <text x="10" y="293" class="t-xs t-muted">hiçbir şey görevin bittiğini kontrol etmez</text>
+  <text x="10" y="293" class="t-xs t-muted">görevin bittiğini hiçbir şey denetlemez</text>
   <text x="270" y="280" class="t-xs t-rose t-b">transkript yalnızca büyür</text>
-  <text x="270" y="293" class="t-xs t-muted">maliyet model çağrısı başına artar; hatalar kalır</text>
+  <text x="270" y="293" class="t-xs t-muted">her çağrıda maliyet artar; hatalar kalır</text>
   <text x="530" y="280" class="t-xs t-rose t-b">sınır çalışma zamanıdır</text>
-  <text x="530" y="293" class="t-xs t-muted">model argüman üretir, asla eylem değil</text>
+  <text x="530" y="293" class="t-xs t-muted">model eylem değil argüman üretir</text>
 </svg>
 ```
 
 ::: {.fig-cap}
-Karşılaşacağınız her framework, bu şemanın üç kenarı hakkında görüşler
+Karşılaşacağınız her framework, bu şemanın üç kenarına dair görüşler
 eklenmiş hâlidir:
 transkripte ne girer, döngünün ne zaman durmasına izin verilir ve çalışma
 zamanının neyi yürütmesine izin verilir.
 :::
 ::::
 
-İçindeki altı şey adlandırmaya değer, çünkü her biri insanların kazara verdiği
-bir karardır.
+Şemadaki altı nokta ayrıca adlandırılmayı hak ediyor, çünkü her biri
+insanların çoğu zaman farkında olmadan verdiği bir karardır.
 
 **Model hiçbir şey yürütmez.** *Argüman* üretir; onları çalıştırıp
 çalıştırmayacağına çalışma zamanınız karar verir. Güvenlik sınırının tamamı
-budur ve kitabın ajan güvenliği bölümü, insanların bunun tek sınır olduğunu
-unuttuğunda ne olduğuyla ilgilidir.
+budur ve @sec-ajan-guvenligi, insanlar bunun tek sınır olduğunu unuttuklarında
+neler olduğunu anlatır.
 
 **`messages` durumdur ve yalnızca büyür.** Başka bellek yoktur. Her gözlem
-eklenir, dolayısıyla bağlam her adımda uzar — bu da maliyeti adım sayısında
-doğrusaldan hızlı büyütür ve sonunda pencereyle çarpışır. On dört ifade o
-çarpışmayı ele almıyor: pencere taştığında `model.chat` `try`'ın *dışında*
-fırlatır ve koşu, transkript kaydedilmeden ölür. Üretim sürümü o çağrıyı da
-sarar, `messages`'ı yeniden fırlatmadan önce kalıcılaştırır ve taşmayı bir
-sıkıştırma adımına devreder — @sec-baglam-muhendisligi tam oradan başlar.
+eklenir, dolayısıyla bağlam her adımda uzar; bu da maliyetin adım sayısıyla
+doğrusaldan hızlı büyümesine yol açar ve bağlam sonunda bağlam penceresinin
+sınırına dayanır. On dört ifade bu durumu ele almıyor: pencere taştığında
+`model.chat` `try`'ın *dışında* hata fırlatır ve koşu, transkript
+kaydedilmeden çöker. Üretim sürümü o çağrıyı da sarar, istisnayı yeniden
+fırlatmadan önce `messages`'ı kalıcı olarak kaydeder ve taşmayı bir
+sıkıştırma (compaction) adımına devreder — @sec-baglam-muhendisligi tam
+oradan başlar.
 
 **3 numaralı satır sonlanma koşuludur ve bir *model* kararıdır.** Döngü, model araç
 çağırmamayı seçtiğinde biter. Hiçbir şey görevin tamamlanıp tamamlanmadığını
-kontrol etmez. Sıradan yazılımdan gelen biri için bu mimarinin en şaşırtıcı
-özelliği budur: durma kuralı bir tahmindir. Üstelik bu koşul bitmiş bir
+kontrol etmez. Klasik yazılım dünyasından gelen biri için bu mimarinin en
+şaşırtıcı özelliği budur: durma kuralı bir tahmindir. Üstelik bu koşul bitmiş bir
 cevaptan fazlasını yakalar. Çıktı token sınırında kesilmiş ya da bir içerik
 filtresine takılmış bir yanıtta da araç çağrısı yoktur; bu döngü o yarım
 parçayı cevapmış gibi döndürür. `reply.content`'e güvenmeden önce sağlayıcının
@@ -188,9 +190,9 @@ değil, modelin tepki verebileceği bir gözlemdir. *İyi* tepki verip vermediğ
 @sec-arac-tasarimi'nin konusudur ve büyük ölçüde o dizginin ne
 söylediğine bağlıdır. O `except`'in başka neyi yuttuğuna da dikkat edin:
 `tools[call.name]`'den gelen bir `KeyError` *sizin* hatanızdır ve model onu
-araç başarısız olmuş gibi alır. Güvenilecek bir çalışma zamanı, gözlemi
-yazmadan önce araç kusurlarını, ajanı çalıştıran yazılım düzeneğinin
-kusurlarından ayırır.
+araç başarısız olmuş gibi alır. Güvenilir bir çalışma zamanı, gözlemi
+yazmadan önce araç kusurlarını düzeneğin (harness) — modelin etrafındaki kendi
+kodunuzun — kusurlarından ayırır.
 
 **7 numaralı satır dürüst kısımdır.** Bir
 [**adım bütçesi**](#gloss-step-cap){#term-step-cap .term-ref} bir performans
@@ -201,24 +203,25 @@ ayar düğmesi değil,
 değil, döngünün çıkışının bir model kararı olduğunun ve hiç alınmayabileceğinin
 itirafı. [↩](#term-step-cap){.term-back}
 :::
-döngünün kendi başına sonlanmayabileceğinin itirafıdır. Tetiklendiğinde ne
-yapacağınız bir ürün kararıdır: yeniden denemek, escalation (insana ya da daha
-yetkili bir sisteme yönlendirme) ya da kısmi işi döndürmek. Bu karar bir
+döngünün kendi başına sonlanmayabileceğinin itirafıdır. Bütçe dolduğunda ne
+yapacağınız bir ürün kararıdır: yeniden denemek, escalation (işi bir insana ya
+da daha güçlü bir modele aktarmak) ya da o ana kadarki kısmi işi döndürmek. Bu karar bir
 framework'ün varsayılanına bırakılmamalı, bilerek verilmeli.
 
 **Plan yoktur.** Model bir eylem seçer, bir sonuç görür ve yeniden seçer.
 Planlamaya benzeyen her şey ya modelin kendi bağlamına bir plan yazıp sonra onu
 izlemesidir ya da kodunuzun dışarıdan yapı dayatmasıdır. İkisi de meşrudur;
 hiçbiri döngünün içinde değildir. Ayrım korunmaya değer: transkripte bir plan
-yazmak *bağlam içi* planlamadır ve koşu boyunca modelin kendi tutarlılığı kadar
-işe yarar. Kodunuzun sonra yürüteceği bir ayrıştırmayı dayatmak ise hiç
-planlama değildir — bir hattır ve @sec-ajan-anatomisi-karar bunun genellikle
-daha iyi takas olduğunu savunuyor.
+yazmak *bağlam içi* planlamadır ve modelin koşu boyunca tutarlı kalabildiği
+ölçüde işe yarar. Görevi, kodunuzun sonra yürüteceği adımlara önceden bölmek
+ise hiç planlama değildir — bu bir hattır ve @sec-ajan-anatomisi-karar bunun
+genellikle daha iyi bir takas olduğunu savunuyor.
 
 ### Çıkışı yeniden bir koşula çevirmenin üç yolu
 
-Çıkışın tahmin olarak kalması şart değil. Üç ucuz hamle, müdahale sırasına göre,
-döngüye kontrol edilebilir bir koşulu geri koyuyor.
+Çıkışın tahmin olarak kalması şart değil. Üç ucuz hamle, en az müdahaleciden
+en çoğuna doğru sıralanmış olarak, döngüye kontrol edilebilir bir koşulu geri
+koyuyor.
 
 **Bitirmeyi bir araç yapın.** Şemadaki bir `submit_answer(answer)`, "bitirdim"i
 çalışma zamanının tanıyabileceği bir çağrıya dönüştürür; böylece döngü bir
@@ -232,22 +235,22 @@ arama komutu `ARA` ile yarışıyor; ikisi aynı *tür* şey olduğunda bu yarı
 biter.
 
 **Tekrarı saptayın.** Bir çağrı transkriptte zaten bulunan biriyle bayt bazında
-aynıysa döngü *muhtemelen* ilerlemeyi bırakmıştır — ayrılması gereken gerçek bir
-istisnayla: bir işi yoklamak, ajanın az önce yazdığı bir dosyayı yeniden okumak
-ya da değişen veriyi yeniden sorgulamak meşru tekrarlardır. Bunun amaç olduğu
-araçları muaf tutun, kontrolü gerisine uygulayın. Aynı sonucu yeniden döndürmek
-yerine bunu söyleyen bir gözlem döndürün — aşağıdaki en kötü kusur, adım
-bütçesi dolana kadar tekrarlanan aynı çağrıdır ve tek satırlık bir defter
-tutma onu yakalar.
+aynıysa döngü *muhtemelen* ilerlemeyi bırakmıştır. Bunun gerçek bir istisnası
+var: bir işin durumunu yoklamak, ajanın az önce yazdığı bir dosyayı yeniden
+okumak ya da değişen veriyi yeniden sorgulamak meşru tekrarlardır. Tekrarın
+zaten amaç olduğu araçları muaf tutun, kontrolü geri kalanlara uygulayın. Aynı
+sonucu yeniden döndürmek yerine tekrarı bildiren bir gözlem döndürün —
+bölümün aşağıda ölçülen en kötü kusuru da adım bütçesi dolana kadar
+tekrarlanan aynı çağrıdır ve tek satırlık bir kayıt tutma onu yakalar.
 
-**Bir değil üç bütçe sınırlayın.** Adım sayısı, wall-clock süresi (gerçekte
-geçen süre, saniye cinsinden) ve token farklı
-biçimde tükenir: bir koşu on adımın altında kalıp yine de bir dakika ya da elli
-bin token harcayabilir. Her biri tetiklendiğinde tanımlı bir davranış ister ve
-yukarıdaki on dört ifade yalnızca birincisini sınırlıyor.
+**Tek bir bütçeye değil üçüne sınır koyun.** Adım sayısı, wall-clock süresi
+(gerçekte geçen süre, saniye cinsinden) ve token sayısı farklı biçimlerde
+tükenir: bir koşu on adımın altında kalıp yine de bir dakika ya da elli bin
+token harcayabilir. Her biri dolduğunda ne olacağı önceden tanımlanmalıdır;
+yukarıdaki on dört ifade ise yalnızca birincisini sınırlıyor.
 
 ::: {.column-margin}
-Bu döngüyü kullandığınız dilde, iki gerçek araca karşı bir kez kendiniz
+Bu döngüyü kullandığınız dilde, iki gerçek araçla bir kez kendiniz
 yazmaya değer. Bir öğleden sonra sürer ve framework belgelerini okuma biçiminizi
 kalıcı olarak değiştirir — sonradan karşılaştığınız her soyutlama bu on dört
 ifadenin tanınabilir bir sarmalayıcısıdır ve ne yaptığını değil ne eklediğini
@@ -256,97 +259,102 @@ sorabilirsiniz.
 
 **Neye bakacağız.** Önce döngünün durumunun gerçekte ne olduğu — yalnızca büyüyen
 bir transkript — ve doğrudan bundan çıkan üç sonuç; "yeniden dene"nin burada
-sıradan yazılımdakinden neden çok daha pahalı bir öneri olduğu dâhil. Sonra
-görevler daha çok adım gerektirdikçe döngünün ne kadar ilerlediğinin ölçümü;
-sürprizin araç kullanımı kusursuz kalırken doğruluğun çökmesi olduğu yer. Sonra
-aynı döngünün elle yazılmış bir metin protokolüne karşı hâli; en zor değil *en
-kolay* görevde en kötü bozulan. Ve son olarak hepsinden önce verilmesi gereken
-karar: bu görev gerçekten bir döngü istiyor mu?
+sıradan yazılımdakinden neden çok daha pahalı bir öneri olduğu da buna dâhil.
+Sonra görevler daha çok adım gerektirdikçe döngünün ne kadar ilerlediğini
+ölçeceğiz; sürpriz, araç kullanımı kusursuz kalırken doğruluğun çökmesi. Sonra
+aynı döngüyü elle yazılmış bir metin protokolüyle karşılaştıracağız; o
+protokol en zor görevde değil, *en kolay* görevde en kötü sonucu veriyor. Son
+olarak da hepsinden önce verilmesi gereken karar: bu görev gerçekten bir döngü
+istiyor mu?
 
 ## Durum bir transkripttir ve asıl problem budur {#sec-ajan-anatomisi-durum}
 
-Bu ajanın durumunun ne *olduğunu* sorun; dürüst cevap rahatsız edicidir: mesaj
-listesidir ve başka hiçbir şey değildir. Çalışma belleği yoktur, değişken
-bağlamaları yoktur, modelin adresleyebileceği bir karalama alanı yoktur. Ajanın
-7. adımda bildiği her şey, 6. adıma kadar transkripte sağ çıkmış olan şeydir.
+Bu ajanın durumunun ne *olduğunu* sorarsanız dürüst cevap rahatsız edicidir:
+mesaj listesi, o kadar. Çalışma belleği yoktur, değişken bağlamaları yoktur,
+modelin adresleyebileceği bir karalama alanı yoktur. Ajanın yedinci adımda
+bildiği her şey, altıncı adıma kadar transkripte girmiş ve orada kalmış olan
+şeydir.
 
 Bu, asgari döngünün bir özelliği; ajanlar hakkında bir yasa değil. Sonraki
-bölümlerden üçü bu sınırlamayı aşmanın farklı yollarını ele alıyor: @sec-baglam-muhendisligi durumu
-ajanın geri okuduğu dosyalara taşıyor, @sec-bellek ona çalıştırmadan uzun yaşayan
-bir depo veriyor ve @sec-cok-ajanli alt görevleri kendi transkriptleri olan
-çalışanlara devrediyor. Aşağıdaki üç sonucu *varsayılan olarak* elinize geçen
-şey ve o bölümlerin var olma sebebi diye okuyun.
+bölümlerden üçü bu sınırlamayı aşmanın farklı yollarını ele alıyor:
+@sec-baglam-muhendisligi durumu ajanın geri okuduğu dosyalara taşıyor,
+@sec-bellek ajana koşudan daha uzun yaşayan bir depo veriyor ve @sec-cok-ajanli
+alt görevleri kendi transkriptleri olan çalışanlara devrediyor. Aşağıdaki üç
+sonucu *varsayılan olarak* elinize geçen şey ve o bölümlerin var olma sebebi
+diye okuyun.
 
-Doğrudan bundan üç sonuç çıkıyor ve pratikte ters gidenlerin çoğunu bunlar
-açıklıyor.
+Bu durumdan doğrudan üç sonuç çıkıyor; pratikte ters giden şeylerin çoğunu
+bunlar açıklıyor.
 
 **Maliyet, araç çağrısı sayısıyla değil *model çağrısı* sayısıyla büyür.** Her
 model çağrısı bütün transkripti yeniden gönderir, dolayısıyla gerçekten sıralı
-*n* adımlık bir çalıştırma kabaca ilk *n* bağlam uzunluğunun toplamına mal olur
-— doğrusal değil karesel. @sec-ajan-anatomisi-bozulma'da ölçülen kurtarıcı
-nokta, aynı anda birkaç araç çağrısı üreten bir modelin pek çok adımı bire
-indirmesidir; bu bölümün ölçümünde ajanın maliyeti üzerindeki en büyük
+*n* adımlık bir koşu kabaca ilk *n* bağlam uzunluğunun toplamına mal olur
+— doğrusal değil karesel. İşin tesellisi, @sec-ajan-anatomisi-bozulma'da
+ölçüldüğü gibi, aynı anda birkaç araç çağrısı üreten bir modelin pek çok adımı
+bire indirmesidir; bu bölümün ölçümünde ajanın maliyeti üzerindeki en büyük
 kaldıraç da bu çıkıyor.
 
 **Hiçbir şey unutulmaz, hatalar dâhil.** Yanlış bir araç çağrısı ve hata mesajı
-çalıştırmanın geri kalanı boyunca bağlamda kalır ve model onları koşullamayı
-sürdürür. Yanlış giden bir ajanın çoğu zaman aynı yönde yanlış gitmeyi
-sürdürmesinin nedeni budur — daha önceki kafa karışıklığının kanıtı artık akıl
-yürüttüğü şeyin bir parçasıdır.
+koşunun geri kalanı boyunca bağlamda kalır; model de sonraki her adımda
+çıktısını onlara koşullu olarak üretmeyi sürdürür. Yanlış giden bir ajanın çoğu
+zaman aynı yönde yanlış gitmeyi sürdürmesinin nedeni budur — daha önceki kafa
+karışıklığının izleri artık akıl yürütürken dayandığı malzemenin bir
+parçasıdır.
 
-**Varsayılan olarak transkriptin geri alınması yoktur.** Sıradan yazılımda
+**Varsayılan olarak transkript geri alınamaz.** Sıradan yazılımda
 başarısız bir adımı temiz bir durumdan yeniden denerdiniz. Burada kusur durumun
 içindedir ve bu döngü her mesajı saklar. Geri almayı *kurabilirsiniz* — bir
-adımdan önce mesaj listesinin anlık görüntüsünü alıp oraya kadar kısaltmak
-ucuzdur ve yapmaya değer. Hiçbir anlık görüntünün geri almadığı şey yan
-etkilerdir: giden e-posta, silinen kayıt, geçen ödeme. İkisini kafanızda ayrı
-tutun, çünkü yalnızca biri sizin denetiminizde ve "yeniden dene"nin bir ajan
-için bir HTTP isteğinden pahalı bir öneri olmasının nedeni de budur.
+adımdan önce mesaj listesinin anlık görüntüsünü alıp gerekirse listeyi o
+noktaya geri kırpmak ucuzdur ve yapmaya değer. Hiçbir anlık görüntünün geri
+almadığı şey yan etkilerdir: giden e-posta, silinen kayıt, geçen ödeme. İkisini
+kafanızda ayrı tutun, çünkü yalnızca biri sizin denetiminizde; "yeniden
+dene"nin bir ajan için bir HTTP isteğine göre çok daha pahalı bir öneri
+olmasının nedeni de budur.
 
 ::: {.column-margin}
-Kuadratik terimin acısını alan tek bir şey var ve başka bir şeyi
-eniyilemeden önce bilmeye değer. Bir ajan döngüsündeki her istek, bir önceki
-isteğin tamamıyla, hiç değişmeden *başlar* — prompt önbelleklemenin tam da bunun
-için yapıldığı desen: bugünkü fiyat listelerinde önbellekten okuma çoğu zaman
-taze okumanın kabaca onda birine mal olur. Kesin indirim sağlayıcıya ve modele
-göre değişir, bazı sağlayıcılar önbelleğe yazmak için ek ücret alır ve bir
-önbellek kaydı varsayılan olarak birkaç dakika kullanılmayınca silinir.
-Kuadratik terim kaybolmuyor; sabiti küçülüyor, en fazla bir büyüklük mertebesi
-kadar — ve devamı rahatsız
-edici, çünkü bir transkripti sıkıştırmak öneki yeniden yazar ve cache'i geçersiz
-kılar. @sec-baglam-muhendisligi'nin sıkıştırması bu yüzden bedava değil;
-mekanikleri @sec-servis'te.
+Karesel terimi hafifleten tek bir şey var ve başka bir şeyi eniyilemeden önce
+bunu bilmekte yarar var. Bir ajan döngüsündeki her istek, bir önceki isteğin
+tamamıyla, hiç değişmeden *başlar* — prompt önbellekleme (prompt caching) tam
+da bu desen için tasarlandı: bugünkü fiyat listelerinde önbellekten okuma çoğu
+zaman taze okumanın kabaca onda birine mal olur. Kesin indirim sağlayıcıya ve
+modele göre değişir, bazı sağlayıcılar önbelleğe yazmak için ek ücret alır ve
+bir önbellek kaydı varsayılan olarak birkaç dakika kullanılmayınca silinir.
+Karesel terim kaybolmuyor; sabiti küçülüyor, en fazla bir büyüklük mertebesi
+kadar. Bunun rahatsız edici bir sonucu da var: bir transkripti sıkıştırmak
+öneki yeniden yazar ve önbelleği geçersiz kılar. @sec-baglam-muhendisligi'nin
+sıkıştırması bu yüzden bedava değil; ayrıntılı mekanizma @sec-servis'te.
 :::
 
 ::: {.column-margin}
-@sec-baglam-muhendisligi'nin bir bölüm olarak var olmasının nedeni budur. Transkriptin durumun *kendisi* olduğunu gördüğünüzde, ona ne gireceğine
-— ve neyin özetleneceğine, düşürüleceğine ya da hiç eklenmeyeceğine — karar
-vermek toparlanma olmaktan çıkıp asıl tasarım faaliyeti olur.
+@sec-baglam-muhendisligi'nin ayrı bir bölüm olmasının nedeni de budur.
+Transkriptin durumun *kendisi* olduğunu gördüğünüzde, ona ne gireceğine — ve
+neyin özetleneceğine, atılacağına ya da hiç eklenmeyeceğine — karar vermek bir
+temizlik işi olmaktan çıkıp asıl tasarım faaliyeti olur.
 :::
 
 ### Denetim: sonra ne olacağına kim karar veriyor?
 
-Transkript ajanın ne *bildiğini* çözer. Sonraki eylemi kimin seçeceğini
-çözmez ve bu, üzerinde bir yelpaze olan ayrı bir eksendir — o yelpazede bilerek
-bir nokta seçmek mühendisliğin çoğudur.
+Transkript ajanın ne *bildiğini* belirler. Sonraki eylemi kimin seçeceğini ise
+belirlemez; bu ayrı bir eksendir ve bu eksen boyunca bir yelpaze uzanır. O
+yelpazede bilerek bir nokta seçmek, mühendisliğin büyük kısmıdır.
 
 | | sonraki eylemi kim seçer | ne zaman doğrudur |
 |:--|:--|:--|
-| **Sabit hat** | siz, tasarım anında | adımlar bilinen ve durağan. [En ucuz, en hızlı ve test edilebilir]{.pro} |
-| **Yönlendirici** | model, bir kez, küçük bir kümeden | birkaç bilinen yol ve hangisi olduğuna girdi karar veriyor |
-| **Kısıtlı döngü** | model, her adımda, adım bütçeli kısıtlı bir araç kümesinden | yol değişiyor ama uzay sınırlı |
+| **Sabit hat** | siz, tasarım anında | adımlar biliniyor ve değişmiyor. [En ucuz, en hızlı ve test edilebilir]{.pro} |
+| **Yönlendirici** (router) | model, bir kez, küçük bir kümeden | birkaç bilinen yol var ve hangisinin izleneceğine girdi karar veriyor |
+| **Kısıtlı döngü** | model, her adımda, adım bütçeli kısıtlı bir araç kümesinden | yol değişiyor ama olası yollar sınırlı |
 | **Açık döngü** | model, her adımda, geniş araçlarla | gerçekten açık uçlu görevler. [En yetenekli ve en öngörülemez]{.con} |
-| **Onay kapılı döngü** | her adımda model, ama adı geçen araçlar yürütülmeden önce bir insan için durur | eylem geri alınamaz: para hareket eder, veri silinir, mesaj gider |
+| **Onay kapılı döngü** | model, her adımda; ama belirlenen araçlar yürütülmeden önce bir insanın onayını bekler | eylem geri alınamaz: para hareket eder, veri silinir, mesaj gider |
 
 : Beş özerklik düzeyi {tbl-colwidths="[22,36,42]"}
 
-Kapı prompt'a değil çalışma zamanına aittir: bir model izin istememeye ikna
+Onay kapısı prompt'a değil çalışma zamanına aittir: bir model izin istememeye ikna
 edilebilir, aracın üzerindeki bir `requires_approval` bayrağı edilemez. O kapının
 nereye konacağı ve karşı tarafta kimin olduğu @sec-korkuluklar'ın konusu.
 
 Son satır özerklikte bir basamak daha yukarısı değil — onay kapısı her döngüye
-eklenebilir — o yüzden ölçeği ilk dört satır olarak okuyun. Adlandırmaya değer
-hata açık döngüyle başlamaktır. Açık bir döngü kurulacak en
+eklenebilir — o yüzden ölçeği ilk dört satır olarak okuyun. Adını koymak
+gereken hata, işe açık döngüyle başlamaktır. Açık bir döngü kurulacak en
 *etkileyici* şeydir ve neredeyse hiçbir zaman problemin ihtiyaç duyduğu şey
 değildir; ve bir demoda çalıştığı için bedeli ancak sonradan, kimsenin hata
 ayıklayamadığı bir sistem biçiminde ortaya çıkar.
@@ -355,19 +363,23 @@ En üstten başlayın ve yalnızca bir ölçüm sizi zorladığında aşağı in
 
 ## Döngü ne kadar ilerliyor? {#sec-ajan-anatomisi-bozulma}
 
-Yukarıdakilerin hepsi mimari. Bir uygulayıcının asıl sorusu **bu ne kadar
-güvenilir** ve cevap ölçülebilir bir şeye bağlı: görevin kaç adım gerektirdiğine.
+Yukarıdakilerin hepsi mimari. Bir uygulayıcının asıl sorusu şu: **bu ne kadar
+güvenilir?** Cevap ölçülebilir bir şeye bağlı: görevin kaç adım gerektirdiğine.
 
-Kurulum diğer her şeyi sabit tutuyor. Uydurma projelerden bir veritabanı —
-`ZRG-14` gibi kodlar, hiçbir modelin tahmin edemeyeceği bütçeler — yalnızca tek
-bir araçla erişilebilir. Bir soru *k* arama ve bir toplama gerektiriyor; *k*
-1'den 5'e. Her *k*'da yirmi beş görev, sıcaklık 0, tam eşleşmeli puanlama. Aynı
-model üzerinde iki döngü: sağlayıcının yapılandırılmış araç çağırma API'si ve
-modelin `ARA(ZRG-14, butce)` yazıp çalışma zamanının onu ayrıştırdığı elle
-yazılmış bir metin protokolü.
+Kurulum diğer her şeyi sabit tutuyor. Uydurma projelerden oluşan bir
+veritabanına — `ZRG-14` gibi kodlar, hiçbir modelin tahmin edemeyeceği
+bütçeler — yalnızca tek bir araçla erişilebiliyor. Her soru *k* arama ve bir
+toplama gerektiriyor; *k* 1'den 5'e kadar. Her *k* değerinde yirmi beş görev,
+sıcaklık 0, tam eşleşmeli puanlama. Aynı model üzerinde iki döngü: sağlayıcının
+yapılandırılmış araç çağırma API'sini kullanan *yerleşik* döngü ve modelin
+`ARA(ZRG-14, butce)` yazıp çalışma zamanının onu ayrıştırdığı, elle yazılmış
+bir *metin protokolü*. Aşağıdaki çıktıda birincisi `native`, ikincisi `text`
+diye geçiyor; sütunlar sırasıyla arama sayısı (`lookups`), doğruluk, %95
+güven aralığı, görev başına model çağrısı ve araç çağrısı, ideal çağrı sayısı,
+adım bütçesine çarpan koşuların oranı (`hit cap`) ve görev başına token.
 
-Bütçeye takılan bir koşu dışlanmıyor, yanlış sayılıyor — söylemeye değer, çünkü
-metin protokolü için hikâyenin çoğu bu.
+Bütçeye takılan bir koşu dışlanmıyor, yanlış sayılıyor — bunu belirtmek
+gerekiyor, çünkü metin protokolünün hikâyesinin çoğu bu.
 
 ```text
 qwen3.5:9b, 25 tasks per step count, step cap 14
@@ -387,9 +399,9 @@ qwen3.5:9b, 25 tasks per step count, step cap 14
    text        5     28.0%  [14.3,  47.6]           7.0         6.1      5    12.0%    1,936
 ```
 
-Hücre başına yirmi beş görev küçük bir örneklem ve aralıklar bunu söylüyor: beş
+Hücre başına yirmi beş görev küçük bir örneklem ve Wilson aralıkları bunu söylüyor: beş
 aramada %40, [23, 59]; üç aramada %80, [61, 91]. Bu ölçümün desteklediği şey
-*yön* — bir arama ile beş arama birbirinden uzak (Fisher exact,
+*yön* — bir arama ile beş arama birbirinden uzak (Fisher kesin testi,
 p = 3 × 10⁻⁶) — aradaki eğrinin tam şekli değil. Komşu adım sayılarının hiçbir
 çifti kendi başına ayrışmıyor; en yakını p = 0,088 ile 4'e karşı 5. Ara
 noktaları birer işaret taşı değil, bir eğim olarak okuyun.
@@ -447,8 +459,8 @@ Plot.plot({
     Plot.dot(agentData, {x: "k", y: agentMetric, fill: "loop", r: 5}),
     Plot.text(agentData, {x: "k", y: agentMetric, dy: -14, fontSize: 11, fill: "loop",
       text: d => (agentMetric === "acc" || agentMetric === "cap")
-        ? d[agentMetric].toFixed(0) + "%"
-        : d[agentMetric].toLocaleString()})
+        ? "%" + d[agentMetric].toFixed(0)
+        : d[agentMetric].toLocaleString("tr-TR")})
   ].filter(m => m)
 })
 ```
@@ -456,59 +468,65 @@ Plot.plot({
 ```{ojs}
 //| echo: false
 md`${agentMetric === "cap"
-  ? "Yerleşik döngü bir kez bile sonlanmakta başarısız olmadı. Metin protokolü ise *en kolay* görevde en kötü kusuru verdi: tek aramalık koşuların %60'ı cevabı 0. adımda getirip aynı çağrıyı bütçe bitene kadar tekrarladı."
+  ? "Yerleşik döngü her koşuda kendiliğinden durdu. Metin protokolü ise *en kolay* görevde en kötü kusuru verdi: tek aramalık koşuların %60'ı cevabı 0. adımda getirip aynı çağrıyı bütçe bitene kadar tekrarladı."
   : agentMetric === "tools"
   ? "Gri çizgi ideal — arama başına bir çağrı. Yerleşik döngü tam üzerinde duruyor; metin protokolü ihtiyaç duymadığı çağrıları yapıyor, en kötüsü *en kolay* görevde."
   : agentMetric === "model"
   ? "Yerleşik döngüde 2,0'da düz: paralel araç çağırma, model çağrısı sayısının görevle büyümemesi demek. Bütün maliyet hikâyesi bu."
   : agentMetric === "tokens"
   ? "Beş kat iş, batch'lemeyle 1,52 kat token'a mal oluyor ve sıralı döngü aynı görev için 3,7 kata kadar ödüyor."
-  : "Araç kullanımı kusursuz kalırken doğruluk 60 puan düşüyor. Bozulan şey döngü değil, döngünün topladığı üzerine yapılan akıl yürütme."}`
+  : "Araç kullanımı kusursuz kalırken doğruluk 60 puan düşüyor. Bozulan şey döngünün kendisi değil, döngünün topladığı bilgiler üzerinde yapılan akıl yürütme."}`
 ```
 :::
 
 ### Araç çağrıları kusursuz, cevaplar değil
 
-Yerleşik satırları dikkatle okuyun, çünkü ilginç sütun doğruluk değil.
+`native` (yerleşik) satırlarını dikkatle okuyun, çünkü ilginç sütun doğruluk
+değil.
 
-**Araç kullanımı her adım sayısında kusursuz.** *k* gerektiren bir görev için
-tam olarak *k* çağrı, sıfır bozuk çağrı, adım bütçesine çarpan sıfır
-çalıştırma. Model her zaman doğru şeyi istiyor. Ve doğruluk yine aynı aralıkta
+**Araç kullanımı her adım sayısında kusursuz.** *k* arama gerektiren bir görev
+için tam olarak *k* çağrı, sıfır bozuk çağrı, adım bütçesine çarpan sıfır
+koşu. Model her zaman doğru şeyi istiyor. Buna rağmen doğruluk aynı aralıkta
 **%100'den %40'a** düşüyor.
 
-[Bozulan şey döngü değil. Döngünün topladığı üzerine yapılan akıl
-yürütme.]{.hl} Ajan beş doğru sayıyı getiriyor ve sonra onları yanlış topluyor.
+[Bozulan şey döngünün kendisi değil; döngünün topladığı bilgiler üzerinde
+yapılan akıl yürütme.]{.hl} Ajan beş doğru sayıyı getiriyor ve sonra onları
+yanlış topluyor.
 
-Bunu içselleştirmeye değer, çünkü hata ayıklamayı yeniden yönlendiriyor. Bir
-ajan bozulduğunda içgüdü araç çağrılarını incelemektir — ve burada araç
-çağrıları hiçbir zaman problem değildi. Biriken gözlemler üzerinde toplama öyle.
+Bunu iyice sindirmekte yarar var, çünkü hata ayıklarken nereye bakacağınızı
+değiştiriyor. Bir ajan bozulduğunda ilk içgüdü araç çağrılarını incelemektir —
+oysa burada araç çağrıları hiçbir zaman sorun değildi. Sorun, biriken
+gözlemleri bir araya getirip toplamaktaydı.
 
-İki rakip açıklamayı ciddiye almaya değer ve ikisi farklı yerlere çıkıyor.
-Birincisi bağlam uzunluğu. Kesilme olası değil: bu tablodaki en uzun koşu
-1.338 token, pencerenin epey içinde; @sec-baglam-muhendisligi-curume de aynı
-modeli benzer bir görevde 11.048 token'a kadar koşuyor ve %88,3 ile %100 arasında
-kalıyor. Bu, pencerenin dolmasını olası bir suçlu olmaktan çıkarıyor. *Biriken
-gözlemlerin* etkisini ise dışlamıyor — modelin topladığını nasıl kullandığı,
-biçimleri, aralarına ne girdiği — ki bu yerin bitmesinden farklı bir şey ve bu
-tasarım onu ayıramıyor.
+İki rakip açıklamayı ciddiye almak gerekiyor; ikisi farklı sonuçlara varıyor.
+Birincisi bağlam uzunluğu. Kesilme olası değil: yerleşik döngüde görev başına
+ortalama token en fazla 1.338, yani pencerenin epey içinde;
+@sec-baglam-muhendisligi-curume de aynı modeli benzer bir görevde 11.048
+token'a kadar koşuyor ve doğruluk %88,3 ile %100 arasında kalıyor. Bu,
+pencerenin dolmasını olası bir suçlu olmaktan çıkarıyor. *Biriken gözlemlerin*
+etkisini ise dışlamıyor — modelin topladıklarını nasıl kullandığı, bunların
+biçimi, aralarına ne girdiği. Bu, yerin bitmesinden farklı bir şeydir ve bu
+deney tasarımı onu ayıramıyor.
 
-İkincisi bu tasarımla elenemiyor, o yüzden yazılması gerekiyor. *k* iki şeyi
-birden kontrol ediyor: döngünün taşıması gereken gözlem sayısını ve tek bir
-ileri geçişte toplanması gereken sayı adedini. Düşüşün bir kısmı ajanlıktan
-değil aritmetik genişlikten kaynaklanıyor olabilir. İkisini ayıran kontrol ucuz
-ve koşulmadı: aynı 25 görev, beş rakam doğrudan prompt'a yapıştırılmış ve hiç
-araç yok. O koşu var olana kadar eğriyi "güvenilirlik, sonunda birleştirilmesi
-gereken miktarla birlikte düşüyor" diye okuyun ve ajanlık okumasını bulgu değil
-yorum sayın.
+İkinci açıklama bu tasarımla elenemiyor; o yüzden açıkça yazmak gerekiyor. *k*
+iki şeyi birden kontrol ediyor: döngünün taşıması gereken gözlem sayısını ve
+tek bir ileri geçişte (forward pass) toplanması gereken sayı adedini. Düşüşün
+bir kısmı ajanlıktan değil aritmetik genişlikten, yani aynı anda toplanan sayı
+adedinden kaynaklanıyor olabilir. İkisini ayırt edecek kontrol deneyi ucuz ama
+koşulmadı: aynı 25 görev, beş sayı doğrudan prompt'a yapıştırılmış ve hiç araç
+yok. O deney yapılana kadar eğriyi "güvenilirlik, sonda birleştirilmesi gereken
+bilgi miktarı arttıkça düşüyor" diye okuyun; ajanlıkla ilgili okumayı ise bir
+bulgu değil, bir yorum sayın.
 
-Eğrinin *olmadığı* şey ise düzenli adım başına aşınma. Her arama birbirinden
+Eğrinin gösterdiği şey ise adım başına sabit bir aşınma değil. Her arama birbirinden
 bağımsız olarak aynı $p$ olasılığıyla başarılı olsaydı, *k* arama gerektiren
 bir görev $p^k$ olasılığıyla başarılı olurdu. İki ile beş arama için
 $p^k$ = ölçülen doğruluk denklemini çözünce $p$ = 0,980, 0,928, 0,908 ve 0,833
-çıkıyor — sabit değil, düşüyor — ve adım başına düz bir 0,90, beş aramada
-ölçülen %40 yerine $0{,}9^5 \approx$ %59 öngörürdü. Adım başına yük
-ağırlaşıyor; aynı sonuç, başka yönden. Dışarıdan bakınca @yao2024taubench,
-benzer bir bozulmayı `pass^k` ile ölçekte ölçüyor; `pass^k`, bir ajanın aynı
+çıkıyor — sabit değil, düşüyor — ve adım başına sabit 0,90'lık bir başarı,
+beş aramada ölçülen %40 yerine $0{,}9^5 \approx$ %59 öngörürdü. Adım başına yük
+ağırlaşıyor; aynı sonuca başka bir yönden varıyoruz. Bu kitabın dışındaki
+çalışmalardan @yao2024taubench, benzer bir bozulmayı büyük ölçekte `pass^k`
+ile ölçüyor; `pass^k`, bir ajanın aynı
 görevdeki *k* bağımsız denemenin *hepsinde* başarılı olma olasılığıdır. 2024'te
 denedikleri en iyi fonksiyon çağırma ajanı (`gpt-4o`) görevlerin yarısından
 azında başarılı oldu ve perakende alanında `pass^8` değeri %25'in altında kaldı.
@@ -533,11 +551,12 @@ sonucu okuyor ve cevaplıyor. Yani görev ne kadar iş gerektirirse gerektirsin
 döngü tam olarak iki kez çalışıyor.
 
 Adın gizlediği bir ayrım var: paralel olan *çağrılar*, on dört ifadedeki
-*yürütme* değil. Yukarıdaki döngü onları bir `for` içinde koşturuyor;
-dolayısıyla batch'leme token faturasını ve gidiş-dönüş sayısını kısıyor, araçların
-içinde geçen wall-clock süresini değil. Onu da paralel yapmak — çağrılar
-üzerinde bir `asyncio.gather` — ayrı bir değişiklik ve araçlarınız sözlük
-aramaları değil ağ çağrıları olduğunda asıl önemli olan o.
+*yürütme* değil. Yukarıdaki döngü onları bir `for` içinde sırayla koşturuyor;
+dolayısıyla batch'leme (çağrıları tek turda toplu gönderme) token faturasını
+ve gidiş-dönüş sayısını azaltıyor, araçların içinde geçen wall-clock süresini
+değil. Yürütmeyi de paralel yapmak — çağrılar üzerinde bir `asyncio.gather` —
+ayrı bir değişiklik; araçlarınız sözlük aramaları değil ağ çağrıları olduğunda
+asıl önemli olan da bu.
 
 Bunun maliyette büyük bir sonucu var. Beş kat iş **1,52 kat token'a** mal
 oluyor — 881'den 1.338'e — çünkü pahalı olan şey transkripti yeniden göndermek
@@ -549,16 +568,16 @@ bedeli her adımda öder; metin protokolünün yaptığı tam olarak budur: *k* 
 Bu aynı zamanda deneyin dürüst sınırı. Beş arama bağımsız olduğu için model
 onları batch'leyebiliyor — dolayısıyla ölçülen şey sıralı planlama değil, yük
 altında toplama. İkinci adımı birinci sonuca bağlı olan bir görev gerçek bir
-döngüyü zorlar ve beklentim, daha kötü sayılar ve karesel bir maliyet eğrisi
-olurdu. Bu rakamların farklı biçimli bir görevde herhangi birine güvenmeden
-önce o deneyi çalıştırmaya değer.
+döngüyü zorunlu kılar; beklentim daha kötü sayılar ve karesel bir maliyet
+eğrisi görmek olurdu. Bu sayılardan herhangi birine farklı yapıda bir görevde
+güvenmeden önce o deneyi koşmakta yarar var.
 :::
 
-### Yapılandırılmış API bir kolaylık değil
+### Yapılandırılmış API yalnızca bir kolaylık değil
 
 O tablodaki iki döngü de aynı modeli aynı görevlerde çalıştırdı; yalnızca
-protokol farklıydı. Yani ikinci blok, genellikle zevkle çözülen bir soruya temiz
-bir cevap: sağlayıcının araç çağırma API'si size iyi yazılmış bir prompt'un
+protokol farklıydı. Yani ikinci blok, genellikle zevke göre karara bağlanan bir
+soruya temiz bir cevap veriyor: sağlayıcının araç çağırma API'si size iyi yazılmış bir prompt'un
 veremeyeceği bir şey kazandırıyor mu?
 
 Metin protokolü bilerek @yao2023react'in getirdiği biçimde. ReAct'te ("reason +
@@ -569,26 +588,27 @@ ayrıştırıcı eylemi çıkarır, çalışma zamanı onu çalıştırır ve so
 2022'de alternatif yoktu — hiçbir sağlayıcı tipli bir araç şeması sunmuyordu —
 ve katkı, akıl yürütmeyi eylemle iç içe geçirmenin akıl yürütmeden yalnızca
 eylemeyi yendiğini ve düşünce zinciriyle birleştirildiğinde soru cevaplamada en
-iyi sonuçları verdiğini göstermekti. Yani aşağıdaki "ReAct kötü" değil, tipli *taşımanın*
-geldikten sonra ne eklediği; hem de tek bir küçük modelde. Şuna da dikkat: bu
-protokolde `Thought:` adımı yok — ReAct'ın karalama defteri olmadan ReAct'ın
-taşıması.
+iyi sonuçları verdiğini göstermekti. Yani aşağıda söylenen "ReAct kötüdür"
+değil; tipli *taşıma* katmanı (typed transport) geldikten sonra neler eklendiği
+— üstelik yalnızca tek bir küçük modelde. Şuna da dikkat: bu protokolde
+`Thought:` adımı yok; yani bu, ReAct'in taşıma biçimi, ama karalama defteri
+(scratchpad) olmadan.
 
 Yerleşik döngü her adım sayısında önde — 60, 20, 28, 8 ve 12 doğruluk puanıyla
 — üstelik ortalamada model çağrılarının kabaca üçte birini kullanarak (adım
 sayısına göre beşte bir ile beşte iki arası). Ama bu farklardan yalnızca
-birincisi 25 görevlik bir testten sağ çıkıyor: 25/25'e karşı 10/25, Fisher exact
-p = 3 × 10⁻⁶; dört aramadaki 8 puanlık fark ise 17 doğruya karşı 15 (p = 0,77)
-ve hiçbir anlam taşımıyor. Metin protokolünün kendi eğrisi — 40, 76, 52, 60, 28
-— tekdüze bile değil. Tek başına şansın açıklayabileceğinden fazla değişiyor
-(beş hücre üzerinde bir χ² testi p ≈ 0,009 veriyor), ama düzenli bir düşüş
-olarak değil: en düşük noktaları, koşuların çoğunun hiç durmadığı tek arama ve
-beş arama. Toplamların gizleyemediği iki bulgu ise korunmalı: yerleşik döngü
-model çağrılarının kabaca üçte birini kullandı ve bir kez bile sonlanmakta
-başarısız olmadı. İkisinin de
-nedeni toplamlarda değil transkriptlerde görünüyor.
+birincisi 25 görevle yapılan bir anlamlılık testini geçiyor: 25/25'e karşı
+10/25, Fisher kesin testi p = 3 × 10⁻⁶; dört aramadaki 8 puanlık fark ise 17
+doğruya karşı 15 (p = 0,77) ve hiçbir anlam taşımıyor. Metin protokolünün kendi
+eğrisi — 40, 76, 52, 60, 28 — monoton bile değil. Tek başına şansın
+açıklayabileceğinden fazla değişiyor (beş hücre üzerinde bir χ² testi
+p ≈ 0,009 veriyor), ama düzenli bir düşüş olarak değil: en düşük noktaları,
+koşuların çoğunun hiç durmadığı tek arama ve beş arama. Toplamların
+gizleyemediği iki bulgu ise akılda tutulmalı: yerleşik döngü model
+çağrılarının kabaca üçte birini kullandı ve her koşuda kendiliğinden durdu.
+İkisinin de nedeni doğruluk oranlarında değil transkriptlerde görünüyor.
 
-İşte *en kolay* görevde, tek aramada bir metin protokolü çalıştırması:
+İşte *en kolay* görevde, tek aramada bir metin protokolü koşusu:
 
 ```text
 SORU: BRS-26 projesinin bütçesi kaçtır?
@@ -603,11 +623,12 @@ SORU: BRS-26 projesinin bütçesi kaçtır?
 
 Cevabı 0. adımda aldı ve hiç durmadı. **Tek aramalık görevlerin yüzde altmışı
 adım bütçesine çarptı** — en kolay koşulun sonlanma davranışı en kötüsüydü ve
-bir arama gerektiren bir görev için **10,7 araç çağrısı** yaptı.
+protokol tek arama gerektiren bir görev için ortalama **10,7 araç çağrısı**
+yaptı.
 
 Bunu doğruluk sütununun yanında okuyun; bir özdeşlik ortaya çıkıyor. Bir ve iki
-aramada metin protokolünün doğruluğu tam olarak 100 eksi bütçe oranı: 40 + 60 ve
-76 + 24. *Durmayı başaran her koşu doğruydu.* Protokol orada daha kötü akıl
+aramada metin protokolünün doğruluğu tam olarak 100 eksi bütçeye çarpma oranı:
+40 + 60 ve 76 + 24. *Durmayı başaran her koşu doğruydu.* Protokol orada daha kötü akıl
 yürütmüyordu; bittiğini söylemeyi beceremiyordu. Yani tek aramadaki 60 puanlık
 fark bir doğruluk sonucu değil bir sonlanma sonucu — ki bu, çıkışın döngünün
 kırılgan parçası olduğuna dair bu bölümdeki en temiz kanıt. Üç aramadan
@@ -615,18 +636,18 @@ itibaren özdeşlik bozuluyor (52 + 28, 60 + 0, 28 + 12) ve bütçenin yanında
 gerçek akıl yürütme hataları da beliriyor.
 
 Bu, @sec-ajan-anatomisi-dongu'nun üçüncü noktasının ölçülmüş hâli. Çıkış bir
-model kararıdır ve yerleşik API'de "araç çağırmayı bırak ve cevapla",
-*yapısal olarak farklı* bir eylemdir.
+model kararıdır ve yerleşik API'de "araç çağırmayı bırak ve cevapla", araç
+çağırmaktan *yapısal olarak farklı* bir eylemdir.
 
 Bir metin protokolünde değildir. `CEVAP(...)`, `ARA(...)` ile yarışan bir
 dizgiden ibarettir — ve transkript üç `ARA` satırı içerdiğinde en olası sonraki
-satır bir dördüncüsüdür. Döngünün kendi geçmişi ondan çıkmaya karşı argüman
-üretir.
+satır bir dördüncüsüdür. Döngünün kendi geçmişi, döngüden çıkmanın aleyhine
+işler.
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">Durmak neden bir protokolde kolay, diğerinde zor</div>
-<svg viewBox="0 0 764 300" style="max-width:744px" role="img" aria-label="Bir ajanın durma kararını nasıl ifade ettiğini karşılaştıran iki panel. Yapılandırılmış araç API'sinde model yanıtının iki ayrı alanı vardır: devam etmek için tool_calls ve durmak için content; dolayısıyla durmak farklı bir alanı doldurmak demektir ve hiçbir çalıştırma adım bütçesine çarpmadı. Elle yazılmış bir metin protokolünde hem arama komutu hem cevap komutu aynı alanda dizgilerdir, dolayısıyla durmak sadece başka bir dizgidir; tek aramalık çalıştırmaların yüzde altmışı adım bütçesine çarptı.">
+<svg viewBox="0 0 764 300" style="max-width:744px" role="img" aria-label="Bir ajanın durma kararını nasıl ifade ettiğini karşılaştıran iki panel. Yapılandırılmış araç API'sinde model yanıtının iki ayrı alanı vardır: devam etmek için tool_calls ve durmak için content; dolayısıyla durmak farklı bir alanı doldurmak demektir ve hiçbir koşu adım bütçesine çarpmadı. Elle yazılmış bir metin protokolünde hem arama komutu hem cevap komutu aynı alanda dizgilerdir, dolayısıyla durmak sadece başka bir dizgidir; tek aramalık koşuların yüzde altmışı adım bütçesine çarptı.">
   <line x1="382" y1="16" x2="382" y2="232" class="ln-thin"/>
 
   <text x="191" y="28" class="t-xs t-mid t-b t-accent">YAPILANDIRILMIŞ ARAÇ API'Sİ</text>
@@ -641,7 +662,7 @@ satır bir dördüncüsüdür. Döngünün kendi geçmişi ondan çıkmaya karş
   <text x="270" y="136" class="t-xs t-mid t-muted">dur</text>
   <text x="191" y="168" class="t-xs t-mid t-b">İKİ ALAN &#8212; DURMAK FARKLI BİRİNİ DOLDURUR</text>
   <rect x="46" y="182" width="290" height="38" rx="4" class="box-accent"/>
-  <text x="191" y="198" class="t-xs t-mid t-muted">adım bütçesine çarpan çalıştırmalar</text>
+  <text x="191" y="198" class="t-xs t-mid t-muted">adım bütçesine çarpan koşular</text>
   <text x="191" y="214" class="t-sm t-mid t-b t-accent">%0,0 — her adım sayısında</text>
 
   <text x="573" y="28" class="t-xs t-mid t-b t-rose">ELLE YAZILMIŞ METİN PROTOKOLÜ</text>
@@ -655,7 +676,7 @@ satır bir dördüncüsüdür. Döngünün kendi geçmişi ondan çıkmaya karş
   <text x="573" y="136" class="t-xs t-mid t-muted">aynı alanda iki dizgi</text>
   <text x="573" y="168" class="t-xs t-mid t-b">TEK ALAN &#8212; DURMAK SADECE BAŞKA BİR DİZGİ</text>
   <rect x="428" y="182" width="290" height="38" rx="4" class="box-rose"/>
-  <text x="573" y="198" class="t-xs t-mid t-muted">adım bütçesine çarpan çalıştırmalar</text>
+  <text x="573" y="198" class="t-xs t-mid t-muted">adım bütçesine çarpan koşular</text>
   <text x="573" y="214" class="t-sm t-mid t-b t-rose">%60,0 — tek aramalık görevlerde</text>
 
   <rect x="26" y="244" width="712" height="44" rx="4" class="chip"/>
@@ -674,26 +695,27 @@ bulunan dizgilerle yarışan bir dizgi ve transkript kazanıyor.
 ::: {.callout-note collapse="true"}
 ## Bu deneyin ilk sürümü modeli değil benim prompt'umu ölçtü
 
-Metin protokolü ilk çalıştırmada **her adım sayısında %0,0** aldı; her adım
-ayrıştırılamadı ve her görev bütçeye çarptı. Bu, bir değerlendirme düzeneği hatasının
-tipik biçimi olan, şüphe uyandıracak kadar tam bir başarısızlık.
+Metin protokolü ilk koşuda **her adım sayısında %0,0** aldı; hiçbir adım
+ayrıştırılamadı ve her görev bütçeye çarptı. Bu, şüphe uyandıracak kadar
+eksiksiz bir başarısızlık; değerlendirme düzeneğindeki bir hata genellikle tam
+da böyle görünür.
 
 Hata benimdi. Protokolün imzasını `ARA(proje, alan)` diye yazmıştım ve bunları
 yer tutucu olarak kastediyordum. Model onları birebir etiket olarak okudu ve
 `ARA(proje, ZRG-14)` üretti; regex'im de bunu haklı olarak reddetti. Tek bir
-somut örnek eklemek — `ornek: ARA(ZRG-14, butce)` — düzeltti.
+somut örnek eklemek — `ornek: ARA(ZRG-14, butce)` — sorunu çözdü.
 
-Ders "daha iyi prompt yazın" değil. Elle yazılmış bir protokolün, bir çağırma
-kuralını düzyazıyla, belirsizliğe yer bırakmadan belirtmenizi zorunlu kılması;
-tipli bir şemanın ise bunu bedavaya yapmasıdır. %0, metin yaklaşımının gerçek
-bir bedeliydi; yalnızca ölçmeye çalıştığım bedel değildi ve onu bir model
-sonucu olarak yayımlamak yanlış olurdu.
+Ders "daha iyi prompt yazın" değil. Ders şu: elle yazılmış bir protokol, bir
+çağırma kuralını düzyazıyla ve belirsizliğe yer bırakmadan tanımlamanızı
+gerektirir; tipli bir şema ise bunu size bedavaya verir. O %0, metin
+yaklaşımının gerçek bir bedeliydi; yalnızca ölçmeye çalıştığım bedel değildi ve
+onu bir model sonucu olarak yayımlamak yanlış olurdu.
 
 Düzeltmeden sonra dürüst bir sınır kalıyor. Bu *tek bir* protokol prompt'u ve
 ilk sürüm, sonucun sözcüklere ne kadar duyarlı olduğunu tam olarak gösterdi.
 "Cevap zaten elindeyse hemen `CEVAP` yaz" kadar küçük bir talimat ya da `CEVAP`
-üzerine bir durdurma dizisi, sonlanma farkının çoğunu geri kazandırabilirdi;
-hiçbir ablation koşulmadı. Tipli bir şemanın verdiği şey daha iyi bir prompt
+üzerine bir durdurma dizisi (stop sequence), sonlanma farkının çoğunu
+kapatabilirdi; bunu sınayan bir ablasyon deneyi koşulmadı. Tipli bir şemanın verdiği şey daha iyi bir prompt
 değil — o değişkenin deneyden çıkarılmasıdır.
 :::
 
@@ -713,10 +735,10 @@ Yani soru "bu görev karmaşık mı" değil, **"*denetim akışı* veriye bağl�
 | görev | ne kurulur |
 |:--|:--|
 | Bir belgeden alanları çıkar, sonra doğrula | [Hat]{.pro}. Adımlar hiç değişmiyor |
-| Bir kaydı sınıfla, sonra yönlendir | [Yönlendirici]{.pro}. Bir model kararı, sonra sabit yollar |
+| Bir destek talebini sınıflandır, sonra yönlendir | [Yönlendirici]{.pro}. Bir model kararı, sonra sabit yollar |
 | Bir bilgi tabanından cevapla | [Hat]{.pro} — eriş, sonra üret. @sec-rag bir hattır, ajan değil |
-| Cevapla, ama bazen ilk arama yetmiyor | Kısıtlı döngü. Dallanma gerçek ama uzay küçük |
-| Bir müşterinin siparişinin beş sistemde neden bozulduğunu bul | [Ajan]{.pro}. İkinci olarak neye bakacağınız gerçekten ilk bulduğunuza bağlı |
+| Cevapla, ama bazen ilk arama yetmiyor | Kısıtlı döngü. Dallanma gerçek ama olası yollar az |
+| Bir müşteri siparişinin neden başarısız olduğunu beş sistemi tarayarak bul | [Ajan]{.pro}. İkinci olarak neye bakacağınız gerçekten ilk bulduğunuza bağlı |
 
 : Ölçüt zorluk değil dallanmadır {tbl-colwidths="[46,54]"}
 
@@ -724,38 +746,38 @@ Yani soru "bu görev karmaşık mı" değil, **"*denetim akışı* veriye bağl�
 bir hat — proje kodlarını ayrıştır, her birini ara, topla — bütün riski tek bir
 yere, ayrıştırmaya taşır. Kodlar bir kez çıkarıldıktan sonra aramalar ve toplama
 **her adım sayısında kesindir**, çağrı başına hiçbir şeye mal olmaz ve
-mikrosaniyeler sürer; ajan ise beş aramada %40'a ulaşıyor. Takas en açık hâliyle
+mikrosaniyeler sürer; ajanın doğruluğu ise beş aramada %40'a düşüyor. Takas en açık hâliyle
 bu ve ne *olmadığına* dikkat edin: "model yok" değil ve "regex her zaman modeli
 yener" hiç değil. Model, beş sıralı iş yerine sınırlı tek bir iş yapıyor.
 Adımlar biliniyorsa onları yazmak, bir modelden her seferinde yeniden
-keşfetmesini istemeyi yener ve fark yakın bile değildir.
+keşfetmesini istemeyi açık ara yener.
 
-@anthropic2024effectiveagents aynı savı üretim deneyiminden kuruyor ve daha
-sert söylüyor: karmaşıklığı ancak sonuçları gösterilebilir biçimde
+@anthropic2024effectiveagents aynı savı üretimdeki deneyime dayanarak kuruyor
+ve daha açık sözlü biçimde söylüyor: karmaşıklığı ancak sonuçları gösterilebilir biçimde
 iyileştirdiğinde ekleyin. O yazının sözcük dağarcığıyla her yerde
 karşılaşacaksınız, bu yüzden bu bölümünkiyle eşleyin: *workflow* (iş akışı)
 dediği şey — model çağrılarının ve araçların önceden tanımlı kod yolları
 üzerinden düzenlenmesi — yukarıdaki hatlar ve yönlendiricilerdir; *ajan*
 sözcüğünü ise modelin kendi adımlarını kendisinin yönettiği sistemlere ayırır.
 
-### Kusur biçimleri türce farklıdır
+### Kusurlar da farklı türdendir
 
-Bozulan bir hat bir satır numarasında istisna fırlatır. Bozulan bir ajan,
-beklemediğiniz bir şey yapmış olarak makul bir cevap döndürür ve bunu
-transkriptten öğrenirsiniz.
+Bozulan bir hat bir satır numarasında istisna fırlatır. Bozulan bir ajan ise
+beklemediğiniz bir şey yapmış olmasına rağmen makul görünen bir cevap döndürür;
+bunu da ancak transkriptten öğrenirsiniz.
 
-O fark, @sec-ajan-anatomisi-durum'daki özerklik düzeylerinin bir olgunluk
-merdiveni değil bir mühendislik tercihi olarak ciddiye alınmaya değer olmasının
-nedenidir. Hata ayıklanabilirliği, saymadığınız girdileri kaldırabilme
-karşılığında takas ediyorsunuz — ve onları sayabiliyorsanız hata
-ayıklanabilirliği hiçbir şey karşılığında verdiniz.
+@sec-ajan-anatomisi-durum'daki özerklik düzeylerini bir olgunluk merdiveni
+olarak değil, bir mühendislik tercihi olarak ciddiye almanın nedeni bu farktır.
+Önceden sıralayamadığınız girdilerle başa çıkabilmek karşılığında hata
+ayıklanabilirlikten vazgeçiyorsunuz — ve o girdileri sıralayabiliyorsanız, bu
+vazgeçişin karşılığında hiçbir şey almamış olursunuz.
 
 ::: {.column-margin}
 Bu argümanın fazla ileri giden bir sürümü var — "sadece bir hat yazın" — ve
 ajanların gerçekten iyi olduğu görevler için yanlıştır. Dürüst konum şudur:
 insanların ajan olarak kurduğu şeylerin çoğu fazladan adımları olan hatlardır,
 *ve* geriye kalan görevler gerçekten bir ajan döngüsünü hak eder. Yukarıdaki
-ölçüt, hangisine sahip olduğunuzu nasıl anlayacağınızdır.
+ölçüt, hangisiyle karşı karşıya olduğunuzu anlamanın yoludur.
 :::
 
 ## Sezgi kontrolleri {#sec-ajan-anatomisi-sezgi}
@@ -766,26 +788,26 @@ diğer dördünü bölüm tartışmayla değil ölçümle çözdü.
 ::: {.callout-note collapse="true"}
 ## 1. Bir ajan nedir, tek cümlede?
 
-İşlev çağırabilen bir modelin etrafındaki bir while döngüsü. Model argüman
+Fonksiyon çağırabilen bir modelin etrafındaki bir while döngüsü. Model argüman
 üretir ve çalışma zamanınız onları yürütür; döngü, model hiçbir şey çağırmamayı
 seçtiğinde biter. Diğer her şey — planlama, bellek, düzenleme — o on dört ifadenin
-etrafındaki mühendisliktir ve bunu söyleyebilmek framework belgelerini okunabilir
-tutan şeydir.
+etrafındaki mühendisliktir; bunu bilmek, framework belgelerini okunur kılan
+şeydir.
 :::
 
 ::: {.callout-note collapse="true"}
-## 2. Ajanınız beş aramalı bir görevde zamanın %60'ında yanlış. Nereye bakarsınız?
+## 2. Ajanınız beş aramalı bir görevde vakaların %60'ında yanlış cevap veriyor. Nereye bakarsınız?
 
 Muhtemelen araç çağrılarına değil. Burada ölçüldü: araç kullanımı **kusursuz**
 kaldı — tam olarak doğru sayıda çağrı, hiçbiri bozuk değil, hiçbiri bütçeye
 çarpmadı — doğruluk ise %100'den %40'a düştü. Kusur, geleni toplamaktaydı.
-Genellemeden önce görevin biçimine dikkat edin: beş arama bağımsız, dolayısıyla
-model onları iki model çağrısında topladı ve hiçbir zaman beş ardışık adım
-koşturmadı. Dağılan şey yük altında toplama; birbirine bağlı beş kararlık bir
-zincir değil. Bir
-şemayı yeniden yazmadan önce toplanan gözlemler üzerindeki akıl yürütmeyi
-kontrol edin ve yapabiliyorsanız görevi ayrıştırın: aynı anda tutulacak daha az
-şey, gerçekten işe yarayan çözümdür.
+Genellemeden önce görevin yapısına dikkat edin: beş arama birbirinden bağımsız,
+dolayısıyla model onları iki model çağrısına sığdırdı ve hiçbir zaman beş
+ardışık adım koşturmadı. Çöken şey, yük altında sonuçları bir araya getirmekti;
+birbirine bağlı beş kararlık bir zincir değil. Bir şemayı yeniden yazmadan önce
+toplanan gözlemler üzerindeki akıl yürütmeyi kontrol edin ve yapabiliyorsanız
+görevi parçalara bölün: aynı anda akılda tutulacak şeyi azaltmak, gerçekten işe
+yarayan çözümdür.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -795,9 +817,9 @@ Asgari döngüde transkript ve başka hiçbir şey — çalışma belleği yok, 
 bağlaması yok. Üç şey buradan çıkar: maliyet model çağrısı sayısıyla büyür,
 çünkü her biri her şeyi yeniden gönderir; hiçbir şey unutulmaz, hatalar dâhil —
 kafası karışmış bir ajanın aynı yönde karışık kalma eğiliminin nedeni budur; ve
-siz kurmadıkça transkriptin geri alınması yoktur ve onu geri almak dış etkileri
-geri almaz; onlar, varsa, kendi işlem (transaction) ya da telafi mekanizmalarını
-ister. Sonra bu kısmın geri kalanının ne eklediğini söyleyin: dış dosyalar,
+siz bir mekanizma kurmadıkça transkript geri alınamaz; geri alsanız bile dış
+etkiler geri alınmaz — onlar, varsa, kendi işlem (transaction) ya da telafi
+mekanizmalarına ihtiyaç duyar. Sonra bu kısmın geri kalanının ne eklediğini söyleyin: dış dosyalar,
 bir bellek deposu ve kendi transkriptleri olan alt ajanlar — hepsi tek bir mesaj
 listesinin içinde yaşamamanın yolları.
 :::
@@ -805,13 +827,14 @@ listesinin içinde yaşamamanın yolları.
 ::: {.callout-note collapse="true"}
 ## 4. Yapılandırılmış araç çağırma API'si gerçekten yardımcı mı, yoksa süs mü?
 
-Yardımcı ve kolaylıktan fazlasıyla. Aynı model ve görevde yerleşik API, elle
-yazılmış bir metin protokolünü her adım sayısında yendi — 60 doğruluk puanına
-kadar, gerçi 25 görevde istatistiksel olarak net olan yalnızca bu en büyük
-fark — üstelik model çağrılarının kabaca üçte birini kullanarak. Mekanizma sonlanma:
-yapılandırılmış API'de "araç çağırmak yerine cevapla" farklı *türde* bir
-eylemken, bir metin protokolünde cevap komutu araç komutuyla yarışır ve
-transkriptin kendi geçmişi başka bir araç çağrısından yana argüman üretir.
+Yardımcı; üstelik kolaylıktan çok daha fazlası. Aynı model ve görevde yerleşik
+API, elle yazılmış bir metin protokolünü her adım sayısında yendi — 60 doğruluk
+puanına kadar, gerçi 25 görevde istatistiksel olarak net olan yalnızca bu en
+büyük fark — üstelik model çağrılarının kabaca üçte birini kullanarak. Farkı
+yaratan mekanizma sonlanma: yapılandırılmış API'de "araç çağırmak yerine
+cevapla" farklı *türde* bir eylemken, bir metin protokolünde cevap komutu araç
+komutuyla yarışır ve transkriptin kendi geçmişi başka bir araç çağrısından yana
+ağırlık koyar.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -830,18 +853,19 @@ olduğunu söyler.
 Denetim akışı veriye bağlı değilken. Ölçüt zorluk değil dallanmadır: adımları
 yazabiliyorsanız yazın. Bu bölümün görevi için sabit bir hattın her adım
 sayısında yanlış verecek bir kararı yoktur, çağrı başına hiçbir şeye mal olmaz
-ve mikrosaniyeler sürer; beş aramada %40'a ulaşan bir ajana karşı. (Yine de
-hataları olabilir — sonuçta koddur — ve başka her kod gibi test ister; olmayan
-şey, sonraki adımı seçen bir modeldir.) Döngüye, ikinci olarak
-yaptığınız şey gerçekten ilk bulduğunuza bağlı olduğunda uzanın.
+ve mikrosaniyeler sürer; karşısındaki ajanın doğruluğu ise beş aramada %40'a
+düşüyor. (Hattın da hataları olabilir — sonuçta koddur — ve başka her kod gibi
+test ister; olmayan şey, sonraki adımı seçen bir modeldir.) Döngüye ancak
+ikinci adımda yapacağınız şey gerçekten ilk adımda bulduğunuza bağlıysa
+başvurun.
 :::
 
 ## Mülakat soruları {#sec-ajan-anatomisi-mulakat}
 
 ::: {.callout-warning appearance="simple"}
-**Kaynak konusunda — @sec-metin-veri'deki çekincenin aynısı.** Bunlar bu kitabın
-kullandığı iki güvenilir açık kaynakta tekrar eder; ayrıca bu bölümün
-ölçümlerinin cevaplanabilir kıldığı sorular vardır.
+**Kaynak konusunda — @sec-metin-veri'deki çekincenin aynısı.** Bu sorular,
+kitabın kullandığı iki güvenilir açık kaynakta tekrar tekrar geçiyor; bunlara
+bu bölümün ölçümleriyle cevaplanabilir hâle gelen sorular eklendi.
 :::
 
 ### Mekanizmayı anlayıp anlamadığınızı sınayanlar
@@ -851,56 +875,58 @@ kullandığı iki güvenilir açık kaynakta tekrar eder; ayrıca bu bölümün
 Model çıktısı olarak yapılandırılmış bir çağrı — bir ad ve argümanlar — üretir.
 Hiçbir şey yürütmez. Çalışma zamanınız onu doğrular ve çalıştırır, sonucu ya da
 hatayı bir gözlem olarak mesaj listesine geri ekler. Sonra bütün transkript
-modele geri gider. Bir tane kurduğunuzu gösteren iki sonucu söyleyin: çalışma
-zamanı *tek* güvenlik sınırıdır ve asgari döngüde transkript tek durumdur.
+modele geri gider. Gerçekten bir ajan kurmuş olduğunuzu gösteren iki sonucu da
+ekleyin: çalışma zamanı *tek* güvenlik sınırıdır ve asgari döngüde transkript
+tek durumdur.
 
 **S: Bir ajan bittiğine nasıl karar verir?**
 
-Kontrol edilen hiçbir anlamda karar vermez — döngü model araç çağrısı
-üretmediğinde biter, dolayısıyla durma kuralı bir koşul değil bir tahmindir. Bir
+Denetlenebilir bir anlamda karar vermez — döngü, model araç çağrısı
+üretmediğinde biter; dolayısıyla durma kuralı bir koşul değil bir tahmindir. Bir
 adım bütçesinin isteğe bağlı olmamasının ve yapılandırılmış API'nin "araç çağır"
-ile "içerik üret" arasındaki ayrımının önemli olmasının nedeni budur: burada
-ölçüldü, ikisinin yarıştığı bir metin protokolü **tek adımlık görevlerin
-%60'ında** sonlanamadı; üstelik cevabı zaten getirmiş olarak.
+ile "içerik üret" arasındaki ayrımının önemli olmasının nedeni budur: bu
+bölümdeki ölçümde, ikisinin yarıştığı bir metin protokolü, cevabı çoktan
+getirmiş olduğu hâlde **tek adımlık görevlerin %60'ında** duramadı.
 
 **S: Görevler uzadıkça bir ajan neden pahalılaşır?**
 
 Çünkü her model çağrısı bütün transkripti yeniden gönderir, dolayısıyla *n*
-adımlık sıralı bir çalıştırma kabaca büyüyen *n* bağlamın toplamına mal olur.
-Gönüllü olarak eklenecek incelik, bunun modelin araç çağrılarını batch'leyip
+adımlık sıralı bir koşu kabaca büyüyen *n* bağlamın toplamına mal olur.
+Sorulmadan eklemeye değer incelik, bunun modelin araç çağrılarını batch'leyip
 batch'lemediğine bağlı olmasıdır: bu bölümün ölçümünde yerleşik döngü görev
 boyutu ne olursa olsun iki model çağrısı kullandı ve beş kat iş 1,52 kat token'a
-mal oldu — sıralı metin döngüsü ise aynı beş aramalık görev için 3,5 kat model
-çağrısı ödedi.
+mal oldu — sıralı metin döngüsü ise aynı beş aramalık görev için 3,5 kat daha
+fazla model çağrısı yaptı.
 
-### Bir tane yayına alıp almadığınızı sınayanlar
+### Gerçekten bir ajanı yayına alıp almadığınızı sınayanlar
 
-**S: Ajan mı hat mı olduğuna nasıl karar verirsiniz?**
+**S: Ajan mı yoksa hat mı kuracağınıza nasıl karar verirsiniz?**
 
 Görevin zor olup olmadığına değil, denetim akışının veriye bağlı olup olmadığına
-bakarak. Adımlar bilinen ve durağansa onları yazın — sabit ve sınanmış bir hat, bir
-sonraki adıma karar vermeyi modelin elinden alır, ucuzdur ve bir satır
-numarasında hata verir. Girdilerinin, hesaplarının ve dış etkilerinin yine de
-doğrulanması gerekir; kod da sessizce yanlış olabilir. İkinci olarak neye
-bakacağınız gerçekten ilk bulduğunuza bağlı olduğunda döngüye uzanın. Sonra size
-neye mal olduğunu söyleyin: bozulan bir ajan, beklenmedik bir şey yapmış olarak
-makul bir cevap döndürür ve bu, bir istisnadan çok daha kötü bir hata ayıklama
-konumudur.
+bakarak. Adımlar biliniyor ve değişmiyorsa onları yazın — sabit ve sınanmış bir
+hat, bir sonraki adıma karar vermeyi modelin elinden alır, ucuzdur ve bir satır
+numarasında hata verir. Yine de hattın girdilerinin, hesaplarının ve dış
+etkilerinin doğrulanması gerekir; kod da sessizce yanlış olabilir. Döngüye ancak
+ikinci olarak neye bakacağınız gerçekten ilk bulduğunuza bağlıysa başvurun.
+Sonra bunun size neye mal olacağını söyleyin: bozulan bir ajan, beklenmedik bir
+şey yapmış olmasına rağmen makul görünen bir cevap döndürür; bu da bir
+istisnadan çok daha kötü bir hata ayıklama konumudur.
 
 **S: Ajanınız testte çalışıyor ve üretimde sonsuza kadar dönüyor. Ne yaparsınız?**
 
-Önce kuram üretmek yerine bütçeye çarpan çalıştırmaların transkriptlerine
-bakarım — kusur genellikle üç satırda görünür. İki örüntüden birini bekleyin:
-sonucu zaten elinde olan bir çağrıyı tekrarlıyordur, ki bu bir sonlanma
-problemidir ve "bitti" eyleminin nasıl ifade edildiğine işaret eder; ya da
-sürekli başarısız olan bir şeyi yeniden deniyordur, ki bu aracın döndürdüğü hata
-mesajına işaret eder. Sonra düzgün sınırlayın: bir adım bütçesi, bir wall-clock süresi
-bütçesi ve bir token bütçesi; her biri tetiklendiğinde tanımlı bir davranışla.
+Önce kuram üretmek yerine bütçeye çarpan koşuların transkriptlerine bakın —
+kusur genellikle üç satırda görünür. İki örüntüden birini bekleyin. Ya sonucu
+zaten elinde olan bir çağrıyı tekrarlıyordur — bu bir sonlanma sorunudur ve
+"bitti" eyleminin nasıl ifade edildiğine işaret eder — ya da sürekli başarısız
+olan bir şeyi yeniden deniyordur; bu da aracın döndürdüğü hata mesajına işaret
+eder. Sonra döngüye düzgün sınırlar koyun: bir adım bütçesi, bir wall-clock
+süresi bütçesi ve bir token bütçesi; her biri dolduğunda ne olacağı da
+tanımlanmış olarak.
 
 ## 2026 alet çantası {#sec-ajan-anatomisi-araclar}
 
-Bu bölümdeki her şey aşağıdaki sürümlerle yerelde ve dikkat çekici biçimde
-hiçbir ajan framework'ü olmadan çalıştı.
+Bu bölümdeki her şey aşağıdaki sürümlerle yerel makinede ve — dikkat çekici
+biçimde — hiçbir ajan framework'ü kullanılmadan çalıştı.
 
 | kütüphane | kullanılan sürüm | burada ne işe yarıyor |
 |:--|:--|:--|
@@ -913,24 +939,25 @@ Bilmeye değer, yukarıda kullanılmadı:
 
 | kütüphane | güncel sürüm | ne zaman kullanılır |
 |:--|:--|:--|
-| `langgraph` | 1.2.11 | denetim akışı bir while döngüsü değil bir şema olmayı hak ettiğinde |
-| `openai-agents` | 0.22.0 | devretmeler ve guardrail'ler yerleşik gelen, küçük ve okunabilir bir uygulama |
-| `smolagents` | 1.26.0 | yalnızca import edilecek değil okunacak olan |
+| `langgraph` | 1.2.11 | denetim akışı bir while döngüsü olarak değil, bir diyagram olarak çizilmeyi hak ettiğinde |
+| `openai-agents` | 0.22.0 | handoff'lar (konuşmayı başka bir ajana devretme) ve korkuluklar (guardrails) yerleşik gelen, küçük ve okunabilir bir uygulama |
+| `smolagents` | 1.26.0 | yalnızca import etmek için değil, kodunu okumak için de ideal olan |
 | `pydantic-ai` | 2.35.3 | yığınınız zaten Pydantic ise tipli araçlar ve doğrulanmış çıktılar |
-| `llama-index` | 0.14.24 | erişimi hazır bağlanmış, kendi verinizin üzerinde ajanlar |
-| `crewai` / `autogen-agentchat` | 1.15.18 / 0.7.5 | çok ajanlı düzenleme — @sec-cok-ajanli, ve bir ajan çalışana kadar ertelemeye değer |
+| `llama-index` | 0.14.24 | erişim altyapısı hazır bağlanmış, kendi verinizle çalışan ajanlar |
+| `crewai` / `autogen-agentchat` | 1.15.18 / 0.7.5 | çok ajanlı düzenleme (@sec-cok-ajanli); tek bir ajan düzgün çalışana kadar ertelemekte yarar var |
 
 : Daha geniş ekosistem, yazıldığı andaki sürümler {tbl-colwidths="[24,16,60]"}
 
 ## Lab: döngüyü kurun, sonra bozun {#sec-ajan-anatomisi-lab}
 
-Başka bir framework'ün belgelerini okumadan önce kurun, çünkü alıştırmanın amacı o
-belgelerin *hakkında* olacağı somut bir şeye sahip olmaktır.
+Bir sonraki framework belgesini okumadan önce bu döngüyü kurun; alıştırmanın
+amacı, o belgelerin anlattıklarını eşleyebileceğiniz somut bir şeyi elinizde
+tutmaktır.
 
 ### Adım 1 — on dört ifadeyi kendiniz yazın
 
-Framework yok. İki gerçek araç, bir model, bir adım bütçesi. İki araçlı bir soruyu
-uçtan uca cevapladığında bitmiştir.
+Framework yok. İki gerçek araç, bir model, bir adım bütçesi. İki araç
+gerektiren bir soruyu uçtan uca cevaplayabildiğinde iş bitmiş demektir.
 
 ### Adım 2 — her adımda transkripti yazdırın
 
@@ -941,12 +968,12 @@ olmayı bıraktığı an budur.
 
 1, 2, 3, 4 ve 5 araç çağrısı gerektiren, cevaplarını tam kontrol edebileceğiniz
 görevler kurun. Her birinden yirmi beş tane. Doğruluğu adım sayısına karşı
-çizin ve modelinizin nerede düştüğünü bulun.
+çizin ve modelinizin nerede çöktüğünü bulun.
 
 ### Adım 4 — model çağrılarını araç çağrılarından ayrı sayın
 
 Bunlar farklı sayılardır ve yalnızca biri faturanızı öngörür. Eşitlerse modeliniz
-batch'lemiyordur ve maliyet eğriniz dik olandır.
+batch'lemiyordur ve maliyet eğriniz dik olanıdır.
 
 ### Adım 5 — bir aracı bozun
 
@@ -960,64 +987,66 @@ on dakikalık ön izlemesidir.
 Modelin tamamlayamayacağı bir görevde çalıştırın ve ne olduğunu izleyin. Bütçeyi
 geri koyun. Onu bir daha asla bir ayar parametresi olarak görmezsiniz.
 
-### Neyi teslim edeceksiniz
+### Teslim edilecekler
 
-Doğruluk-adım eğrisini, yan yana model çağrısı ve araç çağrısı sayılarını,
-başarısız olan bir çalıştırmanın bir transkriptini ve bu ajana denetimsiz
-güvenmeyeceğiniz adım sayısını adlandıran bir cümleyi.
+Doğruluk–adım sayısı eğrisi; yan yana model çağrısı ve araç çağrısı sayıları;
+başarısız bir koşunun transkripti; ve hangi adım sayısının ötesinde bu ajana
+gözetimsiz güvenmeyeceğinizi söyleyen tek bir cümle.
 
 ## Alıştırmalar {#sec-ajan-anatomisi-alistirmalar}
 
-1. **On dört ifade.** Döngüyü zaten sahip olduğunuz iki araca karşı sıfırdan
-   uygulayın. Framework kullanmayın. Kendinizi zamanlayın; bir öğleden sonra sürer.
+1. **On dört ifade.** Döngüyü elinizdeki iki araçla sıfırdan yazın. Framework
+   kullanmayın. Süre tutun; bir öğleden sonra sürer.
 2. **Bozulma eğrinizi bulun.** Cevapları kontrol edilebilir, 1'den 6'ya araç
    çağrısı gerektiren görevler kurun ve doğruluğu adım sayısına karşı çizin.
-   Ürününüzün ihtiyaç duyduğu eşiği geçtiği noktayı işaretleyin.
-3. **Sayaçları ayırın.** Gerçek bir yükte model çağrılarını ve araç çağrılarını
-   ayrı ölçün. Oranı hesaplayın. 1'e yakınsa sıralı maliyet eğrisini ödüyorsunuz.
-4. **Batch'lemeyi öldürün.** Ajanınızı tur başına bir araç çağrısı yapmaya
-   zorlayın ve maliyeti yeniden ölçün. Fark, paralel araç çağırmanın size parasal
-   olarak ne değdiğidir.
-5. **Sonlanma probe'u.** Ajanınıza tek çağrıda bitirebileceği bir görev verin ve
+   Doğruluğun ürününüzün ihtiyaç duyduğu eşiğin altına düştüğü noktayı
+   işaretleyin.
+3. **Sayaçları ayırın.** Gerçek bir iş yükünde model çağrılarını ve araç
+   çağrılarını ayrı ölçün. Oranı hesaplayın. 1'e yakınsa sıralı maliyet eğrisini
+   ödüyorsunuz.
+4. **Batch'lemeyi kapatın.** Ajanınızı tur başına bir araç çağrısı yapmaya
+   zorlayın ve maliyeti yeniden ölçün. Aradaki fark, paralel araç çağırmanın
+   size para olarak ne kazandırdığıdır.
+5. **Sonlanma testi.** Ajanınıza tek çağrıda bitirebileceği bir görev verin ve
    ne sıklıkla hemen durduğunu sayın. Bu bölümün metin protokolü, mümkün olan en
-   kolay görevde bu testte %60 başarısız oldu.
+   kolay görevde bu testte vakaların %60'ında başarısız oldu.
 6. **Hat kontrolü.** Şu anda ajanla çözdüğünüz bir görev için sabit hattı yazın.
    Doğruluğu, maliyeti ve gecikmeyi karşılaştırın. Ajanın yerini hak edip
    etmediğini dürüstçe raporlayın.
-7. **Durumu bozun.** Bir çalıştırmanın ortasında yanlış bir gözlem enjekte edin
+7. **Durumu bozun.** Bir koşunun ortasında transkripte yanlış bir gözlem ekleyin
    ve ajanın toparlanıp toparlanmadığına bakın. Sonra
    @sec-ajan-anatomisi-durum'dan yola çıkarak neden genellikle toparlanmadığını
    açıklayın.
-8. **Önce şemalar, sonra karar.** İyi bildiğiniz üç adımlık manuel bir iş akışı
-   alın. Bir ajanın ihtiyaç duyacağı araç şemalarını yazın, sonra ajanın buna
+8. **Önce şemalar, sonra karar.** İyi bildiğiniz, elle yürüttüğünüz üç adımlık
+   bir iş akışı alın. Bir ajanın ihtiyaç duyacağı araç şemalarını yazın, sonra ajanın buna
    değip değmediğini tartışın — şemalar genellikle cevabı apaçık yapar.
 
 ## Daha derine {#sec-ajan-anatomisi-derinlesme}
 
-Bunlardan önce: döngüyü kendiniz, iki gerçek araca karşı, framework'süz yazın.
-Aşağıdaki her şey sonrasında farklı okunur.
+Bunlardan önce: döngüyü kendiniz, iki gerçek araçla ve framework kullanmadan
+yazın. Aşağıdaki her şey sonrasında farklı okunur.
 
 | kaynak | ne olduğu |
 |:--|:--|
-| [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) — Anthropic | bu konudaki en iyi kısa yazı; merkezî argümanı bu bölümünkidir, üretim deneyiminden savunulmuş |
+| [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) — Anthropic | bu konudaki en iyi kısa yazı; merkezî argümanı bu bölümünkiyle aynı, ama üretim deneyimine dayanarak savunuluyor |
 | [Agents](https://huyenchip.com/2025/01/07/agents.html) — Chip Huyen | planlama, araçlar ve kusur biçimlerinin uzun ve iyi düzenlenmiş bir ele alınışı |
-| [LLM Powered Autonomous Agents](https://lilianweng.github.io/posts/2023-06-23-agent/) — Lilian Weng | insanların şimdi kullandığı sözcük dağarcığının çoğunu yaygınlaştıran derinlemesine yazı |
+| [LLM Powered Autonomous Agents](https://lilianweng.github.io/posts/2023-06-23-agent/) — Lilian Weng | bugün kullanılan terimlerin çoğunu yaygınlaştıran, derleme niteliğinde derinlemesine bir yazı |
 | [`smolagents`](https://github.com/huggingface/smolagents) | bir öğleden sonrada okunacak kadar küçük; bu da onu bir framework'ün ne yaptığını *öğrenmek* için en iyi framework yapıyor |
-| [`langgraph`](https://github.com/langchain-ai/langgraph) | açık bir durum makinesi olarak döngü — tam da denetim akışını çizdiğiniz bir şey yaptığı için yararlı |
-| [`pydantic-ai`](https://github.com/pydantic/pydantic-ai) | tipli araçlar ve tipli sonuçlar, doğrulama sınırı bariz kılınmış |
-| [`openai-agents`](https://github.com/openai/openai-agents-python) | döngünün, devretmelerin ve guardrail'lerin asgari bir referans uygulaması |
+| [`langgraph`](https://github.com/langchain-ai/langgraph) | açık bir durum makinesi olarak döngü — denetim akışını çizilebilir bir şeye dönüştürdüğü için yararlı |
+| [`pydantic-ai`](https://github.com/pydantic/pydantic-ai) | tipli araçlar ve tipli sonuçlar; doğrulama sınırı açıkça görünür |
+| [`openai-agents`](https://github.com/openai/openai-agents-python) | döngünün, handoff'ların ve korkulukların asgari bir referans uygulaması |
 
 : Makalelerin ötesi {tbl-colwidths="[42,58]"}
 
 | konu | kaynak |
 |:--|:--|
 | eylemle iç içe geçmiş akıl yürütme | @yao2023react |
-| modelin işlev çağırması | @schick2023toolformer |
+| modelin fonksiyon çağırmayı öğrenmesi | @schick2023toolformer |
 | kendini düzeltme ve neyi düzeltmediği | @madaan2023selfrefine; @huang2024large |
 | eylemler üzerinde değil, akıl yürütme üzerinde arama | @yao2023tree |
-| döngü içinde öz-düzeltme | @shinn2023reflexion |
+| döngü içinde kendini düzeltme | @shinn2023reflexion |
 | tekrarlı denemelerde güvenilirliğin ne kadar düştüğü | @yao2024taubench |
-| aynı bozulma, görev uzunluğu ufku olarak ölçülmüş | @kwa2025timehorizon |
+| aynı bozulma, görev süresi ufku (time horizon) olarak ölçülmüş | @kwa2025timehorizon |
 | ajanın kendi bellek problemi | @packer2023memgpt |
 
 : Birincil kaynaklar {tbl-colwidths="[46,54]"}
@@ -1032,29 +1061,30 @@ Aşağıdaki her şey sonrasında farklı okunur.
 - **Çıkış bir koşul değil bir tahmindir.** Hiçbir şey görevin bitip bitmediğini
   kontrol etmez; adım bütçesinin bir ayar parametresi değil mimari bir bileşen
   olmasının nedeni budur.
-- **Bu deneyde doğruluk arama sayısıyla düştü.** Burada:
-  bir aramadan beşe **%100 → %96 → %80 → %68 → %40**; sıcaklık 0'da ve tam
-  cevapları olan bir görevde — hücre başına n = 25, yani %40'ın aralığı
-  [23, 59] ve sağlam olan şey eğrinin şekli değil *yönü*. Aramalar iki model
-  çağrısında batch'lendi, yani bu beş ardışık karar değil; @yao2024taubench ve
-  @kwa2025timehorizon ardışık hâlini ölçekte ölçüyor.
+- **Bu deneyde doğruluk arama sayısıyla düştü.** Bir aramadan beşe
+  **%100 → %96 → %80 → %68 → %40**; sıcaklık 0'da ve cevabı kesin olarak
+  bilinen bir görevde — hücre başına n = 25, yani %40'ın aralığı [23, 59] ve
+  sağlam olan şey eğrinin şekli değil *yönü*. Aramalar iki model çağrısında
+  batch'lendi, yani bu beş ardışık karar değil; @yao2024taubench ve
+  @kwa2025timehorizon ardışık hâlini büyük ölçekte ölçüyor.
 - **Bozulan şey döngü değildi.** Araç kullanımı her adım sayısında kusursuzdu —
   tam olarak doğru çağrılar, bozuk yok, bütçeye çarpan yok — doğruluk ise 60
-  puan düştü. Kusur, toplanan gözlemler üzerindeki toplamada yaşıyor;
+  puan düştü. Kusur, toplanan gözlemleri bir araya getirme aşamasında;
   dolayısıyla önce orada hata ayıklayın.
 - **Model çağrılarını araç çağrılarından ayrı sayın.** Paralel araç çağırma bu
   döngüyü **her adım sayısında 2,0 model çağrısına** indirdi, dolayısıyla beş kat
-  iş 1,52 kat token'a mal oldu. Sıralı bir döngü her adımda öder: beş aramada
-  metin protokolü aynı iş için 3,5 kat model çağrısı kullandı.
+  iş 1,52 kat token'a mal oldu. Sıralı bir döngü bedeli her adımda öder: beş
+  aramada metin protokolü aynı iş için 3,5 kat model çağrısı kullandı.
 - **Yapılandırılmış araç API'si süs değildir.** Her adım sayısında öndeydi, 60
   doğruluk puanına kadar — gerçi 25 görevde yalnızca tek aramalık fark bir
-  anlamlılık testinden sağ çıkıyor — ve bir kez bile sonlanmakta başarısız
-  olmadı; esas olarak "dur ve cevapla"yı "araç çağır"dan yapısal olarak farklı
-  bir eylem yaptığı için.
+  anlamlılık testini geçiyor — ve her koşuda kendiliğinden durdu; bunun başlıca
+  nedeni "dur ve cevapla"yı "araç çağır"dan yapısal olarak farklı bir eylem
+  hâline getirmesi.
 - **Sonlanma kusuru en kolay görevde en kötüydü.** Metin döngüsü **tek aramalık
-  görevlerin %60'ında** adım bütçesine çarptı; cevabı 0. adımda getirmiş ve sonra
-  bütçe bitene kadar çağrıyı tekrarlamış olarak.
+  görevlerin %60'ında** adım bütçesine çarptı; üstelik cevabı 0. adımda getirmiş
+  olduğu hâlde, bütçe bitene kadar çağrıyı tekrarlayarak.
 - **Ajanı zorluğa göre değil dallanmaya göre seçin.** Adımlar biliniyorsa onları
   yazın: sabit ve sınanmış bir hat, sonraki adımı seçmeyi modelin elinden alır,
   ucuzdur ve bir satır numarasında bozulur — gerçi girdilerinin ve çıktılarının
-  yine de doğrulanması gerekir. Bozulan bir ajan ise bunun yerine makul bir şey döndürür.
+  yine de doğrulanması gerekir. Bozulan bir ajan ise hata vermek yerine makul
+  görünen bir şey döndürür.
