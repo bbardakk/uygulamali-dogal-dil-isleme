@@ -14,17 +14,18 @@ problemi de var ve bu problem, bölümün geri kalanındaki skorların nasıl
 okunacağını değiştiriyor.
 Yazılım: `scikit-learn` 1.9.0, `sklearn-crfsuite` 0.5.0, `transformers`
 5.15.1, PyTorch 2.13.0, `datasets` 5.0.1, `seqeval` 1.2.2, Python 3.14.5.
-Encoder fine-tuning: batch boyutu 16, öğrenme oranı 3e-5, üç epoch, seed 42, bir
-Apple M serisi GPU'da MPS arka ucuyla — bütçe başına tek koşu, hiperparametre
-taraması yok. Yerel LLM: 4 bit'e nicemlenmiş bir `qwen3.5:9b`, `ollama` 0.24.0
+Encoder fine-tuning (ince ayar): batch boyutu 16, öğrenme oranı 3e-5, üç epoch,
+tohum (seed) 42, bir Apple M serisi GPU'da MPS arka ucuyla — bütçe başına tek koşu, hiperparametre
+taraması yok. Yerel LLM: 4 bite nicemlenmiş bir `qwen3.5:9b`, `ollama` 0.24.0
 üzerinden, sıcaklık 0 ve düşünme kapalı. Aşağıdaki süre *oranlarını* taşınabilir,
 mutlak saniyeleri taşınamaz sayın.
 :::
 
 **Öğrenme hedefleri.** Bu bölümün sonunda:
 
-- NER, POS tagging ve chunking'i tek bir mimari — token başına bir etiket —
-  artı bir çözümleme adımı olarak ele alabilir ve hataların neden tam da o
+- NER, POS tagging (sözcük türü etiketleme) ve chunking'i (öbekleme) tek bir
+  mimari — token başına bir etiket — artı bir çözümleme (decoding) adımı olarak
+  ele alabilir ve hataların neden tam da o
   çözümleme adımında ortaya çıktığını söyleyebilirsiniz;
 - bir etiketleme şeması seçebilir, token tahminlerinden span'leri
   çözebilir ve bir etiketleyicinin asla üretmemesi gereken ama ürettiği
@@ -80,7 +81,7 @@ mimari; aralarındaki fark etiket kümesinde, modelde değil.
 Zor yarısı şu: [aslında istediğiniz şey etiketler değil, span'lerdir]{.hl} —
 *"Türkiye Büyük Millet Meclisi bir kurumdur"*, dört ayrı token kararı
 (`B-ORG I-ORG I-ORG I-ORG`) değil.
-Birini diğerine çevirmek bir çözümleme (decoding) problemi. Bu bölüm
+Birini diğerine çevirmek bir çözümleme problemi. Bu bölüm
 modellerden çok çözümlemeye ve ölçüme yer ayırıyor, çünkü asıl kusurlar
 orada.
 
@@ -110,10 +111,11 @@ derlemdeki her cümle en az bir varlık içeriyor.** Gerçek metin böyle
 kimseden bahsetmez. Skorları okurken bunu aklınızda tutun; bu, görevi sizin
 karşılaşacağınız görevden kolay kılıyor.
 
-### Önce taban çizgisi
+### Her şeyden önce: taban
 
-@sec-siniflandirma taban çizgisini önce hesaplamakta ısrar ediyordu. Bu
-alışkanlık burada, kitabın her yerinden daha çarpıcı biçimde işe yarıyor.
+@sec-siniflandirma, işe tabanı — hiçbir şey öğrenmeyen bir modelin alacağı
+skoru — hesaplayarak başlamakta ısrar ediyordu. Bu alışkanlık burada, kitabın
+her yerinden daha çarpıcı biçimde işe yarıyor.
 Her token için `O` üreten bir model düşünün — öznitelik yok, parametre yok,
 eğitim yok:
 
@@ -125,13 +127,13 @@ Token doğruluğu, etiketi doğru olan token'ların oranıdır. Span düzeyinde 
 ise bir varlığı ancak türü ve iki sınırı da doğruysa bulunmuş sayar;
 tam tanımı @sec-dizi-etiketleme-metrikler'de.
 
-[Yüzde altmış bir doğru ve tek bir varlık bile bulmuş değil.]{.hl} Bu iki
+[Yüzde altmış bir doğru, ama tek bir varlık bile bulmuyor.]{.hl} Bu iki
 sayı arasındaki uçurum bir merak konusu değil; @sec-dizi-etiketleme-metrikler
 tam da bu uçurum yüzünden var. Bunun gibi bir etiketleme görevinde "%94 doğruluk"
 bildiren her makale, model kartı ya da meslektaş, bu derlemde tabanı 61 olan bir
 sayı bildiriyor demektir.
 
-**Neye bakacağız.** Önce derlem; üzerinde bir şey ölçülmeden önce denetleniyor, çünkü o denetimin ortaya çıkardığı şey sonraki her skorun nasıl okunacağını değiştiriyor. Sonra token başına etiketleri span'lere çeviren biçim ve bir modelin ürettiği, bu biçimin yasakladığı diziler. Sonra kelimelerle alt kelimeler arasındaki hizalama adımı; sessiz hataların saklandığı yer. Sonra işi kurmanın üç yolu — bir sözlük, bir CRF (conditional random field; klasik istatistiksel dizi modeli, @sec-dizi-etiketleme-baseline'da tanıtılıyor), fine-tune edilmiş bir encoder — altı etiket bütçesinde, çünkü soru hangisinin kazandığı değil, *ne zaman* kazandığı. Sonra herkesin raporladığı metriğin neden yanlış metrik olduğu. Ve son olarak bunların hepsini atlayıp şemayı bir LLM'e tarif ederseniz ne olduğu.
+**Neye bakacağız.** Önce derlem; üzerinde bir şey ölçülmeden önce denetleniyor, çünkü o denetimin ortaya çıkardığı şey sonraki her skorun nasıl okunacağını değiştiriyor. Sonra token başına etiketleri span'lere çeviren biçim ve bir modelin ürettiği, bu biçimin yasakladığı diziler. Sonra kelimelerle alt kelimeler arasındaki hizalama adımı; sessiz hataların saklandığı yer. Sonra işi kurmanın üç yolu — bir sözlük, bir CRF (conditional random field, yani koşullu rastgele alan; klasik istatistiksel dizi modeli, @sec-dizi-etiketleme-baseline'da tanıtılıyor), fine-tune edilmiş bir encoder — altı etiket bütçesinde, çünkü soru hangisinin kazandığı değil, *ne zaman* kazandığı. Sonra herkesin raporladığı metriğin neden yanlış metrik olduğu. Ve son olarak bunların hepsini atlayıp şemayı bir LLM'e tarif ederseniz ne olduğu.
 
 ## Derlemde gerçekte ne var {#sec-dizi-etiketleme-denetim}
 
@@ -139,13 +141,13 @@ sayı bildiriyor demektir.
 hesaplanan bir sayıya güvenmeden önce derlemi denetleyin. WikiANN otomatik
 olarak kuruldu; Wikipedia'nın iç bağlantıları diller arası bağlantılar
 üzerinden yansıtıldı [@pan2017cross]. Bu sayede derlem devasa, ücretsiz ve 282
-dilde mevcut — ama hiç kimse tarafından gözden geçirilmemiş. İşte denetim.
+dilde mevcut — ama onu hiç kimse gözden geçirmemiş. İşte denetim.
 
 Bu denetim bir ilk değil. @lignos2022meaningful, WikiANN'in içeriğini daha az
-kaynaklı diller için inceledi ve derlemin sıfır-atışlı diller arası transferi
-olduğundan iyi gösterdiği sonucuna vardı. Aşağıda aynı argümanı Türkçe üzerinde,
-sayılar önünüzdeyken yeniden sınıyoruz. Buna bir bulgu daha ekleniyor: ne derlem
-makalesi ne de denetim makalesi sizi ona hazırlıyor.
+kaynaklı diller için inceledi ve derlemin zero-shot (sıfır atışlı) diller arası
+transferi olduğundan iyi gösterdiği sonucuna vardı. Aşağıda aynı argümanı Türkçe
+üzerinde, sayılar önünüzdeyken yeniden sınıyoruz. Buna bir bulgu daha ekleniyor;
+ne derlem makalesi ne de denetim makalesi sizi bu bulguya hazırlıyor.
 
 **Bunların çoğu cümle değil.**
 
@@ -156,7 +158,7 @@ does not             13,104   65.5%
 ```
 
 Üçte ikisi, Wikipedia biçimlendirmesinden kırpılmış parçalar. Bu, *alan
-(domain)* hakkında bir olgu ve düzyazıya taşınmayacak.
+(domain)* hakkında bir olgu: burada ölçülenler düzyazıya olduğu gibi taşınmayacak.
 
 **Varlık diye işaretlenen bazı ifadeler aslında varlık değil.**
 
@@ -171,11 +173,12 @@ containing wiki markup         63   0.24%
 ```
 
 Kurum olarak etiketlenmiş yalın yıl sayıları. Bu sayımlar eğitim bölmesindeki
-26.482 varlık ifadesi üzerinde; test bölmesi de aynı yolla kuruldu. Küçük bir oran, ama herhangi bir
+26.482 varlık ifadesi (entity mention) üzerinde; test bölmesi de aynı yolla
+kuruldu. Küçük bir oran, ama herhangi bir
 modelin alabileceği skora tavan koyuyor — çünkü test kümesinin bir kısmı
 düpedüz yanlış.
 
-**Aynı karakter dizisi (string) iki farklı şekilde etiketleniyor.**
+**Aynı dizgi (string) iki farklı şekilde etiketleniyor.**
 
 ```text
 distinct surface forms                16,591
@@ -190,8 +193,8 @@ mentions affected                      1,397   (5.3%)
 
 Bunun bir kısmı gerçek belirsizlik — *Türkiye* *İtalya*'yı yendi derken
 kastedilen futbol federasyonudur, kara parçası değil — bir kısmı ise
-etiketleme gürültüsü. Her hâlükârda varlık ifadelerinin (entity mention)
-%5,3'ünde aynı dizge başka bir etiketle de geçmiş; hangisinin burada geçerli
+etiketleme gürültüsü. Her hâlükârda varlık ifadelerinin
+%5,3'ünde aynı dizgi başka bir etiketle de geçmiş; hangisinin burada geçerli
 olduğunu modelin tahmin etmesi gerekiyor.
 
 ### Her skoru okuma biçiminizi değiştiren kısım
@@ -214,9 +217,10 @@ duplicate sentences inside test itself           540
 :::
 
 Benzer cümleler değil, *bayt bayt aynı token dizileri*. Karşılaştırma,
-`datasets`'in döndürdüğü token listeleri üzerinde yapıldı; büyük-küçük harf
-katlaması, Unicode yeniden normalleştirmesi ya da boşluk onarımı yok. Dolayısıyla
-%13,06, örtüşmenin üst sınırı değil alt sınırı. Bu cümlelerin 1.305'i bayt bayt
+`datasets`'in döndürdüğü token listeleri üzerinde yapıldı; büyük/küçük harf
+eşitlemesi, Unicode yeniden normalleştirmesi ya da boşluk onarımı yok. Daha gevşek
+bir eşleştirme ancak daha fazlasını bulabilirdi; dolayısıyla %13,06, örtüşmenin
+üst sınırı değil alt sınırı. Bu cümlelerin 1.305'i bayt bayt
 aynı referans etiketleri de taşıyor. Eğitim verisini ezberlemekten başka bir şey
 yapmayan bir model, bu 1.306 cümleyi zahmetsizce doğru bilir.
 
@@ -226,7 +230,7 @@ kümesinin sızmış ve temiz yarılarında ayrı ayrı puanlanıyor:
 
 | sistem | sızmış 1.306 | temiz 8.694 | fark | fark / boşluk |
 |:--|--:|--:|--:|--:|
-| Gazetteer (saf ezber) | 77,54 | 51,04 | [+26,50]{.con} | %54 |
+| Gazetteer (varlık sözlüğü; saf ezber) | 77,54 | 51,04 | [+26,50]{.con} | %54 |
 | Elle öznitelikli CRF | **99,81** | 83,56 | [+16,25]{.con} | %99 |
 | Fine-tune edilmiş BERTurk | 98,69 | 91,04 | [+7,65]{.pro} | %85 |
 
@@ -245,7 +249,7 @@ aynı sırayla düşüyor: **+26,50, +16,25, +7,65**.
 Ama son sütunu da okuyun, çünkü ham fark, temiz yarının üstünde bıraktığı
 boşlukla yukarıdan sınırlı: temiz yarıda 91,04 alan bir sistem, ne kadar
 ezberlerse ezberlesin 8,96'dan fazla kazanamaz. Normalleştirdiğinizde sıralama
-değişiyor: gazetteer birincilikten sonunculuğa düşüyor. CRF'in +16,25'i, elindeki
+değişiyor: gazetteer birincilikten sonunculuğa düşüyor. CRF'nin +16,25'i, elindeki
 16,44 puanın **%99**'unu kullanıyor; encoder'ın +7,65'i 8,96'sının %85'ini;
 gazetteer'ın daha büyük olan +26,50'si ise 48,96'sının yalnızca **%54**'ünü.
 İki okuma pratik sonuçta örtüşüyor, sıralamada ayrışıyor. Farkın bir ezber
@@ -254,7 +258,7 @@ fark, daha dikkatli bakın demektir; modelinizin ne kadar ezberlediğini
 ölçtünüz demek değildir. Tek bir derlem ve üç sistemden gelen bu kanıtın
 söyleyebileceği bu kadar.
 
-İki okumanın da desteklediği şey şu: %13 sızıntılı bir ölçüt skorları yalnızca
+İki okumanın da desteklediği şey şu: %13 sızıntılı bir benchmark (kıyaslama), skorları yalnızca
 şişirmez; **eşitsiz** şişirir, üstelik en çok kayırdığı sistemler tam da üretimde
 sizi hayal kırıklığına uğratacak olanlar.
 
@@ -277,7 +281,7 @@ Dürüst çözüm, puanlamadan önce eğitim kümesinde de bulunan test örnekle
 ayıklamak ve bunu açıkça söylemek. Daha ucuz alışkanlık — ve bu bölümden
 çıkarıp götürmeye değer olan
 — şu: bir sonuç fazla iyi görünüyorsa test girdilerinizin hash'ini alın ve
-modelin kaçını daha önce gördüğünü sayın. Dört satır sürer ve bu kitaptaki
+modelin kaçını daha önce gördüğünü sayın. Dört satırlık bir iştir ve bu kitaptaki
 herhangi bir modelleme numarasından daha fazla projeyi kurtarmıştır.
 :::
 
@@ -289,7 +293,7 @@ span'ler. Aradaki köprü bir *etiketleme şeması* ve standardı
 span açar, `I-X` onu sürdürür, `O` ise geri kalan her şeydir.
 
 ::: {#gloss-bio-tagging .column-margin .term-gloss}
-**BIO tagging** (BIO etiketleme) — `B-` bir span'in ilk token'ını, `I-` bir
+**BIO tagging** (BIO etiketleme) — `B-` bir span'in ilk token'ını, `I-`
 devamını, `O` ise dışarıda kalan her şeyi işaretler. Token başına çalışan bir
 sınıflandırıcının çok token'lı span'leri ifade etmesini sağlayan numara; aynı
 türden iki span'in arka arkaya gelmesi dâhil.
@@ -300,9 +304,9 @@ türden iki span'in arka arkaya gelmesi dâhil.
 ```{=html}
 <div class="fig-title">BIO, span'leri token başına etiketlere çevirir — ve bir gramer yaratır</div>
 <svg viewBox="0 0 764 268" style="max-width:744px" role="img"
-     aria-label="Mustafa Kemal 1919 yılında Samsun'a çıktı cümlesi üzerinde BIO etiketleme diyagramı. Token'ların üstünde, etiketleyicinin çizdiği iki span köşeli parantezle işaretli: Mustafa Kemal'i kapsayan bir kişi span'i ve Samsun'a'yı kapsayan bir yer span'i. Token'ların altında her kelime bir BIO etiketi taşıyor: B-PER, I-PER, O, O, B-LOC, O, O. Bir not, B'nin span açtığını, I'nın sürdürdüğünü, O'nun ise span dışı olduğunu açıklıyor; bu yüzden yan yana iki kişi B-PER B-PER olur ve ayırt edilebilir kalır. Altta bir geçiş tablosu hangi etiketin hangisini izleyebileceğini gösteriyor: I-PER, B-PER veya I-PER'i izleyebilir; O veya B-LOC'u izleyemez. Yasak iki geçiş işaretli ve bir not, koşullu rastgele alanın bunlardan kaçınmayı öğrendiğini, token başına çalışan bir sınıflandırıcının ise öğrenmediğini, tümüyle dışlamanın ise açık bir kısıt gerektirdiğini söylüyor.">
+     aria-label="Mustafa Kemal 1919 yılında Samsun'a çıktı cümlesi üzerinde BIO etiketleme diyagramı. Token'ların üstünde, insan etiketleyicinin çizdiği iki span köşeli parantezle işaretli: Mustafa Kemal'i kapsayan bir kişi span'i ve Samsun'a'yı kapsayan bir yer span'i. Token'ların altında her kelime bir BIO etiketi taşıyor: B-PER, I-PER, O, O, B-LOC, O, O. Bir not, B'nin span açtığını, I'nın sürdürdüğünü, O'nun ise span dışı olduğunu açıklıyor; bu yüzden yan yana iki kişi B-PER B-PER olur ve ayırt edilebilir kalır. Altta bir geçiş tablosu hangi etiketin hangisini izleyebileceğini gösteriyor: I-PER, B-PER veya I-PER'i izleyebilir; O veya B-LOC'u izleyemez. Yasak iki geçiş işaretli ve bir not, CRF'nin bunlardan kaçınmayı öğrendiğini, token başına çalışan bir sınıflandırıcının ise öğrenmediğini, tümüyle dışlamanın ise açık bir kısıt gerektirdiğini söylüyor.">
 
-  <text x="10" y="16" class="t-xs t-b t-muted">ETİKETLEYİCİNİN ÇİZDİĞİ — SPAN'LER</text>
+  <text x="10" y="16" class="t-xs t-b t-muted">İNSANIN ÇİZDİĞİ — SPAN'LER</text>
 
   <path d="M18 44 L 18 32 L 210 32 L 210 44" class="ln-accent"/>
   <text x="114" y="26" class="t-xs t-mid t-b t-accent">PER</text>
@@ -616,9 +620,9 @@ etiketleri konum konum eşleştirdiğinizde ne olduğunu görüyorsunuz.
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">Kelime başına bir etiket, kelime başına çok alt kelime — ve yine de eğiten bir kelimelik kayma</div>
+<div class="fig-title">Kelime başına bir etiket, kelime başına çok alt kelime — ve eğitimi durdurmayan bir kelimelik kayma</div>
 <svg viewBox="0 0 764 288" style="max-width:744px" role="img"
-     aria-label="Alt kelime etiket hizalaması şeması. Üst satırda, her birinin tek bir referans etiketi olan üç Türkçe varlık kelimesi var: İstanbul B-LOC, Erdemir B-ORG ve Mississippi'de B-LOC. Orta satır, BERTurk tokenlaştırıcısının aynı üç kelime için ürettiği toplam on bir konumu gösteriyor: açılış CLS token'ı, tek bir alt kelime olarak İstanbul, Erdemir için Erdem ve ##ir, Mississippi'de için Miss, ##iss, ##ip, ##pi, bir kesme işareti ve de, sonra kapanış SEP token'ı. Her kelime, bölündüğü alt kelimelerin tam üstünde duruyor. Üçüncü satır doğru hizalamayı gösteriyor: her kelimenin ilk alt kelimesi kelimenin etiketini taşıyor ve diğer her konum, kaybın göz ardı ettiği indeks olan eksi yüz taşıyor; böylece B-LOC İstanbul'da, B-ORG Erdem'de, B-LOC Miss'te oturuyor ve diğer sekiz konum maskeleniyor. Alt satır hatayı gösteriyor: üç etiket ilk üç token konumuna konum konum eşleştiriliyor. B-LOC CLS token'ına, B-ORG İstanbul'a, B-LOC Erdem'e düşüyor ve Mississippi'de dâhil kalan sekiz konum hiç etiket almıyor. Bir not, kaybın yine de düştüğünü ve koşunun yine de bittiğini söylüyor.">
+     aria-label="Alt kelime etiket hizalaması şeması. Üst satırda, her birinin tek bir referans etiketi olan üç Türkçe varlık kelimesi var: İstanbul B-LOC, Erdemir B-ORG ve Mississippi'de B-LOC. Orta satır, BERTurk tokenizer'ının aynı üç kelime için ürettiği toplam on bir konumu gösteriyor: açılış CLS token'ı, tek bir alt kelime olarak İstanbul, Erdemir için Erdem ve ##ir, Mississippi'de için Miss, ##iss, ##ip, ##pi, bir kesme işareti ve de, sonra kapanış SEP token'ı. Her kelime, bölündüğü alt kelimelerin tam üstünde duruyor. Üçüncü satır doğru hizalamayı gösteriyor: her kelimenin ilk alt kelimesi kelimenin etiketini taşıyor ve diğer her konum, kaybın göz ardı ettiği indeks olan eksi yüz taşıyor; böylece B-LOC İstanbul'da, B-ORG Erdem'de, B-LOC Miss'te oturuyor ve diğer sekiz konum maskeleniyor. Alt satır hatayı gösteriyor: üç etiket ilk üç token konumuna konum konum eşleştiriliyor. B-LOC CLS token'ına, B-ORG İstanbul'a, B-LOC Erdem'e düşüyor ve Mississippi'de dâhil kalan sekiz konum hiç etiket almıyor. Bir not, kaybın yine de düştüğünü ve koşunun yine de bittiğini söylüyor.">
 
   <text x="10" y="14" class="t-xs t-b t-muted">ELİNİZDEKİ — KELİME BAŞINA BİR REFERANS ETİKET</text>
 
@@ -674,7 +678,7 @@ etiketleri konum konum eşleştirdiğinizde ne olduğunu görüyorsunuz.
 
   <path d="M10 192 L 754 192" class="ln-thin ln-dash"/>
 
-  <text x="10" y="212" class="t-xs t-b t-rose">YİNE DE EĞİTEN HATA — &#220;&#199; ETİKET KONUM KONUM EŞLEŞTİRİLMİŞ</text>
+  <text x="10" y="212" class="t-xs t-b t-rose">EĞİTİMİ DURDURMAYAN HATA — &#220;&#199; ETİKET KONUM KONUM EŞLEŞTİRİLMİŞ</text>
 
   <rect x="14"  y="220" width="58" height="24" rx="5" class="box-rose"/>
   <text x="43"  y="236" class="t-xs t-mid t-b t-mono t-rose">B-LOC</text>
@@ -743,10 +747,10 @@ dokunmadan önce hizalamayı kontrol edin.]{.hl} Tokenize edilmiş bir cümleyi
 hizalanmış etiketleriyle yan yana yazdırıp okuyun. Bir dakika sürer ve bu
 bölümdeki en verimli dakikadır.
 
-## Transformer'lardan önce taban çizgileri {#sec-dizi-etiketleme-baseline}
+## Transformer'lardan önce baseline'lar {#sec-dizi-etiketleme-baseline}
 
-[12. bölümün](../chapters/12-siniflandirma.html) disiplini: önce ucuz olanı kurun, pahalı olanı da onu
-geçmeye mecbur bırakın.
+[12. bölümün](../chapters/12-siniflandirma.html) disiplini: önce ucuz olanı — baseline'ı (taban model) —
+kurun, pahalı olanı da onu geçmeye mecbur bırakın.
 
 ### Bir gazetteer
 
@@ -762,9 +766,9 @@ gazetteer (16,591 memorised phrases, longest match)
 
 Bir Python sözlüğünden 55 F1. Bir modelin kendini haklı çıkarmak için geçmesi
 gereken sayı bu ve çoğu kişinin tahmininden yüksek — çünkü isimler
-tekrarlanır. Bu derlemde [test kümesindeki varlık ifadelerinin %52,2'si eğitim verisinde birebir geçiyor]{.hl}. Bu oran hem gazetteer'ın recall tavanıdır hem
-de derlem denetiminde (@sec-dizi-etiketleme-denetim) gördüğümüz sızıntı
-probleminin başka bir ifadesi.
+tekrarlanır. Bu derlemde [test kümesindeki varlık ifadelerinin %52,2'si eğitim verisinde birebir geçiyor]{.hl}. Bu oran hem gazetteer'ın recall (duyarlılık)
+tavanı hem de derlem denetiminde (@sec-dizi-etiketleme-denetim) gördüğümüz
+sızıntı probleminin başka bir ifadesi.
 
 ::: {#gloss-gazetteer .column-margin .term-gloss}
 **gazetteer** (varlık sözlüğü) — bilinen varlık dizgilerinin ezberlenmiş bir
@@ -808,7 +812,7 @@ bunları tek tek saymak imkânsız. Her skor yalnızca *komşu* etiketleri
 birbirine bağladığı için dinamik programlama ikisini de $O(T L^2)$'de
 hesaplar: toplamı ileri (forward) algoritması, maksimumu Viterbi.
 
-Bu koşullamanın sağladığı avantajın bir adı var. Saklı Markov modeli (HMM),
+Bu koşullamanın sağladığı avantajın bir adı var. Saklı Markov modeli (hidden Markov model, HMM),
 CRF'lerden önceki klasik dizi modelidir ve şöyle bir hikâye anlatır: her etiket
 kendi kelimesini, her etiket de bir sonraki etiketi üretir. HMM
 **üretici**dir: ortak dağılım $p(x, y)$'yi modeller, dolayısıyla *kelimelerin*
@@ -873,7 +877,7 @@ CRF (sklearn-crfsuite, lbfgs, c1=0.1, c2=0.1, 200 iterations)
 indirme yok. Bölümün geri kalanının geçmesi gereken sayı bu ve gerçekten zor
 bir hedef.
 
-Bu tablodaki iki şey, göz atıp geçmek yerine okunmaya değer. `ORG` recall'ü
+Bu tablodaki iki şey, göz atıp geçmek yerine okunmaya değer. `ORG` recall'u
 78,70; `PER`'in on, `LOC`'un yedi puan altında. Kurumlar uzun, bileşik ve açık
 uçludur (*Slovenya Millî Basketbol Takımı*), bu yüzden uzun bir adın ilk
 kelimesinin etrafındaki beş token'lık pencere son kelimeye uzanmayabilir; oysa
@@ -881,7 +885,7 @@ kelimesinin etrafındaki beş token'lık pencere son kelimeye uzanmayabilir; oys
 özniteliği gerçekten iş yapıyor: Türkçe yazımda kesme işareti bir eki özel
 isimden (ya da *1919'da* örneğindeki gibi bir sayıdan veya kısaltmadan) ayırır; bu
 yüzden kendinden önceki karakterlerin bir ad olduğunun güçlü bir işaretidir.
-Bu, başka dillerin sahip olmadığı bir yazım şansı.
+Bu, başka dillerde bulunmayan bir yazım şansı.
 
 ## Bir encoder'ı fine-tune etmek {#sec-dizi-etiketleme-encoder}
 
@@ -902,11 +906,11 @@ budget    token acc   span P   span R   span F1   macro   illegal   train s
 CRF, all 20,000 sentences   94.41    86.27    84.64     85.45   85.34    0    18.5
 ```
 
-**Bütçe başına tek koşu, seed 42, hiperparametre taraması yok — ve oynak
+**Bütçe başına tek koşu, tohum 42, hiperparametre taraması yok — ve oynak
 olanlar iki küçük bütçe.** 200 cümlede, rastgele ilklendirilmiş bir katmanın her
 şeye `O` deme çözümünden kurtulup kurtulamadığı tohuma bağlı olabilir;
 dolayısıyla 3,14'ü, arkasında iki ondalık olan bir sayı değil *tek haneli* diye
-okuyun. Bu tablodaki her karşılaştırmanın altında bir taban da var: test
+okuyun. Bu tablodaki her karşılaştırmanın altında bir gürültü tabanı da var: test
 kümesinin 13.587 referans span'i üzerinde %85 civarındaki bir span F1'in,
 yalnızca test kümesi örneklemesinden gelen standart hatası 0,3 puan kadar; %95
 aralığı kabaca $\pm 0{,}6$ puan. Kesişimi belirleyen 84,23 ile 85,45 arasındaki
@@ -972,7 +976,7 @@ bulamadı. Ampirik sıfır yerine garanti istiyorsanız, yasak geçişleri
 çözümlemeden önce maskeleyin (@sec-dizi-etiketleme-yasak-gecisler).
 
 ::: {.column-margin}
-Hataların hangi yöne aktığına dikkat edin. CRF precision'a yatkın (86,27 P'ye
+Hataların hangi yöne aktığına dikkat edin. CRF precision'a (kesinlik) yatkın (86,27 P'ye
 karşı 84,64 R); 500'den yukarı her encoder satırı ise recall'a yatkın.
 Öznitelik şablonları eşleştiklerinde ateşlenir, eşleşmediklerinde susar;
 fine-tune edilmiş bir encoder ise tahmin yürütür. Hangi hata türünü tercih
@@ -1026,7 +1030,7 @@ Plot.plot({
     Plot.ruleY([budgetRef[budgetMetric]], {stroke: "#C1666B", strokeDasharray: "4,3"}),
     Plot.text([{x: 20000, y: budgetRef[budgetMetric]}], {
       x: "x", y: "y", dy: -9, textAnchor: "end", fill: "#C1666B", fontSize: 11,
-      text: () => `20.000 cümlenin tamamında CRF: ${budgetRef[budgetMetric]}`}),
+      text: () => `20.000 cümlenin tamamında CRF: ${budgetRef[budgetMetric].toLocaleString("tr-TR")}`}),
     Plot.line(budgetData, {x: "n", y: budgetMetric, stroke: "#0E7C7B", strokeWidth: 2}),
     Plot.dot(budgetData, {x: "n", y: budgetMetric, fill: "#0E7C7B", r: 5}),
     Plot.text(budgetData, {x: "n", y: budgetMetric, dy: -14, fontSize: 11,
@@ -1145,14 +1149,14 @@ oldukça farklı görünür:
   ORG       86.34   78.70   82.34         88.93   88.73   88.83     4,154
 ```
 
-`ORG` her iki sütunda da sonuncu ve recall'ü aykırı değer — CRF'de 78,70,
+`ORG` her iki sütunda da sonuncu ve recall'u aykırı değer — CRF'de 78,70,
 altı puan önde giden encoder'da bile üçünün en düşüğü olan 88,73. Altı puanlık ek model gücü bile `ORG`'u sondan
 kurtaramadı.
 
 Sebep span'lerin kendisinde yatıyor. Kurum adları uzundur — ortalama referans span **`ORG` için 2,68 token; `PER` için 2,26
 ve `LOC` için 1,61** — bileşiktir ve sıklıkla sıradan kelimelerden kurulur
-(*Türk Silahlı Kuvvetleri*, *Eurovision Şarkı Yarışması*). Beş token'lık
-pencereye sahip bir model, uzun bir adı ilk kelimesinden bakarak bütün göremez;
+(*Türk Silahlı Kuvvetleri*, *Eurovision Şarkı Yarışması*). Beş token'lık bir
+pencereyle bakan model, uzun bir adı ilk kelimesinden bakarak bütün göremez;
 görebilen bir modelin de nerede biteceğine karar vermesi gerekir.
 
 Türleriniz bu kadar dengesizken micro'nun yanında macro-F1 de raporlayın.
@@ -1163,13 +1167,13 @@ için gösterdiği gibi.
 
 **Bütün bunların bir sınırı var, çünkü bölüm üç görevle açıldı ama yalnızca
 birini ölçtü.** Yukarıda span'ler, BIO ve span düzeyinde F1 hakkında söylenen
-her şey, çıktısı bir *span* olan görevler için geçerli: NER, öbekleme, slot doldurma. Sözcük türü
-etiketleme bunlardan biri değil: her token bir etiket taşır, hiçbir token `O`
+her şey, çıktısı bir *span* olan görevler için geçerli: NER, chunking, slot doldurma. POS
+tagging bunlardan biri değil: her token bir etiket taşır, hiçbir token `O`
 değildir ve çözümlenecek bir şey yoktur. Dolayısıyla orada token doğruluğu
 gayet makul bir metriktir. Tabanı da %61 değil, en sık etiket baseline'ıdır
 (her kelimeye eğitimde en sık aldığı etiket verilir; İngilizcede %90 civarı,
 birçok kelime biçiminin eğitimde hiç görülmediği Türkçede daha düşük). Mimari ortak; değerlendirme değil. Buraya Türkçe
-sözcük türü etiketleme için geldiyseniz etiket kümesi Universal Dependencies'inki,
+POS tagging için geldiyseniz etiket kümesi Universal Dependencies'inki,
 derlemler de UD Türkçe ağaç bankalarıdır (BOUN, IMST). Ama
 @sec-dizi-etiketleme-hizalama bu bölümün size hâlâ gereken kısmı, çünkü alt
 kelime problemi etiketlerin ne anlama geldiğinden bağımsız.
@@ -1235,7 +1239,7 @@ Bizim kurulumumuz tam da o kesişimde duruyor. Çıkarılacak ders, teşhis hang
 olursa olsun geçerli ve pratik olan da bu: sunucu sürümünüzü sabitleyin ve bir istek kısıtın açık olduğunu
 kanıtlayana kadar kapalı olduğunu varsayın.
 
-Bu kurulumu bir çıkarım hattının içinde, parse adımının çevresinde bir
+Bu kurulumu bir bilgi çıkarma hattının içinde, ayrıştırma (parse) adımının çevresinde bir
 `try/except json.JSONDecodeError` ile çalıştırın: her belge için sıfır varlık
 döndüren bir çıkarıcı ve sıfırlarla dolu bir metrik tablosu elde edersiniz.
 Sonra bir öğleden sonranızı, bu sıfırların suçunu prompt'unuzda arayarak
@@ -1284,7 +1288,7 @@ def align_span(tokens, text):
   `Samsun'a`. Kılavuz birebir kopya istemişti; model ise yardımsever davranıp
   ifadeyi normalleştirdi. 3 numaralı yedek tam bunun için var ve gerçekten iş yapıyor.
 - **Cümlede hiç bulunmayan bir varlık ifadesi.** Bir yeniden ifade, bir genişletme, bir
-  çıkarım. Bunu dürüstçe puanlamanın bir yolu yok; onu isabet saymak, modeli
+  çıkarsama. Bunu dürüstçe puanlamanın bir yolu yok; onu isabet saymak, modeli
   kendi uydurduğu bir metin hakkındaki iddiası üzerinden puanlamak olurdu.
 
 Hizalanamayan her ifadeye halüsinasyon deyip geçmek cazip. Bunun çoğunlukla
@@ -1303,7 +1307,7 @@ genuinely not in the sentence                     4    0.28%
 [Otuz bir başarısızlığın yirmi yedisi hizalayıcının suçuydu, modelin
 değil.]{.hl} Yirmisi derlemin kendi Wikipedia biçimlendirmesinden, yedisi ise
 modelin kıvrık kesme işaretini düz olana normalleştirmesinden geldi. Sonuçlar
-incelenmeden raporlansaydı ana bulgu "model 31 varlık halüsine etti" olurdu —
+incelenmeden raporlansaydı ana bulgu "model 31 varlık uydurdu" olurdu —
 model hakkında gibi görünen, aslında ön işleme hakkında olan bir iddia.
 
 Dersin daha rahatsız edici olan ikinci yarısı şu: hizalayıcıyı düzeltmek
@@ -1326,7 +1330,7 @@ Her sistem için aynı 1.000 test cümlesi, 1.373 referans varlık, aynı puanla
 | Gazetteer | 20.000 cümle | 76,12 | 60,28 | 50,40 | 54,90 |
 | **LLM, zero-shot** | **yok** | 82,87 | 60,33 | 60,82 | **60,57** |
 | CRF | 20.000 cümle | 94,42 | 84,94 | 83,39 | 84,16 |
-| BERTurk fine-tune | 20.000 cümle | 96,98 | 91,11 | 91,77 | **91,44** |
+| Fine-tune edilmiş BERTurk | 20.000 cümle | 96,98 | 91,11 | 91,77 | **91,44** |
 
 : `qwen3.5:9b` etiketleyicilere karşı, birebir aynı dilim üzerinde. LLM satırı
 *naif* hizalayıcıyı kullanıyor; düzeltilmiş olan 60,29 alıyor
@@ -1343,7 +1347,7 @@ durumlarda ileriye taşınır.
 
 **Hiç eğitim verisi olmadan LLM, gazetteer'ı altı puan geçiyor.** Bu gerçek
 bir yetenek ve 2019'da mevcut değildi. Elinizde bir şema varsa ve etiket
-yoksa, yarına kadar çalışan bir çıkarıcınız olur.
+yoksa, yarın elinizde çalışan bir çıkarıcı olur.
 
 **Aynı LLM, on sekiz saniyede eğitilen bir CRF'nin 24 puan, fine-tune
 edilmiş encoder'ın 31 puan gerisinde kalıyor.** Zero-shot çıkarım *başlangıç* noktasıdır,
@@ -1360,16 +1364,16 @@ Tür bazındaki döküm, LLM'in nerede yanıldığını gösteriyor:
   ORG 54.67  40.10  46.26    90.46  87.97  89.20
 ```
 
-**40,10'luk `ORG` recall'ü** en çarpıcı başarısızlık: model beş kurumdan üçünü
+**40,10'luk `ORG` recall'u** en çarpıcı başarısızlık: model beş kurumdan üçünü
 kaçırıyor. Bu, bölümdeki her sistemde görülen zayıflığın büyütülmüş hâli.
 Ama etiketleyicilerde görülmeyen bir sebebi de var.
 Model dizgileri *bulmakta* başarısız olmuyor; *Değişim Hareketi*'nin bir kurum
 olup olmadığı ve adının nerede bittiği konusunda anlaşmazlığa düşüyor. Bir
 etiketleyici o sınır uzlaşımını 20.000 örnekten öğrenir. Bir prompt ise onu
-ifade etmek zorundadır ve bir sayfalık kılavuz, etiketleyicilerin bir derlem
-boyunca üzerinde uzlaştığı şeyi kodlayamaz.
+ifade etmek zorundadır ve bir sayfalık kılavuz, insan etiketleyicilerin bir
+derlem boyunca üzerinde uzlaştığı şeyi kodlayamaz.
 
-`PER` bunun ayna görüntüsünü gösteriyor: 82,00 recall'e karşı 64,63
+`PER` bunun ayna görüntüsünü gösteriyor: 82,00 recall'a karşı 64,63
 precision. Model kişileri hevesle buluyor ve fazla iddialı davranıyor;
 kılavuzun dışladığı tanımları ve unvanları da etiketliyor.
 
@@ -1387,16 +1391,16 @@ generated tokens per sentence          26.4                    n/a
 malformed JSON responses                  0
 ```
 
-[LLM cümle başına kabaca 1.200 kat daha yavaş]{.hl} — üstelik bu, 4 bit'e
+[LLM cümle başına kabaca 1.200 kat daha yavaş]{.hl} — üstelik bu, 4 bite
 nicemlenmiş ve yerelde çalışan 9B'lik bir model; düşünme kapalı ve bir şema
-çıktıyı 26 token'da tutuyor. Barındırılan bir frontier model muhtemelen daha
-isabetli olurdu, ama her istek yine milisaniye değil saniye mertebesinde sürerdi;
-istekleri paralel göndererek verim satın alabilirsiniz, ama her birinin
-parasını ödersiniz.
+çıktıyı 26 token'da tutuyor. Bulutta barındırılan en ileri (frontier) bir model
+muhtemelen daha isabetli olurdu, ama her istek yine milisaniye değil saniye
+mertebesinde sürerdi; istekleri paralel göndererek işlem hacmi satın
+alabilirsiniz, ama her birinin parasını ödersiniz.
 
-Bin cümle için bu fark önemsiz. Bir çıkarım hattının kolayca işlemesi
+Bin cümle için bu fark önemsiz. Bir bilgi çıkarma hattının kolayca işlemesi
 gerekebilecek on milyon cümle içinse, cümle başına 1,26 saniye tek makinede 146
-günlük wall-clock süresi eder. Sınıflandırma bölümündeki karar kuralı (@sec-siniflandirma-kesisim)
+gün eder. Sınıflandırma bölümündeki karar kuralı (@sec-siniflandirma-kesisim)
 burada da aynen geçerli: düşük
 hacimde prompt kullanın, hacim geldiğinde bir etiketleyiciye damıtın.
 
@@ -1418,22 +1422,22 @@ Yukarıdaki karşılaştırma bir *genel amaçlı* LLM ile bir *eğitilmiş* eti
 arasında ve tam da aradaki boşluk için kurulmuş aileyi dışarıda bırakıyor. GLiNER
 [@zaratiana2024gliner], serbest biçimli tür *adlarını* aday span'lerle
 eşleştirmek üzere eğitilmiş BERT boyutunda bir encoder; yani keyfî bir etiket
-kümesi üzerinde sıfır-atışlı çıkarımı metin üretme gecikmesiyle değil
-encoder gecikmesiyle yapıyor. UniversalNER [@zhou2024universalner] aynı hedefe talimatla
-ince ayar yolundan gidiyor, NuNER [@bogdanov2024nuner] ise 125M'lik bir encoder'ı
-LLM tarafından üretilmiş anotasyonlarla ön eğitiyor. Yayımlanmış
-karşılaştırmalar 90M'lik bir GLiNER'i, sıfır-atışlı kipte 13B'lik bir
-UniversalNER ile aynı bantta gösteriyor.
+kümesi üzerinde zero-shot çıkarımı metin üretme gecikmesiyle değil
+encoder gecikmesiyle yapıyor. UniversalNER [@zhou2024universalner] aynı hedefe
+yönergeyle fine-tuning (instruction tuning) yolundan gidiyor, NuNER
+[@bogdanov2024nuner] ise 125M'lik bir encoder'ı bir LLM'in ürettiği etiketlerle
+ön eğitiyor. Yayımlanmış karşılaştırmalar 90M'lik bir GLiNER'i, zero-shot kipte
+13B'lik bir UniversalNER ile aynı bantta gösteriyor.
 
 Yani etiketiniz yokken dürüstçe bakıldığında seçenek iki değil, üç:
 
 | seçenek | etiket | gecikme | ne zaman |
 |:--|:--|:--|:--|
 | bir LLM'i şemayla kısıtlayarak prompt'lamak | yok | ~1,3 sn/cümle | prototipleme, uzun kuyruk alanlar, koşullu şemalar |
-| GLiNER ailesi, sıfır-atışlı | yok | etiketleyici ölçeğinde | herhangi bir düz varlık şeması, hacimde |
-| bir encoder'ı fine-tune etmek | 2.000+ | etiketleyici ölçeğinde | anotasyonunu göze alabildiğiniz, oturmuş bir şema |
+| GLiNER ailesi, zero-shot | yok | etiketleyici ölçeğinde | herhangi bir düz varlık şeması, hacimde |
+| bir encoder'ı fine-tune etmek | 2.000+ | etiketleyici ölçeğinde | etiketlemesini göze alabildiğiniz, oturmuş bir şema |
 
-: Sıfır-etiket seçenekleri {tbl-colwidths="[28,14,18,40]"}
+: Etiketiniz yokken seçenekler {tbl-colwidths="[28,14,18,40]"}
 
 Bu bölüm birinciyi ve üçüncüyü ölçtü. Ortadaki satır, yapılacak bariz bir sonraki
 ölçüm. 1.200 kat gecikme cezasını etiketsiz olmanın bedeli diye kabul etmeden
@@ -1461,7 +1465,7 @@ Alternatiflerin hepsi token başına tek etiket kısıtından vazgeçiyor:
 
 | yaklaşım | fikir | bedeli |
 |:--|:--|:--|
-| Span sayımı | *k* uzunluğuna kadar her aday span'i puanla, her birini sınıflandır | $O(nk)$ aday — ki bu ancak *k*, *n* ile büyüdüğünde $O(n^2)$ olur; güçlü ve basit bir taban çizgisi |
+| Span sayımı | *k* uzunluğuna kadar her aday span'i puanla, her birini sınıflandır | $O(nk)$ aday — ki bu ancak *k*, *n* ile büyüdüğünde $O(n^2)$ olur; güçlü ve basit bir baseline |
 | Biaffine / bağımlılık tarzı | her (başlangıç, bitiş) çiftini biaffine bir katmanla puanla [@yu2020named] | iç içe geçmeyi doğal olarak ele alır; standart güçlü sonuç |
 | MRC çerçevelemesi | tür başına bir soru olarak "kurumlar nerede?" diye sor [@li2020unified] | tür başına bir ileri geçiş; tür tanımını modelin içine sokar |
 | Kelime-kelime ızgara etiketleme | her token çifti arasındaki ilişkiyi sınıflandır — komşuluk, kuyruk-baş [@li2022w2ner] | iç içe geçmeyi ve süreksizliği tek bir formülasyonda ele alır |
@@ -1472,10 +1476,10 @@ Alternatiflerin hepsi token başına tek etiket kısıtından vazgeçiyor:
 GLiNER ailesindeki modeller (@sec-dizi-etiketleme-llm) örtüşen span'leri de
 doğal olarak döndürüyor. Bu yüzden şemanızın iç içe geçmeyi destekleyen bir
 eğitim düzeneğine gerçekten ihtiyaç duyup duymadığını anlamanın en ucuz yolu,
-sıfır-atışlı rota.
+zero-shot rota.
 
 Ne kadar kaybedeceğiniz, karar vermeden önce ölçülebilir bir şey: iç içe geçmenin
-anotasyona dâhil edildiği derlemlerde — GENIA, ACE — varlık ifadelerinin altıda
+etiketlemeye dâhil edildiği derlemlerde — GENIA, ACE — varlık ifadelerinin altıda
 biri ile üçte biri arasındaki bir kısmı iç içe; yani içtekini atmak bir yuvarlama hatası
 değil.
 [Şemanızda iç içe geçme varsa ve hattınız BIO kullanıyorsa, o varlıkları
@@ -1505,13 +1509,13 @@ Başlamadan önce bilmeye değer üç şey:
 2. **Etiketleme maliyeti her şeye baskın.** Varlık etiketlemesi kabaca
    token sayısıyla doğrusal; ilişki etiketlemesi ise varlık sayısıyla ikinci
    dereceden. Üstelik kılavuzları tekrarlanabilir kılmak çok daha zor —
-   `PER` ve `ORG` üzerinde anlaşan iki etiketleyici, bir cümlenin bir istihdam
+   `PER` ve `ORG` üzerinde anlaşan iki insan etiketleyici, bir cümlenin bir istihdam
    ilişkisi bildirip bildirmediği konusunda çoğu zaman anlaşamaz. TACRED
    [@zhang2017position] hem referans veri kümesi hem de bu konudaki en bilinen
    ibretlik örnek:
-   geliştirme ve test kümelerinin yeniden anotasyonlanması raporlanan F1'i kabaca
+   geliştirme ve test kümelerinin yeniden etiketlenmesi raporlanan F1'i kabaca
    sekiz puan oynattı [@alt2020tacred] — bu, herhangi bir modelin değil,
-   anotasyon gürültüsünün ölçümü.
+   etiket gürültüsünün ölçümü.
 3. **Yüksek sesle söylenmeye değer iki sınır.** Yukarıdaki çift bazlı çerçeve
    *cümle düzeyinde* ve gerçek belgelerdeki ilişkilerin büyük bir kısmı cümle
    sınırını aşıyor — bu, belge düzeyi problemdir ve belirgin biçimde daha zordur.
@@ -1530,8 +1534,9 @@ karşılayabiliyorsanız kurun.
 
 *Türkiye'nin* ifadesini bulmak tanımadır. Onun *Türkiye'de*, *Türkiye'deki*
 ve *Türkiye* ile aynı şeye gönderme yaptığını bilmek ise
-[entity linking](#gloss-entity-linking){#term-entity-linking .term-ref} ve
-eklemeli bir dilde ders kitaplarının varsaydığından bir adım önce başlıyor.
+[varlık bağlama (entity linking)](#gloss-entity-linking){#term-entity-linking .term-ref}
+işidir; eklemeli bir dilde bu iş, ders kitaplarının varsaydığından bir adım önce
+başlar.
 
 ::: {#gloss-entity-linking .column-margin .term-gloss}
 **entity linking** (varlık bağlama) — bir varlık ifadesini kanonik bir tanımlayıcıya
@@ -1581,10 +1586,9 @@ Bunun ötesindeki hat standarttır: bir bilgi tabanından dizgi benzerliğiyle
 aday kayıtlar üretin, sonra adayları bağlamla sıralayın. Klasik sistemler
 bunu varlık ifadelerinin eş-oluşum grafiği üzerinden yapıyordu
 [@hoffart2011robust]. Modern sürümü ise bağlam içindeki varlık ifadesini ve kayıt
-açıklamasını aynı vektör uzayına gömüyor ve getirme yapıyor [@wu2020scalable] —
-yani [3. bölümün](../chapters/03-gommeler.html) mekanizmasının farklı bir
-probleme uygulanmış hâli. O getirme
-adımını gerektiği gibi kuran bölüm
+açıklamasını aynı vektör uzayına gömüyor ve adayları erişimle (retrieval) buluyor
+[@wu2020scalable] — yani [3. bölümün](../chapters/03-gommeler.html) mekanizmasının
+farklı bir probleme uygulanmış hâli. O erişim adımını gerektiği gibi kuran bölüm
 @sec-erisim.
 
 ::: {.column-margin}
@@ -1667,7 +1671,7 @@ Tam 20.000 cümleyle eğitilmiş bir CRF ile kesişim noktası ise **2.000 ile 5
 etiketli cümle arasında bir yere düşüyor: 2.000'de encoder hâlâ bir puan geride
 (85,45'e karşı 84,23), 5.000'de ise neredeyse üç puan önde.
 
-Yani: önce gazetteer, sonra CRF, ve birkaç bin etiketli cümleyi geçtiğinizde
+Yani: önce gazetteer, sonra CRF; birkaç bin etiketli cümleyi geçtiğinizde de
 fine-tuning. Genel ders şu: "sadece bir transformer'ı fine-tune
 et" tavsiyesinin bir bütçesi vardır ve o bütçe nadiren söylenir.
 :::
@@ -1704,8 +1708,8 @@ Burada ölçüldü: dönen 1.419 varlık ifadesinin 31'i hizalanamadı — ve bu
 ifadeden yalnızca 4'ü (%0,28) gerçekten metinde yoktu ve onlar bile uydurma
 değil, hâl eki karışıklığıydı.
 
-Yani: sayın, sayıyı raporlayın ve sebebe göre ayırın. Bu, bir etiketleyicinin
-yapısal olarak sahip olamayacağı bir başarısızlık biçimi — bir etiketleyici
+Yani: sayın, sayıyı raporlayın ve sebebe göre ayırın. Bu, bir etiketleyicide
+yapısal olarak görülemeyecek bir başarısızlık biçimi — bir etiketleyici
 yalnızca var olan token'ları etiketleyebilir — ama bu hataya benzeyenlerin
 çoğu aslında ön işlemeden kaynaklanır.
 :::
@@ -1746,7 +1750,7 @@ yasak bir geçişi, bütün cümleye karşı pahalı ya da en azından desteksiz
 
 Güçlü bir ön eğitimli encoder'ın üstünde kazanç küçüktür, çünkü encoder zaten
 bütün cümleyi görür ve geçişlerin çoğu bağlamdan öğrenilebilir. Bu tür
-encoder'ların üstünde bildirilen farklar CoNLL tarzı ölçütlerde genelde bir
+encoder'ların üstünde bildirilen farklar CoNLL tarzı benchmark'larda genelde bir
 puanın altındadır. Yine de buna güvenmek yerine kendi şemanızda ölçün; biz
 burada ölçmedik. Daha ucuz seçeneği de söyleyin: logit'lere uygulanan bir
 geçiş maskesi ile Viterbi (@sec-dizi-etiketleme-yasak-gecisler), geçersiz
@@ -1758,7 +1762,7 @@ cezalandırılması yetmez, arama uzayından çıkarılmaları gerekir.
 
 Span düzeyinde micro ve macro F1, tam eşleşme, tür bazında raporlanmış. Sonra
 buna inanmadan **önce** neyi kontrol edeceğinizi söyleyin: her şeye `O` diyen
-taban, test ile eğitim girdileri arasındaki örtüşme, ve skorun hangi çözümleme
+taban, test ile eğitim girdileri arasındaki örtüşme ve skorun hangi çözümleme
 uzlaşımını varsaydığı. "F1" deyip susan biri hiçbir şey değerlendirmemiştir.
 
 ### Bir tane yayına alıp almadığınızı sınayanlar
@@ -1826,7 +1830,7 @@ Yukarıda kullanılmayan ama bilmeye değer olanlar:
 | `GLiNER` | 0.2.28 | prompt yerine tür *adlarından* zero-shot NER [@zaratiana2024gliner] — üretim gecikmesi yerine encoder gecikmesi; bkz. @sec-dizi-etiketleme-llm |
 | `nervaluate` | 1.2.1 | tam eşleşme, çıktınızı kullanan taraf için yanlış sözleşmeyse, MUC tarzı kısmi puan dökümü |
 | `Label Studio` / `doccano` | 1.23.0 / 1.8.4 | span etiketleme arayüzleri; bu bölümdeki her projede darboğaz modelleme değil, etiketli veridir |
-| `pytorch-crf` | 0.7.2 | etiket dilbilgisinin model içinde *öğrenilmesini* istediğinizde bir transformer'ın üstüne koyacağınız CRF katmanı — geçiş puanları serbest parametredir, dolayısıyla iyi biçimliliği garanti eden şey yine kısıtlı çözümlemedir |
+| `pytorch-crf` | 0.7.2 | etiket gramerinin model içinde *öğrenilmesini* istediğinizde bir transformer'ın üstüne koyacağınız CRF katmanı — geçiş puanları serbest parametredir, dolayısıyla iyi biçimliliği garanti eden şey yine kısıtlı çözümlemedir |
 | `outlines` / `jsonformer` | 1.3.3 / 0.12.0 | sessizce yok sayılabilecek bir sunucu bayrağına güvenmek yerine kendi kontrolünüzdeki gramer kısıtlı kod çözme (@sec-cozumleme) |
 | `zeyrek` | 0.1.3 | Türkçe morfolojik analiz; normalleştirme adımında (@sec-dizi-etiketleme-baglama) kesme işareti sezgiseli yetmediğinde |
 
@@ -1835,15 +1839,15 @@ Yukarıda kullanılmayan ama bilmeye değer olanlar:
 ::: {.column-margin}
 `GLiNER`, tablodaki yeri yüzünden gözden kaçabilir ama bir kez daha bakmaya
 değer; @sec-dizi-etiketleme-llm de ona bu ikinci bakışı ayırıyor. Tür *açıklamalarını* span'lerle
-eşleştirmek üzere eğitilmiş küçük bir encoder. Yani keyfi bir etiket kümesi
+eşleştirmek üzere eğitilmiş küçük bir encoder. Yani keyfî bir etiket kümesi
 üzerinde zero-shot çıkarım elde ediyorsunuz, üstelik LLM gecikmesiyle değil,
-kabaca etiketleyici gecikmesiyle. Biz onu ölçmedik; bu bölümün sıfır-atışlı
+kabaca etiketleyici gecikmesiyle. Biz onu ölçmedik; bu bölümün zero-shot
 kısmında 1.200 kat gibi bir sayının bulunmasının sebebi de bu.
 :::
 
-## Lab: gerçekten sahip olduğunuz bütçeyle çıkarım {#sec-dizi-etiketleme-lab}
+## Lab: elinizdeki gerçek bütçeyle bilgi çıkarımı {#sec-dizi-etiketleme-lab}
 
-Bu lab'ın dayanağı encoder ölçümü (@sec-dizi-etiketleme-encoder): küçük
+Bu labın dayanağı encoder ölçümü (@sec-dizi-etiketleme-encoder): küçük
 etiket bütçelerinde öğrenilmiş model, listeye kaybediyor. Dolayısıyla lab
 "bir transformer'ı fine-tune et" değil; "bütçenizin ne kazandırdığını,
 harcamadan önce öğrenin".
@@ -1875,8 +1879,8 @@ sayı bunlar. Gazetteer'ın utandıracak kadar rekabetçi olmasını bekleyin.
 
 ### Adım 4 — bir CRF eğitin ve özniteliklerin iş yapıp yapmadığını görün
 
-Taban çizgileri kısmındaki öznitelik şablonunu (@sec-dizi-etiketleme-baseline)
-kullanın. Sonra ablasyon yapın: ek özniteliklerini çıkarın, bağlam penceresini
+Baseline'lar kısmındaki öznitelik şablonunu (@sec-dizi-etiketleme-baseline)
+kullanın. Sonra ablasyon yapın: sonek (suffix) özniteliklerini çıkarın, bağlam penceresini
 çıkarın, şekil özniteliğini çıkarın ve her seferinde F1'i kaydedin. Amaç son
 skor değil; modelinizde asıl işi hangi parçanın yaptığını bilmek.
 
@@ -1925,10 +1929,10 @@ bu bir sonuçtur ve 150 etiketli cümlede olası bir sonuçtur.
 4. **Sızıntıyı kendiniz ölçün.** Kullandığınız herhangi bir NER derlemindeki
    token dizilerinin hash'ini alın ve test/eğitim kesişimini raporlayın. Bu
    derlem CoNLL-2003 [@tjongkimsang2003conll], kendi derleminiz ya da başka
-   bir dildeki WikiANN olabilir. Sonra ezberleyen bir taban çizgisini sızmış
+   bir dildeki WikiANN olabilir. Sonra ezberleyen bir baseline'ı sızmış
    ve temiz yarılarda ayrı puanlayın.
 
-5. **Ek ablasyonu.** `w[-3:]`, `w[-2:]` ve `w.hasapos` özniteliklerini CRF'den
+5. **Sonek ablasyonu.** `w[-3:]`, `w[-2:]` ve `w.hasapos` özniteliklerini CRF'den
    çıkarıp modeli yeniden eğitin. 85,45'in ne kadarı Türkçe
    yazımından geliyordu? Çalıştırmadan önce cevabı tahmin edin.
 
@@ -1944,15 +1948,15 @@ bu bir sonuçtur ve 150 etiketli cümlede olası bir sonuçtur.
 
 ## Daha derine inmek için {#sec-dizi-etiketleme-derin}
 
-Her şeyden önce: ölçütünüzde eğitim/test örtüşmesi olup olmadığını kontrol
+Her şeyden önce: benchmark'ınızda eğitim/test örtüşmesi olup olmadığını kontrol
 edin. Bu birkaç satırlık bir iştir. Bu bölümün yaptığı ilk şey de buydu ve
 sonraki her sayının nasıl okunması gerektiğini değiştirdi.
 
 | kaynak | nedir |
 |:--|:--|
 | [`seqeval`](https://github.com/chakki-works/seqeval) | herkesin kullandığı span düzeyi puanlayıcı; "F1"in burada tam olarak ne demek olduğunu görmek için okuyun, çünkü token doğruluğu değil |
-| [`flair`](https://github.com/flairNLP/flair) | okunabilir bir eğitim döngüsüne sahip güçlü dizi etiketleme modelleri ve iyi bir taban çizgisi kaynağı |
-| [spaCy course](https://course.spacy.io/en/) | ücretsiz, etkileşimli ve çalışan bir kural-artı-istatistik çıkarım hattına giden en hızlı yol |
+| [`flair`](https://github.com/flairNLP/flair) | eğitim döngüsü okunabilir, güçlü dizi etiketleme modelleri ve iyi bir baseline kaynağı |
+| [spaCy course](https://course.spacy.io/en/) | ücretsiz, etkileşimli; kuralla istatistiği birleştiren, çalışan bir bilgi çıkarma hattına giden en hızlı yol |
 | [CMU CS11-711 Advanced NLP](https://phontron.com/class/anlp2024/) | modelleme varsayımlarını açıkta bırakarak yapılandırılmış tahmini işleyen ders materyalleri |
 | [Hugging Face token-classification bölümü](https://huggingface.co/learn/llm-course/chapter7/2) | bu bölümde kullanılan encoder için fine-tuning yolu; hataların çoğuna sebep olan etiket hizalama adımı dâhil |
 | [CS224N ders serisi](https://www.youtube.com/playlist?list=PLoROMvodv4rOSH4v6133s9LFPRHjEmbmJ) — Stanford | dizi modellerini ve yapılandırılmış tahmini, varsayımları tahtada açıkça kurarak işleyen ücretsiz dersler |
@@ -1964,7 +1968,7 @@ sonraki her sayının nasıl okunması gerektiğini değiştirdi.
 | etiket dizisini bütün olarak puanlayan yapılandırılmış model | @lafferty2001crf; @viterbi1967error |
 | etiketleme şeması ve alternatifleri | @ratinov2009design; @tjongkimsang2003conll |
 | yapay sinir ağı tabanlı dizi etiketlemenin yerleşmiş hâli | @lample2016neural |
-| burada kullanılan çok dilli ölçüt ve nasıl kurulduğu | @pan2017cross; @rahimi2019massively |
+| burada kullanılan çok dilli benchmark ve nasıl kurulduğu | @pan2017cross; @rahimi2019massively |
 | BIO'nun ifade edemediği iç içe varlıklar | @yu2020named; @li2020unified |
 | NER'de ezberlemeye karşı genelleme | @elangovan2021memorization |
 | bir varlık ifadesini gerçek bir varlığa bağlamak | @hoffart2011robust |
@@ -1987,13 +1991,13 @@ sonraki her sayının nasıl okunması gerektiğini değiştirdi.
 
 - **Skora güvenmeden önce derlemi denetleyin.** WikiANN Türkçe'de **test
   kümesinin %13,06'sı eğitimde birebir geçiyor** ve sızıntı primi, bir
-  sistemin ne kadar ezberlediğiyle tekdüze düşüyor: gazetteer için **+26,50**,
+  sistemin ne kadar ezberlediğiyle monoton biçimde düşüyor: gazetteer için **+26,50**,
   CRF için **+16,25** (sızmışta 99,81'e karşı temizde 83,56), fine-tune
   edilmiş encoder için **+7,65**. Bu fark bir ezber ölçümü değil, bir teşhis
   aracıdır: büyükse daha dikkatli bakın. Test girdilerinizin hash'ini
   alın; bu dört satırlık bir iş.
 
-- **Klasik taban çizgisi bir formalite değil.** Bir Python sözlüğünden
+- **Klasik baseline bir formalite değil.** Bir Python sözlüğünden
   ibaret bir gazetteer **55,26** alıyor; elle tasarlanmış özniteliklerle çalışan
   bir CRF ise **bir CPU'da 18,5 saniyede 85,45**. Fine-tune edilmiş BERTurk,
   20.000 cümleyle eğitilmiş CRF'yi yakalamak için 2.000–5.000 etiketli cümleye
@@ -2034,7 +2038,7 @@ sonraki her sayının nasıl okunması gerektiğini değiştirdi.
   cümlede: hiç etiket olmadan LLM **60,57** span F1, gazetteer 54,90, CRF
   **84,16**, fine-tune edilmiş encoder **91,44** — ve LLM cümle başına kabaca
   **1.200 kat daha yavaş**. Sözlüğü geçiyor, on sekiz saniyelik CRF'ye 24 puan
-  kaybediyor. En kötü sınıfı 40,10 ile `ORG` recall'ü, çünkü bir prompt,
+  kaybediyor. En kötü sınıfı 40,10 ile `ORG` recall'u, çünkü bir prompt,
   20.000 etiketli örneğin öğrettiği sınır uzlaşımını kodlayamaz.
 
 - **LLM dizgi döndürür; metrik konum ister.** Her varlık ifadesinin kaynağa
