@@ -373,8 +373,8 @@ merges were learned over — is where real tokenizers differ from this toy, and
   <text x="353" y="259" class="t-sm t-mono t-mid">est&lt;/w&gt;</text>
 
   <text x="424" y="250" class="t-sm t-muted">Two units the merges already built.</text>
-  <text x="424" y="267" class="t-sm t-muted">No out-of-vocabulary token —</text>
-  <text x="424" y="284" class="t-sm t-muted">the worst case is a fallback to characters.</text>
+  <text x="424" y="267" class="t-sm t-muted">No out-of-vocabulary token — worst case,</text>
+  <text x="424" y="284" class="t-sm t-muted">characters, if the alphabet covers them.</text>
 </svg>
 ```
 
@@ -475,7 +475,7 @@ open-ended Unicode coverage problem, while a byte-based one can represent any
 text with 256 values.
 
 The loop above — count adjacent pairs, merge the most frequent, repeat — *is*
-BPE. The name is older than NLP. It comes from a 1994 data-compression
+BPE. The name is older than its use in NLP: it comes from a 1994 data-compression
 algorithm that kept replacing the most frequent pair of adjacent **bytes** in a
 file with a single byte value the file did not use [@gage1994new]. Sennrich and
 colleagues kept the loop and changed its purpose: the merges build a vocabulary
@@ -658,7 +658,7 @@ evlerimizden   5 tokens  [' ev', 'ler', 'im', 'iz', 'den']
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">One Turkish word, four suffixes, five tokens &#8212; and an accidental morphological analysis</div>
+<div class="fig-title">One Turkish word, three suffixes, five tokens &#8212; and an accidental morphological analysis</div>
 <svg viewBox="0 0 760 300" role="img" aria-label="Four Turkish word forms of increasing length, each shown as the tokens byte-pair encoding splits it into, with the token count rising from one to five">
   <text x="8"   y="20" class="t-xs t-muted t-b">WORD</text>
   <text x="178" y="20" class="t-xs t-muted t-b">WHAT THE TOKENIZER SEES</text>
@@ -928,9 +928,9 @@ design problem is that the two ends fail in opposite directions.
 
 | | Characters | Subwords (BPE, WordPiece, Unigram) | Whole words |
 |---|---|---|---|
-| Vocabulary size | [~100 for ASCII; tens of thousands for multilingual Unicode — 256 if you work in bytes]{.pro} | 30k–100k | [Unbounded — it never closes]{.con} |
+| Vocabulary size | [~100 for ASCII; tens of thousands for multilingual Unicode — 256 if you work in bytes]{.pro} | roughly 30k–250k | [Unbounded — it never closes]{.con} |
 | Out-of-vocabulary words | [Cannot arise *if* the character set is closed — guaranteed only when you work in bytes]{.pro} | [Rare — an unrecognised word falls back to shorter pieces, provided the vocabulary covers every character or falls back to bytes. WordPiece without that fallback still emits `[UNK]`]{.pro} | [Constant, and worst for the words you care about]{.con} |
-| Sequence length | [5–10× longer; long sequences are both slower and more expensive]{.con} | [Moderate]{.pro} | [Shortest]{.pro} |
+| Sequence length | [~2.5–5× longer than subwords, ~6–8× longer than words (the Article 1 measurement); long sequences are both slower and more expensive]{.con} | [Moderate]{.pro} | [Shortest]{.pro} |
 | Meaning per unit | [Almost none — `p` means nothing]{.con} | Partial; often morpheme-like | [A whole unit of meaning]{.pro} |
 | Morphologically rich languages | Handles them, expensively | [Handles them well — it recovered Turkish suffixes above]{.pro} | [Falls seriously short here]{.con} |
 | Needs training | [No]{.pro} | [Yes, on a corpus]{.con} | [No]{.pro} |
@@ -1394,7 +1394,7 @@ corpus size, $|V| \approx K N^{\beta}$, with $\beta$ typically between 0.4 and
 0.6. The exponent is below 1, so the curve keeps rising without ever reaching a
 finite ceiling — the derivative $\mathrm{d}|V|/\mathrm{d}N = K\beta N^{\beta-1}$
 is strictly positive for every $N$, while shrinking towards zero. It looks flat
-on a plot long before it stops growing, which is the trap.
+on a plot while it is still growing, which is the trap.
 
 [There is no corpus size at which you stop meeting new words. There is only a
 size at which you stop meeting them *quickly*.]{.hl} That is the whole argument
@@ -1673,12 +1673,16 @@ tells you nothing about any of them. [↩](#term-document-frequency-df){.term-ba
 
 **[Document frequency](#gloss-document-frequency-df){#term-document-frequency-df .term-ref}**, $\mathrm{df}(t)$, is how many documents contain the
 word at all. We want the weight to fall as df rises, so we invert it. But raw
-inversion, $1/\mathrm{df}$, is too aggressive. Picture a collection of a
-thousand documents. One term occurs in 1 document, another in 2: $1/\mathrm{df}$
-halves the second one's weight outright. Two terms occurring in 100 and 200
-documents are halved in the same way — even though the first difference matters
-far more for rarity than the second. A logarithm compresses those ratios: as
-document frequency grows, each extra document costs less
+inversion, $1/\mathrm{df}$, is too aggressive, because its range is far too
+wide. In a collection of a thousand documents, a term in one document gets
+$1/\mathrm{df} = 1$ and a term in every document gets $0.001$: a thousandfold
+gap. A handful of rare terms — often typos and one-off names — would soak up
+nearly all the weight and swamp everything else. A logarithm compresses that
+range: $\log(n/\mathrm{df})$ stays between $\ln 1000 \approx 6.9$ and 0 in the
+same collection, and doubling the document frequency costs the same amount
+($\ln 2 \approx 0.69$) wherever it happens. The second justification comes
+from information theory: $\log(n/\mathrm{df})$ is the self-information of
+seeing the term in a document (see the intuition check below)
 [@sparckjones1972statistical]. The basic form is:
 
 $$
@@ -1741,11 +1745,14 @@ the weak answer is "to prevent the weight from getting too big."
 
 The better answer has two parts.
 
-**Diminishing returns.** Informativeness is not linear in rarity. A word in
-1 document out of 10,000 versus 10 documents out of 10,000 is a big
-difference in specificity; 5,000 versus 5,010 is no difference at all. The
-log compresses the top of the range and preserves resolution at the bottom,
-which matches how specificity actually behaves.
+**It compresses the range.** Informativeness is not linear in rarity, but that
+alone does not call for a logarithm: $1/\mathrm{df}$ is also a decreasing,
+flattening curve. The difference is the range. In a collection of 10,000
+documents, $1/\mathrm{df}$ puts a ten-thousandfold gap between a term in one
+document and a term in every document, and a few rare terms take over every
+similarity. $\log(n/\mathrm{df})$ stays between 9.2 and 0 and treats equal
+ratios equally: raising df from 1 to 10 costs the same weight
+($\ln 10 \approx 2.3$) as raising it from 1,000 to 10,000.
 
 **It is a probability in disguise.** If $\mathrm{df}(t)/n$ estimates the
 probability that a random document contains $t$, then
@@ -1893,12 +1900,25 @@ Frequent-and-rare wins; frequent-and-everywhere loses. [↩](#term-tf-idf){.term
 
 [TF-IDF](#gloss-tf-idf){#term-tf-idf .term-ref} is the product, computed cell by cell. For d1 (`the pump failed`):
 
+```python
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+counts = X.toarray()[0]
+weighted = counts * idf_manual
+norm = np.linalg.norm(weighted)
+print("counts        :", counts)
+print("times idf     :", weighted.round(4))
+print("l2 norm       :", round(norm, 4))
+print("normalized    :", (weighted / norm).round(4))
+print("sklearn row d1:", TfidfVectorizer().fit_transform(corpus).toarray()[0].round(4))
+```
+
 ```text
 counts        : [1 0 1 0 0 0 1 0 0]
-times idf     : [1.5108 0. 1.5108 0. 0. 0. 1. 0. 0.]
+times idf     : [1.5108 0.     1.5108 0.     0.     0.     1.     0.     0.    ]
 l2 norm       : 2.3591
-normalized    : [0.6404 0. 0.6404 0. 0. 0. 0.4239 0. 0.]
-sklearn row d1: [0.6404 0. 0.6404 0. 0. 0. 0.4239 0. 0.]
+normalized    : [0.6404 0.     0.6404 0.     0.     0.     0.4239 0.     0.    ]
+sklearn row d1: [0.6404 0.     0.6404 0.     0.     0.     0.4239 0.     0.    ]
 ```
 
 That last pair of lines is the point of this whole section: the hand
@@ -1932,8 +1952,10 @@ and those are exactly the numbers `TfidfVectorizer` printed above.
 
 That final division by $\lVert v \rVert_2$ is [L2 normalization]{.hl}, and it
 is not cosmetic. Without it, a long document has a large vector simply for
-being long, and every similarity comparison becomes a comparison of document
-lengths. Normalizing puts every document on the unit sphere, so only
+being long, and every comparison based on a dot product or Euclidean distance
+— including a linear classifier's score — becomes partly a comparison of
+document lengths. (Cosine divides by the norms itself, so it is immune; see
+below.) Normalizing puts every document on the unit sphere, so only
 *direction* — the mix of words — carries information.
 
 The particular combination you have just built — term frequency, times
@@ -2050,8 +2072,8 @@ html`<div style="font-size:0.86rem; color:var(--fig-muted);">
     ${matrixMode === "TF-IDF"
       ? html`Watch the <code>the</code> column: it is present in every
         document, so TF-IDF fades it to the lightest non-zero weight in each
-        row, while <code>valve</code> — unique to d3 — becomes the darkest
-        cell in the matrix.`
+        row, while <code>valve</code> — unique to d3 — becomes one of the
+        darkest cells in the matrix.`
       : html`Under raw counts, <code>the</code> is indistinguishable from
         <code>valve</code>: both are 1. Switch to TF-IDF to see the
         difference appear.`}
@@ -2103,8 +2125,13 @@ weighting is what decides which shared word counts as evidence.]{.hl}
 
 ```python
 from sklearn.metrics.pairwise import cosine_similarity
-print(cosine_similarity(T).round(3))
+
+T = TfidfVectorizer().fit_transform(corpus)   # the TF-IDF rows from step 5
+print(cosine_similarity(T).round(3))          # top panel
+print(cosine_similarity(X).round(3))          # bottom panel: raw counts from step 1
 ```
+
+Row and column labels were added to the output for readability:
 
 ```text
        d1     d2     d3     d4          <- TF-IDF
@@ -2406,7 +2433,7 @@ Read those six lines carefully, because they contain four conclusions:
    More features is not more information; it is more variance.
 4. **`sublinear_tf` points the same way** (0.843 vs 0.831). That option
    replaces the raw count with $1 + \log(\text{tf})$ — the same
-   diminishing-returns argument we made for IDF, applied to the
+   range-compression argument we made for IDF, applied to the
    term-frequency side.
 
 A caution before you quote any of those six numbers, because this book asks the
@@ -2433,11 +2460,14 @@ own experiment and report it.
 One more warning about generalising from six lines. Every number here comes
 from *English topic classification on long documents*, and two of the four
 lessons reverse when the task changes. On Turkish product reviews — short
-documents, sentiment rather than topic — @sec-bake-off measures the opposite on
-both counts: bigrams give the largest single gain in that chapter, and plain
-counting beats TF-IDF, because IDF down-weights exactly the frequent sentiment
-words that carry the signal. The transferable lesson is the method, not the
-ranking.
+documents, sentiment rather than topic — the first table in @sec-bake-off
+points the opposite way on both counts: at a fixed label budget bigrams give
+the largest gain, and plain counting beats TF-IDF. But the second result does
+not come from IDF. That chapter's ablation refutes the obvious "IDF
+down-weights the frequent sentiment words" explanation (L2 normalization costs
+the points; adding IDF on top wins them back) and shows the result hinged on an
+untuned `C` and reverses under an equal tuning budget. The transferable lesson
+is the method, not the ranking.
 
 The other reason to care is that the model is *readable*. Ask a
 TF-IDF-plus-logistic-regression model what it learned and it will tell you,
@@ -2514,9 +2544,10 @@ The deployments themselves:
   truncated SVD of the TF-IDF matrix; see the interview questions below), then
   rank candidate
   solutions by cosine similarity to the ticket [@uber2018cota]. It cut ticket
-  resolution time by around 10%, and the write-up notes that the
-  cosine-similarity ranker beat using the topic vectors directly by 25%
-  relative accuracy — because the raw vectors were too sparse. That is this
+  handling time by around 10% on average, and the write-up notes that the
+  cosine-similarity ranker beat a multi-class classifier fed the LSA topic
+  vectors directly by 25% relative accuracy — because those topic vectors
+  needed hundreds or thousands of dimensions, most of them close to zero. That is this
   chapter's sparsity problem, in production, with a number attached.
 - **Search ranking.** Lucene, and therefore Elasticsearch and OpenSearch,
   scores documents with BM25 — a direct descendant of TF-IDF that adds
@@ -2553,23 +2584,27 @@ Lucene's defaults are $k_1 = 1.2$ and $b = 0.75$ [@robertson2009probabilistic].
   contribute nothing and eventually cause overfitting. Our bigram result —
   249,522 features, *worse* accuracy — is the same finding on a smaller
   corpus.
-- **Hybrid retrieval for RAG.** Modern retrieval stacks combine dense
+- **Hybrid retrieval.** Modern retrieval stacks combine dense
   embedding search with sparse BM25 search, because the sparse half catches
   the exact matches — part numbers, error codes, surnames — that embeddings
-  blur together. You will build one in @sec-rag.
+  blur together. You will build one in @sec-retrieval; @sec-rag wires it to a
+  language model.
 - **Spam and abuse filtering at scale.** Sparse text features remain a
   first-line filter because they are cheap enough to run on every message and
   retrain in minutes when attackers change tactics. The feature-hashing trick
   [@weinberger2009feature] is what makes this work without ever materializing
   a vocabulary.
-- **Near-duplicate detection.** Google's web-crawl deduplication
-  [@manku2007detecting] runs on shingles and hashing, not neural networks,
-  because it has to work over billions of documents. A **shingle** is a
+- **Near-duplicate detection.** Near-duplicate detection at web scale runs on
+  hashing, not neural networks, because it has to work over billions of
+  documents. Google's web-crawl deduplication [@manku2007detecting] computes
+  simhash fingerprints from weighted document features; the other standard
+  method is MinHash over sets of shingles [@broder1997resemblance]. A
+  **shingle** is a
   fixed-length window of words (or characters) slid across the document; the
   windows overlap like roof tiles, which is where the name comes from. The
   three-word shingles of *the pump failed last night* are `the pump failed`
-  and `pump failed last` and `failed last night`. So shingles are exactly
-  n-grams — the front half of this chapter.
+  and `pump failed last` and `failed last night`. So shingles are exactly the
+  n-grams we used above to recover some word order.
 
 The practical rule: reach for TF-IDF when your labels are few, your
 documents are long, your vocabulary is technical and exact-match matters, or
@@ -2656,6 +2691,13 @@ Almost certainly your tokenizer. `scikit-learn`'s default
 `token_pattern=r"(?u)\b\w\w+\b"` requires two or more word characters and
 does not cross the hyphen:
 
+```python
+text = ["P-101 / P-102 pump tripped"]
+for name, pattern in [("default", r"(?u)\b\w\w+\b"), ("custom", r"(?u)\b\w[\w-]*\w\b")]:
+    cv = CountVectorizer(token_pattern=pattern).fit(text)
+    print(f"{name:<10} : {list(cv.get_feature_names_out())}")
+```
+
 ```text
 default    : ['101', '102', 'pump', 'tripped']
 custom     : ['p-101', 'p-102', 'pump', 'tripped']
@@ -2722,7 +2764,10 @@ Give the two-factor decomposition first: a word matters here if it is
 frequent in this document and rare across the collection. Then give the
 information-theoretic answer from the intuition check above —
 $\log(n/\mathrm{df})$ is the self-information of the term — and mention
-diminishing returns. If you add that Spärck Jones proposed it empirically in
+range compression: $1/\mathrm{df}$ gives rare terms thousands of times the
+weight of common ones, while the log keeps the range to a few units. Do not
+reach for "1 versus 2 documents matters more than 100 versus 200"; the log
+counts both doublings as equal. If you add that Spärck Jones proposed it empirically in
 1972 [@sparckjones1972statistical] and the theory came later
 [@robertson2004understanding], you have shown that you read primary
 sources.
@@ -2730,15 +2775,18 @@ sources.
 **Q: When would raw term counts outperform TF-IDF?**
 
 When document frequency is not informative about importance. Examples: a
-corpus of near-identical documents where every term has similar df; very
-short texts where each term appears once anyway so TF adds nothing;
+corpus of near-identical documents where every term has similar df;
 generative models like multinomial naive Bayes, whose likelihood is defined
 over counts and whose probabilistic interpretation TF-IDF breaks. And when
 the numbers feed a statistical test directly rather than a model: tests like
 chi-square or the log-likelihood ratio expect *counts*, because counts add
 up — "this term occurs 47 times across the two categories" is a meaningful
 sentence. TF-IDF weights are scaled fractional values whose sums correspond
-to nothing, and they violate the test's assumption.
+to nothing, and they violate the test's assumption. One warning: in
+@sec-bake-off, raw counts beating TF-IDF on short Turkish reviews came not from
+IDF but from an untuned `C` interacting with L2 normalization, and it reversed
+under an equal tuning budget. Give both sides the same tuning budget before
+you credit the representation.
 
 **Q: You add bigrams and accuracy drops. What happened?**
 
@@ -2759,7 +2807,8 @@ carry no signal, and sentiment is not topic. The standard lists delete
 *not*, *no*, *never*, *very*, *only* and *but* — precisely the words that
 invert or intensify an opinion. *This is not good* and *this is good* become
 the same vector. The chapter's own numbers show both sides: stop word
-removal gained 2.2 accuracy points on topic classification, and would lose
+removal showed a 2.2-point gain on topic classification (borderline on its
+own), and would lose
 badly on the negation example. The rule to state out loud is that
 preprocessing must be chosen against the task, never applied by default.
 
@@ -2892,7 +2941,7 @@ Start with BM25 [@robertson2009probabilistic] via Elasticsearch or a similar
 engine, because it is a strong baseline that ships this week and handles
 exact matches on part numbers that embeddings destroy. Measure it. Then add
 dense retrieval for paraphrase and combine the two — hybrid retrieval, the
-architecture you will build in @sec-rag. Candidates who jump straight to
+architecture you will build in @sec-retrieval. Candidates who jump straight to
 embeddings without a lexical baseline are giving the wrong answer to a
 question about engineering judgment.
 
