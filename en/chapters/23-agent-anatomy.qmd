@@ -48,8 +48,8 @@ def agent(question, tools, model, max_steps=10):
         messages.append(reply.model_dump())       # 4. remember the decision
         for call in reply.tool_calls:             # 5. the runtime acts
             try:
-                args = json.loads(call.arguments) # a JSON string, not a dict
-                result = tools[call.name](**args)
+                args = json.loads(call.function.arguments) # a JSON string, not a dict
+                result = tools[call.function.name](**args)
             except Exception as e:
                 result = f"ERROR: {e}"            # 6. failure is an observation
             messages.append({"role": "tool",
@@ -62,13 +62,16 @@ def agent(question, tools, model, max_steps=10):
 That is an agent. Fourteen statements, the `def` included — count them — and
 this loop is the pattern underneath the frameworks you will meet. (The numbers
 in the comments are labels for the discussion below, not statement counts.)
+`model.chat` is a schematic client, and `tools` does double duty here, standing
+for both the schema list sent to the model and the name → function lookup;
+in real code keep them apart (say, `tool_schemas` and `tool_impls`).
 What frameworks add is mostly opinions about the lines marked 1, 4 and 7, plus
 the state management, validation, scheduling and recovery that a
 fourteen-statement loop does not have.
 
 Three details in there are not decoration. First, the arguments. On an
-OpenAI-compatible endpoint `call.arguments` arrives as a JSON *string*, so
-`**call.arguments` raises `TypeError`. Because that happens inside the `try`,
+OpenAI-compatible endpoint `call.function.arguments` arrives as a JSON *string*, so
+`**call.function.arguments` raises `TypeError`. Because that happens inside the `try`,
 the model receives an error message that blames its own call for the
 runtime's bug. The reverse trap exists too: Ollama's native `/api/chat` and
 Anthropic's Messages API hand you an already-parsed object, and there it is
@@ -183,7 +186,7 @@ Check the reason the provider gives for stopping (`finish_reason` or
 crash; it is an observation the model gets to react to. Whether it reacts
 *well* is @sec-tool-design's subject, and it is largely decided by what that
 string says. Note also what else that `except` swallows: a `KeyError` from
-`tools[call.name]` is *your* bug, and the model receives it as though the tool
+`tools[call.function.name]` is *your* bug, and the model receives it as though the tool
 had failed. A runtime worth trusting distinguishes tool failures from failures
 of the *harness* — your own code around the model — before it writes the
 observation.
@@ -454,7 +457,7 @@ Plot.plot({
 ```{ojs}
 //| echo: false
 md`${agentMetric === "cap"
-  ? "The native loop never once failed to terminate. The text protocol failed worst on the *easiest* task: 60% of one-lookup runs retrieved the answer at step 0 and then repeated the call until the budget ran out."
+  ? "The native loop never once failed to terminate. The text protocol failed worst on the *easiest* task: 60% of one-lookup runs retrieved the answer at step 0 and then kept calling tools until the budget ran out."
   : agentMetric === "tools"
   ? "The grey line is the ideal — one call per lookup. The native loop sits exactly on it; the text protocol makes calls it did not need, worst on the *easiest* task."
   : agentMetric === "model"
@@ -507,9 +510,11 @@ accuracy for two to five lookups gives $p$ = 0.980, 0.928, 0.908 and 0.833 —
 falling, not constant — and a flat 0.90 per step would predict
 $0.9^5 \approx$ 59% at five lookups against the 40% measured. The load per
 step is getting heavier, which is the same conclusion from a different
-direction. Externally, @yao2024taubench measures a related decay at scale
-with `pass^k`, the probability that an agent succeeds on *all* $k$
-independent attempts at the same task: the best function-calling agent they
+direction. Externally, @kwa2025timehorizon measure how success falls as tasks
+get longer, at scale, by the time a task takes a human. @yao2024taubench
+measure a different dimension of reliability, consistency over repeated
+trials, with `pass^k`: the probability that an agent succeeds on *all* $k$
+independent attempts at the same task (here $k$ counts trials, not lookups): the best function-calling agent they
 tested in 2024 (`gpt-4o`) succeeded on fewer than half the tasks, and in the
 retail domain its `pass^8` was below 25%.
 
@@ -1037,8 +1042,9 @@ framework. Everything below reads differently afterwards.
   temperature 0 on a task with exact answers — n = 25 per cell, so the 40% is
   [23, 59] and it is the *direction* that is solid, not the shape.
   The lookups were batched into two model calls, so this is not five
-  sequential decisions; @yao2024taubench and @kwa2025timehorizon measure the
-  sequential version at scale.
+  sequential decisions; @kwa2025timehorizon measure decay with task length at
+  scale, while the `pass^k` of @yao2024taubench measures consistency over
+  repeated trials.
 - **The loop was not what broke.** Tool use was perfect at every step count —
   exactly the right calls, none malformed, none capped — while accuracy fell 60
   points. Aggregation over collected observations is where the failure lives,
@@ -1054,7 +1060,7 @@ framework. Everything below reads differently afterwards.
   "call a tool".
 - **The termination failure was worst on the easiest task.** The text loop hit
   the step cap on **60% of one-lookup tasks**, having retrieved the answer at
-  step 0 and then repeated the call until the budget ran out.
+  step 0 and then kept calling tools until the budget ran out.
 - **Choose an agent on branching, not difficulty.** If the steps are known,
   write them down: a fixed, tested pipeline removes the model from choosing the
   next step, is cheap, and fails at a line number — though it still needs its
