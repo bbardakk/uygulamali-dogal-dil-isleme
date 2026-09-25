@@ -35,8 +35,10 @@ on Python 3.14.5; the MT model on an Apple M-series GPU, the LLM through
 ## Translation is where attention came from {#sec-machine-translation-attention}
 
 @sec-transformers taught attention as a mechanism. This chapter is where it
-gets its origin story, because attention was not invented as a general idea —
-it was invented to fix one specific, measurable failure in translation.
+gets its origin story, because attention in its modern form was not proposed
+as a general idea — it was proposed to fix one specific, measurable failure in
+translation. (Similar soft-addressing ideas were being tried in other tasks at
+the time, handwriting generation for one.)
 
 The 2014 architecture [@sutskever2014sequence] was an encoder RNN that read
 the source sentence and compressed it into **a single fixed-length vector**,
@@ -68,7 +70,10 @@ This is why the first attention papers could publish alignment heatmaps that
 looked like word alignments — and why later attempts to read transformer
 attention heads as explanations disappointed. In a translation encoder-decoder
 the alignment interpretation is *earned* by the task's structure. In a
-24-layer language model it is a hypothesis, and usually a wrong one.
+24-layer language model it is a hypothesis, and whether attention weights are
+a faithful explanation remains contested ([Jain and Wallace,
+2019](https://arxiv.org/abs/1902.10186); [Wiegreffe and Pinter,
+2019](https://arxiv.org/abs/1908.04626)).
 :::
 
 Two years later @vaswani2017attention removed the recurrence and kept only
@@ -128,8 +133,11 @@ both.
 
 ## Evaluation, and how BLEU actually works {#sec-machine-translation-eval}
 
-Translation has no single right answer, so every automatic metric compares
-against one or more human translations and reports a similarity. The metric
+Translation has no single right answer, so every reference-based automatic
+metric compares against one or more human translations and reports a
+similarity. A reference-free family also exists: quality estimation (QE)
+metrics predict a score from the source and the output alone, which makes them
+the automatic signal you can use in production, where there is no reference. The metric
 you pick decides which systems you will believe are better, so it is worth
 knowing exactly what each one counts.
 
@@ -353,7 +361,8 @@ having concretely rather than as a rule of thumb.
 The difference is in the task. Open-ended generation has many good answers and
 you *want* the variety, so sampling from the distribution is the point.
 Translation also has many valid renderings — that is why the metrics in this
-chapter compare against references rather than against a single truth — but the
+chapter compare against a reference, one of many possible correct renderings,
+rather than against a single truth — but the
 variety is not what the user asked for, and a sampled token is as likely to be
 a worse rendering as a different-but-equal one. What you want is the sequence
 the model itself rates highest. So translation uses **beam search**: keep the *k*
@@ -463,12 +472,16 @@ everything else fixed:
 BLEU moves fourteen times as much as chrF, and it moves in lockstep with
 output *length*. Two metrics disagreeing does not by itself settle which one is
 right — a flat chrF is not proof that quality held. What makes the reading safe
-here is the third line: the length ratio moves with BLEU and not with chrF,
-which is exactly the mechanism BLEU's brevity penalty and precision denominator
-respond to. A human or MQM check would settle it; the length ratio is the cheap
+here is the third line: the length ratio moves with BLEU and not with chrF.
+Note which mechanism is moving: the ratio is above 1 in every row, so the
+output is longer than the reference and the brevity penalty never engages
+(BP = 1); what moves BLEU is the precision denominator, since every extra word
+adds n-grams whether or not they match. A human or MQM check would settle it; the length ratio is the cheap
 evidence that it is worth checking.
-[If you tune the length penalty against BLEU you are tuning your system to
-produce slightly shorter output]{.hl}, which is a real and common way to buy a
+[Tuning the length penalty against BLEU pulls output length toward the
+reference length]{.hl}; for this system, whose output runs long, that means
+slightly shorter output (had the output run short, it would push the other
+way), which is a real and common way to buy a
 point of BLEU that no reader would notice.
 
 ## Why BLEU is worse than usual for Turkish {#sec-machine-translation-turkish}
@@ -677,8 +690,8 @@ already showed: moving a phrase destroys every n-gram that crosses the move,
 while leaving the meaning intact. A correct English paraphrase that reorders
 one phrase scored **50.27** (57.81 once casing is taken out of the picture).
 In a language where reordering is a normal stylistic choice rather than an
-occasional one, a translator's legitimate variation is charged at that rate
-every time.
+occasional one, a translator's legitimate variation is charged in a similar
+way every time.
 
 Both problems have the same fix and it is not a better *word* n-gram metric:
 score at the character level, which softens both penalties without removing
@@ -706,8 +719,9 @@ which restrict the draw to the most likely tokens (@sec-decoding covers
 them). Benchmarking an LLM at a chat default and
 concluding that LLMs translate badly is the most common way to get this
 comparison wrong, and the LLM row below is only interpretable if its decoding
-settings are published beside it. They are not, and that is a gap this chapter
-owes you: treat the LLM row as *a* measurement of this model rather than as its
+settings are published beside it. They are not, and neither are the prompt
+text or whether the thinking mode of `qwen3.5:9b`, a reasoning model, was on;
+that is a gap this chapter owes you: treat the LLM row as *a* measurement of this model rather than as its
 ceiling until it has been re-run with the decoder pinned.
 
 **And state the precision.** `ollama` serves an untagged model 4-bit quantised
@@ -751,8 +765,10 @@ uncontaminated number, use a test set published after your model's cutoff.
 
 As for the seconds: they are not measured the same way as the `ms/sent` column
 in @sec-machine-translation-decoding, which is why the same model at the same
-beam width appears there at 80 ms and here at 24. Compare within a table, never
-across, and when you publish a latency say whether it is one request or a
+beam width appears there at 80 ms and here at 24. The same holds for BLEU: the
+same model and setting score 30.17 there and 32.33 here because the two tables
+use different subsets (the first 500 and the first 400 sentences). Compare
+within a table, never across, and when you publish a latency say whether it is one request or a
 batch.
 
 Three things to take from this.
@@ -819,7 +835,7 @@ The practical architecture in 2026 is usually neither alone: a dedicated model
 for volume, an LLM for the documents where context and terminology matter,
 and a router in front. The cost table decides the split — 0.024 seconds
 against 1.088 is not a rounding difference at scale, it is the difference
-between one machine and forty.
+between one machine and forty-five.
 :::
 
 ## Low-resource translation {#sec-machine-translation-lowresource}
@@ -913,7 +929,9 @@ Two more considerations that decide it in practice:
 against a monolingual Turkish one on the same task — and finds no general
 verdict, only a protocol. Translate-train and translate-test are not measured
 in this book; this chapter's contribution is the mechanics and the arithmetic,
-and the lab and exercise 7 are where you measure them for your own task.
+and exercise 7 is where you measure translate-test for your own task (for
+translate-train, translate the same task's training data, train on it, and
+compare on the same Turkish test set).
 
 ## Intuition checks {#sec-machine-translation-intuition}
 
@@ -951,7 +969,7 @@ variety here — you want the sequence the model rates highest, which is a
 statement about model probability rather than about quality, and beam search is
 a heuristic for finding it rather than an exact search. Sampling deliberately
 introduces variation, and across a sentence the chances of drawing a worse token
-accumulate. The setting that makes a chat reply feel natural cost 15 BLEU on
+accumulate. The setting that makes a chat reply feel natural cost about 16 BLEU on
 this model and this test set — evaluate decoding on the task you actually intend
 to deploy.
 :::
@@ -983,8 +1001,10 @@ points and chrF by 0.09, while the output length ratio moves from 1.007 to
 1.041.
 
 BLEU is responding to how many words you produced, through its brevity
-penalty and its precision denominator. Tuning against it teaches your system
-to produce slightly shorter output. If a change moves BLEU and leaves chrF flat, suspect a metric artefact
+penalty and its precision denominator; in this sweep the ratio stays above 1,
+so the brevity penalty is inactive and only the precision denominator moves.
+Tuning against BLEU pulls output length toward the reference, which for this
+system, whose output runs long, means slightly shorter output. If a change moves BLEU and leaves chrF flat, suspect a metric artefact
 before you call it an improvement, and read the outputs to find out which it
 is.
 :::
@@ -1028,7 +1048,7 @@ measurements make answerable.
 
 ### Testing whether you understand the task
 
-**Q: Why did attention get invented for translation and not for something else?**
+**Q: Why was attention in its modern form proposed for translation and not for something else?**
 
 Because the encoder-decoder RNN compressed the entire source into one
 fixed-length vector, and translation makes that bottleneck obvious: quality
@@ -1038,7 +1058,7 @@ vector per source token. Say also *why it fit*: translation has
 output-to-input correspondence, so a weighted average that can concentrate on
 one source position is the right interface — which is why early attention maps
 looked like word alignments and why the same reading of a deep language model
-does not hold up.
+cannot be taken for granted.
 
 **Q: What does BLEU actually compute?**
 
@@ -1078,7 +1098,7 @@ Route. A dedicated model per pair where one exists and volume justifies it,
 an LLM for the long tail and for documents needing context or terminology
 control. The number that decides the split is latency-per-sentence: measured
 here, 0.024 seconds against 1.088 is the difference between one machine and
-forty. Say also that you would measure both directions separately, because
+forty-five. Say also that you would measure both directions separately, because
 they are not symmetric — 32.33 out of Turkish against 23.13 into it, on the
 same model family and corpus.
 
@@ -1283,7 +1303,7 @@ else's — which is the entire argument of @post2018call.
   beam 2→64 buys +0.57 for seven times the compute.
 
 - **A BLEU gain with a flat chrF is a reason to suspect a metric artefact.** Sweeping the length penalty moves BLEU 1.26 points and chrF 0.09, tracking output length; confirm by reading outputs before you believe the gain. Tuning
-  against BLEU teaches your system to produce shorter output.
+  against BLEU pulls output length toward the reference; for a system whose output runs long, as here, that shortens it.
 
 - **A 237M dedicated model beat a 9B LLM in both directions**, by 3 BLEU into
   English and 6 into Turkish, at 41–164× the speed. Reach for the LLM when you
