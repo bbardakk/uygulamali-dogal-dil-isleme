@@ -374,13 +374,14 @@ single variable, and no result in this chapter depends on pretending otherwise.
 **A postscript that is also evidence.** Since we ran this, the vendor abandoned
 the design our instrument depends on: from the 2507 checkpoints onward Qwen
 ships *separate* Instruct and Thinking models rather than one hybrid, on the
-stated grounds that the hybrid arrangement cost benchmark quality. Pin
+stated grounds that training them separately gets "the best quality possible".
+The 2507 refresh covered only some sizes, with no 1.7B among them. Pin
 `Qwen/Qwen3-1.7B` if you want to reproduce our numbers, and check whether
 `enable_thinking` is still honoured before you trust a sweep on any newer
 checkpoint — a flag that is silently ignored produces a table that looks fine.
 But notice what the retreat says: **the two modes were never a neutral A/B of
 one model**, which is the caution this section opened with, arriving a second
-time from the vendor's own benchmark table.
+time from the vendor itself.
 
 [^decode]: Thinking mode runs at temperature 0.6, top-$p$ 0.95, top-$k$ 20;
 non-thinking at temperature 0.7, top-$p$ 0.8, top-$k$ 20. These are the model
@@ -531,8 +532,11 @@ or MATH-500 — where @guo2025deepseekr1 measures a 62-point swing from
 reinforcement learning alone — would be far more likely to show a **knee**: the
 point where accuracy stops rising steeply with budget and the curve flattens,
 so each further token buys much less. We did
-not run one because a 1.7B model scores near zero there, which is its own kind
-of uninformative. So read what follows as **"no detectable gain on a shallow,
+not run one, and not because the model is helpless there: the Qwen3 technical
+report puts Qwen3-1.7B at 13.4 on AIME'24 without thinking and 48.3 with it
+(73.0 and 93.4 on MATH-500) — exactly the curve we could not afford to draw.
+AIME traces run to tens of thousands of tokens, and 200 problems × 6 budgets of
+that is not a laptop job. So read what follows as **"no detectable gain on a shallow,
 near-saturated task"**, not as "no gain".
 
 For each problem we sweep a
@@ -690,11 +694,11 @@ reporting it as a finding. The 512 row is bolded because it is
 the largest number in the column, not because it is the best budget — at
 $z = +0.33$ that bolding is decoration, and you should read it with suspicion.[^paired-test]
 
-[^paired-test]: The $z$-test above is the *wrong* test, and wrong in the
-    conservative direction. Every budget saw the same 200 problems in the same
+[^paired-test]: The $z$-test above is the *wrong* test, and most likely wrong in
+    the conservative direction. Every budget saw the same 200 problems in the same
     order, so this is a paired design and McNemar's test — which conditions on
-    the problems the two conditions disagree about, and discards the large
-    majority they both get right — would have more power. We report $z$ because
+    the problems the two conditions disagree about, and discards the concordant
+    pairs they both get right or both get wrong — would usually have more power. We report $z$ because
     our result files saved only the per-budget mean, which throws the pairing
     away. The lab at the end of this chapter records per-problem correctness at
     every step, so you are not stuck with our mistake. Do not over-claim the
@@ -916,7 +920,10 @@ token budget is just a quantity, and there is a second thing you can do with it.
 Instead of one 2,000-token attempt, take **eight 250-token attempts and combine
 them**. Same tokens, same bill, completely different failure profile.
 
-This is the axis most teams never try, and it is often the better buy.
+This is the axis many teams never try. Which one wins you cannot know without
+measuring, since the best strategy depends on how hard the question is
+[@snell2025scaling, below]; try parallel first because it is cheap
+and adds no latency, but make the call on an equal-token measurement.
 
 ### Why more attempts help at all
 
@@ -1631,8 +1638,8 @@ bothering with a 2,048 row.
 So the honest summary of this task is not "thinking hurts". It is sharper:
 
 > Thinking **never significantly helped** on this task at any budget. Truncated
-> thinking **significantly hurt** it. And the ceiling that stopped hurting cost
-> 88.6× the tokens of not thinking at all.
+> thinking **significantly hurt** it. And the budgets that stopped hurting cost
+> roughly 70–90× the tokens of not thinking at all.
 
 ::: {.callout-tip appearance="simple" icon="false"}
 **One artefact we do not have here.** @sec-budgets had to publish a caveat about
@@ -1687,7 +1694,9 @@ is unconstrained generation with a spare 850 tokens.
 read one.** @shojaee2025illusion evaluated reasoning models on puzzles of
 tunable complexity — Tower of Hanoi, river crossing — and reported a *complete
 accuracy collapse* past a complexity threshold, together with the counterintuitive
-finding that models spend *fewer* thinking tokens as problems get harder. The
+finding that thinking effort rises with complexity only up to a point: near the
+collapse, models start spending *fewer* thinking tokens as problems get harder,
+even with budget to spare. The
 headline travelled widely. So did @lawsen2025comment's reply, which showed that
 part of the collapse was an artefact of the harness rather than the models: the
 Hanoi evaluation required printing a solution whose length grows exponentially,
@@ -1881,9 +1890,12 @@ your own system in an afternoon, with no annotation budget.
 Note that @sec-budgets already generated the data for a crude version of it and
 we did not use it: every budget row is the same 200 problems answered from a
 trace cut off at a different point, so the rate at which the final answer
-changes between adjacent budgets is a free, direct measure of how load-bearing
-the trace was. Recording per-problem answers — the fix we owe that section
-anyway — turns a cost sweep into a faithfulness probe at no extra compute.
+changes between adjacent budgets is a free, if crude and noisy, signal of how
+load-bearing the trace was. Noisy because every row was sampled at temperature
+0.6, so an answer can change from sampling alone; it cannot be read without a
+control that samples the same budget twice. Recording per-problem answers — the
+fix we owe that section anyway — turns a cost sweep into the raw material for a
+faithfulness probe at no extra compute.
 
 ### Our measurement: does a small model take the bait?
 
@@ -1974,10 +1986,12 @@ only a misleading one. The control that separates the two is a **placebo**: a
 sentence of the same length and the same confident register carrying no number,
 `A teaching assistant I trust says to watch the units on this one.` Without it,
 the damage below is a mixture of *disruption by a false claim* and *disruption
-by any claim*. The clearest evidence that some of it is the second kind is
-already in the table above: **16 problems got better** under a misleading hint,
-and there is no plausible mechanism by which a wrong number helps. That is
-trajectory noise, and the same noise is inside the 42. Read every split that
+by any claim*. The clearest evidence that the arm matters is already in the
+table above: **16 problems got better** under a misleading hint. Some of those
+are trajectory noise; some may be a contradicting hint prompting a re-check that
+catches a real slip (the *"Wait, … Did I make a mistake somewhere?"* pattern
+below). Only the placebo arm separates the two, and the same mixture is inside
+the 42. Read every split that
 follows as an upper bound, and run the placebo arm — one extra pass over 200
 problems — before you quote them.
 
@@ -2028,9 +2042,12 @@ myself"*. That is far more transparent than the frontier results quoted above.
 
 Before reading that as good news, notice what makes it easy. **Our hint is
 blatant.** It is a full English sentence naming a person and a number, sitting in
-the prompt. Turpin's biasing features were subtle — reordered options, a pattern
-in the few-shot examples — things a model could be influenced by without ever
-having represented them as a claim. Mentioning our hint takes no self-knowledge
+the prompt. Only one of Turpin's two biasing features was subtle: *Answer is
+Always A* — reordered options, a pattern in the few-shot examples — is something
+a model could be influenced by without ever having represented it as a claim.
+The other, *Suggested Answer*, was as explicit as ours, and their 1-in-426
+finding covers both; where our model at least admits an answer was given, theirs
+almost never mentioned the bias. Mentioning our hint takes no self-knowledge
 at all; it is barely more than repeating the input. **The disclosure rate you
 measure is a property of how obvious your bias is, not only of how honest your
 model is,** and a probe made of blatant hints will flatter any system you point
@@ -2085,8 +2102,9 @@ That is why this belongs in an engineering chapter rather than a philosophical
 one. If a trace is going in front of a user, an auditor or a regulator, the
 disclosure rate is a property of your system you are responsible for knowing.
 @sec-guardrails returns to this with the oversight machinery; here the point is
-narrower and harder to escape: **you cannot infer it from reading, because
-reading is exactly what it is optimised to survive.**
+narrower and harder to escape: **you cannot infer it from reading, because a
+trace is produced to look convincing when read — and once monitoring pressure is
+put on it, it can learn to hide the very problem you are reading for.**
 :::
 
 ## Lab: find the knee in your own cost curve {#sec-reasoning-lab}
@@ -2204,9 +2222,11 @@ times the wall-clock you expect per sample**: our five-sample run took about
 five times as long per sample as the sequential sweep at the same budget and
 decoding settings, and we could not fully explain why (see the footnote in
 @sec-parallel-compute). Measure your own rate on the first few problems before
-you commit to the full run. And **use odd $k$** — under first-wins tie-breaking, majority@2 is provably
+you commit to the full run. And **read and deploy odd $k$** — under first-wins tie-breaking, majority@2 is provably
 identical to majority@1, so every even sample is doing less work than the one
-before it. Report the *any-correct* rate alongside the majority rate; the gap
+before it. The $k = 8$ above is the one exception, there only to make the
+equal-token arithmetic come out ($8 \times 256 = 2{,}048$); when you pick a
+point off the voting curve, pick $k = 7$ or $9$. Report the *any-correct* rate alongside the majority rate; the gap
 between them is the most useful number the exercise produces.
 
 ### What to hand in
@@ -2335,8 +2355,9 @@ metric rather than a diagnostic you check after something looks wrong.
 ::: {.callout-note collapse="true"}
 ## 4. Five samples and a majority vote, or one sample with five times the budget?
 
-Usually the five samples — and the more interesting finding is that voting
-wastes most of what you paid for.
+You cannot know without measuring. Try the five samples first, because they
+are cheap and add no latency, but decide on an equal-token comparison — and the
+more interesting finding is that voting wastes most of what you paid for.
 
 Parallel sampling gives you equal tokens and the latency of a single trace if
 you can batch. Be careful with the word *independent*, because it is true in one
