@@ -232,9 +232,10 @@ distinction does most of the work in @sec-classification-costs.
 </svg>
 ```
 ::: {.fig-cap}
-The middle tier is what @sec-bake-off did not need. A model has one fitted
-object — its weights. This chapter has four, and three of them are fitted
-*after* training, on data the classifier never saw. Without the `cal` slice
+The middle tier is what @sec-bake-off did not need. A plain setup fits its
+objects — the weights and the vectorizer vocabulary — during training. This
+chapter adds three more, and all three are fitted *after* training, on data the
+classifier never saw. Without the `cal` slice
 every threshold and every calibration curve in this chapter would be reporting
 on data it was tuned on.
 :::
@@ -355,10 +356,11 @@ The competitor is BERTurk, the Turkish BERT released as
 
 ::: {.column-margin}
 BERTurk is a 2020 checkpoint. We use it because it is the strongest
-widely-used *Turkish-specific* encoder — not because it is the frontier. The 2024–2026 encoder revival rebuilt the same
-110M-parameter budget with rotary embeddings, unpadding and an 8,192-token
-context: ModernBERT [@warner2025modernbert] and the multilingual families that
-followed it cover Turkish and train markedly faster. Either of this chapter's
+widely-used *Turkish-specific* encoder — not because it is the frontier. The 2024–2026 encoder revival rebuilt the
+BERT-base recipe at a similar size (~150M parameters for ModernBERT-base) with rotary embeddings, unpadding and an 8,192-token
+context: ModernBERT [@warner2025modernbert] itself is trained on English and
+code, but the multilingual families that followed it (mmBERT, for example)
+cover Turkish and train markedly faster. Either of this chapter's
 cost headlines would move on one of them. We did not re-run the sweep, which is
 the honest boundary of the 970× figure.
 :::
@@ -454,8 +456,7 @@ to 60.22 across that one step, and why the 5,000-label model scores *below* the
 2,000-label one on the shared subsample in @sec-classification-llm (81.21
 against 82.00). A learning curve that dips as the budget grows is not normal,
 and a schedule change is the first thing to suspect. Both of this chapter's
-headline crossovers sit at exactly the budget that got the most training per
-example. We did not re-run 5,000 at 20 epochs to separate the two, so read every
+headline crossovers sit at 2,000, the largest budget on the 20-epoch schedule. We did not re-run 5,000 at 20 epochs to separate the two, so read every
 crossover below as *at this schedule*.
 
 Three readings, and the third is the one that changes how you plan a project.
@@ -613,8 +614,9 @@ that `cal` stays clean — so it is not the class-weighted 76.21 model above.
 **`test`**, and it is illustration rather than selection: it exists to show what
 the metrics do across the range, not to pick an operating point. The operating
 point actually used in @sec-classification-imbalance was chosen on `cal` and
-lands at 0.166 — one grid step from the best row here, which is roughly the
-regret you should expect from doing it properly.
+lands at 0.166 — between the 0.15 and 0.20 grid points, close to the best row
+here (0.15). Its regret is 77.66 against the oracle's 78.00 on `test`, 0.34
+macro-F1 points: roughly what doing it properly costs.
 
 ```text
    t      acc   bal-acc    prec     rec   compF1   macroF1     MCC
@@ -716,19 +718,21 @@ threshPlot = {
         title: d => `t = ${d.t}\naccuracy: ${d.acc}%` }),
       Plot.text([threshRows[13]], { x: "t", y: "acc", text: ["accuracy"],
         dy: -12, fill: "currentColor", fontWeight: 600 }),
-      Plot.ruleY([48.37], { stroke: "#B3453E", strokeDasharray: "3 3", strokeOpacity: 0.5 }),
+      threshMetric === "mf1"
+        ? Plot.ruleY([48.37], { stroke: "#B3453E", strokeDasharray: "3 3", strokeOpacity: 0.5 })
+        : null,
       Plot.line(threshRows, { x: "t", y: pick, stroke: "#1F4E79", strokeWidth: 2.5 }),
       Plot.dot(threshRows, { x: "t", y: pick, fill: "#1F4E79", r: 3.5,
         title: d => `t = ${d.t}\n${threshLabels[threshMetric]}: ${pick(d).toFixed(2)}\n` +
                     `${d.tp} caught, ${d.fp} false alarms, ${d.fn} missed` })
-    ]
+    ].filter(d => d)
   });
 }
 ```
 
 ::: {.column-margin}
-The faint red rule at 48.37 is the macro-F1 of a model that always answers
-"satisfied". Switch the radio to **macro-F1** and watch the blue line dive
+The faint red rule at 48.37, drawn only when macro-F1 is selected, is the
+macro-F1 of a model that always answers "satisfied". Switch the radio to **macro-F1** and watch the blue line dive
 towards it as the threshold rises: past $t = 0.8$ the model has effectively
 stopped being a classifier, and accuracy is still 93.77.
 :::
@@ -1201,7 +1205,7 @@ Platt's 0.94 against isotonic's 0.69 — a gap of 0.25 — is not a measurement 
 difference between the two methods, and neither is BERTurk's 0.56, which is not
 distinguishable from perfect. What *does* survive the floor is the raw-versus-
 calibrated gap (3.96 → 0.9) and the class-weighting penalty (3.96 → 14.18), both
-an order of magnitude above it. Estimating ECE without bias is its own small
+several times the floor. Estimating ECE without bias is its own small
 literature [@kumar2019verified; @roelofs2022mitigating]; the practical rule is
 to distrust any calibration difference smaller than about a point unless you
 have bootstrapped it.
@@ -1378,7 +1382,7 @@ prior shift. It takes ECE from 14.18 to 0.93.
 
 ::: {.column-margin}
 Guo et al. popularised temperature scaling and found it to be a strong baseline
-on image classifiers [@guo2017calibration]. That is not in tension with this
+on image and text classifiers [@guo2017calibration]. That is not in tension with this
 result: their networks were overconfident but not systematically shifted, which
 is the failure temperature is designed for. Reaching for temperature scaling
 here is reaching for a one-parameter fix to a two-parameter problem.
@@ -1391,7 +1395,8 @@ on the class-weighted model gets the best ECE of its group (0.88) and the
 sparse bin with a large gap barely moves it. MCE ignores bin size, so a single
 sparse bin decides it — and here that bin holds **one document**, which the
 isotonic map put at 0.278 and which happened to be satisfied. The next-worst
-gap for the same model is 9.0 points, in a bin of 40. So 72.20 describes one
+gap for the same model is also a one-document bin (46.2 points); leaving
+single-document bins aside, it is 9.0 points, in a bin of 40. So 72.20 describes one
 review, not the tail: the binomial noise that puts a floor under ECE puts a far
 higher one under MCE. If your decisions live in the tail — and cost-sensitive
 decisions usually do — the average is the wrong summary, and the maximum is a
@@ -1408,10 +1413,10 @@ cannot, which is why it wins with enough held-out data and overfits without it.
 **Fitting the calibrator on training data does not look broken.** The row marked
 "isotonic fitted on TRAIN" is the mistake this section exists to warn about: we
 fitted the isotonic map on the same 32,000 documents the classifier was trained
-on. It scores ECE 2.39. That is 3.5× worse than fitting it properly on held-out
+on. It scores ECE 2.39. That is 1.7 points worse than fitting it properly on held-out
 data (0.69) — and still *better than doing nothing* (3.96). [The leak does not
 produce an obviously wrong number. It produces a plausible number that is
-silently several times worse than the one you could have had]{.hl}, which is why
+silently and clearly worse than the one you could have had]{.hl}, which is why
 it survives code review.
 
 **The transformer is better calibrated on average and worse in the tail.**
@@ -1960,8 +1965,9 @@ would also have failed to resolve a real two-point gain.
 
 The Turkish-instruction failure on `llama3.2:3b` is not a subtle degradation. It
 labels 96.03% of complaints correctly and reaches 15.34% precision doing it —
-it is calling almost everything a complaint. The English instruction does not
-teach it Turkish; it stops it from collapsing onto one label.
+it calls roughly 40% of documents complaints when the true rate is 6.3%. The
+English instruction does not teach it Turkish; it cuts that over-flagging to
+about 16%.
 
 ::: {.column-margin}
 This is why "use English prompts" survives as advice. It was *true*, on the
@@ -2175,8 +2181,8 @@ fourth option that the "prompt or fine-tune" framing hides:
 
 - **Under ~1,000 labels.** Prompt. The encoder has not yet learned what a
   complaint is — at 500 labels it scores 59.47 macro-F1 on this subsample
-  against the majority baseline's 48.37, catching 14.29% of complaints — and no
-  *learning-rate sweep* changes that. A different recipe might: `setfit` (@sec-classification-tools)
+  against the majority baseline's 48.37, catching 14.29% of complaints — and we
+  doubt a *learning-rate sweep* would change that, though we did not run one. A different recipe might: `setfit` (@sec-classification-tools)
   is contrastive fine-tuning of a sentence encoder
   plus a logistic head, it is built for exactly this budget, and it routinely
   reports usable macro-F1 from 8–64 examples per class
@@ -2196,7 +2202,7 @@ fourth option that the "prompt or fine-tune" framing hides:
   those labels — the LLM as annotator, the encoder as student
   [@hsieh2023distilling; @gilardi2023chatgpt]. Our own numbers price it. At
   352.6 seconds per thousand documents, labelling all 40,000 is under four hours
-  of laptop GPU, and what it buys is a student that serves **142× cheaper** *and*
+  of laptop GPU, and what it buys is a student that serves roughly **165× cheaper** than this zero-shot teacher *and*
   hands back the score, the ROC curve and the threshold that
   @sec-classification-llm showed prompting takes away. The labels are noisy,
   so the natural reference point is the teacher's 81.56 rather than a human
@@ -2251,7 +2257,7 @@ table's own tf-idf pair shows batching alone is worth 11× (72,972 against
 What batching cannot recover is the mechanism underneath. The encoder reads a
 document once and emits a number. The prompted model must write its answer one
 token at a time, and every token costs a full pass through a network thirty to
-three hundred times larger. [Batching amortises the overhead; it does not change
+250 times larger in active parameters. [Batching amortises the overhead; it does not change
 the arithmetic.]{.hl}
 
 ::: {.column-margin}
@@ -2569,13 +2575,16 @@ satisfied         0.9987   "A so-so product."
 The third row is the one that needs no adjudication, and it is worth dwelling
 on. **The reviewer states, in the review, that the star rating is strategic
 rather than evaluative** — five stars so the complaint floats to the top of the
-listing. Our labels are derived from star ratings. So the label is a faithful
+listing. The dataset card does not document how the labels were derived
+(@sec-bake-off), but this row is strong evidence that they come from star
+ratings. So the label is a faithful
 record of the stars and a false record of the sentiment, and the reviewer has
 helpfully documented the exact mechanism by which our ground truth fails.
 
-The rows above and below it read the same way to us: a vacuum that burned out,
-a product that "does nothing," a review that ends *don't buy it* — all filed as
-satisfied. And in the other direction, two glowing reviews filed as complaints.
+The two rows below it read the same way to us: a vacuum that burned out, and a
+review that says the product "does nothing" and ends *don't buy it* — both filed
+as satisfied. The two rows above it go the other direction: two glowing reviews
+filed as complaints.
 [We are stating that as our reading, not as a measurement]{.hl}: no independent
 Turkish-speaking annotator has re-adjudicated these, so we will not put a number
 on how many of the 204 shared failures are label errors. What we will say is
@@ -2603,8 +2612,8 @@ number. Re-label instead, or change the labelling function.
 ### What the encoder buys, in sentences
 
 The 122 complaints BERTurk catches that tf-idf misses have a shape, and it is
-not vocabulary. These are all documents where tf-idf scored well under its 0.166
-threshold and BERTurk scored above 0.9:
+not vocabulary. Below are examples where tf-idf scored just under its 0.166 threshold
+(0.13–0.15) and BERTurk scored above 0.9:
 
 ```text
 p_lin   p_bert   review (glossed)
@@ -2619,16 +2628,17 @@ p_lin   p_bert   review (glossed)
                   the same modem."
 ```
 
-None of these contain a complaint word in the sense a bag of words understands.
+None of these contain the stock complaint words a bag of words weights heavily.
 The first carries its entire meaning in one rare verb (*koptu*, "snapped"). The
 second is a concessive: the complaint is in the first clause and the second
 clause partly retracts it, which is a structure tf-idf cannot represent because
 it has thrown away the order. The fourth is a complaint expressed as a
-*narrative* — no evaluative vocabulary at all, just a description of the product
-failing to do its job twice. [Sparse features need the word; the encoder needs
+*narrative*: the one evaluative phrase ("very weak") comes only after a
+description of the product failing to do its job twice. [Sparse features need the word; the encoder needs
 the sentence.]{.hl}
 
-And the errors both models share, similarly glossed, fall into two families:
+And the errors both models share, similarly glossed, fall into four kinds, the
+largest being the lukewarm family:
 
 ```text
 "It drops out now and then, but it'll do."          lukewarm
@@ -2825,7 +2835,7 @@ Treat any page claiming to list "the questions company X asks" as marketing.
 
 2. **Precision, recall, F1, ROC-AUC, PR-AUC — when do you use which?** Say what
    each divides by. FPR divides by the majority count; precision divides by what
-   you flagged. On an imbalanced problem those denominators differ by orders of
+   you flagged. On an imbalanced problem those denominators can differ by up to a couple of orders of
    magnitude, so the two curves rank models differently
    [@davis2006relationship] — ours disagreed in direction between two BERTurk
    checkpoints. Finish with the practical rule: quote PR-AUC against the base
@@ -2942,7 +2952,7 @@ Worth knowing about, not used above:
 | library | current version | when you would reach for it |
 |:--|:--|:--|
 | `setfit` | 1.1.3 | the contrastive few-shot recipe of @tunstall2022setfit as one object. The right first try when you have tens of labels per class rather than hundreds |
-| ModernBERT and its multilingual descendants | 2025–2026 | the encoders to try *before* BERTurk on a new project [@warner2025modernbert] — same fine-tuning recipe, rotary embeddings, an 8,192-token context and markedly faster training |
+| ModernBERT and its multilingual descendants | 2025–2026 | the encoders to try *before* BERTurk on a new project [@warner2025modernbert]; ModernBERT itself is English and code, so for Turkish use a multilingual descendant such as mmBERT — same fine-tuning recipe, rotary embeddings, an 8,192-token context and markedly faster training |
 | `sentence-transformers` | 5.7.0 | frozen embeddings plus a linear head — often within a point or two of full fine-tuning at a fraction of the training cost |
 | `peft` / `accelerate` | 0.20.0 / 1.14.0 | LoRA and distributed training when the encoder no longer fits the way it did here (@sec-post-training) |
 | `netcal` | 1.4.0 | calibration methods and diagrams beyond what `scikit-learn` ships, including binning and beta calibration |
@@ -3247,8 +3257,8 @@ encoder.
 - **Sort your errors by confidence, not at random.** The top of that list is
   where label errors concentrate. Ours includes a review that says the product
   broke in two months *and explains that it is giving five stars so the
-  complaint appears at the top of the listing* — labelled satisfied, because our
-  labels come from star ratings. When the model looks more right than the label,
+  complaint appears at the top of the listing* — labelled satisfied, because the
+  labels evidently come from star ratings. When the model looks more right than the label,
   stop tuning and go re-read @sec-audit; @frenay2014classification is the survey.
 - **Some of your test set is unlabelable.** 204 documents defeat both models and
   137 of them are complaints — 21.7% of every complaint in the test set. One of
