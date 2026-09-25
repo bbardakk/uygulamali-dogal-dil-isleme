@@ -38,10 +38,10 @@ character of the output more than most people expect.
   probability reaches $p$, then renormalises [@holtzman2020curious].
 
 **The order these run in matters, and it is the part that surprises people.**
-In `transformers`, one decoding step applies the
-repetition/frequency/presence penalties to the raw logits, then temperature,
+In `transformers` (5.x), one decoding step applies the repetition penalty
+(and processors such as no-repeat n-gram) to the raw logits, then temperature,
 then top-k, then top-p, then min-p, and then samples. vLLM also applies the
-penalties and then temperature first, but runs min-p *before* top-k and top-p;
+penalties (repetition, frequency and presence) and then temperature first, but runs min-p *before* top-k and top-p;
 llama.cpp's default chain applies temperature *last*, after all the cutoffs.
 So the order is fixed inside one library, not across libraries — check the one
 you use. Two consequences follow for the temperature-first order.
@@ -207,7 +207,7 @@ continuations, min-p keeps them all, where top-p 0.9 would cut the last few by
 cumulative mass alone, however plausible they are.
 
 ::: {.column-margin}
-The general rule underneath all five: [the policy should depend on how many
+The general rule underneath all of them: [the policy should depend on how many
 good answers the task has]{.hl}. Extraction, classification and translation
 have one, so greedy or a narrow beam. Drafting, brainstorming and dialogue
 have many, so sample. @sec-machine-translation measured the cost of getting
@@ -271,8 +271,9 @@ once; frequency keeps scaling.
 
 [The penalties are blunt instruments and they are the wrong tool for
 structured output.]{.hl} A JSON object legitimately repeats keys, braces and
-quote characters; a no-repeat-3-gram constraint on JSON is a way to guarantee
-invalid output. If you are generating structure, the fix for repetition is the
+quote characters; a no-repeat-3-gram constraint on JSON whose keys recur (an
+array of objects, say) forbids writing a key the second time and makes
+schema-invalid output all but certain. If you are generating structure, the fix for repetition is the
 grammar in @sec-decoding-constrained, not a penalty.
 
 ## Constrained decoding {#sec-decoding-constrained}
@@ -336,8 +337,8 @@ distorting version, which is the right default and worth knowing you are using.
 
   <text x="10" y="118" class="t-xs t-b t-rose">UNCONSTRAINED — ANY OF THE FOUR MAY BE SAMPLED</text>
   <rect x="10" y="128" width="356" height="58" rx="6" class="box-rose"/>
-  <text x="188" y="148" class="t-xs t-mid t-muted">three of the four continue into output that</text>
-  <text x="188" y="162" class="t-xs t-mid t-muted">no longer parses against the schema</text>
+  <text x="188" y="148" class="t-xs t-mid t-muted">three of the four are continuations this grammar</text>
+  <text x="188" y="162" class="t-xs t-mid t-muted">(canonical, no-whitespace JSON) forbids</text>
   <text x="188" y="178" class="t-xs t-mid t-b t-rose">invalid output is merely unlikely</text>
 
   <text x="400" y="118" class="t-xs t-b t-accent">CONSTRAINED — THE AUTOMATON MASKS FIRST</text>
@@ -441,7 +442,7 @@ formatting failure from being counted as a reasoning failure.
 
 **The cost is latency, and it is not where you would guess.** Overhead ranged
 from **1.01× to 17.5×**; the top of that range is the weak model at L4, where
-0.53 s per item became 9.26 s. The overhead was not monotone in schema complexity — L1 and L3 were cheap, L2 and L4 expensive.
+0.53 s per item became 9.26 s. The overhead was not monotone in schema complexity — on `llama3.2:3b` L1 and L3 were cheap, L2 and L4 expensive; on `qwen3.5:9b` L3 was the most expensive.
 The two ends sit on different models, which is itself the finding: on
 `qwen3.5:9b` the grammar costs between 1.006× and 1.13× — **essentially
 free** — and on `llama3.2:3b` between 1.5× and 17.5×. A grammar is cheap where
@@ -484,8 +485,10 @@ Two corollaries worth stating plainly:
    task allows.
 2. **A schema is not a substitute for the escape hatch.** If the model has no
    legal way to say *I do not know*, the grammar guarantees it will say
-   something else instead. Add `null` to the type, and — as
-   @sec-sequence-labeling found — check that the model actually uses it.
+   something else instead. Add `null` to the type, and check that the model
+   actually uses it; this book did not measure that, so treat it as a check,
+   not a finding. As @sec-naming-clusters puts it, an escape hatch that never
+   fires is decoration.
 
 ## Making tool arguments reliable {#sec-decoding-tool-args}
 
@@ -532,7 +535,10 @@ confirmation and authorisation machinery around it — belongs.
 Alongside each token, the model reports the log probability it assigned — its
 [logprob](#gloss-logprob){#term-logprob .term-ref}. This is the cheapest
 signal available about how sure the model is, it costs nothing extra to
-obtain, and most pipelines throw it away.
+obtain where the API exposes it, and most pipelines throw it away. Not every
+hosted API or model returns logprobs, and those that do often return only the
+top few candidates (`top_logprobs`): check both before relying on it, because
+renormalising over `A` and `B` below needs both tokens in the list.
 
 The question is whether it is *usable*. Measured with `qwen3.5:9b` on 400
 balanced reviews, with
@@ -944,8 +950,9 @@ correct call: the id may be well-typed and wrong, which is
 Give it a legal way to — a `null` in the schema or an explicit abstain value —
 and then a threshold to decide when to use it. Constrain the answer to a
 single token, read its logprob, and pick a threshold on a held-out slice.
-Measured here: abstaining on the least-confident 20% took accuracy from 86.75%
-to 92.50%, no model change involved. Report coverage alongside accuracy, or
+Measured here: abstaining on the least-confident 20% took accuracy on the
+kept items from 86.75% to 92.50% (80% coverage), no model change involved —
+what the other 20% cost has to be measured separately. Report coverage alongside accuracy, or
 the number is meaningless.
 
 **Q: Your evaluation says the model is 92% confident and it is right 68% of
@@ -1111,9 +1118,10 @@ in your evaluation should be reported.
   0.5 right on **5 of 15** items, with substantial uncertainty. Rank with them;
   do not quote them as probabilities.
 
-- **Abstention is the cheapest accuracy you will buy.** Dropping the
-  least-confident 20% took accuracy from **86.75% to 92.50%** with no model
-  change. Choose the threshold on held-out data and report coverage with it.
+- **Abstention is the cheapest accuracy on kept items you will buy.** Dropping
+  the least-confident 20% took accuracy on the kept items from **86.75% to
+  92.50%** (80% coverage) with no model change; the cost of the other 20% has
+  to be measured separately. Choose the threshold on held-out data and report coverage with it.
 
 - **A usable confidence signal is designed in, not discovered.** It worked
   here because the answer was one token from a two-token alphabet. Averaging

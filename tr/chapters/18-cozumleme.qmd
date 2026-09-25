@@ -1,4 +1,4 @@
-# Çözümleme ve Yapılandırılmış Çıktı {#sec-cozumleme}
+# Kod Çözme ve Yapılandırılmış Çıktı {#sec-cozumleme}
 
 ::: {.callout-note appearance="simple" icon="false"}
 **Bölüm durumu: çevrildi.** Kaynak metin:
@@ -6,16 +6,18 @@
 Ölçümler @sec-karsilastirma ve @sec-siniflandirma ile aynı Türkçe ürün yorumu
 derleminde, dengeli bir örneklem üzerinde yapıldı; böylece doğruluk %50'lik bir
 tabana göre okunuyor. İki model bilerek kullanıldı — `qwen3.5:9b` ve
-`llama3.2:3b` — çünkü @sec-cozumleme-kisitli'nin bulgusuna göre kısıtlı
-çözümleme (constrained decoding: üretimi bir gramerin ya da şemanın
+`llama3.2:3b` — çünkü @sec-cozumleme-kisitli'ün bulgusuna göre kısıtlı
+kod çözme (constrained decoding: üretimi bir gramerin ya da şemanın
 kurallarıyla sınırlamak) birinde neredeyse hiçbir şey kazandırmıyor, diğerinde
 ise çok şey kazandırıyor. Yazılım: `ollama` 0.24.0, Python 3.14.5. Aşağıdaki
-örnekleme gezgini tümüyle çalışır durumda. Bu bölümün geri kalanı, koşularla
-ilgili iki noktaya dayanıyor; koşuları nerede tekrarlarsanız tekrarlayın, bu
-ikisini aynı tutmaya dikkat edin.
-Birincisi, model etiketleri `ollama`'nın varsayılan 4 bitlik nicelemesine
-karşılık geliyor. Bu niceleme logit dağılımını değiştirir; dolayısıyla
-@sec-cozumleme-logprob'daki her kalibrasyon sayısının bir parçasıdır. İkincisi,
+örnekleme gezgini tümüyle çalışır durumda.
+
+**Deney kurulumu.** Bu bölümün geri kalanı, koşularla ilgili iki noktaya
+dayanıyor; koşuları nerede tekrarlarsanız tekrarlayın, bu ikisini aynı tutmaya
+dikkat edin. Birincisi, model etiketleri `ollama`'nın varsayılan 4 bitlik
+nicelemesine karşılık geliyor. Bu niceleme logit dağılımını değiştirir;
+dolayısıyla @sec-cozumleme-logprob'teki her kalibrasyon sayısı nicelemenin
+etkisini de taşır. İkincisi,
 aşağıdaki her gecikme rakamı bir dizüstü bilgisayarda süresi ölçülmüş tek bir
 çalıştırmadan geliyor. Bu yüzden saniyeleri değil oranları okuyun; yaklaşık 1,5
 katın altındaki her farkı ısınmış bir makinenin gürültü payı içinde sayın.
@@ -32,16 +34,28 @@ katın altındaki her farkı ısınmış bir makinenin gürültü payı içinde 
   anlamsız bir çıktıya kayması) rastgele parametre ayarlamak yerine teşhis
   edebilirsiniz.
 
+**Neye bakacağız.** Önce örnekleme politikaları: greedy, beam, sıcaklık ve
+top-k / top-p / min-p kesimleri. Sonra greedy'nin neden tekrar döngülerine
+girdiği ve yapı üretmeye başladığınızda alışıldık cezaların neden yanlış araç
+olduğu. Sonra kısıtlı kod çözme; bir gramerin geçersiz çıktıyı düşük olasılıklı
+değil, erişilemez kıldığı yer — iki modelde ölçüldü, çünkü birinde neredeyse
+hiçbir şey, diğerinde on yedi doğruluk puanı kazandırıyor. Sonra araç
+çağrıları; güçlü modeldeki iyi sonucun bile yetmediği durum. Sonra
+logprob'lar; iyi ayırt eden, kötü kalibre olan ve yine de tek bir eşik
+karşılığında tutulan maddelerde size doğruluk kazandıran şey. Son olarak da
+akış (streaming); yapılandırılmış çıktının istediği her şeyin tersini isteyen
+şey.
+
 ## Greedy, beam, sıcaklık, top-k / top-p / min-p {#sec-cozumleme-ornekleme}
 
 Bir dil modelinin ileri geçişi bir **logit** vektörüyle biter — sözlükteki her
-token için bir ham puan. @sec-transformerlar'ın tamamı o vektörü üretmekle
-ilgiliydi. Bu puanları gerçek token'lara çevirme işine **çözümleme** (decoding;
-sözlükteki karşılığıyla *kod çözme*) diyoruz. Bu adımda olan şey öğrenme değil,
+token için bir ham puan. @sec-transformerlar'nin tamamı o vektörü üretmekle
+ilgiliydi. Bu puanları gerçek token'lara çevirme işine **kod çözme** (decoding)
+diyoruz. Bu adımda olan şey öğrenme değil,
 [çıkarım anında sizin kontrol ettiğiniz bir örnekleme politikası]{.hl}. Bu
 politika, çıktının karakterini çoğu insanın beklediğinden fazla değiştiriyor.
 
-- **Sıcaklık** $\tau$, softmax'ten önce logit'leri yeniden ölçekler:
+- **Sıcaklık** $\tau$, softmax'tan önce logit'leri yeniden ölçekler:
   $p_i \propto \exp(z_i/\tau)$. Düşük $\tau$ keskinleştirir, yüksek $\tau$
   düzleştirir.
 - **Top-k** yalnızca en yüksek olasılıklı $k$ token'ı tutar, sonra yeniden
@@ -50,11 +64,12 @@ politika, çıktının karakterini çoğu insanın beklediğinden fazla değişt
   kümesini tutar, sonra yeniden normalize eder [@holtzman2020curious].
 
 **Bunların çalışma sırası önemlidir ve insanları asıl şaşırtan kısım da budur.**
-`transformers`'ta tek bir çözümleme adımı şunu uygular: ham logit'lere
-tekrar cezası, frequency penalty (geçme sayısıyla büyüyen ceza) ve presence
-penalty (önceden geçen token'a sabit ceza), sonra sıcaklık, sonra top-k, sonra top-p, sonra
-min-p, sonra örnekleme. vLLM de önce cezaları, ardından sıcaklığı uygular; ama
-min-p'yi top-k ve top-p'den *önce* çalıştırır. llama.cpp'nin varsayılan
+`transformers`'ta (5.x) tek bir kod çözme adımı şunu uygular: ham logit'lere
+tekrar cezası (ve no-repeat n-gram gibi diğer işlemciler), sonra sıcaklık,
+sonra top-k, sonra top-p, sonra min-p, sonra örnekleme. vLLM de önce cezaları
+— tekrar cezasının yanında frequency penalty (geçme sayısıyla büyüyen ceza) ve
+presence penalty (önceden geçen token'a sabit ceza) — ardından sıcaklığı
+uygular; ama min-p'yi top-k ve top-p'den *önce* çalıştırır. llama.cpp'nin varsayılan
 zincirinde ise sıcaklık bütün kesimlerden sonra, *en sonda* gelir. Yani sıra tek
 bir kütüphanenin içinde sabittir, kütüphaneler arasında değil; kullandığınız
 kütüphaneye bakın. Sıcaklığın önce geldiği sıralamada bundan iki sonuç
@@ -71,8 +86,11 @@ birlikte ayarlıyorsanız önce sıcaklığı ayarlayın.
 
 ### Keşfedin: sıcaklık, top-k ve top-p
 
-Model az önce *"After the lecture, the students were completely ____"* cümlesini
-okudu ve aşağıdaki logit'leri üretti. Gri çubuklar o anki sıcaklıktaki softmax
+Model az önce *"After the lecture, the students were completely ____"* ("Dersten
+sonra öğrenciler tamamen ____") cümlesini okudu ve aşağıdaki logit'leri üretti.
+Örnek İngilizce, çünkü adayların her biri tek bir token; Türkçede
+"yorulmuşlardı" gibi bir devam çoğu tokenizer'da birkaç alt kelime token'ına
+bölünür ve aynı politika her parçada yeniden uygulanır. Gri çubuklar o anki sıcaklıktaki softmax
 dağılımını herhangi bir kesimden önce, turkuaz çubuklar ise örnekleme
 politikanızdan geçen token'ları, yeniden normalize edilmiş hâliyle gösteriyor. $\tau = 0{,}2$ deneyin, sonra $\tau = 1{,}8$.
 Sonra kuyruğu top-p $= 0{,}6$ ile kesin.
@@ -180,29 +198,31 @@ elinizdeki en ucuz ayar düğmesidir.
 
 ### Greedy, beam ve min-p
 
-Tabloyu üç politika daha tamamlıyor.
+Resmi üç politika daha tamamlıyor.
 
-**Greedy** (açgözlü) çözümleme her adımda argmax'ı, yani en olası token'ı
+**Greedy** (açgözlü) kod çözme her adımda argmax'ı, yani en olası token'ı
 alır. Sıcaklığın 0'a gittiği limit durumudur ve
 tek bir doğru cevap olduğunda varsayılan olarak seçilmesi gereken budur.
 (Sıfıra bölme tanımsız olduğundan API'ler "sıcaklık 0" isteğini greedy
-çözümleme olarak uygular. Buna rağmen barındırılan bir API her seferinde aynı
-dizgiyi döndürmeyebilir: GPU'daki toplu işleme (batching) ve kayan nokta
-yuvarlamaları, neredeyse eşit olasılıklı iki token arasındaki sırayı
-değiştirebilir; tek bir token farklı çıktığında da metnin geri kalanı
-değişir.)
+kod çözme olarak uygular. Buna rağmen barındırılan bir API her seferinde aynı
+dizgiyi döndürmeyebilir: GPU'da isteklerin batch (toplu işlem) hâlinde işlenmesi ve
+kayan nokta yuvarlamaları, neredeyse eşit olasılıklı iki token arasındaki
+sırayı değiştirebilir; tek bir token farklı çıktığında da metnin geri kalanı
+değişir. Sabit bir seed (tohum) da bunu tek başına çözmez: seed yalnızca
+örneklemenin rastgele çekilişlerini sabitler, batch bileşimini, donanımı ya da
+kütüphane sürümünü sabitlemez.)
 
-**Beam search** (ışın araması) en iyi *k* kısmi diziyi (*k*'ye *ışın genişliği* denir) tutup
+**Beam search** (ışın araması) en iyi *k* kısmi diziyi (*k*'ye *beam genişliği* denir) tutup
 hepsini genişletir; böylece her adımda en iyi token'ı seçmek yerine olasılığı
 yüksek bir *bütün diziyi* arar. Yine de genişliği sınırlı bir arama olduğu için
 en olası tek diziyi kaçırabilir.
 
 @sec-makine-cevirisi bunu çeviri üzerinde düzgün biçimde ölçüyor ve
 bulgularından ikisini burada da hatırlatmakta yarar var. Kazançlar hızla azalıyor — beam 1'den 2'ye +0,61 BLEU,
-beam 2'den 64'e yedi kat hesaplama karşılığında yalnızca +0,57 daha. Işını
+beam 2'den 64'e yedi kat hesaplama karşılığında yalnızca +0,57 daha. Beam'i
 genişletmenin çıktıyı *kötüleştirdiği* yolundaki yaygın uyarı ("beam search
-laneti") ise hiç görünmedi; büyük olasılıkla çözümleyici arama sırasında
-uzunluğa göre normalize ettiği için. Uzunluk normalizasyonu, bir ışının log
+laneti") ise hiç görünmedi; büyük olasılıkla kod çözücü arama sırasında
+uzunluğa göre normalize ettiği için. Uzunluk normalleştirmesi, bir aday dizinin log
 olasılığını uzunluğuna böler. Bu yapılmazsa her ek token toplam puana negatif
 bir log olasılık daha ekler ve arama gereğinden kısa çıktıları kayırır.
 
@@ -225,27 +245,17 @@ kararsız olduğunda ise min-p hepsini tutar; oysa top-p 0,9, ne kadar makul
 olurlarsa olsunlar son birkaçını yalnızca kümülatif kütleye bakarak keserdi.
 
 ::: {.column-margin}
-Beşinin de altında yatan genel kural: [politika, görevin kaç tane iyi cevabı olduğuna
-bağlı olmalı]{.hl}. Bilgi çıkarımı, sınıflandırma ve çevirinin bir tane var, dolayısıyla
+Hepsinin altında yatan genel kural: [politika, görevin kaç tane iyi cevabı olduğuna
+bağlı olmalı]{.hl}. Bilgi çıkarma, sınıflandırma ve çevirinin bir tane var, dolayısıyla
 greedy ya da dar bir beam. Taslak yazma, beyin fırtınası ve diyaloğun çok var,
 dolayısıyla örnekleyin. @sec-makine-cevirisi bunu tersine çevirmenin bedelini
 ölçtü — sohbet varsayılanı olan 1,0 sıcaklık, bir çeviri modelini 30,17
 BLEU'dan 14,34'e düşürdü.
 :::
 
-**Neye bakacağız.** Önce greedy çözümlemenin neden tekrar döngülerine girdiği ve
-yapı üretmeye başladığınızda alışıldık cezaların neden yanlış araç olduğu. Sonra
-kısıtlı çözümleme; bir gramerin geçersiz çıktıyı düşük olasılıklı değil,
-erişilemez kıldığı yer — iki modelde ölçüldü, çünkü birinde neredeyse hiçbir
-şey, diğerinde on yedi doğruluk puanı kazandırıyor. Sonra araç çağrıları;
-güçlü modeldeki iyi sonucun bile yetmediği durum. Sonra logprob'lar; iyi ayırt eden, kötü
-kalibre olan ve yine de tek bir eşik karşılığında size doğruluk kazandıran şey.
-Son olarak da akış (streaming); yapılandırılmış çıktının istediği her şeyin
-tersini isteyen şey.
-
 ## Tekrar ve yozlaşma {#sec-cozumleme-tekrar}
 
-Greedy ve düşük sıcaklıklı çözümlemenin karakteristik bir kusuru var: model bir
+Greedy ve düşük sıcaklıklı kod çözmenin karakteristik bir kusuru var: model bir
 döngüye düşer ve token sınırına çarpana kadar bir öbeği tekrarlar.
 
 Mekanizma gizemli değil. Bir öbeği bir kez ürettikten sonra model o öbeği kendi
@@ -254,18 +264,18 @@ tekrarlanan öbeklerin ilk tekrardan sonra daha olası olduğunu öğrenmiştir.
 
 @holtzman2020curious buna ad verdi ve şaşırtıcı kısmı gösterdi: döngü düşük
 olasılıklı bir rastlantı değil. **Tekrarlanan devam çoğu zaman, mevcut diziler
-arasında olasılığı en yüksek olanıdır**; greedy çözümlemenin bu döngüye
+arasında olasılığı en yüksek olanıdır**; greedy kod çözmenin bu döngüye
 girmesinin, örneklemenin ise nadiren girmesinin nedeni budur.
 
 Alışıldık kontroller ve her birinin bedeli:
 
 | kontrol | ne yapar | neyi bozar |
 |:--|:--|:--|
-| Örnekleme (top-p, min-p) | bazen argmax olmayan bir token seçer, döngüyü kırar | bir bilgi çıkarımı görevinde istemeyebileceğiniz çeşitlilik |
-| Tekrar cezası | zaten kullanılmış her token'ın logit'ini düşürür — pozitifken bölerek, negatifken çarparak (aşağıya bakın) | meşru biçimde tekrarlanan kelimeleri cezalandırır — adlar, teknik terimler, `null` |
-| No-repeat n-gram | zaten üretilmiş her n-gram'ı yasaklar | gerçekten tekrarlanması gereken öbekleri de yasaklar; `{"type":` gibi ifadelerin tekrarlandığı yapılandırılmış çıktıda yıkıcıdır |
-| Presence penalty | daha önce geçmiş her token'ın logit'inden sabit bir miktar çıkarır | aynı kusur, daha hafif biçimde; tırmanmaz |
-| Frequency penalty | kaç kez geçtiğiyle orantılı bir miktar çıkarır | her tekrarla tırmanır, bu yüzden uzun çıktılar kayar |
+| Örnekleme (top-p, min-p) | bazen argmax olmayan bir token seçer, döngüyü kırar | bir bilgi çıkarma görevinde istemeyebileceğiniz çeşitlilik |
+| Tekrar cezası (repetition penalty) | zaten kullanılmış her token'ın logit'ini düşürür — pozitifken bölerek, negatifken çarparak (aşağıya bakın) | meşru biçimde tekrarlanan kelimeleri cezalandırır — adlar, teknik terimler, `null` |
+| No-repeat n-gram (n-gram tekrar yasağı) | zaten üretilmiş her n-gram'ı yasaklar | gerçekten tekrarlanması gereken öbekleri de yasaklar; `{"type":` gibi ifadelerin tekrarlandığı yapılandırılmış çıktıda yıkıcıdır |
+| Presence penalty (varlık cezası) | daha önce geçmiş her token'ın logit'inden sabit bir miktar çıkarır | aynı kusur, daha hafif biçimde; tırmanmaz |
+| Frequency penalty (sıklık cezası) | kaç kez geçtiğiyle orantılı bir miktar çıkarır | her tekrarla tırmanır, bu yüzden uzun çıktılar kayar |
 
 : Bir döngüyü durdurmanın beş yolu ve her birinin bedeli {tbl-colwidths="[26,38,36]"}
 
@@ -289,14 +299,15 @@ devreye girer; frequency penalty her tekrarla büyümeye devam eder.
 [Bu cezalar gerekli tekrarı gereksiz tekrardan ayırt etmez; bu yüzden
 yapılandırılmış çıktı için yanlış araçtır.]{.hl} Bir
 JSON nesnesi meşru biçimde anahtarları, süslü parantezleri ve tırnak
-karakterlerini tekrarlar; JSON'a bir no-repeat-3-gram kısıtı koymak, geçersiz
-çıktıyı garantiye almak demektir. Yapı üretiyorsanız tekrarın çözümü bir ceza
-değil, @sec-cozumleme-kisitli'deki gramerdir.
+karakterlerini tekrarlar; aynı anahtarların yinelendiği bir JSON'a (örneğin bir
+nesne dizisine) no-repeat-3-gram kısıtı koymak, ikinci nesnede anahtarı
+yazmayı yasaklar ve şemaya aykırı çıktıyı neredeyse kaçınılmaz kılar. Yapı üretiyorsanız tekrarın çözümü bir ceza
+değil, @sec-cozumleme-kisitli'teki gramerdir.
 
-## Kısıtlı çözümleme {#sec-cozumleme-kisitli}
+## Kısıtlı kod çözme {#sec-cozumleme-kisitli}
 
 Yukarıdakilerin hepsi bütün sözlük üzerindeki bir dağılımı yeniden biçimlendirir.
-[Kısıtlı çözümleme](#gloss-constrained-decoding){#term-constrained-decoding .term-ref}
+[Kısıtlı kod çözme](#gloss-constrained-decoding){#term-constrained-decoding .term-ref}
 daha katı bir şey yapar: her adımda, hangi token'ların çıktıyı gramere uygun
 biçimde sürdürebileceğini hesaplar ve diğer tüm token'ların logit'lerini
 $-\infty$ yapar. Geçersiz çıktı artık yalnızca düşük olasılıklı değildir;
@@ -326,16 +337,16 @@ yok. Sonuçta gramere uygun dizgiler üzerinde bir dağılım elde edersiniz; am
 dizgilerin olabilirlikleri artık modelin kendi olabilirlikleriyle orantılı
 değildir [@park2024grammar]. Pratikte bu, kısıtsız modelin daha aşağı
 sıralayacağı gramere uygun çıktılar olarak kendini gösteriyor. Gramerle
-hizalanmış çözümleme bunu fazladan bir maliyetle düzeltiyor.
+hizalanmış kod çözme bunu fazladan bir maliyetle düzeltiyor.
 @sec-cozumleme-araclar'daki her kütüphane ise ucuz ama dağılımı bozan sürümü
 sunuyor. Doğru varsayılan da budur; yine de bu sürümü kullandığınızın farkında
 olun.
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">Tek bir çözümleme adımı, gramerli ve gramersiz</div>
+<div class="fig-title">Tek bir kod çözme adımı, gramerli ve gramersiz</div>
 <svg viewBox="0 0 764 300" style="max-width:744px" role="img"
-     aria-label="Tek bir çözümleme adımının şeması. Solda model açık süslü parantez, tırnak, label, tırnak, iki nokta kısmi çıktısını üretmiş ve sonraki token dağılımı dört adayla gösteriliyor: tırnak 0,61; maybe kelimesi 0,18; satır sonu 0,12; positive kelimesi 0,09. Kısıtsız yolda örnekleme dördünden herhangi birini seçebilir; bu uygulama boşluksuz kanonik JSON ürettiği için geçerli bir belgeyi yalnızca tırnak sürdürür, satır sonu dâhil diğer üçü sürdürmez. Kısıtlı yolda şemadan derlenmiş bir sonlu durum makinesi bu noktada yalnızca tırnağın gramere uygun olduğunu bilir, dolayısıyla diğer üçünün logit'leri eksi sonsuz yapılır ve olasılıkları sıfır olur; tırnak bire yeniden normalize edilir. Bir not, gramerin çıktının biçimini garanti ettiğini ve içeriğin doğru olup olmadığı hakkında hiçbir şey söylemediğini belirtiyor.">
+     aria-label="Tek bir kod çözme adımının şeması. Solda model açık süslü parantez, tırnak, label, tırnak, iki nokta kısmi çıktısını üretmiş ve sonraki token dağılımı dört adayla gösteriliyor: tırnak 0,61; maybe kelimesi 0,18; satır sonu 0,12; positive kelimesi 0,09. Kısıtsız yolda örnekleme dördünden herhangi birini seçebilir; bu uygulama boşluksuz kanonik JSON ürettiği için geçerli bir belgeyi yalnızca tırnak sürdürür, satır sonu dâhil diğer üçü sürdürmez. Kısıtlı yolda şemadan derlenmiş bir sonlu durum makinesi bu noktada yalnızca tırnağın gramere uygun olduğunu bilir, dolayısıyla diğer üçünün logit'leri eksi sonsuz yapılır ve olasılıkları sıfır olur; tırnak bire yeniden normalize edilir. Bir not, gramerin çıktının biçimini garanti ettiğini ve içeriğin doğru olup olmadığı hakkında hiçbir şey söylemediğini belirtiyor.">
 
   <text x="10" y="16" class="t-xs t-b t-muted">ŞU ANA KADARKİ KISMİ ÇIKTI</text>
   <rect x="10" y="26" width="220" height="34" rx="6" class="chip"/>
@@ -360,8 +371,8 @@ olun.
 
   <text x="10" y="118" class="t-xs t-b t-rose">KISITSIZ — DÖRDÜNDEN HERHANGİ BİRİ ÖRNEKLENEBİLİR</text>
   <rect x="10" y="128" width="356" height="58" rx="6" class="box-rose"/>
-  <text x="188" y="148" class="t-xs t-mid t-muted">dördünün üçü, şemaya göre artık ayrıştırılamayan</text>
-  <text x="188" y="162" class="t-xs t-mid t-muted">bir çıktıya doğru devam ediyor</text>
+  <text x="188" y="148" class="t-xs t-mid t-muted">dördünün üçü, bu gramerin (boşluksuz kanonik JSON)</text>
+  <text x="188" y="162" class="t-xs t-mid t-muted">izin vermediği bir devam</text>
   <text x="188" y="178" class="t-xs t-mid t-b t-rose">geçersiz çıktı yalnızca düşük olasılıklı</text>
 
   <text x="400" y="118" class="t-xs t-b t-accent">KISITLI — OTOMAT ÖNCE MASKELİYOR</text>
@@ -396,9 +407,16 @@ olun.
 Bu mekanizma, tokenizer'ın sözlüğü üzerinde çalışan bir sonlu durum makinesidir
 [@willard2023efficient]: regex'i — ya da iç içe geçmesi sınırlı bir JSON
 Schema'yı — bir otomata derleyin, hangi durumda olduğunuzu izleyin ve her durum
-için izin verilen sonraki token kümesini önceden hesaplayın. Genel bir bağlamdan
+için izin verilen sonraki token kümesini önceden hesaplayın. (Sonlu durum
+makinesini, "şu ana kadar ne yazıldı"ya bakarak bir sonraki adımda nelerin
+yazılabileceğini bilen bir akış şeması gibi düşünün.) Asıl mühendislik
+zorluğu da buradadır: token'lar gramer sembolleriyle hizalı değildir — tek bir
+token `":` ya da `", "` gibi birkaç karakter taşıyabilir — bu yüzden izin
+kümesi karakter düzeyinde değil, token düzeyinde hesaplanmalıdır; `outlines`
+ve `xgrammar` gibi kütüphanelerin var olma nedeni budur. Genel bir bağlamdan
 bağımsız gramer (CFG) sonlu durum makinesine *sığmaz*, çünkü sınırsız iç içe
-geçme bir yığın gerektirir; CFG kabul eden kütüphaneler bunun yerine artımlı bir
+geçme bir yığın (stack) gerektirir — kaç parantezin açık kaldığını saymak
+için; CFG kabul eden kütüphaneler bunun yerine artımlı bir
 ayrıştırıcı (yığınlı otomat) koşturur. Bu, adım başına daha pahalıdır ama
 karşılığında sınırsız derinlikte özyinelemeye izin verir. @geng2023grammar aynı
 fikri genel yapılandırılmış NLP görevlerine uygular.
@@ -411,9 +429,13 @@ fikri genel yapılandırılmış NLP görevlerine uygular.
 zorlayabilir — **zorlanmamış bir modelin kendi başına uymayı nerede bıraktığı**
 ve zorlama devreye girdiğinde bunun neye mal olduğudur. Giderek zorlaşan dört
 şema, 150 dengeli yorum, iki model; şemaya uyum bir kez yalnızca istenerek
-(`asked`), bir kez de zorlanarak (`forced`) ölçüldü. Sütunlar sırasıyla
-ayrıştırılabilen çıktıların oranı, şemaya uyan çıktıların oranı, doğruluk ve
-madde başına saniye:
+(`asked`), bir kez de zorlanarak (`forced`) ölçüldü. Satırlardaki dört şema
+düzeyi şunlar: L1 düz bir nesne ve doğal etiketli bir enum (`flat, natural
+enum`), L2 doğal olmayan etiketli bir enum (`unnatural enum`), L3 iç içe nesne
+ve dizi (`nested + array`), L4 iç içe nesne ve null olabilen bir alan
+(`nested + nullable`). Sütunlar sırasıyla ayrıştırılabilen çıktıların oranı
+(`parses`), şemaya uyan çıktıların oranı (`schema-ok`), doğruluk (`accuracy`)
+ve madde başına saniye (`s/item`):
 
 ```text
 qwen3.5:9b                        parses  schema-ok  accuracy  s/item
@@ -455,7 +477,8 @@ sınıflandırmaya **yardım ettiğini** ve çok adımlı akıl yürütmeye
 **zarar verdiğini** buldu. GSM8K türü görevler JSON kipinde birkaç puan
 kaybetti; üstelik ayrıştırma hataları sıfıra yakındı. Yani kayıp ayrıştırmada
 değil, akıl yürütmede. Dolayısıyla bu bölümün sonucu onlarınkiyle çelişmiyor;
-onların sonucunun dar bir alt kümesi ve genel bir iddiaya dayanak olmuyor.
+onların bulgularının dar bir alt kümesiyle örtüşüyor ve genel bir iddiayı
+desteklemiyor.
 "Zorlamanın maliyeti yok" sonucunu bir düşünce zinciri görevine taşımayın;
 orada güvenli kalıp, modelin kısıtsız akıl yürütmesine izin verip yalnızca son
 cevap alanını kısıtlamaktır.
@@ -470,8 +493,9 @@ sayılmasını durdurdu.
 
 **Bedel gecikmedir ve tahmin edeceğiniz yerde değildir.** Ek yük **1,01 kat ile
 17,5 kat** arasında değişti (üst uç, zayıf modelin L4'teki değeri: madde başına
-0,53 saniyeden 9,26 saniyeye) ve şema karmaşıklığıyla birlikte monoton artmadı: L1 ve L3 ucuz, L2 ve L4
-pahalıydı. İki uç değer farklı modellere ait ve asıl bulgu da bu: `qwen3.5:9b`'de
+0,53 saniyeden 9,26 saniyeye) ve şema karmaşıklığıyla birlikte monoton artmadı:
+`llama3.2:3b`'de L1 ve L3 ucuz, L2 ve L4 pahalıydı; `qwen3.5:9b`'de ise en
+pahalısı L3'tü. İki uç değer farklı modellere ait ve asıl bulgu da bu: `qwen3.5:9b`'de
 gramerin bedeli 1,006 kat ile 1,13 kat arasında, yani **neredeyse maliyetsiz**;
 `llama3.2:3b`'de ise 1,5 kat ile 17,5 kat arasında. Model şemayla zaten
 uyuşuyorsa gramer ucuzdur; uyuşmuyorsa pahalıdır.
@@ -492,8 +516,8 @@ bağlı ve bunu ikisini de çalıştırmadan göremezsiniz.
 
 ### Neyi düzeltemez
 
-Bir gramer biçimi kısıtlar. Neyin doğru olduğunu bilemez ve bunun doğurduğu
-kusuru doğrudan görmeye değer. Örnek @sec-dizi-etiketleme-llm'den; orada şema,
+Bir gramer biçimi kısıtlar. Neyin doğru olduğunu bilemez; bunun doğurduğu
+kusuru doğrudan görelim. Örnek @sec-dizi-etiketleme-llm'den; orada şema,
 tam sayı tipinde bir `answer` alanı içeren bir nesne istiyordu:
 
 ```text
@@ -502,25 +526,27 @@ prompt: "What is the capital of France?"
   ->  {"answer": 1}
 ```
 
-Şema-geçerli, ayrıştırılabilir, tip olarak doğru ve anlamsız. [Kısıtlı çözümleme
+Şema-geçerli, ayrıştırılabilir, tip olarak doğru ve anlamsız. [Kısıtlı kod çözme
 bir ayrıştırma kusurunu anlamsal bir kusura dönüştürür]{.hl}. Bu genellikle
-istediğiniz takastır, çünkü doğrulayabileceğiniz yanlış bir değer, bir çökmeden
-iyidir. Ama bu bir takastır, bir çözüm değil. Size verdiği her garanti
+istediğiniz ödünleşimdir (trade-off), çünkü doğrulayabileceğiniz yanlış bir
+değer, bir çökmeden iyidir. Ama bu bir ödünleşimdir, bir çözüm değil. Size verdiği her garanti
 sözdizimseldir.
 
-Açıkça belirtmeye değer iki sonuç:
+Buradan iki sonuç çıkıyor:
 
 1. **Yalnızca yapıyı değil değerleri de doğrulayın.** Bir enum kontrol
    edilebilir; serbest metinli bir alan edilemez. Görev elverdiği ölçüde
    sözleşmenizdeki alanları enum'larla sınırlayın.
 2. **Bir şema kaçış kapısının yerine geçmez.** Modelin *bilmiyorum* demesinin
    geçerli bir yolu yoksa, gramer modelin bunun yerine başka bir şey söylemesini
-   garanti eder. Tipe `null` ekleyin ve — @sec-dizi-etiketleme'nin bulduğu
-   gibi — modelin onu gerçekten kullandığını kontrol edin.
+   garanti eder. Tipe `null` ekleyin ve modelin onu gerçekten kullandığını
+   ayrıca ölçün; bu kitapta ölçülmüş bir bulgu değil, bir kontrol adımı.
+   @sec-kume-adlandirma'in dediği gibi, hiç devreye girmeyen bir kaçış kapısı
+   süstür.
 
 ## Araç argümanlarını güvenilir kılmak {#sec-cozumleme-arac-arg}
 
-Yukarıdakilerin en çok işe yaradığı yer bilgi çıkarımı değil, araç çağrılarıdır.
+Yukarıdakilerin en çok işe yaradığı yer bilgi çıkarma değil, araç çağrılarıdır.
 Bir araç çağrısı zaten yapılandırılmış bir çıktıdır — bir işlev adı ve tipli bir
 argüman nesnesi — ve doğruluğu her zamankinden önemli kılan bir özelliği var:
 **sonrasında bir şey çalışıyor.**
@@ -541,7 +567,7 @@ bir gramere derler. Hangisini açtığınızı bilin.
 Yukarıdaki ölçümlerden üç kural çıkıyor.
 
 **Argümanları her zaman kısıtlayın.** Güçlü modeldeki iyi sonuç burada
-yetmez. %98 şema geçerliliği bilgi çıkarımı için mükemmel, yürütme için kabul
+yetmez. %98 şema geçerliliği bilgi çıkarma için mükemmel, yürütme için kabul
 edilemezdir: günde bin çağrıda bu, günde yirmi kusur demektir ve her biri bir
 stack trace (hataya yol açan çağrı zincirinin kaydı) ya da yanlış bir eylemdir.
 Gramer, tamamlanan her çağrı için bunu sıfıra indirir. Gecikme bedeli gerçektir ve şemadan şemaya değişir; ama yayına almadan
@@ -563,8 +589,13 @@ konusudur.
 
 Model her token'ın yanında ona atadığı log olasılığı da bildirir — token'ın
 [logprob](#gloss-logprob){#term-logprob .term-ref}'u. Bu, modelin ne kadar emin
-olduğuna dair mevcut en ucuz sinyaldir. Elde etmenin ek bir maliyeti yoktur ve
-çoğu hat onu çöpe atar.
+olduğuna dair mevcut en ucuz sinyaldir. API'niz onu döndürüyorsa elde etmenin
+ek bir maliyeti yoktur ve çoğu hat onu çöpe atar. Her barındırılan API ya da
+model logprob döndürmez; döndürenler de çoğu zaman yalnızca en olası birkaç
+adayı (`top_logprobs`) verir. Kullandığınız API'nin logprob verip vermediğini
+ve kaç aday döndürdüğünü önce kontrol edin: aşağıdaki yöntem için `A` ile
+`B`'nin ikisi de listede olmalı, yoksa iki seçenek üzerinden yeniden normalize
+etmek mümkün olmaz.
 
 Soru, bu sinyalin *kullanılabilir* olup olmadığı. Ölçüm `qwen3.5:9b` ile 400
 dengeli yorum üzerinde yapıldı. Cevap tek bir token'la sınırlandı: olumlu için
@@ -586,6 +617,10 @@ sıralamadığıdır: modelin emin olduğu maddeler, gerçekten doğru cevaplad�
 maddeler mi? Bu soruyu iki AUC cevaplıyor. AUC (ROC eğrisinin altındaki alan),
 rastgele seçilmiş bir olumlu örneğin rastgele seçilmiş bir olumsuzdan daha
 yüksek puan alma olasılığıdır: 0,5 şans düzeyi, 1 kusursuz sıralama demektir.
+Aşağıdaki çıktıda ilk AUC satırı etiket olasılığının olumluları olumsuzlardan
+ne kadar iyi ayırdığını, ikincisi güvenin modelin kendi doğru ve yanlış
+cevaplarını ne kadar iyi ayırdığını veriyor; son iki satır, model haklıyken ve
+yanılırken ortalama güvendir.
 
 ```text
 accuracy                                              86.75%
@@ -596,7 +631,8 @@ mean confidence when the model was right              0.9481
 mean confidence when the model was wrong              0.7793
 ```
 
-[Puan iyi ve model ne zaman emin olmadan cevap verdiğini biliyor.]{.hl} 0,9492'lik bir
+[Puan iyi; model tahmin yürüttüğü maddelere belirgin biçimde daha düşük güven
+veriyor.]{.hl} 0,9492'lik bir
 AUC, olasılığın olumluları olumsuzların üstünde sıralamada neredeyse eğitilmiş
 bir sınıflandırıcı kadar başarılı olduğunu söylüyor. 0,8268 ise güvenin, modelin
 kendi doğru cevaplarını yanlışlarından ayırdığını söylüyor.
@@ -605,8 +641,10 @@ kendi doğru cevaplarını yanlışlarından ayırdığını söylüyor.
 ### Kalibre değil
 
 Ayırt etme ile kalibrasyon farklı özelliklerdir ve ikincisi burada sağlanmıyor.
-Tablo 400 cevabı beyan edilen güvene göre kutulara ayırıyor. ECE (beklenen
-kalibrasyon hatası, tanımı @sec-siniflandirma'da), her kutudaki güven ile
+Tablo 400 cevabı beyan edilen güvene göre kutulara ayırıyor (`confidence bin`:
+güven aralığı, `n`: kutudaki madde sayısı, `accuracy`: kutudaki doğruluk,
+`mean confidence`: kutudaki ortalama güven). ECE (beklenen
+kalibrasyon hatası, tanımı @sec-siniflandirma'de), her kutudaki güven ile
 doğruluk arasındaki farkın, kutu büyüklükleriyle ağırlıklandırılmış
 ortalamasıdır:
 
@@ -627,15 +665,15 @@ ECE = 7.04%
 ```
 
 $[0{,}50;\ 1{,}00)$ üzerinde on eşit genişlikli kutu kullanıldı. Bunu belirtmek
-gerekir, çünkü ECE bu seçime duyarlıdır ve bu kutulama kimseyi kayırmıyor: 400
+gerekir, çünkü ECE bu seçime duyarlıdır ve bu kutulama sonucu güzelleştirmiyor: 400
 maddenin 284'ü en üst kutuya düşüyor ve %7,04'ün yaklaşık %44'ü tek başına bu
 kutudan geliyor. Eşit kütleli bir kutulama (her kutuya aynı sayıda madde
 düşer) ya da hiç kutu gerektirmeyen Brier skoru (verilen olasılıkla gerçekleşen
-0/1 sonuç arasındaki farkın karesinin ortalaması), aynı verinin daha dürüst bir
+0/1 sonuç arasındaki farkın karesinin ortalaması), aynı verinin daha sağlam bir
 özetidir.
 
-Tablodan iki sonuç çıkıyor ve ikisi aynı ölçüde sağlam değil. Model **orta
-bölgede aşırı emin**: %92,6 olasılık verdiği kutuda 25 maddenin 17'sinde
+Tablodan iki sonuç çıkıyor ve ikisi aynı ölçüde sağlam değil. Model **yüksek
+güven bölgesinde bile aşırı emin**: %92,6 olasılık verdiği kutuda 25 maddenin 17'sinde
 haklı. Bu %68,0'lık oranın %95 Wilson aralığı $[48;\ 83]$ ve aralığın tamamı
 modelin beyan ettiği güvenin altında kalıyor. Sağlam olan bulgu bu.
 
@@ -651,11 +689,11 @@ yaklaşık $-0{,}69$ eder. Eşik uygulamadan önce dönüştürün.)
 [0,5'e yakın bir etiket olasılığını "vakaların yarısında doğru" diye
 okumayın.]{.hl} Yine de işe yarayabileceği yer *sıralama*: kalibre olmayan bir
 skor, şüpheli belgeleri bir insana yönlendirmeye yetecek kadar iyi sıralayabilir
-ve aşağıdaki çekimserlik deneyi tam olarak bunu yapıyor. Bu kullanımı
+ve aşağıdaki çekimserlik deneyi bunu yapıyor. Bu kullanımı
 değerlendirirken bu kutuya değil, bir doğruluk–kapsam eğrisine bakın.
 
 Gerektirdiği çabaya göre sıralanmış iki çözüm var. **Sıcaklık ölçekleme**
-[@guo2017calibration], ayrı tutulmuş (held-out) bir dilimde tek bir skaler $T$
+[@guo2017calibration], ayrılmış (held-out) bir dilimde tek bir skaler $T$
 değeri kestirir ve logit'leri bu değere böler. Bu, @sec-cozumleme-ornekleme'deki
 $\exp(z/\tau)$ ifadesinin aynısıdır; tek farkı üretim sırasında değil, sonradan
 uygulanmasıdır. Monoton olduğu için AUC'yi ve bir sonraki kısımdaki çekimserlik
@@ -663,11 +701,14 @@ eğrisini *aynen* korur, ECE'yi ise genellikle en az yarı yarıya düşürür. 
 yüzden ilk denenecek yöntem budur. Tek bir skalerin düzeltebileceği şey,
 buradaki üst kutulardaki gibi *sistematik* bir aşırı güvendir; tablonun
 ortasındaki kutudan kutuya zikzakları gideremez. Tek bir skaler yetmiyorsa bir
-sonraki adım @sec-siniflandirma'nın izotonik ya da Platt eşlemesidir.
+sonraki adım @sec-siniflandirma'nin izotonik ya da Platt eşlemesidir.
 
 ### Çekimserlik için hemen kullanışlı
 
-Sinyal kalibre olmasa bile, ürettiği sıralama yönlendirme için yeterli:
+Sinyal kalibre olmasa bile, ürettiği sıralama yönlendirme için yeterli. İlk
+sütun en az güvenilen maddelerin yüzde kaçında çekimser kalındığını, ikincisi
+tutulan madde sayısını, üçüncüsü yalnızca tutulan maddeler üzerindeki
+doğruluğu veriyor:
 
 ```text
 abstain on the least-confident    kept    accuracy on what is kept
@@ -685,15 +726,15 @@ tutulan maddelerdeki doğruluğu modeli hiç değiştirmeden %86,75'ten %92,50'y
 doğruluğudur, hattın tamamının doğruluğu değil. Diğer 80'in neye mal olduğu —
 bir insanın ya da daha büyük bir modelin hata oranı — burada ölçülmedi ve uçtan
 uca sayı ikisinin kapsama ağırlıklı bileşimidir. Doğruluğu ve kapsamı *her zaman*
-birlikte raporlayın. Yine de bu, çoğu prompt mühendisliği çabasının
+birlikte raporlayın. Yine de bu, çoğu prompt (istem) mühendisliği çabasının
 sağladığından daha büyük bir kazanç ve bedeli de tek bir eşik.
 
 ::: {.column-margin}
 Bu, kitaptaki en ucuz yönlendirme sinyalidir ve diğer her şeyle
 birleştirilebilir: bir eşiğin altında çekimser kalın, çekimser kalınan maddeleri
 daha büyük bir modele aktarın ve kapsamı doğrulukla birlikte raporlayın. Eşiğin
-*veriden ayarlanan bir nicelik* olduğuna dikkat edin; onu ayrı tutulmuş bir
-dilimde seçin. Bu, @sec-siniflandirma'nın karar eşiğine uyguladığı disiplinin
+*veriden ayarlanan bir nicelik* olduğuna dikkat edin; onu ayrılmış bir
+dilimde seçin. Bu, @sec-siniflandirma'nin karar eşiğine uyguladığı disiplinin
 aynısı. Eşiği raporladığınız veride seçmek, aynı hatanın kılık değiştirmiş
 hâlidir.
 :::
@@ -798,7 +839,7 @@ hızla bozulur:
 Bu, bir çekince olduğu kadar bir tasarım argümanıdır da: **bir güven sinyali
 istiyorsanız görevi, cevap tek bir kısıtlı token olacak şekilde
 yapılandırın.** Bu tür etiketler doğruluktan ödün vermeyi de gerektirmez:
-@sec-promptlama'daki on iki prompt varyantının karşılaştırmasında anlamsız
+@sec-promptlama'deki on iki prompt varyantının karşılaştırmasında anlamsız
 `A`/`B` etiketlerini kullanan varyant ikinci oldu ve `olumlu`/`olumsuz`
 etiketli varyantın on puandan fazla önüne geçti.
 
@@ -830,7 +871,7 @@ edemeyen, çıktıyı kullanan bir sistem ya çöker ya da anlamsız bir şey g�
 `None`'ın iki anlama gelmesine izin vermek yerine bu durumu açıkça modelleyin:
 bir alan ya eksiktir, ya beklemededir ya da mevcuttur.
 
-@sec-cozumleme-kisitli'den pratik bir not çıkıyor: bir gramer ve artımlı bir
+@sec-cozumleme-kisitli'ten pratik bir not çıkıyor: bir gramer ve artımlı bir
 ayrıştırıcı, aynı otomatın iki uçtan görünüşüdür.
 
 Üretimi zaten kısıtlıyorsanız, hangi token'lara izin verildiğine karar veren
@@ -846,25 +887,25 @@ bölümün tartışmayla değil ölçümle çözdüğü sorular.
 ::: {.callout-note collapse="true"}
 ## 1. Sıcaklığı düşürmek modeli daha doğru yapar mı?
 
-Modeli daha *belirlenimci* yapar; bu aynı şey değildir. Sıcaklık softmax'ten
+Modeli daha *belirlenimci* yapar; bu aynı şey değildir. Sıcaklık softmax'tan
 önce logit'leri yeniden ölçekler. Dolayısıyla seçenekler arasındaki kontrastı
 değiştirir ama sıralamayı asla değiştirmez: $\tau = 0{,}1$'deki argmax token'ı
 ile $\tau = 1{,}9$'daki argmax token'ı aynıdır.
 
-Yani greedy çözümleme bir maddede yanılıyorsa, sıcaklığı düşürmek bunu
+Yani greedy kod çözme bir maddede yanılıyorsa, sıcaklığı düşürmek bunu
 düzeltmez; yalnızca modelin daha tutarlı biçimde yanılmasını sağlar. Sıcaklığın
 kontrol ettiği şey varyanstır. Sıcaklığı düşürmek örneklenen çıktının
 doğruluğunu *artırabilir* — her çekiliş argmax'a daha sık denk gelir;
-@sec-makine-cevirisi'nin 1,0 sıcaklıkta gördüğü de buydu. Ama sıcaklık
+@sec-makine-cevirisi'in 1,0 sıcaklıkta gördüğü de buydu. Ama sıcaklık
 düştükçe örneklenen çıktının doğruluğu greedy'ninkine yaklaşır; limitte ikisi
 aynıdır ve argmax'ı yanlış olan bir madde yanlış kalır.
 :::
 
 ::: {.callout-note collapse="true"}
-## 2. JSON ayrıştırma kusur oranınız %2. Kısıtlı çözümleme buna değer mi?
+## 2. JSON ayrıştırma kusur oranınız %2. Kısıtlı kod çözme buna değer mi?
 
 Tümüyle sonrasında ne olduğuna bağlı. Çıkarılan bilgi bir tabloya yazılacaksa
-%2, bir yeniden deneme demektir; üzerinde durmaya değmez. **Araç çağrıları için
+%2, bir yeniden deneme demektir; üzerinde durmaya gerek yok. **Araç çağrıları için
 %2, her ellinci istekte yanlış bir eylem ya da bir stack trace demektir**; cevap,
 tartışmaya gerek kalmadan evettir.
 
@@ -880,9 +921,9 @@ ettiği yerdeydi.
 talep eden bir şema, Fransa'nın başkenti için `{"answer": 1}` döndürdü —
 geçerli, tipli, ayrıştırılabilir, anlamsız.
 
-Kısıtlı çözümleme ayrıştırma kusurlarını anlamsal kusurlara dönüştürür. Bu
-genellikle istediğiniz takastır, çünkü yanlış bir değer doğrulanabilir, bir
-çökme doğrulanamaz — ama bir takastır. Görev elverdiği ölçüde alanları
+Kısıtlı kod çözme ayrıştırma kusurlarını anlamsal kusurlara dönüştürür. Bu
+genellikle istediğiniz ödünleşimdir, çünkü yanlış bir değer doğrulanabilir, bir
+çökme doğrulanamaz — ama yine de bir ödünleşimdir. Görev elverdiği ölçüde alanları
 enum'larla sınırlayın, değerleri yapıdan ayrı doğrulayın ve modele *bilmiyorum*
 diyebileceği açık bir çıktı seçeneği verin.
 :::
@@ -911,7 +952,7 @@ dışında hiçbir şeyi kanıtlayamayacak kadar da geniş.
 
 Ama *sıralama* iyiydi — kendi doğruluğunu öngörmede AUC 0,8268 — ve
 yönlendirme için bu yeterli. Logprob'ları maddeleri sıralamak için kullanın,
-yüzde raporlamak için değil; sayının kendisine ihtiyacınız varsa ayrı tutulmuş
+yüzde raporlamak için değil; sayının kendisine ihtiyacınız varsa ayrılmış
 bir dilimde kalibre edin.
 :::
 
@@ -940,14 +981,14 @@ bölümün ölçümlerinin cevaplanabilir kıldığı sorular eklendi.
 
 **S: Sıcaklık gerçekte ne yapar?**
 
-Softmax'ten önce logit'leri yeniden ölçekler, $p_i \propto \exp(z_i/\tau)$.
+Softmax'tan önce logit'leri yeniden ölçekler, $p_i \propto \exp(z_i/\tau)$.
 Üzerine düşündüğünüzü gösteren sonucu söyleyin: **sıralamayı asla değiştirmez**,
 yalnızca kontrastı; dolayısıyla sıcaklık yanlış bir argmax'ı düzeltemez. Sonra
 onu top-k ve top-p'den ayırın: bunlar adayları tümüyle kaldıran sert
 kesimlerdir. Min-p'den de ayırın: onun kesimi en üst token'ın olasılığıyla
 ölçeklenir, bu yüzden dağılımın ne kadar sivri olduğuna uyum sağlar.
 
-**S: Kısıtlı çözümleme nasıl çalışır?**
+**S: Kısıtlı kod çözme nasıl çalışır?**
 
 Şemayı tokenizer'ın sözlüğü üzerinde bir otomata derleyin. Her adımda, gramere
 uygun biçimde devam edemeyecek her token'ın logit'ini maskeleyin. Geçersiz çıktı
@@ -956,7 +997,7 @@ devam eder: sözdizimini garanti eder, başka hiçbir şeyi değil; ve gecikmeye
 olur. Bu bedel burada 1,01 kat ile 17,5 kat arasında ölçüldü; en kötü sonuç,
 şemanın modelin üretmek istemediği bir şeyi talep ettiği yerde çıktı.
 
-**S: Beam search neden çeviride standart da sohbette kullanılmıyor?**
+**S: Beam search neden çeviride standart, sohbette ise kullanılmıyor?**
 
 Çünkü beam search en yüksek olasılıklı *diziyi* arar; bu da görevin
 yaklaşık tek bir doğru cevabı olduğunda istediğiniz, çok cevabı olduğunda ise
@@ -977,16 +1018,18 @@ için desenler; böylece bütün hata sınıfları erişilemez olur. Sonra kıs�
 gerçekten uygulandığını doğrularım, çünkü `format`'ı yok sayan bir sunucu
 sessizce başarısız olur. Ve geçerli bir çağrının yine de doğru bir çağrı
 olmadığını açıkça söylerim: id'nin tipi doğru, değeri yanlış olabilir. Bu da
-çözümleyicinin değil, araç tasarımının problemidir (@sec-arac-tasarimi).
+kod çözücünün değil, araç tasarımının problemidir (@sec-arac-tasarimi).
 
 **S: Sisteminize "bilmiyorum" dedirtmeyi nasıl sağlarsınız?**
 
 Ona bunu söyleyebileceği açık bir çıktı seçeneği verin — şemada bir `null`
 ya da açık bir çekimserlik değeri. Sonra bu seçeneği ne zaman kullanacağına
 karar veren bir eşik belirleyin. Cevabı tek bir token'a kısıtlayın,
-logprob'unu okuyun ve eşiği ayrı tutulmuş bir dilimde seçin. Burada ölçüldü:
-modelin en az emin olduğu %20'de çekimser kalmak doğruluğu %86,75'ten
-%92,50'ye çıkardı; modelde hiçbir değişiklik gerekmedi. Kapsamı doğrulukla
+logprob'unu okuyun ve eşiği ayrılmış bir dilimde seçin. Burada ölçüldü:
+modelin en az emin olduğu %20'de çekimser kalmak, tutulan maddelerdeki
+doğruluğu %86,75'ten %92,50'ye çıkardı (kapsam %80); modelde hiçbir değişiklik
+gerekmedi, ama çekimser kalınan %20'nin nereye gittiği ve neye mal olduğu
+ayrıca ölçülmeli. Kapsamı doğrulukla
 birlikte raporlayın, yoksa sayı anlamsızdır.
 
 **S: Değerlendirmeniz, modelin %92 emin olduğunu ve vakaların %68'inde haklı
@@ -996,8 +1039,8 @@ Modelde bir sorun yok; siz bir ayırt etme sinyalini kalibrasyon sinyali olarak
 okuyorsunuz.
 Logprob cevapları iyi sıraladı — kendi doğruluğunu öngörmede AUC 0,8268 —
 ama kalibrasyonu kötüydü: ECE %7,04. Sıralamayı yönlendirme için kullanın;
-sayının kendisine ihtiyacınız varsa ayrı tutulmuş veride kalibre edin. Gereken
-yöntemler @sec-siniflandirma'da.
+sayının kendisine ihtiyacınız varsa ayrılmış veride kalibre edin. Gereken
+yöntemler @sec-siniflandirma'de.
 
 ## 2026 alet çantası {#sec-cozumleme-araclar}
 
@@ -1010,15 +1053,15 @@ Bu bölümdeki her şey aşağıdaki sürümlerle tek bir dizüstü bilgisayarda
 
 : Bu sayıların çıktığı yığın {tbl-colwidths="[24,16,60]"}
 
-Bilmeye değer, yukarıda kullanılmadı:
+Yukarıda kullanılmayan ama bilinmesi gereken araçlar:
 
 | kütüphane | güncel sürüm | ne zaman kullanılır |
 |:--|:--|:--|
-| `outlines` | 1.3.3 | @sec-cozumleme-kisitli'deki otomatın referans uygulaması [@willard2023efficient]; grameri bir sunucu bayrağının arkasında değil, kendi sürecinizin içinde çalıştırmak istediğinizde |
+| `outlines` | 1.3.3 | @sec-cozumleme-kisitli'teki otomatın referans uygulaması [@willard2023efficient]; grameri bir sunucu bayrağının arkasında değil, kendi sürecinizin içinde çalıştırmak istediğinizde |
 | `xgrammar` | 0.2.5 | aynı fikrin verim için optimize edilmiş hâli; yukarıda ölçülen 17,5 katlık ek yük kabul edilemez olduğunda başvurulacak araç |
 | `lm-format-enforcer` | 0.11.3 | `transformers` ve `vLLM` üretim döngülerine takılan şema zorlaması |
 | `guidance` | 0.3.1 | üretimi sabit şablon metniyle iç içe geçirir; böylece model yalnızca boşlukları doldurur |
-| `pydantic` / `jsonschema` | 2.13.4 / 4.26.0 | gramer biçimi garanti ettikten sonra değerleri doğrulamak — @sec-cozumleme-kisitli'de hâlâ atmanız gerektiği savunulan adım |
+| `pydantic` / `jsonschema` | 2.13.4 / 4.26.0 | gramer biçimi garanti ettikten sonra değerleri doğrulamak — @sec-cozumleme-kisitli'te hâlâ atmanız gerektiği savunulan adım |
 
 : Daha geniş ekosistem, yazıldığı andaki sürümler {tbl-colwidths="[22,16,62]"}
 
@@ -1033,7 +1076,7 @@ yok* için açık bir null. Şema şartnamedir; prompt ise onu isteme biçiminiz
 
 ### Adım 2 — zorlanmamış baseline'ı ölçün
 
-Buradaki baseline (taban model), zorlamasız hâlin kendisidir. Şemayı 150
+Buradaki baseline (karşılaştırma tabanı), zorlamasız koşulun kendisidir. Şemayı 150
 maddede, zorlama olmadan yalnızca prompt'ta isteyin. Ayrıştırma oranını, şema
 geçerliliğini ve doğruluğu kaydedin. Güçlü bir modelde %98 civarı bekleyin;
 mesele de bu: **zorlamanın ne kazandırdığını bilmek için bu sayıya ihtiyacınız
@@ -1063,7 +1106,7 @@ olabilir ve kayıtlarınızda yalnızca biri görünür.
 ### Adım 6 — çekimserlik ekleyin
 
 Cevap alanını tek bir token'a kısıtlayın, logprob'unu okuyun ve doğruluk–kapsam
-eğrisini çizin. Eşiği ayrı tutulmuş bir dilimde seçin — raporladığınız veride
+eğrisini çizin. Eşiği ayrılmış bir dilimde seçin — raporladığınız veride
 değil — ve hangi kapsamda yayına aldığınızı belirtin.
 
 ### Neyi teslim edeceksiniz
@@ -1075,13 +1118,13 @@ kusurları kapsamadığına dair bir paragraf.
 ## Alıştırmalar {#sec-cozumleme-alistirmalar}
 
 1. Sıcaklık ölçeklemesinin argmax token'ı asla değiştirmediğini cebirsel olarak
-   gösterin. Bu, greedy çözümleme hakkında ne ima ediyor?
+   gösterin. Bu, greedy kod çözme hakkında ne ima ediyor?
 2. Gezginde $\tau = 1$ ve top-k $= 12$ ayarlayın. En az dört token'ı hâlâ tutan
    en küçük top-p'yi bulun ve cevabınızın arkasındaki kümülatif kütle mantığını
    açıklayın.
 3. Sıcaklığı 0 yapın ve aynı prompt'u barındırılan bir API üzerinde 20 kez
    çalıştırın. Çıktılar birebir aynı mı? Bulduğunuzu açıklayın.
-4. %40 JSON kusur oranı olan bir bilgi çıkarımı görevi alın. Kısıtlı çözümleme ekleyin
+4. %40 JSON kusur oranı olan bir bilgi çıkarma görevi alın. Kısıtlı kod çözme ekleyin
    ve yeni kusur oranını — ve yeni hata biçimlerini — raporlayın.
 
 ## Daha derine {#sec-cozumleme-derinlesme}
@@ -1092,11 +1135,11 @@ nasıl raporlanması gerektiğine karar verir.
 
 | kaynak | ne olduğu |
 |:--|:--|
-| [`outlines`](https://github.com/dottxt-ai/outlines) | kütüphane olarak kısıtlı üretim; kaynak kodu @sec-cozumleme-kisitli'deki otomatın en net açıklamasıdır |
-| [How to generate text](https://huggingface.co/blog/how-to-generate) — Hugging Face | çözümleme stratejileri, çalıştırılabilir kod ve her birinin başarısız olduğu dürüst örneklerle |
+| [`outlines`](https://github.com/dottxt-ai/outlines) | kütüphane olarak kısıtlı üretim; kaynak kodu @sec-cozumleme-kisitli'teki otomatın en net açıklamasıdır |
+| [How to generate text](https://huggingface.co/blog/how-to-generate) — Hugging Face | kod çözme stratejileri, çalıştırılabilir kod ve her birinin başarısız olduğu örneklerle |
 | [Controllable Text Generation](https://lilianweng.github.io/posts/2021-01-02-controllable-text-generation/) — Lilian Weng | bu bölümün yalnızca bir kısmına değindiği alanı derinlemesine tarayan bir yazı |
 | [`vllm`](https://github.com/vllm-project/vllm) | üretim ortamında model sunma, yapılandırılmış çıktı desteğiyle; gerçekte hangi ayarların kullanıcıya açıldığını görmek için örnekleme parametrelerini okuyun |
-| [Stanford CS336](https://stanford-cs336.github.io/spring2025/) | çıkarım ve çözümlemeyi uygulama tarafından da içeriyor |
+| [Stanford CS336](https://stanford-cs336.github.io/spring2025/) | çıkarım ve kod çözmeyi uygulama tarafından da içeriyor |
 | [Let's build GPT: from scratch](https://www.youtube.com/watch?v=kCc8FmEb1nY) — Andrej Karpathy | videonun başlarında bigram baseline'ı için yazılan `generate` işlevi, olabilecek en basit örnekleme döngüsüdür (softmax, ardından bir token çekmek); duraklatıp düzenleyebileceğiniz kod hâlinde. nanoGPT'deki sürümü buna sıcaklık ve top-k ekler |
 
 : Makalelerin ötesi {tbl-colwidths="[42,58]"}
@@ -1108,12 +1151,16 @@ nasıl raporlanması gerektiğine karar verir.
 | bir şemayı token maskesine derlemek | @willard2023efficient |
 | genel yapılandırılmış görevler için aynı fikir | @geng2023grammar |
 | modellerin ne bildiklerini bilip bilmedikleri | @kadavath2022language |
+| adım adım maskelemenin modelin dağılımını nasıl bozduğu | @park2024grammar |
+| format kısıtının sınıflandırmaya yardım edip akıl yürütmeye zarar vermesi | @tam2024format |
+| sıcaklık ölçeklemeyle kalibrasyon | @guo2017calibration |
+| tekrar cezasının kaynağı | @keskar2019ctrl |
 
 : Birincil kaynaklar {tbl-colwidths="[46,54]"}
 
 ## Akılda kalması gerekenler {#sec-cozumleme-ozet}
 
-- **Sıcaklık sıralamayı asla değiştirmez.** Softmax'ten önce logit'leri yeniden
+- **Sıcaklık sıralamayı asla değiştirmez.** Softmax'tan önce logit'leri yeniden
   ölçekler, dolayısıyla varyansı kontrol eder; onu düşürmek örneklenen çıktının
   doğruluğunu greedy'ninkine yaklaştırır, limitte ikisi aynıdır. Greedy bir
   maddede yanılıyorsa, daha düşük bir sıcaklık onun daha tutarlı biçimde
@@ -1144,11 +1191,11 @@ nasıl raporlanması gerektiğine karar verir.
   şemanızda ölçün.
 
 - **Bir şema biçimi garanti eder, asla doğruluğu değil.** Fransa'nın başkenti
-  için `{"answer": 1}` geçerli, tipli ve anlamsızdır. Kısıtlı çözümleme
-  ayrıştırma kusurlarını anlamsal kusurlara çevirir; bu iyi bir takastır, bir
-  çözüm değil.
+  için `{"answer": 1}` geçerli, tipli ve anlamsızdır. Kısıtlı kod çözme
+  ayrıştırma kusurlarını anlamsal kusurlara çevirir; bu iyi bir ödünleşimdir,
+  bir çözüm değil.
 
-- **Araç argümanlarını tartışmadan kısıtlayın.** %98 bilgi çıkarımı için yeterlidir,
+- **Araç argümanlarını tartışmadan kısıtlayın.** %98 bilgi çıkarma için yeterlidir,
   ama ardından bir şey çalıştırılacaksa kabul edilemez: günde bin çağrıda bu,
   yirmi yanlış eylem ya da stack trace demektir.
 
@@ -1158,12 +1205,17 @@ nasıl raporlanması gerektiğine karar verir.
   **15 maddenin 5'inde** doğruydu, üstelik ciddi bir belirsizlikle. Onlarla
   sıralayın; onları olasılık diye aktarmayın.
 
-- **Çekimserlik, doğruluğu artırmanın en ucuz yoludur.** Modelin en az emin
-  olduğu %20'yi dışarıda bırakmak doğruluğu **%86,75'ten %92,50'ye** çıkardı;
-  modelde hiçbir değişiklik gerekmedi. Eşiği ayrı tutulmuş veride seçin ve
-  kapsamı onunla birlikte raporlayın.
+- **Çekimserlik, tutulan maddelerde doğruluğu artırmanın en ucuz yoludur.**
+  Modelin en az emin olduğu %20'yi dışarıda bırakmak, tutulan maddelerdeki
+  doğruluğu **%86,75'ten %92,50'ye** çıkardı (kapsam %80); modelde hiçbir
+  değişiklik gerekmedi. Diğer %20'nin maliyeti ayrıca ölçülmeli. Eşiği
+  ayrılmış veride seçin ve kapsamı onunla birlikte raporlayın.
 
 - **Kullanılabilir bir güven sinyali bulunmaz, tasarlanır.** Burada işe yaradı,
   çünkü cevap iki token'lık bir alfabeden tek bir token'dı. Serbest metin
   üzerinde logprob'ların ortalamasını almak, ifadenin ne kadar sıradan olduğunu
   ölçer.
+
+Modelin bilmediği bir şeyi sorduğunuzda bu bölümdeki ayarların hiçbiri yardım
+etmez; @sec-erisim, üretimden önce doğru belgeleri bulup bağlama koyan adıma,
+erişime geçiyor.
