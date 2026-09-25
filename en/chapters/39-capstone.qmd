@@ -36,7 +36,7 @@ The requirements that shape everything:
 |:--|:--|
 | Turkish, including the morphology that breaks naive tokenisation | @sec-turkish-nlp, and every eval set below |
 | Customer messages contain national IDs, IBANs and addresses | @sec-guardrails, @sec-governance |
-| A return is money leaving the company | @sec-guardrails' reversibility taxonomy |
+| A refund is money leaving the company | @sec-guardrails' reversibility taxonomy |
 | Answers must be traceable to a policy document | @sec-rag, @sec-observability |
 | One platform team, five product teams wanting agents | @sec-capstone-platform |
 
@@ -73,7 +73,7 @@ design just as much.
 | **PII** (personal data) | detect and tokenise reversibly at the boundary | mask destructively — safe and it breaks order lookup (@sec-guardrails) |
 | **Refunds** | agent proposes, service enforces the ceiling, human approves above it | agent calls the refund API with a limit in the prompt — a limit in a prompt is a request (@sec-agent-security) |
 | **Eval** | golden set in the repo, gate on every prompt change | manual spot-checks before release — @sec-production-eval measured what slips through |
-| **Where the provider sits** | a Türkiye-region deployment where one exists, otherwise a standard contract under Article 9 of KVKK, Türkiye's personal-data protection law | "the gateway abstracts it away" — the gateway centralises the choice, it does not make it a technical one (@sec-governance-kvkk) |
+| **Where the provider sits** | a Türkiye-region deployment where one exists (with the contract confirming no remote access from abroad, since even support access from abroad can count as a transfer), otherwise a standard contract under Article 9 of KVKK, Türkiye's personal-data protection law | "the gateway abstracts it away" — the gateway centralises the choice, it does not make it a technical one (@sec-governance-kvkk) |
 
 : Seven decisions; the rejected column is the one to read
 {tbl-colwidths="[16,34,50]"}
@@ -148,7 +148,9 @@ after it. At the shape this design aims for — a thousand tokens of context and
 a two-sentence Turkish answer, call it 150 tokens — prefill is 0.50 s and
 decode is 0.79 s, so **decode is the larger term**, and time-to-first-token
 stops being the thing to optimise. That is a consequence of the design, not an
-argument against it.
+argument against it. The arithmetic is per model call: an agent conversation
+makes several (tool call, tool result, answer), each paying prefill again, so
+multiply by calls per conversation for the conversation's latency.
 
 Prompt caching still goes first, because it is free of quality risk: warm
 prefill measured **flat at 12–16 ms regardless of prompt length**. But scale
@@ -168,7 +170,8 @@ priced at three to five times input (@sec-summarization), so the same 53 are
 worth roughly 160–265 input tokens. Either way, [sending less saves more than
 writing less — but the output side is not negligible]{.hl}. At 40,000
 conversations a month with a few model calls each, every token of boilerplate
-in your system prompt is paid on every call, so it deserves the same scrutiny
+in your system prompt is paid on every call (at a discount on most providers when
+it is served from cache), so it deserves the same scrutiny
 as the choice of model.
 
 **Telemetry.** @sec-observability measured **4.8 spans and 3,167 bytes per run**
@@ -184,7 +187,7 @@ Multiply both by *r*; the volume is small either way. At a million runs it is
 it deliberately, and sample content while keeping it on every error.
 
 **Evaluation.** @sec-llm-eval's sizing says that, comparing two systems on
-separate samples at 80% power from an 80% baseline, 100 items resolves a
+separate samples at 80% power (two-sided α = 0.05) from an 80% baseline, 100 items resolves a
 13.4-point difference and 1,000 resolves 4.8 — so a hundred-item golden set
 finds broken, not better. A gate that compares runs on the same items is what
 makes small regressions visible anyway. Grow the fifty cases of step 1 above toward
@@ -264,8 +267,23 @@ bump (@sec-agent-security).
 
 **At the fifth agent**, nobody can answer "how many agents do we run and what can
 they reach". An **agent registry** — one row per agent, listing its tools, its
-data access, its owner and its reversibility profile — is unglamorous and is the
-artefact every audit, incident and cost review will need (@sec-governance).
+data access, its owner, its lawful basis and its reversibility profile — is
+unglamorous and is the artefact every audit, incident and cost review will need
+(@sec-governance). One row for this chapter's support agent:
+
+| field | value for the support agent |
+|:--|:--|
+| owner | a named person and their team |
+| tools and reversibility class | find order and check shipment: no state change; open return request: reversible with effort (can be cancelled) — classes from @sec-guardrails |
+| data access | order and shipping records; PII tokenised at the boundary |
+| lawful basis and transfer | the processing condition set by legal; if the provider is abroad, the standard contract and its notification date (@sec-governance-kvkk) |
+| model | the version pinned at the gateway (@sec-gateway) |
+| evidence | the eval gate's threshold and the latest attack success rate, with dates |
+
+: One row of the agent registry {tbl-colwidths="[30,70]"}
+
+The registry is filled in as a required step when an agent ships;
+attempted after an incident, it cannot be reliably reconstructed.
 
 **At the tenth agent**, the platform team becomes the bottleneck, and the
 resolution is a golden path rather than a review queue: a template repository
@@ -316,7 +334,10 @@ a Turkish company handling TCKN and IBAN, so a US-hosted provider is a transfer
 abroad under KVKK Article 9, and @sec-governance-kvkk has the consequence. When
 that chapter was written, the KVKK Board had issued no adequacy decision for any
 country, so the route is the published standard contract with its
-five-business-day notification; check the Board's page before relying on that.
+five-business-day notification. The standard contract must be used exactly as the
+Board published it, without any change (Article 14(3) of the transfer
+regulation); the provider's own DPA or the EU's standard contractual clauses do
+not substitute for it. Check the Authority's page before relying on that.
 Tokenising PII at the boundary does not make the question go away: the
 detector catches identifiers with a fixed format, not names, addresses or what
 customers write about themselves. If the company is a bank, a
@@ -445,9 +466,10 @@ classification already wired makes the compliant way the fastest way, which is
 the only version of governance that survives contact with a deadline.
 
 Plus one artefact nobody wants to own: an **agent registry** — one row per agent
-with its tools, data access, owner and reversibility profile. Every audit,
-incident and cost review needs it, and reconstructing it after the fact depends on
-whatever other records happen to survive — the same limit as
+with its tools, data access, owner, lawful basis and reversibility profile.
+Every audit, incident and cost review needs it, and it cannot be reliably
+reconstructed after the fact: at most you can piece together what other surviving
+records (invoices, access logs) allow — the same limit as
 @sec-observability's cost dimensions.
 :::
 
@@ -507,8 +529,8 @@ a cascade to a routing decision: answer with the small model and escalate on a
 runtime validity check, because a validator is a signal you actually have at
 request time, where predicted difficulty is a guess — @sec-classification
 measured verbalised confidence as a detector of a model's own errors at AUROC
-0.667, against 0.843 for a real probability, which is real signal and not enough
-to route on blindly.
+0.667, against 0.843 for a fine-tuned BERTurk classifier's score, which is real
+signal and not enough to route on blindly.
 
 ### Testing whether you have run a platform
 
@@ -527,8 +549,8 @@ A tool changed by one team breaking another team's agent, because tool
 definitions are shared context and nobody treated them as an interface. Version
 them, give them owners, and review changes as dependency bumps. Shortly after
 that: nobody can answer what agents exist and what they can reach, which is the
-registry's job, and which is only as reconstructable later as the other records
-that happen to survive.
+registry's job; if it was not kept from the start it cannot be reliably rebuilt
+later, only pieced together from whatever other records survive.
 
 **Q: Your agent platform's costs tripled. How do you find out why?**
 
@@ -542,8 +564,8 @@ ticket rather than per session, or a feature nobody completes will look cheap.
 ## The 2026 toolbox {#sec-capstone-tools}
 
 This chapter runs nothing, so there is no measurement stack. The second table is
-the assembled set — the tools named across Part VI, in the order a platform
-adopts them.
+the assembled set — the tools named across Part VI, in layer order (not adoption
+order: as above, the eval and the attack come before the agent).
 
 | library | version used | what it is for here |
 |:--|:--|:--|
@@ -557,7 +579,7 @@ The platform's shape, as a reading list of what earlier chapters recommended:
 |:--|:--|:--|
 | serving | `vllm`, `sglang`, `ollama` for local work | @sec-serving |
 | gateway | `litellm` and equivalents, for attribution and pinning | @sec-gateway |
-| durable execution | a workflow engine with checkpointed state | @sec-deployment |
+| durable execution | a workflow engine with checkpointed state: `temporalio` (Temporal), `restate-sdk` (Restate) | @sec-deployment |
 | tracing | `opentelemetry-sdk` plus a UI such as `arize-phoenix` or `langfuse` | @sec-observability |
 | eval gate | `promptfoo`, `inspect-ai` or `deepeval` in CI | @sec-production-eval |
 | security testing | `agentdojo`, `PyRIT`, `garak` | @sec-agent-security |
