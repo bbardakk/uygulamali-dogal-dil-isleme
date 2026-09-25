@@ -57,7 +57,10 @@ crude. Take one invented fact — *the approved 2025 budget for project ZRG-14 i
 743,912 lira* — that no model can know or guess. Put it in a context alongside
 genuine Turkish news articles as distractors. Ask for the number, and score by
 exact match, so there is no grading ambiguity. Then vary two things: how many
-documents are in the context, and **where the fact sits**.
+documents are in the context, and **where the fact sits**. There is no
+retrieval step in this test — the documents go straight into the context — so
+the `retrieval failures` counter in the last line does not measure retrieval
+here.
 
 ```text
 qwen3.5:9b, 40 invented facts per cell, temperature 0, exact-match scoring
@@ -117,8 +120,9 @@ relevant passage must be identified on meaning rather than matched on a rare
 token, and that is where the effect is most robust.
 
 Note that context length is not the difference between us: their
-multi-document setting tops out at 30 hundred-word passages, roughly 4,000
-tokens, which is a quarter of my longest condition. The difference is the
+multi-document setting tops out at 30 passages of at most 100 tokens each,
+about 4,400–5,200 tokens on average depending on the tokenizer, which is between
+a quarter and a third of my longest condition. The difference is the
 needle, not the haystack. Their measurements were also taken on a 2023
 generation of models, and long-context handling is precisely the thing that has
 had the most engineering attention since.
@@ -135,7 +139,8 @@ the narrow true thing than the wide familiar one: **on this model, at up to
 16,775 tokens, with a lexically easy needle, no positional effect large enough
 for forty queries per cell to see.**
 
-If your retrieval task looks like that, stop worrying about position. If it
+If your retrieval task looks like that, on a similar-sized model at similar
+context lengths, position is probably not your first worry. If it
 does not, this table tells you nothing about your case — and the way to find
 out is to run the same experiment with *your* needles, which is an afternoon.
 
@@ -153,9 +158,11 @@ the measurement actually lands.
 
 [The cost of not retrieving is not that the model gets it wrong. It is that
 you pay 148 times over to be equally right.]{.hl} You pay it on every request
-that cannot be served from a cache, and attention cost grows faster than
-linearly in sequence length, so the latency bill grows faster than the token
-bill.
+that cannot be served from a cache, and as the context grows, attention's
+quadratic share of the compute grows with it, so latency rises faster than the
+token count. (At this model size and around 16K tokens, most prefill compute is
+still in layers that scale linearly; the quadratic term dominates at longer
+contexts.)
 
 **Prompt caching is the honest rebuttal to that number and it deserves stating
 plainly.** A stable corpus prefix can be cached: cached input is billed at a
@@ -190,8 +197,8 @@ standard metrics for scoring each half of the system.
 ## The canonical pipeline {#sec-rag-pipeline}
 
 If retrieval is what stops you paying for 79 documents you did not need, the
-next question is what the machinery actually consists of. Every RAG system is
-the same seven stages. Naming them separately is what makes @sec-rag-failures
+next question is what the machinery actually consists of. A typical RAG system
+has seven stages (some, such as reranking, are not present in every system). Naming them separately is what makes @sec-rag-failures
 possible, because each one can fail on its own.
 
 :::: {.anlp-fig}
@@ -313,7 +320,7 @@ the pipeline runs, the numbers look plausible, and the answer is wrong for a
 reason nobody is looking at. Read fifty parsed documents by hand before
 tuning anything else.
 
-**Stage 5 sets a ceiling on stage 7.** @sec-retrieval measured this and it is
+**Stage 5 sets a ceiling on stage 7.** @sec-retrieval showed this and it is
 the single most useful fact in the chapter: if recall@k is 80% for the *k* you
 pass to the model, then 20% of questions cannot be answered *from the retrieved
 text* before generation starts, and no prompt engineering reaches them. (The
@@ -454,7 +461,8 @@ strengthen that finding, not weaken it.
 **Recall@5 is not deduplicated by article.** Five chunks from a 50-word index
 can be five slices of one document; five chunks from the whole-article index
 are necessarily five different documents. Fine-grained indexes are therefore
-penalised at rank 5 for spending their slots well, and an unknown part of the
+penalised at rank 5 because several of their five slots can go to slices of
+the same article, and an unknown part of the
 ten-point R@5 gap in condition A is that artefact rather than chunking.
 
 **And $n = 400$ per condition, so a 95% interval is about ±4.6 points in A and
@@ -725,13 +733,19 @@ for q, gold_doc, expected in evaluation_set:
         bucket["grounding miss"] += 1          # fix the prompt, or the model
     else:
         bucket["synthesis miss"] += 1          # fix decomposition, or the task
+                                               # (or a bad source/label: inspect)
 ```
 
 Read the three tests in order. Only wrong answers are attributed. If the gold
 document never arrived, nothing downstream could have saved it. If it arrived
 but the answer is not supported by the retrieved text, the model ignored or
 contradicted its evidence. If every claim is supported and the conclusion is
-still wrong, the facts were combined wrongly. In practice `==` becomes a
+still wrong, the facts were usually combined wrongly. But the last bucket also
+collects two other causes: the retrieved document itself may be wrong, stale or
+contradicted by another document (a corpus error), or the reference answer may
+be wrong (a label error). Their fixes differ from a synthesis fix, so inspect
+this bucket by hand; a supported but wrong answer drawn from a single chunk
+points at the source rather than at synthesis. In practice `==` becomes a
 normalised match or a judge, and `answer_supported_by` is the faithfulness
 check defined at the end of this section.
 
@@ -797,7 +811,8 @@ claims, three of which the retrieved chunks support, scores 3/4 = 0.75, even
 if the fourth claim happens to be true — faithfulness asks *where* a claim came
 from, not whether it is correct. The mapping to the attribution buckets is
 direct: low context recall is a retrieval miss, low faithfulness is a
-grounding miss, and a wrong answer with both high is a synthesis miss.
+grounding miss, and a wrong answer with both high is a synthesis miss (or, as
+noted above, a source or label error).
 
 Two cautions. First, a note on provenance: the RAGAS paper itself defines
 faithfulness, answer relevance and *context relevance*; context precision and
@@ -1125,8 +1140,8 @@ literature is relevant to you.
 - **What survives is the cost, and it is large.** Eighty documents instead of
   the one that mattered: **148× the input tokens for identical accuracy**, paid
   on every request that cannot be served from a cache — prompt caching brings
-  that nearer 15×, and only while the prefix is stable — with attention cost
-  growing faster than linearly in sequence length. Retrieval is not a crutch for a model that cannot read; it
+  that nearer 15×, and only while the prefix is stable — with attention's
+  quadratic share growing as the context does. Retrieval is not a crutch for a model that cannot read; it
   is how you stop paying for 79 documents you did not need.
 - **Two reasons to retrieve are permanent and have nothing to do with window
   size.** The model is frozen and your documents are not, and a prompt cannot
