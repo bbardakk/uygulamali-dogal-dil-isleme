@@ -298,8 +298,9 @@ language model's text behaviour untouched.
 *Projection into one sequence.* LLaVA [@liu2023visual] does the simpler thing: a
 small projector — a single linear layer in the original LLaVA, a two-layer MLP
 in its successor LLaVA-1.5 — projects each patch vector to the language model's hidden size, those
-vectors are concatenated with the text tokens, and the whole thing is
-instruction-tuned. One stream, one attention, no new modules — which is the
+vectors are concatenated with the text tokens. Training has two stages: first
+only the projector is trained for alignment, then the projector and the language
+model are instruction-tuned together, with the vision encoder frozen throughout. One stream, one attention, no new modules — which is the
 design in the figure above, and the one most open VLMs now follow.
 
 Knowing which you have in front of you tells you what you can change. Be
@@ -342,7 +343,7 @@ bad phone photo. Any gap between the two languages cannot be a content gap.
 a decade old and public, so the model may well have memorised some of these
 sentences — and a memorised sentence can be "transcribed" without being read,
 which pushes CER down. The bias is unlikely to be symmetric: the English side of
-WMT is copied across the web far more often than the Turkish side, so
+WMT is probably copied across the web far more often than the Turkish side, so
 contamination would inflate exactly the ratio this section reports. The control
 is a ladder on sentences published after the model's training cutoff, and it
 has not been run. Until it is, treat the roughly 5× gap reported below as an
@@ -418,7 +419,8 @@ Plot.plot({
 ```{ojs}
 //| echo: false
 md`On a log axis the two lines are close to parallel — Turkish sits roughly
-**5× above English at every resolution**, which is the ratio staying constant.
+**5× above English at every resolution**, so the ratio *looks* roughly constant;
+but the error counts on the upper rungs are very small (see below).
 Switch to a linear axis and the same data looks like a cliff, because at 11 px
 the gap is 5.3 percentage points rather than 0.2. Both readings are true, and
 which one you show decides whether anyone acts on it.`
@@ -427,8 +429,8 @@ which one you show decides whether anyone acts on it.`
 
 ### What it says
 
-[Turkish costs about five times the error rate of English, at every resolution,
-on identical content.]{.hl} 6.5× at 34 px, 5.0× at 22, 5.9× at 15, 5.0× at 11.
+[Turkish costs about five times the error rate of English on identical content,
+measured firmly at 11 px and consistent with every rung above it.]{.hl} 6.5× at 34 px, 5.0× at 22, 5.9× at 15, 5.0× at 11.
 
 Before reading that as four confirmations, convert the percentages back into
 events. Forty sentences is about 8,880 English characters and 9,320 Turkish
@@ -463,8 +465,9 @@ So the two curves have the same shape; Turkish is the English curve shifted up
 by a roughly constant factor. What that shift does in practice is move the
 *threshold*. Pick any error rate you can tolerate — say 1% of characters —
 and Turkish crosses it at a larger font size than English (between 22 and
-15 px here, against between 15 and 11 px for English). Resolution is not a
-smooth dial, it is a threshold, and for a fixed tolerance the threshold sits at
+15 px here, against between 15 and 11 px for English). The degradation accelerates
+at each step, so for a fixed tolerance resolution behaves not like a smooth
+dial but like a threshold, and for a fixed tolerance the threshold sits at
 a different place for the two languages — which means a scanning setting
 validated on English documents is not validated for Turkish ones.
 
@@ -685,8 +688,8 @@ errors.
 | Layout and reading order | needs its own model or heuristics | [handled, often well]{.pro} |
 | Answering *about* a document | [not its job — you build that on top]{.con} | [the thing it is for]{.pro} |
 | Charts and diagrams | [nothing useful]{.con} | reads them, with the caveat above |
-| Cost per page | cheap, local, no GPU needed | for this model's fixed-grid encoder, a flat 256+ tokens plus generation; tiling encoders charge per crop |
-| Turkish specifically | depends entirely on the engine's language packs | measured above: ~5× the English error rate |
+| Cost per page | cheap, local; classical engines (Tesseract) run comfortably on CPU, deep-learning engines benefit from a GPU | for this model's fixed-grid encoder, a flat 256+ tokens plus generation; tiling encoders charge per crop |
+| Turkish specifically | depends entirely on the engine's language packs | measured above: ~5× the English error rate at 11 px |
 
 : Two tools, two failure modes {tbl-colwidths="[24,36,40]"}
 
@@ -717,7 +720,8 @@ less the page contains.
 ::: {.callout-note collapse="true"}
 ## 2. Why does transcription accuracy fall as the font gets smaller, if the model is unchanged?
 
-Because the token budget does not fall with it. Be exact about what is being
+Because the encoder's input resolution and token budget are fixed, so as the
+type shrinks each character gets fewer pixels. Be exact about what is being
 held constant: the *content* is the same sentence in every row, so nothing new
 is being added — what changes is that the characters occupy fewer pixels, and
 the encoder emits a fixed number of vectors regardless. A smaller font means
@@ -730,9 +734,10 @@ cropping, not prompting.
 ## 3. Your VLM reads English documents at 0.2% character error. What will it do on Turkish?
 
 Worse, and by a factor you should measure rather than assume. Here it was
-**about 5× at every resolution** on semantically matched English and Turkish
-text rendered under identical conditions — 6.67% against 1.33% at the smallest
-size. Note that "identical content" is as far as the control goes: both are
+**about 5×, measured firmly at the smallest size** on semantically matched
+English and Turkish text rendered under identical conditions — 6.67% against
+1.33%; the upper rungs agree but rest on too few errors to count as evidence on
+their own. Note that "identical content" is as far as the control goes: both are
 Latin script, and the Turkish differs in its diacritics, its word forms and its
 morphology as well as its letters, so the experiment isolates the *language*,
 not one property of it. The general lesson is @sec-turkish-nlp's, arriving with no
@@ -799,7 +804,8 @@ Where do you look?**
 
 Resolution first, because it is the variable with a cliff rather than a slope.
 At smaller type the same content gets fewer encoder pixels per character, and
-the degradation is not gradual —
+the degradation accelerates at each step, behaving like a threshold for any
+fixed tolerance —
 here English went from 0.04% to 1.33% character error across the ladder and
 Turkish from 0.26% to 6.67%. Then check whether production pages differ from
 test pages in language, because the cliff sits in a different place for
@@ -844,7 +850,7 @@ Worth knowing about, not used above:
 |:--|:--|:--|
 | `paddleocr` | 3.7.0 | a strong dedicated OCR engine with layout analysis; the default first try when you want a transcript with confidences to gate on |
 | `surya-ocr` | 0.22.1 | modern OCR plus reading-order and table detection, multilingual |
-| `easyocr` / `pytesseract` | 1.7.2 / 0.3.13 | lighter options; `pytesseract` wraps Tesseract, which is old, fast, and honest about failing |
+| `easyocr` / `pytesseract` | 1.7.2 / 0.3.13 | simpler options; `easyocr` runs on PyTorch, while `pytesseract` wraps Tesseract, which is old, fast on CPU, and honest about failing |
 | `docling` | 2.123.0 | document conversion end to end, the @sec-rag stage-1 problem |
 | `pdf2image` | 1.17.0 | PDF pages to images, when you need the pixels rather than the text layer |
 | `transformers` | 5.16.1 | running open vision–language models yourself, when a local server is not enough |
@@ -970,10 +976,11 @@ both ways. The ratio is the first thing to know and takes two minutes.
   At smaller type the same content occupies fewer pixels per character; the
   experiment changes readability, not the amount of source information. English went 0.04% → **1.33%** character error
   across the ladder; Turkish went 0.26% → **6.67%**.
-- **Turkish cost about 5× the error rate of English at every resolution**, on
+- **Turkish cost about 5× the error rate of English at 11 px** (a firm
+  measurement; the upper rungs agree but are not evidence on their own), on
   professionally translated pairs where the content was identical. No
   tokenizer, stemmer or `lower()` on the input side — just pixels, and the tool
-  still worked measurably worse outside English. @sec-turkish-nlp's pattern
+  still worked measurably worse in Turkish. @sec-turkish-nlp's pattern
   does not need a text *input* to appear; the output is still written by a
   language model.
 - **The failure mode is fluency, not garbage.** Diacritic loss was the minority
