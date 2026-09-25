@@ -526,7 +526,7 @@ reminder.
 [Where a token sits in the schedule changes what it teaches.]{.hl} A token
 seen at step 400,000 under a large learning rate contributes to a broad
 capability that the remaining 800,000 updates will partly overwrite. A token seen
-in the last 0.0003% of the run, as the learning rate goes to zero, lands in
+in the last 0.00026% of the run, as the learning rate goes to zero, lands in
 weights that will never move again. That mechanism is behind an otherwise
 mysterious industrial habit: save the best data for last.
 
@@ -643,7 +643,10 @@ The "same content" column is the aggregate ratio over the whole corpus; the
 "median" is the median of the per-sentence ratios over the first 800 pairs,
 computed separately so that one long outlier cannot drive the headline. For
 five of the six tokenizers the two agree to within 0.02, which is the sanity
-check that the aggregate is not an artefact. GPT-2 is the exception, at 1.98
+check that the aggregate is not an artefact. The vocabulary column is each
+tokenizer's own reported size (`vocab_size`); Llama 3 adds 256 reserved special
+tokens on top, which is why its embedding table has 128,256 rows, the figure the
+$6ND$ margin note uses below. GPT-2 is the exception, at 1.98
 against 1.92. Resist reading a length effect into that gap. The aggregate is a
 length-weighted mean of the per-sentence ratios (each sentence weighted by its
 English token count), and a weighted mean can sit
@@ -925,7 +928,7 @@ it matters more. An estimate this good from two numbers is unusual in systems
 work, and it is the tool that lets you sanity-check a press release.
 
 **One caveat first, because it decides which number you put in $N$.** The $6ND$
-rule counts operations per parameter *used*, and in a mixture-of-experts model (@sec-transformers)
+rule counts operations per parameter *used*, and in a mixture-of-experts model (@sec-moe)
 a token only touches the experts its router picked
 [@jiang2024mixtral]. So the figure you want is active parameters, not total:
 
@@ -1426,17 +1429,21 @@ about two months and just over a year of serious traffic. Which only sharpens th
 overtraining pays back faster than the clean formula suggests, not slower.
 
 That is the whole justification for training an 8B model on 15 trillion
-tokens. You spend 93× the compute-optimal budget up front to get a model that
-is permanently cheaper to run than the compute-optimal alternative of the same
-quality. The bigger, "correct" model would have been cheaper to train and more
+tokens. You spend 93× the compute-optimal token budget for an 8B model up
+front, to get a model that is permanently cheaper to run than the larger
+compute-optimal model that would reach the same quality with less training
+compute. The bigger, "correct" model would have been cheaper to train and more
 expensive forever.
 
 ::: {.callout-tip appearance="simple" icon="false"}
-**The same logic decides your build-versus-buy question.** Work out your
-expected tokens per day, multiply by the model's $2N$, and compare to what
-that model cost to make. If you are three orders of magnitude below
-break-even, you are a rounding error in someone else's inference fleet and you
-should be renting, not training. Most teams are.
+**The same arithmetic makes the first cut on your build-versus-buy question.**
+Work out the *total* tokens you expect the model to generate over its
+lifetime, multiply by the model's $2N$, and compare to that model's training
+compute. If you are three orders of magnitude below it, you are a rounding
+error in someone else's inference fleet and you should be renting, not
+training. Most teams are. The full comparison that actually decides it — API
+bill against training plus deployment plus operations — is interview question
+3 in @sec-pretraining-interview.
 :::
 
 ## The model landscape {#sec-model-landscape}
@@ -1452,7 +1459,7 @@ independent decisions]{.hl}, and vendors mix them freely.
 ```{=html}
 <div class="fig-title">Four things a release can open, decided separately</div>
 <svg viewBox="0 0 764 336" style="max-width:744px" role="img"
-     aria-label="A grid with three rows of release type and four columns of what is disclosed. The columns are weights, training data, training code, and whether the licence is a standard open-source licence. API-only releases such as GPT-4, Claude and Gemini disclose none of the four. Open-weights releases such as Llama 3.1, Qwen 2.5 and Mistral publish the weights but not the training data or the training code, and their licences vary: Mistral 7B and most Qwen 2.5 sizes ship under Apache 2.0, while Llama 3.1 uses custom terms with conditions. Fully open releases such as OLMo 2 and Pythia publish all four, including the training corpus and an Apache 2.0 licence. The caption notes that the middle row is where almost every practical decision is made.">
+     aria-label="A grid with three rows of release type and four columns of what is disclosed. The columns are weights, training data, training code, and whether the licence is a standard open-source licence. API-only releases such as GPT-4, Claude and Gemini disclose none of the four. Open-weights releases such as Llama 3.1, Qwen 2.5 and Mistral publish the weights but not the training data or the training code, and their licences vary: Mistral 7B and most Qwen 2.5 sizes ship under Apache 2.0, while Llama 3.1 uses custom terms with conditions. Fully open releases such as OLMo 2 and Pythia publish all four: weights and code under Apache 2.0, the training corpus under a separate data licence (ODC-BY for OLMo 2's corpus). The caption notes that the middle row is where almost every practical decision is made.">
   <text x="268" y="44" class="t-xs t-mid t-b t-muted">WEIGHTS</text>
   <text x="392" y="44" class="t-xs t-mid t-b t-muted">TRAINING DATA</text>
   <text x="516" y="44" class="t-xs t-mid t-b t-muted">TRAINING CODE</text>
@@ -1496,7 +1503,8 @@ independent decisions]{.hl}, and vendors mix them freely.
   <rect x="468" y="224" width="96" height="38" rx="6" class="box-accent"/>
   <text x="516" y="248" class="t-sm t-mid t-b t-accent">✓</text>
   <rect x="600" y="224" width="96" height="38" rx="6" class="box-accent"/>
-  <text x="648" y="248" class="t-xs t-mid t-b t-accent">Apache 2.0</text>
+  <text x="648" y="243" class="t-xs t-mid t-b t-accent">Apache 2.0</text>
+  <text x="648" y="256" class="t-xs t-mid t-muted">weights, code</text>
 
   <text x="382" y="306" class="t-xs t-mid t-muted">The middle row is where almost every real decision gets made — and it is the row</text>
   <text x="382" y="322" class="t-xs t-mid t-muted">whose name, "open", promises three things it does not deliver.</text>
@@ -1564,9 +1572,9 @@ Three concrete conditions, from the licence text itself:
 None of those will stop a university project or most companies. All of them
 are conditions that an OSI-approved licence such as Apache 2.0 does not
 impose, which is exactly why the distinction has a name. OLMo, by contrast,
-releases code and weights under Apache 2.0 along with its pretraining corpus
-Dolma [@groeneveld2024olmo; @soldaini2024dolma] — and its successors have kept
-that commitment.
+releases code and weights under Apache 2.0 and its pretraining corpus Dolma
+under the ODC-BY data licence [@groeneveld2024olmo; @soldaini2024dolma] — and
+its successors have kept that commitment.
 :::
 
 **The names in the grid go out of date quickly; the grid does not.** The
@@ -1608,7 +1616,7 @@ becomes clear.
 | "cutoff of December 2023" | hard, checkable, and the single most useful line on the card |
 | supported languages: English, German, French, Italian, Portuguese, Hindi, Spanish, Thai | **Turkish is not on the list** |
 | "trained on a broader collection of languages than the 8 supported" | so the list is a *support* boundary, not a capability measurement |
-| "11,390 tons CO2eq" location-based, "0 tons" market-based | one run, two accounting standards, both true |
+| "11,390 tons CO2eq" location-based, "0 tons" market-based | the same training compute (all three models combined), two accounting standards, both true |
 | benchmark tables | the model was tuned while these were visible; treat as an upper bound |
 
 The language row is the one to think hardest about. The card puts use "in
@@ -1699,7 +1707,8 @@ long before anyone touches a GPU.
 4. **Find the context ceiling.** For a 128K-token context window, compute how
    many Turkish *words* fit under each tokenizer, and how many English words
    fit. Report both. This is the number that decides whether a document fits
-   in one @sec-retrieval chunk or three.
+   in the context window in one piece or has to be split and served piece by
+   piece through retrieval (@sec-retrieval).
 5. **Budget a run with $C = 6ND$.** Suppose you want a Turkish-first base
    model. Choose $N$ and $D$ yourself and justify both: $N$ from what you
    intend to serve (@sec-serving), $D$ from what Turkish text actually exists
@@ -1727,7 +1736,7 @@ long before anyone touches a GPU.
 
 **Deliverable:** a one-page memo — the kind you would actually send — that
 recommends *train*, *fine-tune*, or *use an API* for a specific Turkish
-product, with the fertility table, the compute budget, and the break-even
+product, with the same-content ratio table, the compute budget, and the break-even
 month as its three pieces of evidence. State the assumption that, if wrong,
 would flip your recommendation.
 
@@ -1892,14 +1901,14 @@ decisions you are stuck with afterwards.
    because changing it means rebuilding the embedding table the rest of the
    weights were trained against — possible, but a project rather than a
    fine-tune. Quantify the
-   stakes with the fertility table: a Turkish user on GPT-2's tokenizer pays
+   stakes with the same-content ratio from the tokenizer table: a Turkish user on GPT-2's tokenizer pays
    **1.98×** the tokens of an English user for the same content, and on BERTurk
    **0.58×**. Same language, same text, a 3.4× spread driven entirely by a
    decision made before training started.
 
 3. **How would you decide whether to pretrain, fine-tune, or use an API for a
-   Turkish product?** Three numbers, in this order. Fertility, because it sets
-   your per-token cost forever and may by itself justify a Turkish-native model.
+   Turkish product?** Three numbers, in this order. The same-content ratio
+   (Turkish ÷ English tokens), because it sets your per-content cost forever and may by itself justify a Turkish-native model.
    The $6ND$ budget for the smallest model that could work, which is almost
    always large enough to end the conversation. And the break-even month: the
    point where API spend at your projected traffic exceeds training plus
