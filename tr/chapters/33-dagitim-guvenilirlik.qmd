@@ -2,177 +2,181 @@
 
 ::: {.callout-note appearance="simple" icon="false"}
 **Bölüm durumu: çevrildi.** Kaynak metin:
-[İngilizce 33. bölüm](../../en/chapters/33-deployment-reliability.html). Bir
-dakika kadar hesap tutan tek bir küçük ölçüm: bir ajan adımını yeniden denemenin
-onu yeniden üretip üretmediğini öğrenmek için bir modelden aynı araç çağrısını
-defalarca çıkarmasını isteyen 72 kısa çağrı — üç görev × üç örnekleme koşulu ×
-sekiz yeniden deneme. Buradaki diğer her şey, belirlenimci
-olmayan bir çağırana uygulanan sıradan dağıtık sistem pratiği ve yeniden
-türetilmek yerine kaynak gösteriliyor. Yazılım: `ollama` 0.24.0, `llama3.2:3b`
-servis ediyor; Python 3.14.5, Apple Silicon.
+[İngilizce 33. bölüm](../../en/chapters/33-deployment-reliability.html).
+Bölümde yaklaşık bir dakikalık hesaplama gerektiren tek bir küçük ölçüm var: bir
+ajan adımını yeniden denemenin o adımı aynen tekrarlayıp tekrarlamadığını görmek
+için bir modelden aynı araç çağrısını defalarca üretmesini isteyen 72 kısa çağrı
+(üç görev × üç örnekleme koşulu × sekiz yeniden deneme). Geri kalan her şey,
+belirlenimci olmayan bir çağırana uygulanmış sıradan dağıtık sistem pratiği;
+bunlar yeniden türetilmek yerine kaynak gösterilerek aktarılıyor. Yazılım:
+`ollama` 0.24.0, `llama3.2:3b` servis ediyor; Python 3.14.5, Apple Silicon.
 :::
 
 **Öğrenme hedefleri.** Bu bölümün sonunda:
 
-- yönetilen bir ajan çalışma zamanı ile kendi konteynerleriniz arasında bir
-  tercihe göre değil, dile getirilmiş bir gerekçeye göre seçim yapabilirsiniz;
-- bir konuşmanın nerede yaşayacağına karar verebilir ve yatay ölçeklendiğinizde
-  bu kararın size neye mal olduğunu söyleyebilirsiniz;
-- bir isteğin ömrünü aşan ajanları, ilerleme ve iptalle birlikte
+- yönetilen bir ajan çalışma zamanı ile kendi konteynerleriniz arasında kişisel
+  tercihe göre değil, açıkça ifade edilmiş bir gerekçeyle seçim yapabilirsiniz;
+- bir konuşmanın nerede yaşayacağına karar verebilir ve sistemi yatay
+  ölçeklediğinizde bu kararın size neye mal olduğunu söyleyebilirsiniz;
+- bir isteğin ömrünü aşan ajanları ilerleme bildirimi ve iptal desteğiyle
   çalıştırabilirsiniz;
 - dayanıklı yürütmeyi (durable execution: tamamlanan adımları kaydedip kesintiden
-  sonra kaldığı yerden sürdürme) benimsemeden önce onun araç kodunuzdan ne talep ettiğini
-  söyleyebilirsiniz;
-- yan etkili bir adımı yeniden denemeye güvenli kılabilir ve idempotency (aynı
+  sonra kaldığı yerden sürdürme) benimsemeden önce onun araç kodunuzdan neler
+  beklediğini söyleyebilirsiniz;
+- yan etkili bir adımı güvenle yeniden denenebilir kılabilir ve idempotency (aynı
   istek tekrarlandığında ek etki doğmaması) anahtarını doğru yerden türetebilirsiniz;
 - her araç için telafi eylemini yazabilir ve hiç telafisi olmayanı
   belirleyebilirsiniz;
 - bir oturumu adım, token ve wall-clock süresi (gerçekte geçen süre) cinsinden
   sınırlayabilirsiniz;
-- bir ajan değişikliğini, geri alma tetikleyicisi önceden kararlaştırılmış bir
-  kanarya dağıtımıyla yayına alabilirsiniz.
+- bir ajan değişikliğini, geri alma (rollback) tetikleyicisi önceden
+  kararlaştırılmış bir kanarya dağıtımıyla yayına alabilirsiniz.
 
 ## Ajan gerçekte nerede koşuyor {#sec-dagitim-nerede}
 
-İlk karar sıkıcı olanı ve takımlar bunu rutin olarak alışkanlıkla veriyor. Üç
-biçim var ve seçmenin dürüst yolu hangi kısıtın bağlayıcı olduğunu adlandırmak.
+İlk karar sıkıcı bir karar ve takımlar onu çoğu zaman alışkanlıkla veriyor. Üç
+biçim var; dürüst seçim yolu, hangi kısıtın bağlayıcı olduğunu açıkça söylemek.
 
-| | ne elde edersiniz | neden vazgeçersiniz | ne zaman seçilir |
+| | ne elde edersiniz | neyden vazgeçersiniz | ne zaman seçilir |
 |:--|:--|:--|:--|
-| **Yönetilen ajan çalışma zamanı** | yazmadan oturum durumu, yeniden denemeler, ölçeklenme ve izler | döngü üzerindeki denetim, kendi ağınızda koşma imkânı ve taşınabilirlik | yayına alma hızı denetimden daha önemliyse ve hiçbir data residency (verinin tutulduğu ve işlendiği ülke ya da bölge) kuralı engellemiyorsa |
+| **Yönetilen ajan çalışma zamanı** | oturum durumu, yeniden denemeler, ölçeklenme ve izler (trace) — hiçbirini kendiniz yazmadan | döngü üzerindeki denetim, kendi ağınızda koşma imkânı ve taşınabilirlik | yayına alma hızı denetimden daha önemliyse ve hiçbir data residency (verinin tutulduğu ve işlendiği ülke ya da bölge) kuralı engellemiyorsa |
 | **Kendi konteynerleriniz** | döngünün, ağın ve veri yolunun tam denetimi | oturum depolamasını, iptali, yeniden deneme semantiğini ve gözlemlenebilirliği kendiniz kurmak | data residency ya da mevcut bir platform gerekli kılıyorsa — daha ciddi hissettirdiği için değil |
-| **Sunucusuz işlevler** | sıfıra ölçeklenme ve boşta maliyet olmaması | uzun koşular, çünkü yürütme zaman kutuludur | trafik ani sıçramalıysa ve her görev saniyeler içinde bitiyorsa |
+| **Sunucusuz işlevler** | sıfıra ölçeklenme ve boşta maliyet olmaması | uzun koşular, çünkü yürütme süresi sınırlıdır | trafik ani sıçramalar yapıyorsa ve her görev saniyeler içinde bitiyorsa |
 
 : Üç biçim ve birini seçmesi gereken kısıt
 {tbl-colwidths="[20,28,28,24]"}
 
-[Takımları yakalayan üçüncüsü.]{.hl} Bir ajan döngüsü bir istek işleyicisi
-değildir: dakikalar sürebilir ve yürütmeyi birkaç saniyeyle tavanlayan bir
-platform onu, araçlar zaten koştuktan sonra, ortasında öldürür. Çalışma
-zamanınızın sert bir yürütme tavanı varsa döngünün bir kuyruğun arkasına taşınması
-gerekir — ki bu @sec-dagitim-uzun'dur ve dağıtımda değil, üründe bir değişikliktir.
+[Takımları en çok şaşırtan üçüncüsü.]{.hl} Bir ajan döngüsü bir istek işleyicisi
+değildir: dakikalar sürebilir ve yürütmeyi birkaç saniyeyle sınırlayan bir
+platform onu, araçlar zaten çalıştıktan sonra, yarı yolda öldürür. Çalışma
+zamanınızın katı bir yürütme tavanı varsa döngünün bir kuyruğun arkasına taşınması
+gerekir. Bu, @sec-dagitim-uzun'un konusu ve dağıtımda değil, üründe yapılan bir
+değişikliktir.
 
 ## Konuşma nerede yaşıyor {#sec-dagitim-durum}
 
-Ajan mesajlar üzerinde bir döngü olduğuna göre mesajların bir yerde olması
-gerekir. Size ne yapma izni verdiklerine göre artan sırayla üç yer:
+Ajan, mesajlar üzerinde dönen bir döngü olduğuna göre mesajların bir yerde durması
+gerekir. Size tanıdıkları olanaklara göre artan sırayla üç yer var:
 
-**Süreç içinde.** Basit, hızlı ve bir örneğin bir oturumu sonsuza dek
-sahiplenmesi anlamına geliyor. Herhangi bir yeniden başlatma, dağıtım ya da
-scale-in (çalışan örnek sayısının azaltılması) konuşmaları yitiriyor. Yük
+**Süreç içinde.** Basit ve hızlı; ama bir oturumun sonsuza dek tek bir örneğe
+(instance) ait olması demek. Her yeniden başlatma, dağıtım ya da scale-in
+(çalışan örnek sayısının azaltılması) konuşmaları kaybettiriyor. Yük
 dengeleme de bir kullanıcıyı tek bir örneğe sabitlemek, yani tüm isteklerini aynı
 örneğe yönlendirmek zorunda kalıyor — sonunda değişikliği zorlayan kısıt bu.
 
 **Bir oturum deposunda.** Döngü her konuşma turunun (turn) başında geçmişi okuyor
 ve sonunda geri yazıyor. Herhangi bir örnek herhangi bir tura hizmet edebiliyor,
-yeniden başlatmalar atlatılabiliyor ve deponun gecikmesi artık her turun üzerinde.
-Neredeyse her şeye uyan varsayılan bu.
+yeniden başlatmalar atlatılabiliyor ve deponun gecikmesi artık her tura ekleniyor.
+Neredeyse her duruma uyan varsayılan seçenek bu.
 
 **İstemcide.** Çağıran her turda tüm geçmişi gönderiyor. Sunucu gerçekten
-durumsuz ve önemsiz biçimde ölçeklenebilir hâle geliyor — ve maliyet tam olarak
-@sec-servis'in aritmetiğine düşüyor, çünkü o geçmiş prompt token'ı, her turda
-büyüyor ve her istekte parası ödeniyor. Ayrıca istemcinin geçmişi
-düzenleyebilmesi demek; @sec-ajan-guvenligi'nin bu konuda söyleyecekleri var.
+durumsuz ve zahmetsizce ölçeklenebilir hâle geliyor — ama maliyet doğrudan
+@sec-servis'teki aritmetiğe yansıyor, çünkü o geçmiş, her turda büyüyen ve her
+istekte parası ödenen prompt token'ları demek. Bu ayrıca istemcinin geçmişi
+düzenleyebileceği anlamına geliyor; @sec-ajan-guvenligi'nin bu konuda
+söyleyecekleri var.
 
 ::: {.column-margin}
 Bir geçmişi taşımanın token maliyetini hafife almak kolay ve bu, geçmişin
 *nerede* durduğuna bağlı değil. Yirmi turluk bir konuşma son istekte on dokuz
 turu yeniden gönderiyor; dolayısıyla son prompt doğrusal, oturumun toplam
-prompt token'ı ise kabaca karesel büyüyor — geçmişi istemci de göndermiş olsa
-sunucu tarafındaki bir oturum deposu da göndermiş olsa aynı aritmetik, çünkü
-parasını ödediğiniz şey modele ulaşan şey. İstemcide tutulan durumun değiştirdiği
-şey kimin düzenleyebileceği, neye mal olduğu değil — ve @sec-servis'in ölçümleri bunun
-bir fatura problemi olmasından çok önce prefill'in gecikmeye hâkim olduğunu
-gösteriyor. Prompt önbellekleme tam da burada yardımcı oluyor, yeter ki geçmiş
-yalnızca ekleme yapılan türden olsun ve tepede oynak hiçbir şey oturmasın.
+prompt token'ı ise kabaca karesel büyüyor. Geçmişi ister istemci göndersin ister
+sunucu tarafındaki bir oturum deposu, aritmetik aynı, çünkü parasını ödediğiniz
+şey modele ulaşan şey. İstemcide tutulan durumun değiştirdiği şey, maliyet değil,
+geçmişi kimin düzenleyebileceği — ve @sec-servis'in ölçümleri, bu bir fatura
+sorunu olmadan çok önce prefill'in gecikmeye hâkim olduğunu gösteriyor. Prompt
+önbellekleme tam da burada yardımcı oluyor; yeter ki geçmişe yalnızca sondan
+ekleme yapılsın ve başta değişken hiçbir şey durmasın.
 :::
 
 ## Bir isteğin ömrünü aşan ajanlar {#sec-dagitim-uzun}
 
 Bir görev dakikalar sürmeye başladığında bunun için bir HTTP bağlantısını açık
 tutmak makul olmaktan çıkıyor: istemciler zaman aşımına uğruyor, yük
-dengeleyiciler boştaki bağlantıları kesiyor ve bir dağıtım uçuş hâlindeki her
-şeyi öldürüyor.
+dengeleyiciler boştaki bağlantıları kesiyor ve bir dağıtım o an sürmekte olan
+her şeyi öldürüyor.
 
-İşe yarayan biçim, uzun koşan her sistemin yakınsadığı biçim. İsteği kabul edin,
-bir iş yazın, bir kimlik döndürün. Bir işçi işi alsın. İstemci ilerleme için
-yoklasın ya da abone olsun. Atlanması kolay, sonradan eklenmesi acı verici üç
-şey:
+İşe yarayan biçim, uzun süren işler yürüten her sistemin eninde sonunda vardığı
+biçim. İsteği kabul edin, bir iş kaydı oluşturun, bir kimlik döndürün. Bir işçi
+(worker) işi alsın. İstemci ilerlemeyi yoklasın (polling) ya da ilerlemeye abone
+olsun. Atlanması kolay, sonradan eklenmesi acı verici üç şey:
 
 - **Bir anlamı olan ilerleme.** "Bilinmeyen sayıdaki adımdan 4'üncüsü" ilerleme
   değildir. Adımı, az önce çağrılan aracı ve şimdiye kadar harcanan token'ları
-  yayın — bunların ize dönüştüğü yer @sec-gozlemlenebilirlik'tir.
+  bildirin — bunların izlere dönüştüğü yer @sec-gozlemlenebilirlik'tir.
 - **Gerçekten işi durduran iptal.** Döngünün hiç bakmadığı bir iptal bayrağı
   süstür. Döngü onu adımlar arasında okumalı ve araçlar iptal edilebilir ya da
   en azından idempotent olmalı, çünkü araç çağrısının ortasında gelen bir iptal,
   aracın zaten başlattığı yan etkiyi geri alamaz.
 - **Bir dead-letter queue** (tekrar denemelere rağmen işlenemeyen mesajların
-  incelemeye ayrıldığı kuyruk). Tekrar tekrar başarısız olan işler sonsuza dek yeniden
-  denenmek yerine bir insanın gördüğü bir yere düşmeli — bu,
+  incelemeye ayrıldığı kuyruk). Tekrar tekrar başarısız olan işler sonsuza dek
+  yeniden denenmek yerine bir insanın göreceği bir yere düşmeli — bu,
   @sec-dagitim-yeniden-deneme'deki problemin başka bir biçimi.
 
-## Dayanıklı yürütme ve tekrar oynatmanın kodunuzdan talebi {#sec-dagitim-dayanikli}
+## Dayanıklı yürütme ve tekrar oynatmanın kodunuzdan istedikleri {#sec-dagitim-dayanikli}
 
 Bir işçi on iki adımlık bir ajan koşusunun yarısında çökerse ne olur? Naif cevap
 — baştan başla — zaten bir şey göndermiş olanlar dâhil her araç çağrısını yeniden
 yürütür.
 
 **Dayanıklı yürütme** motorları buna, tamamlanan her adımı kaydedip çökme
-sonrasında geçmişi tekrar oynatarak cevap veriyor; böylece tamamlanan iş
-tekrarlanmıyor. Temporal ve Restate alışıldık örnekler ve fikir ajanlardan çok
-öncesine dayanıyor.
+sonrasında geçmişi tekrar oynatarak (replay) cevap veriyor; böylece tamamlanan iş
+tekrarlanmıyor. Temporal ve Restate bilinen örnekler; fikrin kendisi ajanlardan
+çok daha eskiye dayanıyor.
 
-Bunun size ne kazandırdığını tek bir çekince belirliyor. Bir adım ancak sonucu
+Bunun size gerçekte ne kazandırdığını tek bir çekince belirliyor. Bir adım ancak sonucu
 kaydedildiğinde tamamlanmış sayılır; dolayısıyla işçi öldüğü anda *koşmakta* olan
 adım yeniden koşar. Araç etkisini gerçekleştirdiyse ve işçi, motor sonucu
 kaydetmeden önce çöktüyse etki iki kez olur. Temporal'ın belgeleri bunu açıkça
-söylüyor: bir etkinlik bir kez tamamlanmış olarak kaydedilir, ama birden fazla
-kez yürütülebilir. Dayanıklı yürütme, bitmiş adımların yeniden koşmasını ortadan
-kaldırır; idempotent araçlara olan ihtiyacı kaldırmaz (@sec-dagitim-idempotans).
+söylüyor: bir etkinlik (activity) bir kez tamamlanmış olarak kaydedilir, ama
+birden fazla kez yürütülebilir. Dayanıklı yürütme, bitmiş adımların yeniden
+koşmasını ortadan kaldırır; idempotent araçlara olan ihtiyacı
+kaldırmaz (@sec-dagitim-idempotans).
 
-Birini benimsemek açısından önemli olan kısım motor değil, kodunuza dayattığı
-sözleşme:
+Böyle bir motoru benimserken önemli olan motorun kendisi değil, kodunuza
+dayattığı sözleşme:
 
 [Tekrar oynatma, iş akışı işlevinizin baştan yeniden koşması ve tamamlanmış her
 adımın yürütülmek yerine kaydedilmiş sonucunu döndürmesi demektir.]{.hl} Bunun
-sağlam olması için işlevin *belirlenimci* olması gerekiyor: aynı geçmiş, aynı
+doğru çalışması için işlevin *belirlenimci* olması gerekiyor: aynı geçmiş, aynı
 karar dizisi. Saati okumak, rastgele bir kimlik üretmek ya da iş akışı kodundan
-doğrudan bir API çağırmak bunu bozar, çünkü tekrar oynatma özgününden farklı bir
-yol izlerdi.
+doğrudan bir API çağırmak bunu bozar, çünkü tekrar oynatma bu durumda ilk
+koşudan farklı bir yol izler.
 
-Bu da ajanların üzerine tuhaf biçimde oturuyor ve bu konuda açık sözlü olmakta
-yarar var. **Bir LLM çağrısı, dışsal ve potansiyel olarak belirlenimci olmayan
-bir işlem gibi ele alınmalıdır** — sıcaklık 0'da bile, çünkü batch'leme, donanım
-ve sessiz bir model güncellemesi çıktıyı oynatır. Çözüm
+Bu, ajanlarla pek iyi bağdaşmıyor ve bunu açıkça söylemekte yarar var. **Bir LLM
+çağrısı, dışsal ve belirlenimci olmayabilecek bir işlem gibi ele alınmalıdır** —
+sıcaklık 0'da bile, çünkü batch'leme (istekleri yığın hâlinde birlikte işleme),
+donanım ve sessizce yapılan bir model güncellemesi çıktıyı değiştirebilir. Çözüm
 zekice değil, yapısal: model çağrısı, iş akışı kodunun içinde verilen bir karar
 değil, sonucu kaydedilip tekrar oynatılan bir *adımdır* — Temporal'ın
-sözlüğünde bir etkinlik. İş akışı düzenler; belirlenimsizlik kaydettiği
-adımlarda yaşar.
+sözlüğünde bir etkinlik. İş akışı yalnızca düzenler; belirlenimsizlik, onun
+kaydettiği adımların içinde kalır.
 
-Bu, araç tasarımı üzerinde gerçek bir kısıt (@sec-arac-tasarimi) ve dayanıklı bir
-motoru sonradan benimsemek genellikle döngüyü sarmalamak değil, yeniden yazmak
-demek.
+Bu, araç tasarımına (@sec-arac-tasarimi) gerçek bir kısıt getiriyor; dayanıklı
+bir motoru sonradan benimsemek de genellikle döngüyü sarmalamak değil, yeniden
+yazmak demek.
 
 ## Bir adımı yeniden denemek, bir isteği yeniden denemek değildir {#sec-dagitim-yeniden-deneme}
 
-@sec-gecit bir *sağlayıcıya* karşı yeniden denemeleri ele aldı: oradaki arıza
-büyütmedir ve çare backoff, jitter, devre kesiciler ve bir yeniden deneme
-bütçesidir. Bu bölüm bir *ajan adımını* yeniden denemekle ilgili; oradaki arıza
-farklı ve daha kötü.
+@sec-gecit bir *sağlayıcıya* karşı yeniden denemeleri ele aldı: oradaki arıza,
+yeniden denemelerin yükü katlaması (amplification); çaresi de backoff, jitter,
+devre kesiciler ve bir yeniden deneme bütçesi. Bu alt bölüm ise bir *ajan
+adımını* yeniden denemekle ilgili; buradaki arıza farklı ve daha kötü.
 
-İki kez başarılı olan bir sağlayıcı yeniden denemesi size para kaybettirir. İki
-kez başarılı olan bir ajan adımı yeniden denemesi e-postayı iki kez gönderir.
+Bir sağlayıcıya yapılan yeniden deneme iki kez başarılı olursa para kaybedersiniz.
+Bir ajan adımının yeniden denemesi iki kez başarılı olursa e-posta iki kez gider.
 
-Altta yatan ilginç soru, insanların ölçmek yerine varsaydığı soru: **adımı
+İşin altındaki ilginç soru, genellikle ölçülmeyip varsayılan bir soru: **adımı
 yeniden denediğinizde aynı araç çağrısını mı alıyorsunuz?** Ölçüm şöyle: bir
 modelden, üç görevin her biri için ve üç örnekleme koşulunun her birinde, tek bir
 `send_email` çağrısını sekiz kez üretmesi istendi. Üç görev modele giderek daha
 çok karar bırakıyor: `clear` alıcıyı adıyla veriyor, `vague` gevşek ifade
 edilmiş, `choice` ise (aşağıda alıntılanıyor) alıcıyı modele bırakıyor. `seed`
-sütununda `0` sabit bir seed, `None` ise seed verilmediği anlamına geliyor.
-`identical`, sekiz yeniden denemenin tamamında araç çağrısı payload'unun (aracın
-adı ve bütün argümanları) bayt eşitliği; `distinct to` ve `distinct subj` yalnızca
-alıcı ve konu argümanlarının benzersiz değerlerini sayıyor.
+sütununda `0` sabit bir seed (rastgele sayı üretecinin başlangıç değeri), `None`
+ise seed verilmediği anlamına geliyor. `identical`, araç çağrısı payload'unun
+(aracın adı ve bütün argümanları) sekiz yeniden denemenin tamamında bayt bayt aynı
+olup olmadığını gösteriyor; `distinct to` ve `distinct subj` ise yalnızca alıcı
+ve konu argümanlarının kaç farklı değer aldığını sayıyor.
 
 ```text
     task  temp   seed  identical  distinct to  distinct subj
@@ -187,8 +191,9 @@ alıcı ve konu argümanlarının benzersiz değerlerini sayıyor.
   choice   0.7   None      False            5              2
 ```
 
-Son satırı okuyun. Görev *"pompa arızalandı, bilmesi gerekene haber ver"*di ve
-0,7 sıcaklıkta sekiz yeniden deneme boyunca model **beş farklı alıcı** seçti:
+Son satıra bakın. Görev şuydu: *"pompa arızalandı, bilmesi gerekene haber
+ver"*. 0,7 sıcaklıkta sekiz yeniden deneme boyunca model **beş farklı alıcı**
+seçti:
 
 ```text
   3x  maintenance@factory.com
@@ -198,56 +203,61 @@ Son satırı okuyun. Görev *"pompa arızalandı, bilmesi gerekene haber ver"*di
   1x  engineering@company.com
 ```
 
-[Yeniden deneme eylemi tekrarlamadı. Farklı bir eylem gerçekleştirdi.]{.hl} Her
-adres uydurma ve idempotency koruması olmayan bir yeniden deneme döngüsü
-bunlardan birkaçına posta göndermiş olurdu.
+[Yeniden deneme eylemi tekrarlamadı. Farklı bir eylem gerçekleştirdi.]{.hl}
+Adreslerin hepsi uydurma; idempotency koruması olmayan bir yeniden deneme
+döngüsü bunların birkaçına e-posta göndermiş olurdu.
 
-**Beşi bir tahmin değil bir taban olarak okuyun.** Sekiz çekiliş, modelin kaç
-adres uydurmaya istekli olduğunu sınırlayamaz. Ekolojistler tür sayarken aynı
-sorunla karşılaşır; onların Chao1 kestiricisi, hiç görülmemiş değerlerin sayısını
+**Beş sayısını bir kestirim değil, bir alt sınır olarak okuyun.** Sekiz
+çekilişle, modelin kaç farklı adres uydurabileceğine bir üst sınır koyamazsınız.
+Ekologlar tür sayarken aynı sorunla karşılaşır; onların Chao1 kestiricisi, hiç görülmemiş değerlerin sayısını
 tam bir kez ($f_1$) ve tam iki kez ($f_2$) görülen değerlerden kestirir. Bu
 dağılımla — bir adres üç kez, biri iki kez, üçü birer kez; yani $f_1 = 3$,
 $f_2 = 1$ — klasik biçim $5 + f_1^2/(2f_2)$ **9,5** veriyor, küçük örneklem için
 yanlılığı düzeltilmiş biçim $5 + f_1(f_1-1)/(2(f_2+1))$ ise 6,5. Sekiz çekiliş
 ikisi arasında seçim yapmaya hiç yetmez, ama ikisi de beşin üstünde; çünkü sekiz
-çekilişte üç tekil, örneklemediğiniz uzun bir kuyruğun imzasıdır. Diğer yönde, sıcaklık 0'daki sekiz özdeş çıktı tekrar oranı
-üzerinde kabaca **[%68, %100]** Wilson aralığı veriyor; yani "sekiz kez bayt bayt
-aynı", gerçek tekrar oranının üçte ikiye yakın olmasıyla uyumlu. İki düzeltme de
-tasarım sonucunu değiştirmiyor. İkisi de neyin iddia edilebileceğini değiştiriyor:
-bu ölçüm kusurun var olduğunu ve kolayca yeniden üretildiğini ortaya koyuyor, sizin
-uçta ne sıklıkla olduğunu değil.
+çekilişte yalnızca bir kez görülen üç değer, henüz örneklemediğiniz uzun bir
+kuyruğun işaretidir. Öbür yönde, sıcaklık 0'daki sekiz özdeş çıktı, tekrar oranı
+için yaklaşık **[%68, %100]** aralığında bir %95 Wilson güven aralığı veriyor;
+yani "sekiz kez bayt bayt aynı" sonucu, gerçek tekrar oranının üçte ikiye yakın
+olmasıyla da bağdaşıyor. Bu iki düzeltmenin hiçbiri tasarım sonucunu
+değiştirmiyor; ikisi de neyin iddia edilebileceğini değiştiriyor: bu ölçüm,
+kusurun var olduğunu ve kolayca yeniden üretildiğini gösteriyor; sizin uç
+noktanızda (endpoint) ne sıklıkla ortaya çıktığını değil.
 
-Bunun söylemediği ve üçü de önemli olan üç şey.
+Bu ölçümün söylemediği üç şey var ve üçü de önemli.
 
-**Sıcaklık 0 çare değil, farklı bir risktir.** Sıcaklık 0'da her görev için sekiz
-yeniden denemenin tamamı bayt bayt aynıydı — `maintenance@company.com`u
-belirlenimci biçimde uyduran `choice` dâhil. Yeniden üretilebilir ve yine de
-yanlış. Belirlenimcilik yeniden denemeyi *tekrarlanabilir* kılar; altta yatan
-kararı doğru kılmaz.
+**Sıcaklık 0 çare değil, farklı bir risktir.** Sıcaklık 0'da sekiz yeniden
+denemenin tamamı her görevde bayt bayt aynıydı; buna `choice` da dâhil — model
+orada her seferinde aynı `maintenance@company.com` adresini uydurdu. Yeniden
+üretilebilir, ama yine de yanlış. Belirlenimcilik yeniden denemeyi
+*tekrarlanabilir* kılar; altta yatan kararı doğru kılmaz.
 
-**Ve bu tablonun eksik olan bir koşulu, ilgili bir soruyu çözüyor.**
+**Bu tabloda eksik olan bir koşul da ilgili bir soruyu yanıtlıyor.**
 @sec-promptlama aynı kontrolü daha büyük ölçekte koştu ve **sıcaklık 0,7'de sabit
 bir seed'in** de otuz belgenin hepsinde, on tekrar boyunca özdeş çıktı ürettiğini
 buldu. Yani buradaki eksen aslında sıcaklık değil; örnekleyicinin sabitlenip
-sabitlenmediği. Sıcaklık 0'a bir güvenilirlik kolu diye uzanmadan önce bunu
-bilmeye değer, çünkü isteyebileceğiniz çeşitliliği alıp götürüyor ve bir seed'in
-daha ucuza aldığı bir şeyi veriyor.
+sabitlenmediği. Sıcaklık 0'ı bir güvenilirlik ayarı olarak kullanmadan önce bunu
+bilmekte yarar var: sıcaklık 0, isteyebileceğiniz çeşitliliği elinizden alıyor ve
+karşılığında bir seed'in daha ucuza sağladığı şeyi veriyor.
 
-**Ve bu belirlenimcilik tek akışlı yerel bir sunucunun bir özelliği, bir garanti
-değil.** Yükü taşıyan koşul **batch değişmezliği**: matmul, normalizasyon ve dikkatin (attention) arkasındaki indirgeme çekirdekleri farklı batch boyutlarında farklı kod
-yolları izliyor; dolayısıyla aynı prompt, bir batch'te tek başınayken ve on yedi
-kişilik bir batch'teyken sıcaklık 0'da bile farklı çözümlenebiliyor
-[@he2025nondeterminism]. Barındırılan API'ler isteğinizi yabancılarla
-batch'liyor. Sıcaklık 0'ı bir varyans azaltma olarak görün, asla bir idempotency
-mekanizması olarak değil.
+**Üstelik bu belirlenimcilik, tek akışlı yerel bir sunucunun bir özelliği; bir
+garanti değil.** Belirleyici koşul **batch değişmezliği** (batch invariance):
+matris çarpımı (matmul), normalizasyon ve attention (dikkat mekanizması)
+hesaplarının arkasındaki indirgeme çekirdekleri (reduction kernel), farklı batch
+boyutlarında farklı kod yollarından geçiyor. Dolayısıyla aynı prompt, tek başına
+işlendiğinde ve on yedi istekli bir batch içinde işlendiğinde sıcaklık 0'da bile
+farklı çıktı üretebiliyor [@he2025nondeterminism]. Barındırılan API'ler isteğinizi
+başka kullanıcıların istekleriyle aynı batch'e koyuyor. Sıcaklık 0'ı varyansı
+azaltan bir önlem olarak görün; asla bir idempotency mekanizması olarak değil.
 
 ::: {.column-margin}
-Tablodaki örüntü tekil sayılardan daha değerli ve "sorun sıcaklıktır"dan daha
-ince. 0,7'de *hiçbir* görev bayt bayt aynı değildi — alıcıyı adlandıran ve yine
-de gövdede değişen `clear` dâhil. Belirsizliğin değiştirdiği şey *hangi alanın*
-oynadığı: `clear` alıcıyı ve konuyu korudu, `vague` altı konu satırı üretti,
-`choice` beş alıcı üretti. Sıcaklık her şeyi bozar; yan etkisi olan bir alana
-düşüp düşmeyeceğine görev karar verir. Payload'un *herhangi* bir parçasından
+Tablodaki örüntü tek tek sayılardan daha değerli ve "sorun sıcaklıkta" demekten
+daha incelikli. 0,7'de *hiçbir* görev bayt bayt aynı değildi — alıcıyı adıyla
+veren ama e-posta gövdesi yine de değişen `clear` dâhil. Görevdeki belirsizliğin
+değiştirdiği şey, *hangi alanın* oynadığı: `clear` alıcıyı ve konuyu korudu,
+`vague` altı farklı konu satırı üretti, `choice` beş farklı alıcı üretti. Sıcaklık
+her şeyi biraz sarsar; bu sarsıntının yan etkisi olan bir alana denk gelip
+gelmeyeceğine görev karar verir. Payload'un *herhangi* bir parçasından
 türetilen bir anahtarın — yalnızca alıcıdan türetilenin değil — güvensiz olmasının
 nedeni de bu: hangi alanın oynayacağını görev belirler.
 :::
@@ -256,12 +266,12 @@ nedeni de bu: hangi alanın oynayacağını görev belirler.
 
 Yinelenen bir yan etki için standart çare bir **idempotency anahtarıdır**: çağıran
 bir anahtar sağlar, alıcı onu kaydeder ve daha önce gördüğü bir anahtarı taşıyan
-ikinci bir istek, yeniden davranmak yerine ilk sonucu döndürür.
+ikinci bir istek, işlemi yeniden yapmak yerine ilk sonucu döndürür.
 
-Yukarıdaki ölçüm, genellikle geçiştirilen tasarım sorusunu çözüyor:
+Yukarıdaki ölçüm, genellikle üstünkörü geçilen tasarım sorusunu yanıtlıyor:
 
-[Anahtar modelin çıktısından türetilemez.]{.hl} Araç argümanlarını özetlemek
-doğal görünüyor ve tam da ihtiyaç duyduğunuzda başarısız oluyor: `choice`
+[Anahtar modelin çıktısından türetilemez.]{.hl} Araç argümanlarının özetini
+(hash) almak doğal görünüyor ve tam da ihtiyaç duyduğunuzda başarısız oluyor: `choice`
 yeniden denemeleri beş farklı argüman kümesi, dolayısıyla beş farklı özet,
 dolayısıyla beş e-posta üretti. Belirlenimci olmayan bir değerden hesaplanmış bir
 anahtar, anahtar değildir.
@@ -271,9 +281,9 @@ anahtar, anahtar değildir.
 | anahtar neyden türetildi | bir yeniden denemeyi tekilleştirir mi? | notlar |
 |:--|:--|:--|
 | Araç argümanlarının özeti | [hayır]{.con} | model fikrini değiştirdiğinde değişir — bu bölümün ölçtüğü arıza |
-| Deneme başına rastgele kimlik | [hayır]{.con} | her yeniden denemede yeni bir anahtar, ki bu hiç olmamasıyla aynı şey. İşlem başına *bir kez* üretilip ilk denemeden önce saklanan rastgele bir kimlik ise sorunsuzdur — Stripe'ın önerdiği de bu; hata, onu her denemede yeniden üretmektir |
+| Deneme başına rastgele kimlik | [hayır]{.con} | her yeniden denemede yeni bir anahtar; bu, hiç anahtar olmamasıyla aynı şey. İşlem başına *bir kez* üretilip ilk denemeden önce saklanan rastgele bir kimlik ise sorunsuzdur — Stripe'ın önerdiği de bu; hata, onu her denemede yeniden üretmektir |
 | `(oturum kimliği, adım indisi)` | [evet]{.pro} | aynı adımın yeniden denemeleri arasında kararlı — tek bir adım birkaç yan etkili çağrı yapıyorsa bir alt çağrı indisi ekleyin, yoksa çakışırlar |
-| Yukarı akış istek kimliği | [evet]{.pro} | bir isteğin uçtan uca en fazla bir yan etki üretmesi gerektiğinde doğru olan |
+| Yukarı akış istek kimliği | [evet]{.pro} | bir isteğin uçtan uca en fazla bir yan etki üretmesi gerektiğinde doğru seçim |
 
 : Dört aday anahtar ve işe yarayan ikisi {tbl-colwidths="[26,18,56]"}
 
@@ -282,55 +292,56 @@ dayanıklı bir motorun kaydından — geliyorsa kararlıdır. Yeniden başlatma
 sıfırdan koşturursa model aynı çağrıyı başka bir adımda yapabilir ve anahtar da
 onunla birlikte değişir.
 
-Anahtarı kiracı kapsamına da alın; böylece iki müşteri aynı mantıksal işlem
-kimliğinde çakışamaz.
+Anahtara kiracı (tenant) kimliğini de katın; böylece iki müşteri aynı mantıksal
+işlem kimliğini kullandığında anahtarlar çakışmaz.
 
-Pratikte işe yarayıp yaramayacağına üç uygulama notu karar veriyor.
+Bunun pratikte işe yarayıp yaramayacağını üç uygulama ayrıntısı belirliyor.
 
 **Aynı anahtar farklı argümanlarla geldiğinde ne olacağına karar verin.** Cazip
 davranış — saklanmış sonucu döndürmek — yanlıştır: *farklı* bir isteğe sessizce
 eski bir cevap verir. Stripe'ın API'si isteğin bir parmak izini anahtarla
 birlikte saklar ve parametreleri eşleşmeyen bir yeniden kullanımı reddeder;
 kopyalanacak davranış budur. Argümanları kayıtla birlikte saklayın, tekrar
-oynatmada karşılaştırın ve uyuşmazlıkta gürültülü biçimde başarısız olun.
+oynatmada karşılaştırın ve uyuşmazlık varsa açıkça hata verin.
 
-**Kayıt ile etki birlikte commit olmalı.** Etki sizin veritabanınızdaki bir
-satırsa bu tek bir işlemdir ve problem çözülmüştür. Etki uzak bir çağrıysa — ki
-bu bölümün sürekli kullandığı `send_email` dâhil ilginç her araç için durum
-budur — çözülmemiştir, çünkü bir HTTP isteği sizin işleminize katılamaz. Bu,
-çift-yazma (dual-write) problemidir ve standart cevabı **transactional outbox**
-(gönderilecek çağrıyı yerel değişiklikle aynı işlemde kaydetme): tek bir işlemde
-hem idempotency kaydını *hem de* amaçlanan çağrıyı tarif eden bir
-satırı yazın; ayrı bir yayıcı outbox'ı okuyup çağrıyı *en az bir kez*
-(at-least-once) yapar — bir çökmeden sonra çağrıyı tekrarlayabilir ama asla
-atlamaz — ve anahtarı taşır, böylece alıcı yinelemeyi yutar. Yinelemeyi ortadan
-kaldırmadınız. Onu, bir anahtarın soğurabileceği bir yere taşıdınız.
+**Kayıt ile etki birlikte commit olmalı.** Etki sizin veri tabanınızdaki bir
+satırsa bu tek bir veri tabanı işlemidir (transaction) ve problem çözülmüştür.
+Etki uzak bir çağrıysa — ki bu bölümün sürekli kullandığı `send_email` dâhil
+ilginç her araç için durum budur — çözülmemiştir, çünkü bir HTTP isteği sizin
+işleminize katılamaz. Bu, çift yazma (dual-write) problemidir ve standart cevabı
+**transactional outbox** (gönderilecek çağrıyı yerel değişiklikle aynı işlemde
+kaydetme): tek bir işlemde hem idempotency kaydını *hem de* amaçlanan çağrıyı
+tarif eden bir satırı yazın. Ayrı bir yayıcı (publisher) outbox'ı okur ve
+çağrıyı *en az bir kez* (at-least-once) yapar: bir çökmeden sonra çağrıyı
+tekrarlayabilir ama asla atlamaz. Çağrı anahtarı da taşır; böylece alıcı
+yinelenen isteği tanıyıp yok sayar. Yinelemeyi ortadan kaldırmadınız. Onu, bir
+anahtarın soğurabileceği bir yere taşıdınız.
 
-Bu son adım, alıcının idempotency anahtarlarına uyduğunu varsayıyor. Stripe'ınki
-gibi ödeme API'leri uyar; düz SMTP uymaz, pek çok e-posta ve mesajlaşma API'si de
-uymaz. Böyle bir alıcıya karşı "en az bir kez", "arada bir iki kez" demektir. Geriye
-kalan, pencereyi küçültmek — çağrıdan önce "gönderiliyor" diye kaydetmek ve bir
+Bu son adım, alıcının idempotency anahtarlarını dikkate aldığını varsayıyor.
+Stripe'ınki gibi ödeme API'leri dikkate alır; düz SMTP almaz, pek çok e-posta ve
+mesajlaşma API'si de almaz. Böyle bir alıcıya karşı "en az bir kez", "arada bir
+iki kez" demektir. Geriye kalan, pencereyi küçültmek — çağrıdan önce "gönderiliyor" diye kaydetmek ve bir
 çökmeden sonra yeniden göndermeden önce sağlayıcının kendi kaydına bakmak — ve bu
 pencerenin var olduğunu bilmektir.
 
-**Saklama penceresi en uzun yeniden denemenizden uzun olmalı.** Bunu beş dakikaya
-ayarlayıp sonra altı saat gerektiğini keşfetmek kolaydır — çünkü kuyruk birikmişti
-ve iş ertesi sabah yeniden teslim edildi.
+**Saklama penceresi en uzun yeniden denemenizden uzun olmalı.** Pencereyi beş
+dakikaya ayarlayıp sonradan altı saat gerektiğini keşfetmek kolaydır: kuyruk
+birikmiştir ve iş ertesi sabah yeniden teslim edilir.
 
-## Telafi: gönderilmiş bir e-postanın geri alması yoktur {#sec-dagitim-telafi}
+## Telafi: gönderilmiş e-posta geri alınamaz {#sec-dagitim-telafi}
 
 Idempotency bir eylemin iki kez olmasını engeller. Bir kez bile olmaması gereken
 bir eylem hakkında hiçbir şey yapmaz.
 
-Veri tabanları size işlemler verir. Bir ajanın çağırdığı araçlar çoğunlukla
-vermez; dolayısıyla örüntü bir **telafi eylemidir**: her yan etki için, onu geri
-alan işlem — ve disiplin, o sütunu olaydan sonra değil, aracı yayına almadan önce
-yazmaktır.
+Veri tabanları size işlemler (transaction) verir. Bir ajanın çağırdığı araçlar
+çoğunlukla vermez; bu yüzden kullanılan örüntü **telafi eylemidir** (compensating
+action): her yan etki için onu geri alan işlem. Disiplin de telafi sütununu
+olaydan sonra değil, aracı yayına almadan önce yazmaktır.
 
 | araç | telafi | dürüst mü? |
 |:--|:--|:--|
-| Kayıt oluştur | sil | [çoğunlukla]{.pro} — satır gider, ama oluşturulmasıyla birlikte çoktan tetiklenmiş olan (bir webhook, aşağı akışta bir olay, gönderilmiş bir bildirim) geri tetiklenmez |
-| Karttan ödeme al | iade | çoğunlukla — ücret ve ekstre satırı hayatta kalır |
+| Kayıt oluştur | sil | [çoğunlukla]{.pro} — satır gider, ama kaydın oluşturulmasıyla çoktan tetiklenmiş olanlar (bir webhook, aşağı akışta bir olay, gönderilmiş bir bildirim) geri alınamaz |
+| Karttan ödeme al | iade | çoğunlukla — işlem ücreti ve ekstredeki satır kalır |
 | Yer ayır | iptal et | genellikle — ama yer tutuluyken geri çevrilen biri geri çevrilmiş olarak kalır |
 | Bir kanala gönder | mesajı sil | [hayır — insanlar okudu]{.con} |
 | E-posta gönder | [hiçbir şey]{.con} | [hayır]{.con} |
@@ -340,21 +351,22 @@ yazmaktır.
 
 [Alttaki iki satır tasarım kısıtıdır.]{.hl} Bir aracın telafisi olmadığında
 denetimin *daha erkene* taşınması gerekir — sonradan bir geri alma yerine eylem
-öncesinde bir onay kapısı, ki bu @sec-korkuluklar'ın konusu. Bu, mühendislik
-kılığına girmiş bir ürün kararıdır ve telafi tablosu, birinin bunu kasıtlı olarak
-vermesini zorlayan şeydir.
+öncesinde bir onay kapısı; bu da @sec-korkuluklar'ın konusu. Bu, mühendislik
+kılığına girmiş bir ürün kararıdır ve birini bu kararı bilinçli olarak vermeye
+zorlayan şey de telafi tablosudur.
 
 Araç yazarken yararlı bir alışkanlık (@sec-arac-tasarimi): yan etkili her araca
-bir kuru çalıştırma kipi verin. Bu, telafi tablosunu sınanabilir kılar ve ajana
-kendi planını taahhüt etmeden önce kontrol etmesi için bir yol verir.
+bir kuru çalıştırma (dry-run) kipi ekleyin. Bu, telafi tablosunu sınanabilir kılar
+ve ajana, planını uygulamaya geçirmeden önce denetleme olanağı verir.
 
 ## Her ajanın ihtiyaç duyduğu üç tavan {#sec-dagitim-tavanlar}
 
-@sec-ajan-anatomisi bunlara neden ihtiyaç olduğunu ölçtü: protokollerden birinde
-en kolay görevlerin yüzde altmışı kendiliğinden hiç durmadı ve adım tavanına kadar
-koştu — oysa her koşu cevabı daha 0. adımda bulmuştu. Yani bir akıl yürütme sonucu
-gibi görünen doğruluk sütunu aslında bir sonlanma sonucuydu. Üç sınır ve farklı
-arızaları yakalıyorlar:
+@sec-ajan-anatomisi bunlara neden ihtiyaç olduğunu ölçmüştü: protokollerden
+birinde en kolay görevlerin yüzde altmışında ajan kendiliğinden hiç durmadı ve
+adım bütçesi (bu bölümdeki adıyla adım tavanı) dolana kadar koştu — oysa bu
+koşuların her biri cevabı daha 0. adımda bulmuştu. Yani bir akıl yürütme sonucu
+gibi görünen doğruluk sütunu aslında bir sonlanma sonucuydu. Üç sınır var ve her
+biri farklı bir arızayı yakalıyor:
 
 | tavan | neyi yakalar | sınırda ne yapılır |
 |:--|:--|:--|
@@ -366,10 +378,10 @@ arızaları yakalıyorlar:
 
 Üçü de gerekli, çünkü her biri diğerlerinin arızasına kör. Bir adım tavanı tek
 bir aracın bir saat takılmasını durdurmaz; bir wall-clock zaman aşımı altmış
-hızlı adımın bir bütçeyi yakmasını durdurmaz; bir token tavanı aynı küçük dosyayı
-sonsuza dek okuyan bir döngüyü durdurmaz.
+hızlı adımın bir bütçeyi tüketmesini durdurmaz; bir token tavanı aynı küçük
+dosyayı sonsuza dek okuyan bir döngüyü durdurmaz.
 
-Ve bir tavana çarpmak yutulacak bir hata değil, bir **sonuçtur**. Cevapta, izde
+Bir tavana çarpmak da sessizce yutulacak bir hata değil, bir **sonuçtur**. Cevapta, izde
 ve değerlendirmenizde ayrı bir sonuç olarak görünmelidir —
 @sec-ajan-degerlendirme'nin sonlanma oranı tam olarak bu sayıdır ve koşuların
 üçte birinde tavana çarparken %85 doğru görünen bir ajan, %85 doğru bir ajan
@@ -377,49 +389,55 @@ değildir.
 
 ## Bir değişikliği yayına almak: sürümler, kanaryalar ve geri alma {#sec-dagitim-surum}
 
-Buraya kadar her şey, bir koşu sürerken gelen arızadan sağ çıkmakla ilgiliydi.
-Bir ajanın üretimde bozulmasının öteki yaygın yolu bir dağıtımdır: yeni bir
-prompt, yeni bir model sürümü, yeniden yazılmış bir araç açıklaması. Bir dağıtımı
-atlatılabilir kılan dört alışkanlık var.
+Buraya kadar anlatılanların hepsi, bir koşu sürerken gelen arızayı atlatmakla
+ilgiliydi. Bir ajanın üretimde bozulmasının öteki yaygın yolu ise yeni bir
+dağıtımdır: yeni bir prompt, yeni bir model sürümü, yeniden yazılmış bir araç
+açıklaması. Dağıtımları sorunsuz atlatmanızı sağlayan dört alışkanlık var.
 
-**Yalnızca kodu değil, davranışın tamamını sürümleyin.** Bir ajanın ne yaptığını
-kodu, prompt'ları, sabitlenmiş model sürümü (@sec-gecit-surum), araç tanımları ve
-sıcaklık ile üç tavan gibi ayarlar belirler. Bunları tek bir sürüm kimliği altında
-birlikte yayına alın ve o kimliği her ize kaydedin (@sec-gozlemlenebilirlik). Yeni
-bir sürüm kimliği olmadan bir panelden düzenlenen prompt, kimsenin
-ilişkilendiremeyeceği ve geri alamayacağı bir dağıtımdır —
-@sec-uretim-degerlendirme'nin teşhis ettiği "bir sürümle çakışan basamak
-değişimi" de ancak sürüm kaydedildiyse görünür.
+**Yalnızca kodu değil, davranışın tamamını sürümleyin.** Bir ajanın davranışını
+birkaç şey birlikte belirler: kodu, prompt'ları, sabitlenmiş model
+sürümü (@sec-gecit-surum), araç tanımları ve sıcaklık ile üç tavan gibi ayarlar.
+Bunları tek bir sürüm kimliği altında birlikte yayına alın ve o kimliği her ize
+kaydedin (@sec-gozlemlenebilirlik). Yeni bir sürüm kimliği verilmeden bir
+panelden düzenlenen prompt, kimsenin kaynağını bulamayacağı ve geri
+alamayacağı bir dağıtımdır. @sec-uretim-degerlendirme'nin teşhis ettiği "bir
+sürüme denk gelen basamak değişimi" de ancak sürüm kaydedildiyse görünür.
 
-**Önce bir dilime açın.** Bir **kanarya**, canlı trafiğin küçük bir payını —
-diyelim %5'ini — yeni sürüme gönderir ve onu aynı trafikte eski sürümle
-karşılaştırır: hata oranı, gecikme, koşu başına maliyet, tavana çarpan koşuların
-payı ve elinizdeki kalite sinyali neyse o. Pay aşamalarla büyür (%5 → %25 →
-%100), ama yalnızca kanarya daha kötü değilken; bir eşik aşıldığında trafik
-kendiliğinden eski sürüme döner. Bir **gölge dağıtım** — yeni sürüm canlı
-girdilerin bir kopyası üzerinde koşar, ama çıktısı kimseye gösterilmez — bir
-sohbet botu için güvenli, bir ajan için tehlikelidir: gerçek araçları olan bir
-gölge ajan gerçek e-postalar gönderir. Yan etkili araçları kuru çalıştırma
-kipinde koşmalıdır (@sec-dagitim-telafi). Bu basamakların her birinin neyi
-görüp neyi göremediği @sec-uretim-degerlendirme'nin konusu.
+**Önce bir dilime açın.** Bir **kanarya** (canary) dağıtımı, canlı trafiğin
+küçük bir payını — diyelim %5'ini — yeni sürüme gönderir ve yeni sürümü aynı
+trafikte eski sürümle karşılaştırır: hata oranı, gecikme, koşu başına maliyet,
+tavana çarpan koşuların payı ve elinizdeki kalite sinyali neyse o. (Adını,
+madencilerin zehirli gazı erken fark etmek için ocağa indirdiği kanaryadan
+alır: sorunu önce küçük bir dilim görür.) Pay aşama aşama büyür (%5 → %25 →
+%100), ama yalnızca kanarya eski sürümden kötü değilse; bir eşik aşılırsa trafik
+kendiliğinden eski sürüme döner. Bir **gölge dağıtım** (shadow deployment) ise
+yeni sürümü canlı girdilerin bir kopyası üzerinde koşturur, ama çıktısını kimseye
+göstermez. Bu, bir sohbet botu için güvenli, bir ajan için tehlikelidir: gerçek
+araçları olan bir gölge ajan gerçek e-postalar gönderir. Gölge ajanın yan etkili
+araçları kuru çalıştırma kipinde çalışmalıdır (@sec-dagitim-telafi). Bu
+yöntemlerin her birinin neyi yakalayıp neyi kaçırdığı,
+@sec-uretim-degerlendirme'deki değerlendirme merdiveninin konusu.
 
 **Geri alma tetikleyicisini dağıtımdan önce kararlaştırın.** Bir **hizmet düzeyi
-hedefi (SLO)**, bir zaman penceresi üzerinden konan ve bir *hizmet düzeyi
-göstergesiyle (SLI)* ölçülen hedeftir — örneğin "30 günlük pencerede ajan
-koşularının %99,5'i hatasız ve tavana çarpmadan biter". Başarısız olmasına izin
-verilen %0,5 **hata bütçesidir**: ayda 200.000 koşuda 1.000 koşu. Bu bütçeyi eski
-sürümden çok daha hızlı tüketen bir kanarya, bir olay sırasında tartışılarak
-değil, kuralla geri alınır. Göstergeyi dikkatle seçin: HTTP 200 başarılı bir koşu
-demek değildir, çünkü bir koşu 200 döndürüp yine de tavana çarpmış ya da yanlış
-cevap vermiş olabilir (@sec-gozlemlenebilirlik). Dilimin büyüklüğüne de dikkat
-edin. Ayda 200.000 koşuluk bir sistemde %5'lik kanarya günde yaklaşık 330 koşu
-görür; %0,5'lik bir taban oranda günde ikiden az başarısızlık bekler. Bu, kötü
-bozulan bir sürümü yakalamaya yeter, biraz daha kötü olanı fark etmeye ise hiç
-yetmez — küçük etkilerin A/B testine bırakılmasının nedeni bu.
+hedefi** (service level objective, SLO), belirli bir zaman penceresi için konan
+ve bir *hizmet düzeyi göstergesiyle* (service level indicator, SLI) ölçülen
+hedeftir — örneğin "30 günlük pencerede ajan koşularının %99,5'i hatasız ve
+tavana çarpmadan biter". Başarısız olmasına izin verilen %0,5'lik pay **hata
+bütçesidir** (error budget): ayda 200.000 koşu yapan bir sistemde bu, 1.000 koşu
+eder. Bu bütçeyi eski sürümden çok daha hızlı tüketen bir kanarya, bir olay
+sırasında tartışılarak değil, önceden konmuş bir kuralla geri alınır. Göstergeyi
+dikkatle seçin: HTTP 200 başarılı bir koşu demek değildir, çünkü bir koşu 200
+döndürüp yine de tavana çarpmış ya da yanlış cevap vermiş
+olabilir (@sec-gozlemlenebilirlik). Dilimin büyüklüğüne de dikkat edin. Ayda
+200.000 koşuluk bir sistemde %5'lik kanarya günde yaklaşık 330 koşu görür;
+başarısızlık oranının baseline'ı (taban oranı) %0,5 ise günde ikiden az
+başarısızlık bekler (330 × 0,005 ≈ 1,7). Bu, ciddi biçimde bozuk bir sürümü yakalamaya yeter; biraz
+daha kötü olanı fark etmeye ise hiç yetmez. Küçük etkilerin A/B testine
+bırakılmasının nedeni bu.
 
-**Geri alma kodu geri alır, etkileri değil.** Geri almak, eski davranışı *yeni*
-koşular için geri getirir. Kötü sürümün gönderdiği e-postaları geri çekmez — o
-telafi tablosunun işidir — ve hâlâ sürmekte olan koşulara ne olacağını da
+**Geri alma kodu geri alır, etkileri değil.** Geri alma, eski davranışı yalnızca
+*yeni* koşular için geri getirir. Kötü sürümün gönderdiği e-postaları geri çekmez
+— o, telafi tablosunun işidir — ve hâlâ sürmekte olan koşulara ne olacağını da
 belirlemez. Yeni kodla başlamış ve eski kodla tekrar oynatılan (ya da tersi)
 dayanıklı bir iş akışı farklı bir yol izleyebilir; bu da yine
 @sec-dagitim-dayanikli'deki belirlenimcilik kuralıdır. Dayanıklı motorlar bunun
@@ -431,50 +449,51 @@ vermektir.
 
 Her birini açmadan önce cevaplayın. İkisi bu bölümdeki yeniden deneme ölçümüne
 dayanıyor — sıcaklık 0'ın ne kazandırıp ne kazandırmadığı ve idempotency
-anahtarının neden modelden gelemeyeceği — geri kalanı ise çalışan bir prototipin
-dağıtılmaktan sağ çıkıp çıkmayacağına karar veren sorular.
+anahtarının neden modelden gelemeyeceği. Geri kalanlar ise çalışan bir
+prototipin dağıtımdan sağ çıkıp çıkmayacağını belirleyen sorular.
 
 ::: {.callout-note collapse="true"}
 ## 1. Ajanınız yerelde sorunsuz koşuyor ve üretimde 30 saniye sonra öldürülüyor.
 
 Bir döngüyü bir istek işleyicisinin üzerine dağıttınız.
 
-Sunucusuz platformlar yürütme süresini tavanlıyor, birçok yük dengeleyici fazla
-uzun boşta kalan bir bağlantıyı kesiyor ve bir ajan döngüsü bir istek değil: dakikalar sürebiliyor ve tavan koşunun ortasında —
-bazı araçlar zaten yürütüldükten sonra — geliyor. Belirti, gerçek yan etkileri
-olan ve sonucu olmayan kırpılmış bir koşu.
+Sunucusuz platformlar yürütme süresini sınırlıyor, birçok yük dengeleyici fazla
+uzun boşta kalan bir bağlantıyı kesiyor ve bir ajan döngüsü bir istek değil:
+dakikalar sürebiliyor ve sınır koşunun ortasında — bazı araçlar zaten
+yürütüldükten sonra — devreye giriyor. Belirti: gerçek yan etkiler bırakmış ama
+sonuç döndürmemiş, yarıda kesilmiş bir koşu.
 
 İş, denetiminizdeki bir sınırın içinde güvenilir biçimde bitiyorsa zaman aşımını
 ona göre yükseltmek meşru ve çok daha ucuz bir çözümdür. Onun ötesinde çözüm
 yapısal: isteği kabul edin, bir iş kuyruğa alın, bir kimlik döndürün ve döngüyü
-bir işçi koşsun. Bu değişiklik aynı zamanda
-size ilerlemeyi, iptali ve bir dead-letter queue'yu koyacağınız yeri de veriyor.
+bir işçi koşsun. Bu değişiklik, ilerleme bildirimini, iptali ve dead-letter
+queue'yu yerleştireceğiniz yeri de size veriyor.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Bir yeniden denemeyi güvenli kılmak için sıcaklık 0 yeterli mi?
 
-Hayır ve iki farklı özelliği karıştırıyor.
+Hayır; bu soru iki farklı özelliği birbirine karıştırıyor.
 
 Burada ölçüldüğü hâliyle sıcaklık 0, her görev için sekiz yeniden denemeyi bayt
-bayt aynı yaptı — modelin belirlenimci biçimde bir alıcı adresi uydurduğu biri
+bayt aynı yaptı — modelin her seferinde aynı alıcı adresini uydurduğu görev
 dâhil. Yeniden üretilebilir ve yanlış. Belirlenimcilik yeniden denemeyi
 *tekrarlanabilir* kılar; kararı doğru kılmaz ve etkinin zaten gerçekleşmiş
 olması hakkında hiçbir şey yapmaz.
 
 Ayrıca bir garanti de değil. Barındırılan API'ler sıcaklık 0'da bit bit aynı
-çıktı vaat etmiyor, çünkü batch'leme ve indirgeme sırası o an uçuşta olan diğer
-şeylerle değişiyor. Idempotency örnekleme ayarlarından değil, bir anahtardan
+çıktı vaat etmiyor, çünkü batch'leme ve indirgeme sırası o an işlenen diğer
+isteklere göre değişiyor. Idempotency örnekleme ayarlarından değil, bir anahtardan
 gelmeli.
 :::
 
 ::: {.callout-note collapse="true"}
-## 3. Idempotency anahtarı için araç argümanlarının özeti neden olmaz?
+## 3. Idempotency anahtarı olarak araç argümanlarının özeti neden kullanılamaz?
 
 Çünkü argümanlar modelin çıktısı ve modelin çıktısı tam da yeniden denemeler
 arasında değişen şey.
 
-Ölçüldü: *"pompa arızalandı, bilmesi gerekene haber ver"* görevi için 0,7
+Bu ölçüldü: *"pompa arızalandı, bilmesi gerekene haber ver"* görevi için 0,7
 sıcaklıkta sekiz yeniden deneme **beş farklı alıcı adresi** üretti. Beş argüman
 kümesi, beş özet, beş e-posta — anahtar, ihtiyaç duyulduğu anda hiçbir şeyi
 tekilleştirmemiş olurdu.
@@ -495,7 +514,8 @@ almaz ve gönderilmiş bir e-posta hiç geri alınamaz.
 
 Telafi tablosunun bir olaydan sonra değil, yayına almadan önce yazılmasının nedeni bu.
 Telafi sütununun "yok" dediği yerde denetim daha erkene taşınır — eylemden önce
-bir onay kapısı — ve mühendisliğin dışından birinin buna razı olması gerekir.
+bir onay kapısı (@sec-korkuluklar) — ve mühendisliğin dışından birinin buna razı
+olması gerekir.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -505,26 +525,26 @@ bir onay kapısı — ve mühendisliğin dışından birinin buna razı olması 
 
 Tekrar oynatma iş akışı işlevini baştan yeniden koşuyor ve tamamlanmış adımlar
 için kaydedilmiş sonuçları döndürüyor. Bu yalnızca işlev her seferinde aynı yolu
-izlerse sağlamdır; dolayısıyla saati okumak, rastgele bir kimlik üretmek ya da
-iş akışı kodundan doğrudan bir API çağırmak bunu bozar.
+izlerse doğru çalışır; dolayısıyla saati okumak, rastgele bir kimlik üretmek ya
+da iş akışı kodundan doğrudan bir API çağırmak bunu bozar.
 
-Ajanlar için özel tuzak, söylendiğinde apaçık: LLM çağrısı elinizdeki en az
+Ajanlara özgü tuzak, bir kez söylenince apaçık: LLM çağrısı elinizdeki en az
 belirlenimci şey, dolayısıyla iş akışı kodunda verilen bir karar değil,
 kaydedilmiş bir *adım* olmalı. İş akışı düzenler; belirlenimsizlik kaydettiği
 adımlarda yaşar.
 :::
 
 ::: {.callout-note collapse="true"}
-## 6. Bir adım tavanı konmuş. Yine de bir zaman aşımına ihtiyacınız var mı?
+## 6. Adım tavanı zaten var. Yine de bir zaman aşımına ihtiyacınız var mı?
 
-Evet, çünkü birbirlerine körler.
+Evet, çünkü her biri ötekinin yakaladığı arızayı görmez.
 
-Bir adım tavanı tek bir aracın bir saat takılmasını durdurmaz — bu, sıfır ek
-adımdır. Bir wall-clock zaman aşımı altmış hızlı adımın bir bütçeyi yakmasını
-durdurmaz. Bir token tavanı aynı küçük dosyayı sonsuza dek okuyan bir döngüyü
-durdurmaz.
+Bir adım tavanı tek bir aracın bir saat takılmasını durdurmaz — takılan araç
+hiç yeni adım üretmez. Bir wall-clock zaman aşımı altmış hızlı adımın bir
+bütçeyi tüketmesini durdurmaz. Bir token tavanı aynı küçük dosyayı sonsuza dek
+okuyan bir döngüyü durdurmaz.
 
-Üçünü de koyun ve herhangi birine çarpmayı, cevapta, izde ve değerlendirmede
+Üçünü de koyun ve herhangi birine çarpmayı cevapta, izde ve değerlendirmede
 görünen ayrı bir sonuç olarak ele alın. @sec-ajan-degerlendirme'nin sonlanma
 oranı o sayıdır ve koşuların üçte birinde tavana çarparken %85 doğru diye
 raporlanan bir ajan dürüstçe ölçülmemiştir.
@@ -533,9 +553,9 @@ raporlanan bir ajan dürüstçe ölçülmemiştir.
 ## Mülakat soruları {#sec-dagitim-mulakat}
 
 ::: {.callout-warning appearance="simple"}
-**Kaynak konusunda — @sec-metin-veri'deki çekincenin aynısı.** Aşağıdaki sorular
-bu kitabın baştan sona kullandığı iki güvenilir açık kaynakta ve bu bölümün
-kendi ölçümünün cevaplanabilir kıldığı yerlerde tekrar ediyor.
+**Kaynak konusunda — @sec-metin-veri'deki çekincenin aynısı.** Bu sorular,
+kitabın kullandığı iki güvenilir açık kaynakta tekrar tekrar karşımıza çıkıyor;
+bunlara bu bölümün kendi ölçümünün cevaplanabilir kıldığı sorular da ekleniyor.
 :::
 
 ### Arızayı anlayıp anlamadığınızı sınayanlar
@@ -543,17 +563,17 @@ kendi ölçümünün cevaplanabilir kıldığı yerlerde tekrar ediyor.
 **S: Ajanınızın işçisi koşunun ortasında çöküyor. Arkasında ne bıraktı?**
 
 Tamamlanmış araç çağrılarının zaten yaptığı her şeyi, tamamlandıklarına dair
-hiçbir kayıt olmadan. Naif bir yeniden başlatma onları yeniden yürütür. İki cevabı
-adlandırın: her adımı kaydeden ve tamamlanmış işin tekrarlanmaması için geçmişi
-tekrar oynatan dayanıklı yürütme; ya da yan etkili araçlarda idempotency
-anahtarları, ki yeniden yürütme zararsız olsun. Çoğu sistemin ikincisine her
+hiçbir kayıt olmadan. Naif bir yeniden başlatma onları yeniden yürütür. İki
+çözümü sayın: her adımı kaydeden ve tamamlanmış iş tekrarlanmasın diye geçmişi
+tekrar oynatan dayanıklı yürütme; ya da yeniden yürütmeyi zararsız kılan, yan
+etkili araçlardaki idempotency anahtarları. Çoğu sistemin ikincisine her
 hâlükârda ihtiyacı var, çünkü dayanıklı motorlar her adımı *en az bir kez*
 koşar: araç etkisini gerçekleştirdikten sonra ama motor sonucu kaydetmeden önce
 gelen bir çökme o adımı yeniden koşturur.
 
 **S: Bir LLM adımını yeniden denemek idempotent midir?**
 
-Varsayılan olarak değil ve insanların beklediği nedenle de değil. Etkinin zaten
+Varsayılan olarak değil; üstelik nedeni, insanların beklediği neden değil. Etkinin zaten
 gerçekleşmiş olmasının ötesinde, yeniden deneme aynı eylemi tekrarlamayabilir
 bile — burada ölçüldüğü hâliyle belirsiz bir görev, sekiz yeniden deneme boyunca
 beş farklı alıcı adresi üretti. Sıcaklık 0 yerel bir sunucuda yeniden denemeleri
@@ -564,11 +584,10 @@ barındırılan API'ler bunu vaat etmiyor.
 
 Yukarı akıştaki, kararlı bir yerden — `(oturum kimliği, adım indisi)` ya da istek
 kimliği. Açıkça araç argümanlarının bir özeti *değil*, çünkü onlar modelin çıktısı
-ve yeniden denemeler arasında değişiyorlar. Sonra işe yarayıp yaramayacağına
-karar veren iki ayrıntı: anahtar etkiyle atomik biçimde commit olmalı — uzak bir
+ve yeniden denemeler arasında değişiyorlar. Sonra işe yarayıp yaramayacağını
+belirleyen iki ayrıntı: anahtar etkiyle atomik biçimde commit olmalı — uzak bir
 çağrı için bu bir outbox demek, çünkü bir HTTP isteği işleminize katılamaz — ve
-saklama
-penceresi en uzun yeniden denemenizden uzun olmalı.
+saklama penceresi en uzun yeniden denemenizden uzun olmalı.
 
 ### Bir tane yayına alıp almadığınızı sınayanlar
 
@@ -576,7 +595,7 @@ penceresi en uzun yeniden denemenizden uzun olmalı.
 
 Kuyruk destekli, çünkü yirmi dakikalık bir HTTP isteği bir dağıtımdan ya da bir
 yük dengeleyiciden sağ çıkmaz. Kabul edin, kuyruğa alın, bir kimlik döndürün;
-döngüyü bir işçi koşsun; istemci yoklasın ya da abone olsun. Sonra sonradan
+döngüyü bir işçi koşsun; istemci yoklasın ya da abone olsun. Ardından, sonradan
 eklenmesi acı verici üç şey: anlamlı ilerleme, döngünün adımlar arasında
 gerçekten kontrol ettiği iptal ve arızaların sonsuza dek yeniden denenmek yerine
 bir insana ulaşması için bir dead-letter queue. Üç tavanı ekleyin ve birine
@@ -584,12 +603,12 @@ bir insana ulaşması için bir dead-letter queue. Üç tavanı ekleyin ve birin
 
 **S: Konuşma nerede yaşıyor ve bu neye mal oluyor?**
 
-Süreç içinde en basiti ve bir kullanıcıyı tek bir örneğe sabitliyor; dolayısıyla
-yeniden başlatmalar oturumları yitiriyor. Oturum deposu varsayılan: her tura
+Süreç içinde tutmak en basiti ama bir kullanıcıyı tek bir örneğe sabitliyor;
+dolayısıyla yeniden başlatmalarda oturumlar kayboluyor. Oturum deposu varsayılan: her tura
 herhangi bir örnek hizmet ediyor, karşılığında deponun gecikmesi her turun
 üzerinde. İstemcide tutulan geçmiş sunucuyu durumsuz yapıyor ama istemcinin
-geçmişi düzenlemesine izin veriyor, ki bu bir güvenlik sorusu
-(@sec-ajan-guvenligi). Üçünden hiçbiri token faturasını değiştirmiyor: geçmiş
+geçmişi düzenlemesine izin veriyor; bu da bir güvenlik
+sorusu (@sec-ajan-guvenligi). Üçünden hiçbiri token faturasını değiştirmiyor: geçmiş
 nerede saklanırsa saklansın model her turda konuşmanın tamamını alıyor. Dolayısıyla
 prompt token'ları oturum boyunca büyüyor — @sec-servis'in maliyet aritmetiği.
 
@@ -598,7 +617,8 @@ prompt token'ları oturum boyunca büyüyor — @sec-servis'in maliyet aritmeti�
 Model hakkında değil. O aracın bir telafisi olup olmadığı, telafinin gerçek olup
 olmadığı — insanların zaten okuduğu bir mesajı silmek bir geri alma değildir — ve
 değilse eylemin neden bir onay kapısının arkasında olmadığı hakkında. Sonra bunun
-bir karar değil bir yineleme olup olamayacağı, ki bu idempotency sorusu; ve
+modelin bir kararı değil de bir yineleme olup olamayacağı (bu, idempotency
+sorusu); ve
 koşunun bir tavana çarpıp çarpmadığı ve başarı olarak raporlanıp raporlanmadığı.
 
 **S: E-posta gönderen bir ajan için yeni bir prompt'u nasıl yayına alırsınız?**
@@ -608,15 +628,15 @@ kaydedilen tek bir kimlik altında. Sonra küçük bir dilimde bir kanarya; eski
 sürümle hata oranı, tavan çarpmaları, maliyet ve bir kalite sinyali üzerinden
 karşılaştırılır ve geri alma tetikleyicisi SLO'nun hata bütçesinden alınıp önceden
 kararlaştırılır. Düz bir gölge dağıtım değil, çünkü gerçek bir `send_email`'i
-olan gölge ajan gerçek posta gönderir — gölge ancak araçlar kuru çalıştırma
-kipindeyken. Geri almanın neyi yapamayacağını da söyleyin: kanaryanın zaten
+olan gölge ajan gerçek e-posta gönderir; gölge dağıtım ancak araçlar kuru
+çalıştırma kipindeyken yapılabilir. Geri almanın neyi yapamayacağını da söyleyin: kanaryanın zaten
 gönderdiklerini geri çekmez.
 
 ## 2026 alet çantası {#sec-dagitim-araclar}
 
 Bu bölümde neredeyse hiçbir şey bir kütüphane gerektirmedi — ölçüm yerel bir
-modele 72 çağrıydı ve geri kalan her şey kendi döngünüzün bir özelliği. Önemli
-olan ikinci tablo ve ikiye temiz biçimde ayrılıyor: yukarıda anlatılan
+modele 72 çağrıydı ve geri kalan her şey kendi döngünüzün bir özelliği. Asıl
+önemli olan ikinci tablo; o da ikiye net biçimde ayrılıyor: yukarıda anlatılan
 belirlenimcilik sözleşmesini dayatan dayanıklı yürütme motorları ve dayatmayan
 düz görev kuyrukları.
 
@@ -631,9 +651,9 @@ Bilmeye değer, yukarıda kullanılmadı:
 
 | proje | sürüm | ne zaman başvurursunuz |
 |:--|:--|:--|
-| `temporalio` | 1.32.0 | tekrar oynatmalı dayanıklı yürütme; olgun seçenek ve belirlenimcilik sözleşmesi bu bölümde anlatılan |
+| `temporalio` | 1.32.0 | tekrar oynatmalı dayanıklı yürütme; olgun seçenek ve bu bölümde anlatılan belirlenimcilik sözleşmesi onunki |
 | `restate-sdk` | 1.0.4 | daha hafif bir işletme ayak iziyle dayanıklı yürütme |
-| `dbos` | 2.31.0 | zaten bir tane işletiyorsanız Postgres destekli dayanıklı iş akışları |
+| `dbos` | 2.31.0 | zaten bir Postgres işletiyorsanız, Postgres destekli dayanıklı iş akışları |
 | `prefect` | 3.8.4 | yeniden denemeler ve gözlemlenebilirlikle iş akışı düzenleme; ajanlardan çok veri hatlarına yakın |
 | `celery` | 5.6.3 | kuyruk destekli işçilere ihtiyacınız varsa ve fazlasına yoksa, köklü Python görev kuyruğu |
 | `rq` | 2.12.0 | Celery işin gerektirdiğinden fazlaysa, Redis üzerinde daha küçük bir kuyruk |
@@ -641,7 +661,7 @@ Bilmeye değer, yukarıda kullanılmadı:
 
 : Daha geniş ekosistem, yazım anındaki sürümler {tbl-colwidths="[22,14,64]"}
 
-## Lab: bir adımı yeniden denemeye güvenli kılın {#sec-dagitim-lab}
+## Lab: bir adımı güvenle yeniden denenebilir kılın {#sec-dagitim-lab}
 
 En az bir yan etkili aracı olan bir ajan alın. Yoksa bir dosyaya ekleme yapan bir
 `send_email` yeter — amaç yinelemeyi *görmek*.
@@ -656,28 +676,30 @@ gerçekleştiremiyorsanız, kazara gerçekleşmeyeceğini iddia edemezsiniz.
 
 Modelinizden üretim sıcaklığınızda aynı araç çağrısını on kez isteyin. Farklı
 argüman kümelerini sayın. Sonra bilerek eksik belirtilmiş bir görevle tekrarlayın.
-O iki sayı arasındaki boşluk, prompt'unuzun sizi ne kadar koruduğudur.
+İki sayı arasındaki fark, prompt'unuzun sizi ne kadar koruduğunu gösterir.
 
 ### Adım 3 — doğru yerden bir idempotency anahtarı ekleyin
 
 Argümanlar üzerinden değil, `(oturum kimliği, adım indisi)` üzerinden anahtarlayın.
-Adım 1'i tekrarlayın. İkinci yürütme, davranmadan ilk sonucu döndürmeli.
+Adım 1'i tekrarlayın. İkinci yürütme, eylemi yeniden yapmadan ilk sonucu
+döndürmeli.
 
 ### Adım 4 — anahtarı ve etkiyi tek bir işleme koyun
 
-Bir dosyaya ekleme bir veritabanı işlemine katılamaz; bu yüzden bu adım için sahte
-`send_email`'in, idempotency kayıtlarını tutan aynı veritabanına (SQLite yeter)
+Bir dosyaya ekleme bir veri tabanı işlemine katılamaz; bu yüzden bu adım için sahte
+`send_email`'in, idempotency kayıtlarını tutan aynı veri tabanına (SQLite yeter)
 bir satır eklemesini sağlayın ve ikisini tek bir işlemde yazın. Gerçek bir uzak
 çağrı için bunun yerine yukarıda anlatılan outbox'ı kullanın.
 Sonra adım 1'i, işçiyi etki ile kayıt *arasında* öldürerek yeniden koşun. Yineleme
-geri geliyorsa yazma atomik değildi — ki bu adımın var olma nedeni tam da o hatayı
+geri geliyorsa yazma atomik değildi — bu adımın amacı da tam olarak o hatayı
 açığa çıkarmak.
 
 ### Adım 5 — telafi tablosunu yazın
 
 Yan etkili her araç, telafi eylemi ve telafinin gerçek olup olmadığına dair dürüst
-bir not. Dolaştırın. Telafisi olmayan satırlar bir onay kapısına ihtiyaç duyanlar
-ve bu, mühendisliğin dışından biriyle yapılacak bir konuşma.
+bir not. Tabloyu ekibinizle paylaşın. Telafisi olmayan satırlar onay kapısı
+gerektirenlerdir; bu da mühendislik dışından biriyle konuşulması gereken bir
+konu.
 
 ### Adım 6 — üç tavanı koyun ve her birine çarpın
 
@@ -709,8 +731,9 @@ birinin ateşlendiğine ve raporlandığına dair kanıt.
 4. **Atomiklik.** Idempotency kaydınızın, koruduğu etkiyle birlikte commit olup
    olmadığını öğrenin. Etki uzak bir çağrıysa olamaz; o zaman outbox'ı uygulayın
    ve yinelemenin artık sizin işleminizle engellenmek yerine alıcının anahtarıyla
-   soğurulduğunu gösterin. Her hâlükârda yineleme üreten araya girişi kurun ve
-   bunun sizin trafiğinizde ne kadar olası olduğunu söyleyin.
+   soğurulduğunu gösterin. Her hâlükârda yinelemeye yol açan işlem sıralamasını
+   (interleaving) kurgulayın ve bunun sizin trafiğinizde ne kadar olası olduğunu
+   söyleyin.
 
 5. **Üç tavanın üçüne de çarpın.** Sırasıyla adımı, token'ı ve wall-clock süresini
    tüketen üç görev yazın. Her birinin ajanı durdurduğunu ve üçünün kütüklerinizde
@@ -724,20 +747,20 @@ birinin ateşlendiğine ve raporlandığına dair kanıt.
    istemcinin neler yapabileceği. Sonra hangisini seçeceğinizi ve nedenini söyleyin.
 
 7. **İptal, dürüstçe.** Koşan bir ajana bir iptal gönderin ve işin gerçekten
-   durmasının ne kadar sürdüğünü, uçuştaki araç çağrısının tamamlanıp
-   tamamlanmadığını ölçün. Adımlar arasında bayrağı kontrol eden hiçbir şey yoksa
+   durmasının ne kadar sürdüğünü ve o sırada sürmekte olan araç çağrısının
+   tamamlanıp tamamlanmadığını ölçün. Adımlar arasında bayrağı kontrol eden hiçbir şey yoksa
    iptaliniz yok demektir.
 
 8. **Kanaryayı boyutlandırın.** Tanıdığınız bir ajan için, SLI'ı kesin biçimde
    belirtilmiş bir SLO yazın ve aylık hata bütçesini hesaplayın. Sonra %5'lik bir
-   kanaryanın günde kaç koşu gördüğünü ve taban başarısızlık oranınızda kaç
-   başarısızlık beklemesi gerektiğini hesaplayın. Bir günlük kanarya trafiğinin
-   bunu fark edebilmesi için bir sürümün ne kadar daha kötü olması gerekir?
+   kanaryanın günde kaç koşu gördüğünü ve baseline başarısızlık oranınızla kaç
+   başarısızlık beklemesi gerektiğini hesaplayın. Bir sürüm ne kadar daha kötü
+   olmalı ki bir günlük kanarya trafiği farkı görebilsin?
 
 ## Daha derine {#sec-dagitim-derinlesme}
 
-Okumadan önce: sistemdeki, etkisinin iki kez gerçekleştiğini en az görmek
-isteyeceğiniz aracı seçin ve bugün onu durduran bir şey olup olmadığını öğrenin.
+Okumadan önce: sisteminizde, etkisinin iki kez gerçekleşmesini en son
+isteyeceğiniz aracı seçin ve bugün bunu engelleyen bir şey olup olmadığını öğrenin.
 O cevap, bunlardan hangisine önce ihtiyacınız olduğuna karar veriyor.
 
 Bu bölüm çoğunlukla işletme pratiğine dayanıyor. İlk tablo işletme literatürü
@@ -751,7 +774,7 @@ ve onu uygulayan motorlar; içindekilerin hiçbiri bir araştırma sonucu değil
 | [Handling Overload](https://sre.google/sre-book/handling-overload/) | istemci tarafı yeniden deneme bütçesi; başarısız işlerin yeniden denemelerinin bir kesintiye dönüşmesini engelleyen şey |
 | [Service Level Objectives](https://sre.google/sre-book/service-level-objectives/) | Google SRE kitabının SLI ve SLO bölümü; oradaki hata bütçesi, @sec-dagitim-surum'daki geri alma tetikleyicisidir |
 | [Temporal's workflow determinism rules](https://docs.temporal.io/workflow-definition) | tekrar oynatma sözleşmesi kesin biçimde ifade edilmiş; herhangi bir dayanıklı motoru benimsedikten sonra değil, önce okuyun |
-| [`temporalio/sdk-python`](https://github.com/temporalio/sdk-python) | iş akışı/etkinlik ayrımı kod içinde, ki LLM çağrısının düşmesi gereken yer orası |
+| [`temporalio/sdk-python`](https://github.com/temporalio/sdk-python) | iş akışı/etkinlik ayrımı kodda; LLM çağrısının hangi tarafa düşmesi gerektiğini gösteren ayrım bu |
 | [`restate`](https://github.com/restatedev/restate) / [`dbos-transact-py`](https://github.com/dbos-inc/dbos-transact-py) | dayanıklılığa iki daha hafif yaklaşım; Temporal'ın sözleşmesinin hangi parçalarının zorunlu olduğunu görmek için yararlı |
 | [The saga pattern](https://microservices.io/patterns/data/saga.html) | adlandırılmış bir örüntü olarak telafi; yukarıdaki telafi tablosunun yalnızca işaret ettiği arıza kipleriyle |
 | [`celery`](https://github.com/celery/celery) / [`ray`](https://github.com/ray-project/ray) | adımlar zaten idempotentken, dayanıklılık olmadan kuyruk destekli biçim |
@@ -768,14 +791,14 @@ ve onu uygulayan motorlar; içindekilerin hiçbiri bir araştırma sonucu değil
 
 - **Bir ajan döngüsü bir istek işleyicisi değildir.** Dakikalar sürer;
   dolayısıyla yürütme tavanı olan bir platform onu, bazı araçlar zaten
-  ateşlendikten sonra, koşunun ortasında öldürür. Görevler bir isteğin ömrünü
+  çalıştıktan sonra, koşunun ortasında öldürür. Görevler bir isteğin ömrünü
   aşmaya başladığında biçim kuyruk desteklidir: kabul et, kuyruğa al, bir kimlik
   döndür ve ilerlemeyi, iptali ve bir dead-letter queue'yu hâlâ eklemesi ucuzken
   ekle.
 
 - **Konuşmanın nerede yaşadığı token maliyeti değil, işletme ve güven kararıdır.**
-  Süreç içi bir kullanıcıyı tek bir örneğe sabitliyor ve dağıtımda oturumları
-  yitiriyor. Oturum deposu varsayılan; gecikmesi her turun üzerinde. İstemcide
+  Süreç içinde tutmak bir kullanıcıyı tek bir örneğe sabitliyor ve dağıtımda
+  oturumları kaybettiriyor. Oturum deposu varsayılan; gecikmesi her turun üzerinde. İstemcide
   tutulan geçmiş sunucuyu durumsuz yapıyor ve istemcinin onu düzenlemesine izin
   veriyor. Geçmiş nerede yaşarsa yaşasın model her turda tamamını alıyor;
   dolayısıyla prompt token'ları her turda büyüyor — @sec-servis'in aritmetiği ve
@@ -791,7 +814,8 @@ ve onu uygulayan motorlar; içindekilerin hiçbiri bir araştırma sonucu değil
   idempotent olması gerekir.
 
 - **Bir adımı yeniden denemek, bir isteği yeniden denemek değildir.**
-  @sec-gecit'in yeniden deneme problemi büyütmeydi; bu ise yineleme. Ve yeniden
+  @sec-gecit'in yeniden deneme problemi yükün katlanmasıydı; buradaki ise
+  yineleme. Ve yeniden
   deneme aynı eylemi tekrarlamayabilir bile: *bilmesi gerekene haber ver*
   dendiğinde bir model 0,7 sıcaklıkta **sekiz yeniden deneme boyunca beş farklı
   alıcı adresi** üretti.
@@ -800,7 +824,8 @@ ve onu uygulayan motorlar; içindekilerin hiçbiri bir araştırma sonucu değil
   sekiz yeniden denemenin tamamı bayt bayt aynıydı — belirlenimci biçimde bir
   adres uyduran koşu dâhil. Yeniden üretilebilir, doğru demek değildir; üstelik
   barındırılan API'ler sıcaklık 0'da bit bit aynı çıktıyı zaten vaat etmiyor,
-  çünkü batch'leme ve indirgeme sırası o an uçuşta olan diğer şeylerle değişiyor.
+  çünkü batch'leme ve indirgeme sırası o an işlenen diğer isteklere göre
+  değişiyor.
 
 - **Idempotency anahtarını yukarı akıştan türetin, asla modelin çıktısından
   değil.** Araç argümanlarını özetlemek tam da ihtiyaç duyulduğunda başarısız
@@ -818,7 +843,7 @@ ve onu uygulayan motorlar; içindekilerin hiçbiri bir araştırma sonucu değil
   dışından biri için bir karardır.
 
 - **Üç tavanı da koyun, çünkü her biri diğerlerine kör.** Bir adım tavanı takılan
-  bir aracı durdurmaz; bir zaman aşımı bir bütçeyi yakan altmış ucuz adımı
+  bir aracı durdurmaz; bir zaman aşımı bir bütçeyi tüketen altmış ucuz adımı
   durdurmaz; bir token tavanı aynı dosyayı sonsuza dek okuyan bir döngüyü
   durdurmaz. Birine çarpmak bir *sonuçtur*: yeri cevap, iz ve değerlendirmedir ve
   @sec-ajan-degerlendirme'nin sonlanma oranı, tavana çarparken doğru görünen bir
