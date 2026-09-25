@@ -335,7 +335,7 @@ magnitude, and the spread is informative rather than embarrassing.
 |:--|--:|:--|
 | LIMA [@zhou2023lima] | 1,000 | showing that a *little* is enough |
 | InstructGPT [@ouyang2022training] | 12,725 prompts | a general-purpose assistant |
-| Self-Instruct [@wang2023selfinstruct] | ~52,000 instructions | synthetic data, no human writers |
+| Self-Instruct [@wang2023selfinstruct] | ~52,000 instructions | synthetic data; only 175 human-written seed tasks |
 | Tülu 3 [@lambert2025tulu3] | 939,344 prompts | a competitive open recipe |
 
 That last row hides the real work. Tülu 3's team assembled **23,327,961**
@@ -585,9 +585,10 @@ not which factor carries the randomness.]{.hl}
 
 LoRA takes the third row: "a random Gaussian initialization for $A$ and zero
 for $B$" [@hu2022lora]. The paper states the convention and does not argue for
-it over the fourth row, and neither will this book. What the convention buys is
-the property that makes LoRA runs so forgiving of a bad learning rate compared
-to a full fine-tune: you always start from a model that already works.
+it over the fourth row, and neither will this book. What the $B = 0$
+initialisation buys is that the adapter leaves the pretrained model untouched at
+step 0: you start from a model that already works, where random–random
+initialisation would start the run from noise.
 
 ### Rank and alpha, and why there are two knobs
 
@@ -797,13 +798,16 @@ The headline result: fine-tuning a 65B model goes from ">780 GB of GPU memory
 to &lt;48 GB without degrading the runtime or predictive performance compared to
 a 16-bit fully finetuned baseline" [@dettmers2023qlora]. Their Guanaco 65B,
 trained this way in 24 hours on a single GPU, reached 99.3% of ChatGPT's score
-on the Vicuna benchmark.
+on the 80-question Vicuna benchmark, as scored by GPT-4 acting as judge rather
+than by humans.
 
 ::: {.callout-warning appearance="simple"}
-**"Without degrading" is a claim about final quality, not about speed.**
-Dequantizing every block on every forward and backward pass costs arithmetic.
-QLoRA buys you the ability to run at all on a small card; it does not make the
-step faster than plain LoRA on a card where plain LoRA already fits.
+**"Without degrading" is measured against full fine-tuning, not plain LoRA.**
+The paper's claim covers runtime too, but its comparison is a 16-bit *full*
+fine-tune. Against plain LoRA, dequantizing every block on every forward and
+backward pass costs arithmetic. QLoRA buys you the ability to run at all on a
+small card; it does not make the step faster than plain LoRA on a card where
+plain LoRA already fits, and usually makes it somewhat slower.
 :::
 
 ### The payoff nobody mentions until they are on call
@@ -960,7 +964,7 @@ The reward model is the interesting object: it converts an *ordering* — A beat
 B — into a *scalar*, which is what a reinforcement-learning algorithm needs.
 Everything expensive about RLHF follows from having built that converter and
 then needing to keep it, and a frozen reference, and a value estimator, all in
-memory while the policy generates. The optimizer in the middle is PPO
+memory while the policy generates. The reinforcement-learning algorithm in the middle is PPO
 [@schulman2017ppo], chosen for stability rather than for anything to do with
 language.
 :::
@@ -1298,8 +1302,8 @@ the derived model's name.
 
 ## Continued pretraining, and the Turkish case {#sec-continued-pretraining}
 
-There is one situation where the "post-training cannot add knowledge" rule
-genuinely bends: when what is missing is not a fact but a *distribution*. A
+There is one situation where the "post-training is not a reliable way to add
+knowledge" principle genuinely bends: when what is missing is not a fact but a *distribution*. A
 model that has seen little Turkish is not missing a fact about Turkish. It is
 missing the language.
 
@@ -1450,8 +1454,8 @@ not.
 Branch 2 is not a formality. "Have you tried a better prompt" is a question
 with a large literature behind it — one survey catalogues 58 distinct
 text-only prompting techniques [@schulhoff2025prompt], and @sec-prompting works
-through the ones that matter. Most teams who reach for fine-tuning have tried
-two.
+through the ones that matter. Teams who reach for fine-tuning have often tried
+only a few.
 :::
 
 ::: {.callout-important appearance="simple"}
@@ -1503,8 +1507,8 @@ still model Turkish?*
 
 The probe is the original pretraining objective. Mask 15% of the tokens in
 held-out Turkish text and measure how surprised the model's own masked-language
-head is by the answers — the same measurement as @sec-language-models, applied
-before and after.
+head is by the answers — the masked-LM counterpart of the perplexity
+measurement in @sec-language-models, applied before and after.
 
 One methodological point decides whether the numbers mean anything. The LoRA
 row is probed with the adapter **merged into the base weights**, not with the
@@ -1770,8 +1774,9 @@ demonstration, not an experiment.
 - **Neither the 1.40× memory ratio nor the 1.19× speedup generalises upward.**
   Both are laptop numbers at 110M parameters with a batch of 32, and both are
   small because activations dominate at this size. At 8B the balance inverts —
-  the parameter-linear terms grow with the model while the activation term
-  grows with your batch — which is how the same technique turns 119.7 GiB into
+  parameter state grows with the square of the hidden size while activations
+  grow only linearly in it (and in batch × sequence length), so the balance
+  tips towards parameters as the model widens — which is how the same technique turns 119.7 GiB into
   15.5 GiB. Quoting this table's ratios as general claims about LoRA would be
   exactly the dishonesty the table exists to prevent.
 - **Peak memory is one number standing in for a distribution.** It is the
@@ -1814,7 +1819,7 @@ demonstration, not an experiment.
    base model and compare its weights to the original checkpoint tensor by
    tensor. They should be identical. Then do the same after a full fine-tune
    and report how many tensors differ. This is a three-line experiment that
-   makes @sec-forgetting's central claim concrete.
+   makes the reversibility advantage in @sec-forgetting concrete.
 6. **Measure your own forgetting.** Take your fine-tuned encoder and run the
    masked-language probe from @sec-forgetting on Turkish text from a domain
    neither you nor the fine-tune touched. Compare full fine-tuning against
@@ -2039,7 +2044,7 @@ visible in that string, and it takes ten seconds.
 | what LoRA replaced, and why latency mattered | @houlsby2019parameter; @lester2021power |
 | the recipe that made instruction-following standard | @ouyang2022training |
 | preferences, before the language models | @christiano2017deep; @stiennon2020learning |
-| the optimizer inside RLHF | @schulman2017ppo |
+| the RL algorithm inside RLHF | @schulman2017ppo |
 | deriving the reward model away | @rafailov2023dpo |
 | deleting the value model instead | @shao2024deepseekmath |
 | verifiable rewards, at scale | @guo2025deepseekr1 |
