@@ -78,10 +78,10 @@ the field literally** — *how much money was allocated* has to become
 `alan="butce"`. So the schema is the only thing that can carry the mapping.
 Nothing is executed; what is scored is the call the model emits.
 
-Two of the four differ by four words. Here they are in full:
+Two of the four differ by four words. Here they are in full, variant B (named,
+free string) first:
 
 ```json
-// variant B — named, free string
 {"name": "veri_getir",
  "description": "Fetch one field of one project.",
  "input_schema": {"type": "object",
@@ -89,8 +89,11 @@ Two of the four differ by four words. Here they are in full:
                   "alan":  {"type": "string"}},
    "required": ["proje", "alan"],
    "additionalProperties": false}}
+```
 
-// variant C — the only change is the enum
+Then variant C, where the only change is the enum:
+
+```json
 {"name": "veri_getir",
  "description": "Fetch one field of one project.",
  "input_schema": {"type": "object",
@@ -162,7 +165,8 @@ malformed call: a wrong call errors, and an invented answer looks like an
 answer.
 
 **Without the enum, the model echoes the user's vocabulary into your API.**
-Here is the whole of variant B, one row per phrasing:
+Here is the whole of variant B, one row per phrasing (the rows summarise
+phrasings; the per-question rate is the table's 15/60):
 
 ```text
   MISS  wanted butce     got "bütçe"           ← "ne kadar para ayrildi?"
@@ -176,8 +180,10 @@ Here is the whole of variant B, one row per phrasing:
 Neither of the two it got right contains the API's word: *kac kisi calisiyor*
 has no `personel` in it, and *kac ay suruyor* has no `sure`. There the model
 mapped the meaning — how many people, how many months — onto a field name, and
-the name it chose was the API's own. Everywhere else it passed the question's vocabulary
-straight through — *mali buyukluk*, *ekip mevcudu*, *takvim*. The model is not
+the name it chose was the API's own. In three of the other four it passed the
+question's vocabulary straight through — *mali buyukluk*, *ekip mevcudu*,
+*takvim*; in the fourth, the first row, it produced the Turkish spelling of the
+API's own word, `bütçe`. The model is not
 guessing badly; it has no way to know that your API says `butce`, so it says
 what the user said.
 
@@ -190,9 +196,11 @@ Not everywhere, though, and the difference is worth being precise about. An
 enum in a schema is a hint your model usually follows; normalising at the tool
 boundary is a guarantee you control. Do both: apply NFC, then fold diacritics
 through an explicit alias table (`bütçe → butce`) *before* you validate. And
-never round-trip an identifier through `.lower()` without a locale —
-`"IŞIK".lower()` is `işik`, not the Turkish `ışık`, and `"İSTANBUL".lower()`
-picks up a combining dot. Accept what the model plausibly sends; store what your API needs.
+do not leave the folding to Python's `.lower()` or `.casefold()`, which take no
+locale and know nothing of Turkish casing — `"IŞIK".lower()` is `işik`, not the
+Turkish `ışık`, and `"İSTANBUL".lower()` picks up a combining dot. Map the
+Turkish letters explicitly (`str.translate`), or use ICU (PyICU) when you need
+Turkish-aware case conversion. Accept what the model plausibly sends; store what your API needs.
 @sec-turkish-nlp has the rest of the traps; this is the one that reaches your
 function signature.
 
@@ -411,28 +419,32 @@ also close to what your tools return today if nobody wrote an error message: a
 raw exception. (@sec-agent-anatomy's loop sends back `ERROR: {e}`, which for
 this failure is just `ERROR: 'bütçe'` — the traceback's last line, with the
 same missing half.) It produced the *fewest* retries — 15.0% against a
-bare `"Error"`'s 23.3% — but the retries it produced were the ones that
+bare `"Error"`'s 23.3% — but the retries it produced were mostly the ones that
 worked: **7 of its 9 retries landed on the right field, against 1 of 14 for
 the bare error and 2 of 22 for the vague one**. Read those as descriptive:
 which requests retried at all depended on the error message, so the three
 retrying subsets are self-selected and need not be equally hard, and any test
 on the conditional rates inherits that. The comparison that holds up is over
-all 60 requests, paired. Even so, the pattern fits the three-part rule below
-exactly. A
+all 60 requests, paired. A
 traceback states *what failed* — `KeyError: 'bütçe'` names the offending value
 — and says nothing about *what would work*, so it is a half-written error
-message, and it behaves like one: rarely acted on, but informative when it is.
+message, and the pattern is consistent with that: less often acted on, but
+informative when it is. Read that as a hypothesis, not a finding.
 
-What it is *not* is worse than nothing. The abandonment gap that reading rests
-on is 49/60 against 46/60 — three tasks, with intervals of [70.1, 89.4] and
-[64.6, 85.6]. On the same 60 requests the right test is paired, and even the
-most favourable pairing — three requests changing, all in one direction —
-gives exact McNemar $p = 0.25$. This experiment cannot resolve that
+What it is *not* is worse than nothing. Retrying and giving up are two sides
+of one outcome — a task is either retried or abandoned — so "fewest retries"
+and "most abandonment" are the same comparison (up to the traceback row's two
+missing tasks). Against a bare `"Error"` the gap is 9 retries against 14, and
+49/60 abandoned against 46/60, with intervals of [70.1, 89.4] and [64.6, 85.6].
+On the same 60 requests the right test is paired, and even the most favourable
+pairing — every changed request moving in one direction — gives exact McNemar
+$p \approx 0.06$ for retries and $p = 0.25$ for abandonment. This experiment
+cannot resolve that
 comparison, and an earlier draft of this chapter called the ordering a result
 six separate times. What the four rows *do* separate, unambiguously, is the
 actionable string from all three others.
 
-This is the sharpest version of a known result. @huang2024large found that
+This fits, and complements, a known result. @huang2024large found that
 models cannot reliably correct their own reasoning from *intrinsic* feedback —
 being told to try again does not help. What this experiment adds is the
 boundary: the same model recovers 1.7% of the time from feedback that carries
@@ -447,8 +459,9 @@ announces itself in the transcript. @sec-agent-anatomy found the opposite
 failure, an agent that would not stop; here the same architecture will not
 *continue*, and the deciding factor is a sentence.
 
-**"Invalid" is barely better than nothing.** The `vague` style names the
-problem in words and still recovered 3.3% of the time. Saying that something is
+**"Invalid" is barely distinguishable from nothing.** The `vague` style names
+the problem in words and still recovered 3.3% of the time, against 1.7% for the
+bare error — a gap too small to resolve. Saying that something is
 wrong is not the useful part. Saying what would be right is.
 
 ### The rule this gives you
@@ -611,18 +624,24 @@ Cloudflare's Code Mode [@cloudflare2025codemode] and Anthropic's *programmatic
 tool calling* [@anthropic2025advancedtools] both let the model write code that
 calls the tools, instead of calling them one round-trip at a time.
 
+Two forms need separating. In the first, the tools stay and are exposed inside
+the sandbox as a typed code API — which is what both products do — and the
+bindings the sandbox can reach are still an allowlist. In the second, a general
+interpreter replaces the tools, and that is where the allowlist is really lost.
+
 ::: {#gloss-code-mode .column-margin .term-gloss}
-**Code mode** — giving an agent a sandboxed interpreter instead of a fixed
-tool list. Composition, loops and intermediate variables come free; a readable
-whitelist does not. [↩](#term-code-mode){.term-back}
+**Code mode** — letting the model write sandboxed code that calls the tools
+instead of calling them one at a time; at the far end, a general interpreter
+replaces the tool list. Composition, loops and intermediate variables come
+free; some or all of a readable whitelist does not. [↩](#term-code-mode){.term-back}
 :::
 
-Instead of `filter_rows`, `sum_column` and
+At the far end, instead of `filter_rows`, `sum_column` and
 `join_tables`, you expose a sandbox and let the model write the composition.
 It is genuinely more expressive: composition, loops and intermediate variables
 come free, and they are exactly what a fixed tool list makes awkward.
 
-The cost is that [you have replaced a whitelist with an interpreter]{.hl}. A
+The cost of that end is that [you have replaced a whitelist with an interpreter]{.hl}. A
 tool list is a security boundary you can read; a sandbox is a security boundary
 you have to build and keep believing in. That is a real trade and it belongs to
 @sec-agent-security rather than to a paragraph here — but the design decision
@@ -713,11 +732,10 @@ API whose values are ASCII-folded words.
 
 What would have worked. Measured across four styles, recovery went from **1.7%
 to 100%** purely by naming the invalid value and listing the valid ones. The
-striking row is the stack trace: it produced the fewest retries of the four,
-because it names the value that failed and never what would have worked. It is
-a half-written error message, not a worse-than-nothing one — the abandonment
-gap against a bare `"Error"` is three tasks in sixty and does not survive a
-test. Catch it and add the missing sentence.
+stack trace names the value that failed and never what would have worked: a
+half-written error message. Here it could not be told apart from a bare
+`"Error"` — its retry and abandonment gaps do not survive a test — so it is not
+worse than nothing, only unfinished. Catch it and add the missing sentence.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -774,12 +792,10 @@ parametric memory. In this chapter's measurement an opaque schema went uncalled
 **Q: What should a tool return on error?**
 
 A sentence saying what would have worked, with the valid options enumerated.
-Measured across four styles, that took recovery from 1.7% to 100%. And say the
-counterintuitive part, because it is the useful one: a stack trace produced the
-*fewest* retries of the four, because it names the value that failed and never
-what would work. It is a half-written error message, not a worse-than-nothing
-one — its abandonment gap against a bare "Error" is three tasks in sixty and
-does not survive a test. Catch the exception and add the missing sentence.
+Measured across four styles, that took recovery from 1.7% to 100%. A raw stack
+trace names the value that failed and never what would work, so it is a
+half-written error message — and in this measurement it could not be told
+apart from a bare "Error". Catch the exception and add the missing sentence.
 
 ### Testing whether you have shipped one
 
@@ -942,10 +958,10 @@ that has a fixed value set, and measure the change. It is twenty minutes.
   went from **1.7% to 100%** by naming the invalid value and listing the valid
   ones. Write what *would* have worked; the rest is optional.
 - **A stack trace is a half-written error message.** It names the value that
-  failed and never what would have worked, so it produced the fewest retries
-  of any style — though, of the three incomplete styles, its retries were the
-  most often correct, 7 of 9. Do not read it as *worse than nothing*: at n = 60 that comparison sits
-  inside the noise. Read it as unfinished, and add the third sentence.
+  failed and never what would have worked. It produced the fewest retries of
+  any style, yet of the three incomplete styles its retries were the most often
+  correct, 7 of 9 — both descriptive patterns that do not survive a test at
+  n = 60. Do not read it as *worse than nothing*. Read it as unfinished, and add the third sentence.
 - **The dominant failure after an error is giving up, not looping.** Three of
   four error styles made the model stop calling tools and answer without the
   data — a quieter failure than a retry loop and a worse one.
