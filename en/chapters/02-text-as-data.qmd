@@ -98,6 +98,12 @@ print(text.split())
 one either merges things that should stay apart or splits things that should
 stay together.
 
+Name what failed here precisely: **naive whitespace tokenization**, not
+word-level tokenization in general. A serious word tokenizer handles
+punctuation, apostrophes, URLs, numbers and contractions separately, and
+repairs most of the list above. What it cannot repair is the subject of the
+next section: as long as the word is your unit, the vocabulary never closes.
+
 ### The normalization ladder {#sec-text-as-data-normalization}
 
 ::: {#gloss-normalization .column-margin .term-gloss}
@@ -127,11 +133,11 @@ input away from the form the model expects.
 
 | Step | [What it buys you]{.pro} | [What it costs you]{.con} | Default |
 |---|---|---|---|
-| Lowercasing | `Pump` = `pump`: two columns merge into one and their counts add up | `US` → `us`, `Apple` → `apple`. Loses proper nouns and acronyms — and in Turkish `str.lower()` is outright wrong, silently. | Yes for English; elsewhere only with a locale-aware function |
+| Lowercasing | `Pump` = `pump`: two columns merge into one and their counts add up | `US` → `us`, `Apple` → `apple`. Loses proper nouns and acronyms — and in Turkish `str.lower()` is outright wrong, silently. | Yes for English. Languages with the `I/İ` distinction, Turkish and Azerbaijani among them, need a locale-aware conversion; in general the decision depends on the language and the task |
 | Punctuation stripping | `fail;` = `fail` | Destroys `P-101`, decimals, URLs, chemical formulas. | No — strip selectively |
 | Stop word removal | drops `the`, `is`, `of`; 43.9% of tokens here | Destroys negation (`not`), and phrases like *to be or not to be*. | Only for sparse count models |
 | Stemming | `replaced` → `replac`, collapsing inflections cheaply | Crude suffix chopping. `university` → `univers` = `universe`. | No |
-| Lemmatization | `replaced` → `replace`, correctly | Needs a dictionary and part-of-speech tagging, and is slow. | Usually not for transformer input; consider it for sparse and linguistic tasks |
+| Lemmatization | `replaced` → `replace`, correctly | Usually draws on morphology, context and/or part-of-speech information; classical systems keep a word-to-lemma dictionary for it, neural ones need not. Slow either way. | Usually not for transformer input; consider it for sparse and linguistic tasks |
 
 : The normalization ladder {tbl-colwidths="[14,28,40,18]"}
 
@@ -521,9 +527,13 @@ a  U+0061  1 byte(s): 61
 A byte has only 256 possible values, so an alphabet of 256 bytes is closed:
 every string in every language is a sequence of them. Byte-level BPE runs
 exactly the same merge loop over byte sequences instead of characters
-[@radford2019language]. Frequent byte pairs merge back into whole characters
-first — the two bytes of `ç` become one token early if the training text holds
-enough Turkish — and then into subwords, as before.
+[@radford2019language]. The loop merges frequent byte sequences, which does
+make most frequent characters and word pieces into single tokens — the two
+bytes of `ç` become one token early if the training text holds enough Turkish.
+But [the merges are not bound to Unicode character boundaries]{.hl}: the
+algorithm does not know where a character ends, only which byte pair is
+frequent. So a token can stand for a whole character, for several characters,
+or for only part of one UTF-8 character. The next output shows all three.
 
 Here is a byte-level tokenizer, OpenAI's `cl100k_base`, showing the bytes behind
 each token. `enc.encode` returns a list of integer token ids — those integers,
@@ -567,8 +577,9 @@ There is a middle road, **byte fallback**: keep a character-level vocabulary and
 spell out in bytes only the characters it lacks. The SentencePiece library
 offers it as an option.
 
-**Which one is used today.** For the large generative models most people call
-through an API, byte-level BPE is the default. GPT-2 introduced it with a
+**Which one is used today.** Many GPT-type models use byte-level BPE or a
+variant of it; other model families commonly use WordPiece or
+SentencePiece/Unigram instead. GPT-2 introduced it with a
 50,257-token vocabulary [@radford2019language]. OpenAI's `cl100k_base` and
 `o200k_base`, measured in the next section, are byte-level. Llama 3 moved to a
 128K-token vocabulary that combines 100K tokens from OpenAI's `tiktoken` with 28K
@@ -754,6 +765,34 @@ while SentencePiece [@kudo2018sentencepiece] substitutes a visible marker,
 `▁ev`. Same idea, two spellings; the figure uses the `▁` form because it is
 easier to see on a page.
 
+::: {.callout-note appearance="simple"}
+**The four stages of a tokenizer.** The answer to "does BPE run on the whole
+raw string?" is no, and the reason is this pipeline:
+
+1. **Normalization** — Unicode normalization (the NFC/NFD above), lowercasing,
+   stripping diacritics. What you delete here you cannot get back.
+2. **Pre-tokenization** — splitting the text into rough pieces at whitespace
+   and punctuation. SentencePiece deliberately skips this stage.
+3. **Subword encoding** — BPE, WordPiece or Unigram, running *inside* each
+   piece and producing the token ids.
+4. **Special tokens** — adding the markers the model expects at the start, the
+   end, or between segments.
+
+That last stage shows up in the output immediately, so here are the names:
+
+| token | what it is for |
+|:--|:--|
+| `[UNK]` | input with no entry in the vocabulary. Nearly absent in byte-level tokenizers |
+| `[PAD]` | padding that brings short sequences in a batch to the same length; the attention mask ignores it |
+| `[CLS]` | in the BERT family, the token at the front whose vector stands for the whole sequence |
+| `[SEP]` | the boundary between two segments, a question and a passage for instance |
+| BOS / EOS | beginning and end of sequence. In generative models EOS is how the model says it is finished |
+
+The spellings differ by model — `<s>`, `</s>`, `<|endoftext|>` all do these
+jobs. When you start counting your own tokens, remember that these take their
+share of the window too.
+:::
+
 One more, to show that diacritics cost extra (still `cl100k_base`, this time
 without a leading space):
 
@@ -842,10 +881,13 @@ look ideal, until you notice that `hür,` with its comma is a different entry
 from `hür`, and that every new combination of suffixes is a new word. The next
 example shows what that does to a word the vocabulary has not seen.
 
-Subwords are a compression scheme: they buy shorter sequences by spending
-vocabulary. The tokenizer is the knob that trades vocabulary size against
-sequence length, and BPE sets that knob using the statistics of the data rather
-than a human's guess.
+Subword tokenization is a **representation trade-off** between vocabulary size
+and sequence length: you buy shorter sequences by spending vocabulary. The
+tokenizer is the knob that sets that trade, and BPE sets it from the statistics
+of the data rather than a human's guess. You can think of it as a compression
+problem by analogy — BPE really did start life as a data-compression algorithm
+in 1994 [@gage1994new] — as long as the goal here is not making bytes smaller
+but choosing the units the model is shown.
 :::
 
 ### Characters, subwords, whole words: one example {#sec-text-as-data-granularities}
@@ -986,6 +1028,13 @@ best split of each word instead of running full EM.
 
 ::: {.callout-note collapse="true"}
 ## Deep dive: minimal WordPiece and Unigram LM
+
+The WordPiece score below — $\mathrm{score}(a,b) = \mathrm{freq}(ab) /
+(\mathrm{freq}(a)\,\mathrm{freq}(b))$ — is the widely used *pedagogical*
+account of the method, and it gets the training logic right. Do not learn it as
+the exact formula of BERT's original WordPiece training algorithm: not every
+detail of that procedure was published, and real tokenizer implementations
+differ in the details.
 
 ```python
 import math
@@ -1396,8 +1445,10 @@ finite ceiling — the derivative $\mathrm{d}|V|/\mathrm{d}N = K\beta N^{\beta-1
 is strictly positive for every $N$, while shrinking towards zero. It looks flat
 on a plot while it is still growing, which is the trap.
 
-[There is no corpus size at which you stop meeting new words. There is only a
-size at which you stop meeting them *quickly*.]{.hl} That is the whole argument
+[On realistic natural-language corpora you keep meeting new types as the data
+grows; there is only a size at which you stop meeting them *quickly*.]{.hl}
+Heaps' law is an empirical relationship that models that growth approximately —
+a regularity observed again and again in corpora, not a proven theorem. That is the whole argument
 for subwords, and it is also why `min_df` deletes most of your columns while
 deleting very little of your text.
 
@@ -2836,7 +2887,13 @@ whether you normalized.
 **Q: Two documents have cosine similarity 0. What does that mean, and how
 likely is it in practice?**
 
-They share no terms at all. On long English documents with stop words retained
+In this chapter's representations — bag-of-words and TF-IDF vectors, whose
+weights are all non-negative — it means they have no shared feature with
+positive weight, which in practice means they share no terms at all. In
+general a cosine of 0 means the vectors are orthogonal, which in
+representations that can carry negative components does not mean "no shared
+words"; the distinction starts to matter with the embeddings in
+@sec-embeddings. On long English documents with stop words retained
 this is rare, because they tend to share common function words. On short ones —
 this book's 19-word Turkish reviews, a log line, a search query — it is
 routine, and so is it on domain text where two documents genuinely have no
@@ -3106,6 +3163,16 @@ goes past this chapter.
    `TfidfVectorizer`. The follow-up is really a question about term-frequency
    saturation, which is exactly what BM25 adds and what `sublinear_tf`
    approximates.
+8. **Get the Turkish bill off a single sentence.** *(Applied)* The measurement
+   above used one sentence pair, and the 1.82 and 1.39 factors there are not
+   general. Collect 50 to 100 sentence pairs from a parallel text you have —
+   articles of the Universal Declaration of Human Rights, a piece of
+   software's interface strings in two languages, your own bilingual reports.
+   For each language and each tokenizer, compute the **median tokens per
+   1,000 characters**; the median rather than the mean, because one long
+   sentence pulls the mean around. Report the spread as well: how much does
+   the ratio move from sentence to sentence, and where in that spread did the
+   single-sentence measurement land?
 
 ::: {.callout-note collapse="true"}
 ## Expected observations
@@ -3129,6 +3196,9 @@ yourself.
    line, and corpus artefacts in the top five tokens are normal.
 7. The document mentioning the query term three times ranks higher; without
    saturation that effect grows out of proportion.
+8. Turkish costs more tokens per 1,000 characters than English, but the ratio
+   moves noticeably from sentence to sentence; the single-sentence measurement
+   is one point inside that spread, not a summary of it.
 :::
 
 ## What to remember
