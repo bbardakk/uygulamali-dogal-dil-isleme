@@ -875,6 +875,151 @@ Do not assume the cheaper segmentation is the more linguistically sensible
 one — check, as we just did.
 :::
 
+### BERT's tokenizer: WordPiece and its relatives {#sec-tokenizer-algorithms}
+
+The measurement table has six tokenizers in it, but only two algorithms stand
+behind them. GPT-2, Llama 3, Qwen 2.5 and Cosmos GPT-2 use BPE, the algorithm
+chapter 2 built step by step (@sec-text-as-data-bpe). The two BERT models use
+**WordPiece**. A third algorithm that is not in the table, **Unigram LM**, is
+the one you will meet in models such as T5 and XLM-R.
+
+All three do the same job: they learn from a corpus which subword pieces go
+into the vocabulary. They differ in what they count as a "good" piece. Knowing
+which one a model uses is worth it, because that is how you read its output and
+predict how it will cut a word.
+
+**Look at the output first.** Run the same word, *evlerinizden* ("from your
+houses"), through the two BERT tokenizers and through XLM-R, which uses Unigram
+LM:
+
+```python
+from transformers import AutoTokenizer
+
+word = "evlerinizden"
+for name in ["google-bert/bert-base-multilingual-cased",
+             "dbmdz/bert-base-turkish-cased",
+             "FacebookAI/xlm-roberta-base"]:
+    tok = AutoTokenizer.from_pretrained(name)
+    pieces = tok.convert_ids_to_tokens(tok.encode(word))
+    print(f"{name.split('/')[-1]:<30} {' '.join(pieces)}")
+```
+
+```text
+bert-base-multilingual-cased   [CLS] ev ##lerini ##zde ##n [SEP]
+bert-base-turkish-cased        [CLS] evlerini ##z ##den [SEP]
+xlm-roberta-base               <s> ▁ev leriniz den </s>
+```
+
+BERT's output has two things in it that the GPT family's does not.
+
+**The special tokens at the start and the end.** BERT puts `[CLS]` in front of
+every input and `[SEP]` after it. The vector at the `[CLS]` position stands for
+the whole sequence; it is the vector a sentence classifier reads
+(@sec-classification). `[SEP]` marks where a segment ends, and when the input
+has two segments, a question and a passage for instance, one goes between them
+too. XLM-R does the same job with `<s>` and `</s>`.
+
+**The `##` mark.** WordPiece puts `##` in front of every piece that *continues*
+a word. A piece without `##` starts a new word. This carries the same
+information as GPT gluing the space in front of a word onto its token, and as
+the `▁` in XLM-R's output (@sec-text-as-data-turkish): where does a word
+start? One consequence is that `ev` and `##ev` are two separate entries in the
+vocabulary; the model learns one vector for `ev` at the start of a word and
+another for `ev` inside one. In multilingual BERT's vocabulary of 119,547
+entries, 43,606 start with `##`; in BERTurk's 32,000, 7,246 do.
+
+**How WordPiece splits a word.** To split a new word, BPE replays the merges it
+learned, in order. WordPiece does not. Its rule is simpler, and it is *greedy*:
+
+- Start at the beginning of the word. Take the **longest** piece that is in the
+  vocabulary.
+- Do the same for what is left, this time looking for pieces that start with
+  `##`.
+- Continue until the word is used up.
+
+Follow BERTurk through *evlerinizden*. The vocabulary has `ev`, `evler`,
+`evleri` and `evlerini`; it does not have `evleriniz`. So the longest match is
+`evlerini`. That leaves `zden`: `##zden` and `##zde` are not in the vocabulary,
+`##z` is. That leaves `den`: `##den` is there. Result: `evlerini` `##z` `##den`.
+
+The greedy rule has a cost, and it shows here. The same vocabulary also has
+the piece `##lerinizden`, so a two-piece split, `ev` `##lerinizden`, was
+possible. Because the rule takes the longest piece at the first step, it never
+tries that split and produces three pieces.
+
+**WordPiece can emit `[UNK]`.** If at some point no piece in the vocabulary
+matches, WordPiece turns not just that character but the *whole* word into
+`[UNK]`. Multilingual BERT's vocabulary has no 😀:
+
+```text
+çay 😀    ça ##y [UNK]
+çay😀     [UNK]
+```
+
+In the second line the emoji was typed directly after the word, and `çay`
+(tea) was lost with it. A byte-level BPE tokenizer cannot do this
+(@sec-text-as-data-bytes): `cl100k_base` spells the same emoji out in bytes,
+as two tokens. So when you work with a BERT-family model, counting the `[UNK]`s
+in your input is a cheap and useful check.
+
+**How the three algorithms learn the vocabulary.** So far you have seen how a
+finished vocabulary is *used*. How it is *learned* is where the three
+algorithms part:
+
+| | What it optimises | Direction | Ships in |
+|---|---|---|---|
+| **BPE** [@sennrich2016neural] | merge the most *frequent* adjacent pair | bottom-up, the vocabulary grows | GPT-2/3/4, RoBERTa, Llama, Gemma |
+| **WordPiece** [@schuster2012japanese] | merge the pair that most increases corpus likelihood, roughly maximising $\frac{c(ab)}{c(a)\,c(b)}$ | bottom-up | BERT, DistilBERT, ELECTRA |
+| **Unigram LM** [@kudo2018subword] | start from a large candidate set and *prune* the pieces whose removal costs least likelihood, re-estimating piece probabilities by EM (expectation–maximization) | top-down, the vocabulary shrinks | T5, ALBERT, XLNet, XLM-R |
+
+: Three subword algorithms, and what each one is actually maximising
+{tbl-colwidths="[16,40,24,20]"}
+
+Read the table row by row, with the intuition for each.
+
+**BPE** merges the pair that occurs side by side most often. Because it rewards
+frequency, its vocabulary fills with pieces that many words share: `ler`,
+`den`, `lar`.
+
+**WordPiece** does not stop at how often the pair occurs; it divides that count
+by how often each of the two parts occurs on its own. That penalises a merge of
+two parts that are already very common separately, and favours parts that are
+seen almost only together. One caveat about the ratio in the table: BERT's
+original training procedure is not published in full. The ratio is the common
+approximate reconstruction used to explain its logic.
+
+**Unigram LM** comes from the other direction. It starts with a very large set
+of candidate pieces and, in each round, drops the ones whose removal lowers the
+likelihood of the corpus least. It is also the only one of the three that
+assigns a probability to *every* possible split of a word. That makes it
+possible to sample a different split each time during training, so the model
+does not overfit to one arbitrary split. This is called subword regularization
+[@kudo2018subword].
+
+One common confusion is worth clearing up here: `SentencePiece`
+[@kudo2018sentencepiece] is not a fourth algorithm but a *toolkit* that can run
+BPE or Unigram LM. Llama 2 and Gemma use it in BPE mode, T5 and ALBERT in
+Unigram mode.
+
+The choice is not settled in BPE's favour, either: at equal vocabulary size,
+Unigram LM segments closer to morphology than BPE does, and models pretrained
+with it matched or outperformed BPE-based ones on downstream tasks
+[@bostrom2020byte].
+
+::: {.callout-tip appearance="simple" icon="false"}
+**If you want to see the three of them run.** The collapsed box "Deep dive:
+three ways to learn the same kind of unit" at the end of chapter 2's
+tokenization section (@sec-text-as-data-granularities) runs a minimal version
+of each on a sixty-word Turkish corpus and has all three split the same two
+words.
+:::
+
+Now tie this back to the chapter's question. The algorithm explains a small
+part of the differences in the measurement table. Multilingual BERT and BERTurk
+use the *same* algorithm; one charges Turkish 1.23×, the other 0.58×. What
+makes the difference is not the algorithm but the corpus the vocabulary was
+trained on.
+
 ### What the surcharge actually costs
 
 Take the measured corpus figure for Llama 3: Turkish costs **1.23×** the

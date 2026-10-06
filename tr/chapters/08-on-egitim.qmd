@@ -915,6 +915,145 @@ zordur. Daha ucuz tokenleştirmenin dilbilim açısından daha makul olduğunu
 varsaymayın — biraz önce yaptığımız gibi kontrol edin.
 :::
 
+### BERT'in tokenizer'ı: WordPiece ve akrabaları {#sec-tokenizer-algoritmalari}
+
+Ölçüm tablosunda altı tokenizer var, ama arkalarında yalnızca iki algoritma
+duruyor. GPT-2, Llama 3, Qwen 2.5 ve Cosmos GPT-2, 2. bölümde adım adım
+kurduğumuz BPE'yi (@sec-metin-veri-bpe) kullanıyor. İki BERT modeli ise
+**WordPiece** kullanıyor. Tabloda olmayan üçüncü bir algoritma, **Unigram
+LM**, T5 ve XLM-R gibi modellerde karşınıza çıkacak.
+
+Üçü de aynı işi yapar: sözlüğe hangi alt kelime parçalarının gireceğini bir
+derlemden öğrenir. Ayrıldıkları yer, bir parçayı neye göre "iyi" saydıklarıdır.
+Bir modelin hangisini kullandığını bilmek işe yarar, çünkü çıktısını okumanın
+ve bir kelimeyi nasıl böleceğini öngörmenin yolu budur.
+
+**Önce çıktıya bakalım.** Aynı kelimeyi, *evlerinizden*, iki BERT
+tokenizer'ından ve Unigram LM kullanan XLM-R'dan geçirelim:
+
+```python
+from transformers import AutoTokenizer
+
+word = "evlerinizden"
+for name in ["google-bert/bert-base-multilingual-cased",
+             "dbmdz/bert-base-turkish-cased",
+             "FacebookAI/xlm-roberta-base"]:
+    tok = AutoTokenizer.from_pretrained(name)
+    pieces = tok.convert_ids_to_tokens(tok.encode(word))
+    print(f"{name.split('/')[-1]:<30} {' '.join(pieces)}")
+```
+
+```text
+bert-base-multilingual-cased   [CLS] ev ##lerini ##zde ##n [SEP]
+bert-base-turkish-cased        [CLS] evlerini ##z ##den [SEP]
+xlm-roberta-base               <s> ▁ev leriniz den </s>
+```
+
+BERT'in çıktısında, GPT ailesinde görmediğiniz iki şey var.
+
+**Baştaki ve sondaki özel token'lar.** BERT her girdinin başına `[CLS]`, sonuna
+`[SEP]` koyar. `[CLS]` konumundaki vektör bütün diziyi temsil eder; cümleyi
+sınıflandırırken kullanılan vektör odur (@sec-siniflandirma). `[SEP]` ise bir
+parçanın bittiği yeri gösterir; girdi bir soru ile bir pasaj gibi iki parçadan
+oluşuyorsa aralarına da konur. XLM-R aynı işi `<s>` ve `</s>` ile yapıyor.
+
+**`##` işareti.** WordPiece, bir kelimenin *devamı* olan her parçanın başına
+`##` koyar. Başında `##` olmayan parça yeni bir kelime başlatır. Bu, GPT'nin
+kelimenin önündeki boşluğu token'a yapıştırmasıyla ve XLM-R çıktısındaki `▁`
+işaretiyle aynı bilgiyi taşır (@sec-metin-veri-turkce): kelime nerede
+başlıyor? Bunun bir sonucu, `ev` ile `##ev` parçalarının sözlükte iki ayrı
+girdi olmasıdır; model kelime başındaki ve kelime içindeki `ev` için iki ayrı
+vektör öğrenir. Çok dilli BERT'in 119.547 girdilik sözlüğünün 43.606'sı,
+BERTurk'ün 32.000 girdisinin 7.246'sı `##` ile başlıyor.
+
+**WordPiece bir kelimeyi nasıl böler.** BPE yeni bir kelimeyi bölerken
+öğrendiği birleştirmeleri sırayla yeniden uygular. WordPiece bunu yapmaz;
+kuralı daha basittir ve *açgözlüdür*:
+
+- Kelimenin başından başla. Sözlükte bulunan **en uzun** parçayı al.
+- Kalan kısım için aynısını yap; bu kez parçaların başında `##` ara.
+- Kelime bitene kadar sürdür.
+
+BERTurk'ün *evlerinizden* kelimesini nasıl böldüğünü izleyin. Sözlükte `ev`,
+`evler`, `evleri` ve `evlerini` var; `evleriniz` yok. En uzun eşleşme
+`evlerini`. Geriye `zden` kalıyor: `##zden` ve `##zde` sözlükte yok, `##z` var.
+Geriye `den` kalıyor: `##den` var. Sonuç: `evlerini` `##z` `##den`.
+
+Açgözlü kuralın bir bedeli de burada görünüyor. Aynı sözlükte `##lerinizden`
+parçası da var; yani `ev` `##lerinizden` diye iki parçalı bir bölünme
+mümkündü. Kural ilk adımda en uzun parçayı aldığı için bu bölünmeyi hiç
+denemiyor ve üç parça üretiyor.
+
+**WordPiece `[UNK]` üretebilir.** Bir noktada sözlükte eşleşen hiçbir parça
+bulunamazsa, WordPiece yalnızca o harfi değil kelimenin *tamamını* `[UNK]`
+yapar. Çok dilli BERT'in sözlüğünde 😀 yok:
+
+```text
+çay 😀    ça ##y [UNK]
+çay😀     [UNK]
+```
+
+İkinci satırda emoji kelimeye bitişik yazıldı ve `çay` da onunla birlikte
+kayboldu. Bayt düzeyinde çalışan bir BPE tokenizer'ında bu olmaz
+(@sec-metin-veri-baytlar): `cl100k_base` aynı emojiyi baytlarıyla, iki token
+olarak yazar. Bu yüzden BERT ailesinden bir modelle çalışırken girdinizde
+`[UNK]` sayısına bakmak, ucuz ve faydalı bir kontroldür.
+
+**Üç algoritma sözlüğü nasıl öğreniyor.** Buraya kadar hazır bir sözlüğün nasıl
+*kullanıldığını* gördünüz. Sözlüğün nasıl *öğrenildiği* ise üç algoritmada
+şöyle ayrılıyor:
+
+| | Neyi optimize eder | Yön | Nerede kullanılır |
+|---|---|---|---|
+| **BPE** [@sennrich2016neural] | en *sık* komşu çifti birleştir | aşağıdan yukarı, sözlük büyür | GPT-2/3/4, RoBERTa, Llama, Gemma |
+| **WordPiece** [@schuster2012japanese] | derlem olabilirliğini en çok artıran çifti birleştir, kabaca $\frac{c(ab)}{c(a)\,c(b)}$'yi büyüt | aşağıdan yukarı | BERT, DistilBERT, ELECTRA |
+| **Unigram LM** [@kudo2018subword] | büyük bir aday kümeden başla ve kaldırılması en az olabilirliğe mal olan parçaları *buda*; parça olasılıklarını EM (beklenti–maksimizasyon) ile yeniden kestir | yukarıdan aşağı, sözlük küçülür | T5, ALBERT, XLNet, XLM-R |
+
+: Üç alt kelime algoritması ve her birinin gerçekte neyi en büyük kılmaya çalıştığı
+{tbl-colwidths="[16,40,24,20]"}
+
+Tabloyu satır satır, sezgisiyle birlikte okuyalım.
+
+**BPE** en sık yan yana gelen çifti birleştirir. Sıklığı ödüllendirdiği için
+sözlüğü, birçok kelimenin paylaştığı parçalarla dolar: `ler`, `den`, `lar`.
+
+**WordPiece** çiftin kaç kez geçtiğine bakmakla yetinmez; bu sayıyı iki
+parçanın ayrı ayrı kaç kez geçtiğine böler. Böylece tek başlarına zaten çok
+sık olan iki parçanın birleşmesi cezalandırılır; neredeyse yalnızca birlikte
+görülen parçalar öne geçer. Tablodaki oran için bir çekince: BERT'in özgün
+eğitim yordamının bütün ayrıntıları yayımlanmış değil. Bu oran, eğitim
+mantığını açıklamak için yaygın kullanılan yaklaşık bir yeniden kurmadır.
+
+**Unigram LM** ters yönden gelir. Çok büyük bir aday parça kümesiyle başlar ve
+her turda, atılması derlemin olasılığını en az düşüren parçaları atar. Üçü
+arasında bir kelimenin *her* olası bölünmesine bir olasılık veren tek algoritma
+da odur. Bu, eğitim sırasında her seferinde farklı bir bölünme örneklemeyi
+mümkün kılar; model böylece tek bir keyfî bölünmeye aşırı uyum sağlamaz. Buna
+alt kelime düzenlileştirmesi (subword regularization) denir [@kudo2018subword].
+
+Sık yapılan bir karışıklığı da burada giderelim: `SentencePiece`
+[@kudo2018sentencepiece] dördüncü bir algoritma değil, BPE ya da Unigram LM'i
+çalıştırabilen bir *kütüphanedir*. Llama 2 ve Gemma onu BPE kipinde, T5 ve
+ALBERT ise Unigram kipinde kullanır.
+
+Seçim BPE lehine kesinleşmiş de değil: eşit sözlük büyüklüğünde Unigram LM
+morfolojiye daha yakın bölüyor ve onunla ön eğitilen modeller, aşağı akış
+(downstream) görevlerinde BPE ile eğitilenlere denk ya da onlardan daha iyi
+sonuç verdi [@bostrom2020byte].
+
+::: {.callout-tip appearance="simple" icon="false"}
+**Üçünü çalışırken görmek isterseniz.** 2. bölümde tokenization kısmının
+sonundaki katlanır "Derinleşme: aynı tür birimi öğrenmenin üç yolu" kutusu
+(@sec-metin-veri-birimler),
+üç algoritmanın en küçük sürümlerini altmış kelimelik bir Türkçe derlemde yan
+yana çalıştırıyor ve aynı iki kelimeyi üçüne de böldürüyor.
+:::
+
+Bu kısmı bölümün asıl sorusuna bağlayalım. Algoritma, ölçüm tablosundaki
+farkların küçük bir kısmını açıklıyor. Çok dilli BERT ile BERTurk *aynı*
+algoritmayı kullanıyor; biri Türkçeden 1,23×, öbürü 0,58× alıyor. Aradaki
+farkı algoritma değil, sözlüğü eğiten derlem yaratıyor.
+
 ### Ek ücret gerçekte neye mal oluyor
 
 Llama 3 için ölçülmüş derlem rakamını alalım: Türkçe, birebir aynı içerik için
