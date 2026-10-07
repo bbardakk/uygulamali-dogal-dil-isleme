@@ -836,11 +836,11 @@ depends on the learned vocabulary and on the content of the text.
 
 ### Who pays for Turkish {#sec-text-as-data-turkish}
 
-Now the part that matters if you work in a language other than English. A
-tokenizer is trained on a corpus, and how efficiently it encodes a language
-depends on how much of that language the corpus contained — which, for the
-tokenizers most people use, means mostly English. The consequence is
-measurable. Here is Article 1 of the Universal
+A tokenizer can produce different numbers of tokens for the same content in
+different languages. The difference depends on the language mix and the content
+of the training corpus, on the vocabulary size, on the tokenization algorithm
+and on the preprocessing rules. Let us look at the difference between Turkish
+and English on a concrete example. Here is Article 1 of the Universal
 Declaration of Human Rights, in the official English and Turkish texts, run
 through OpenAI's tokenizers:
 
@@ -858,42 +858,50 @@ for name in ["cl100k_base", "o200k_base"]:
     enc = tiktoken.get_encoding(name)
     a, b = len(enc.encode(en)), len(enc.encode(tr))
     print(f"{name}:")
-    print(f"  english : {len(en):>4} chars -> {a:>3} tokens  "
-          f"({len(en) / a:4.2f} chars/token)")
-    print(f"  turkish : {len(tr):>4} chars -> {b:>3} tokens  "
-          f"({len(tr) / b:4.2f} chars/token)")
-    print(f"  turkish costs {b / a:4.2f}x more tokens")
+    print(f"  english : {len(en):>4} code points -> {a:>3} tokens  "
+          f"({len(en) / a:4.2f} code points/token)")
+    print(f"  turkish : {len(tr):>4} code points -> {b:>3} tokens  "
+          f"({len(tr) / b:4.2f} code points/token)")
+    print(f"  Turkish/English token count ratio: {b / a:4.2f}")
 ```
 
 ```text
 cl100k_base:
-  english :  170 chars ->  33 tokens  (5.15 chars/token)
-  turkish :  160 chars ->  60 tokens  (2.67 chars/token)
-  turkish costs 1.82x more tokens
+  english :  170 code points ->  33 tokens  (5.15 code points/token)
+  turkish :  160 code points ->  60 tokens  (2.67 code points/token)
+  Turkish/English token count ratio: 1.82
 o200k_base:
-  english :  170 chars ->  33 tokens  (5.15 chars/token)
-  turkish :  160 chars ->  46 tokens  (3.48 chars/token)
-  turkish costs 1.39x more tokens
+  english :  170 code points ->  33 tokens  (5.15 code points/token)
+  turkish :  160 code points ->  46 tokens  (3.48 code points/token)
+  Turkish/English token count ratio: 1.39
 ```
 
-The same sentence, the same meaning, [1.82× the tokens]{.hl} on the
-GPT-3.5/4 tokenizer. Since APIs bill per token and context windows are
-measured in tokens, a Turkish speaker pays more money for less context.
-Newer tokenizers narrow the gap (1.39× with `o200k_base`) but do not close
-it. This is a documented and measured unfairness across languages
-[@petrov2023language], not a rounding error. One sentence does not give you a
-universal coefficient: these numbers show only how differently the same
-content can be split in two languages. Nor is the source of the gap merely
-that Turkish characters take two bytes — the language mix in the tokenizer's
-training data and the vocabulary budget matter just as much.
+In these two-sentence texts of the same article, the Turkish token count is
+[about 1.82 times]{.hl} the English one with `cl100k_base`, and 1.39 times with
+`o200k_base`. In this example the second encoding narrows the difference.
 
-Why does it happen? Turkish encodes far more grammatical information inside a
-single word, with suffixes, than English does [@oflazer1994two], so one stem
-produces many surface forms. English spreads the same information across
-separate words more often, and that is exactly what a frequency-based merge
-algorithm captures well. Here is one Turkish stem growing suffix by suffix,
-again on `cl100k_base`; each word is encoded with a leading space, the way it
-would appear inside a sentence:
+In a comparison where the same input price per token applies, more tokens mean
+a higher input cost. A fixed token limit can also correspond to different
+amounts of content in texts like these. The total cost, though, depends on the
+model chosen, on the lengths of input and output, and on the pricing terms.
+
+Similar differences between languages have been shown in broader studies
+[@petrov2023language]. The two texts here do not give a universal ratio for
+Turkish. Nor is it enough to explain the difference by some Turkish letters
+taking two bytes in UTF-8; the learned vocabulary and the tokenization rules
+act together.
+
+Where does the difference come from? Turkish encodes far more grammatical
+information inside a single word, with suffixes, than English does
+[@oflazer1994two], so one stem produces many surface forms. English expresses
+the same grammatical information with separate words in some constructions. If
+those words are frequent in the training corpus, they can be represented with
+short token sequences. In Turkish, how the many inflected forms are split
+depends on which shared sequences the tokenizer has learned.
+
+Below you can see how the output of `cl100k_base` changes as suffixes are added
+to the stem `ev` ("house"). We encoded each word separately, with a single
+space in front of it:
 
 ```text
 ev             1 tokens  [' ev']
@@ -904,21 +912,21 @@ evlerimizden   5 tokens  [' ev', 'ler', 'im', 'iz', 'den']
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">One Turkish word, three suffixes, five tokens &#8212; and an accidental morphological analysis</div>
-<svg viewBox="0 0 760 300" role="img" aria-label="Four Turkish word forms of increasing length, each shown as the tokens byte-pair encoding splits it into, with the token count rising from one to five">
+<div class="fig-title">Morphemes and BPE pieces in one Turkish word</div>
+<svg viewBox="0 0 760 300" role="img" aria-label="Four Turkish word forms of increasing length, each shown as the tokens byte-pair encoding splits it into, with the token count rising from one to five. Grammatical labels below: ev is the stem, ler the plural suffix, im and iz together the first person plural possessive suffix imiz, den the ablative suffix.">
   <text x="8"   y="20" class="t-xs t-muted t-b">WORD</text>
   <text x="178" y="20" class="t-xs t-muted t-b">WHAT THE TOKENIZER SEES</text>
   <text x="666" y="20" class="t-xs t-muted t-b">TOKENS</text>
 
   <text x="8" y="52" class="t-sm t-mono">ev</text>
   <rect x="178" y="38" width="86" height="22" rx="4" class="box-accent"/>
-  <text x="221" y="53" class="t-xs t-mono t-mid">&#9601;ev</text>
+  <text x="221" y="53" class="t-xs t-mono t-mid">&#9251;ev</text>
   <text x="678" y="52" class="t-sm t-mono t-b">1</text>
 
   <text x="8" y="90" class="t-sm t-mono">evler</text>
   <rect x="178" y="76" width="86" height="22" rx="4" class="box-accent"/>
   <rect x="270" y="76" width="86" height="22" rx="4" class="box"/>
-  <text x="221" y="91" class="t-xs t-mono t-mid">&#9601;ev</text>
+  <text x="221" y="91" class="t-xs t-mono t-mid">&#9251;ev</text>
   <text x="313" y="91" class="t-xs t-mono t-mid">ler</text>
   <text x="678" y="90" class="t-sm t-mono t-b">2</text>
 
@@ -927,7 +935,7 @@ evlerimizden   5 tokens  [' ev', 'ler', 'im', 'iz', 'den']
   <rect x="270" y="114" width="86" height="22" rx="4" class="box"/>
   <rect x="362" y="114" width="86" height="22" rx="4" class="box"/>
   <rect x="454" y="114" width="86" height="22" rx="4" class="box"/>
-  <text x="221" y="129" class="t-xs t-mono t-mid">&#9601;ev</text>
+  <text x="221" y="129" class="t-xs t-mono t-mid">&#9251;ev</text>
   <text x="313" y="129" class="t-xs t-mono t-mid">ler</text>
   <text x="405" y="129" class="t-xs t-mono t-mid">im</text>
   <text x="497" y="129" class="t-xs t-mono t-mid">iz</text>
@@ -939,96 +947,108 @@ evlerimizden   5 tokens  [' ev', 'ler', 'im', 'iz', 'den']
   <rect x="362" y="152" width="86" height="22" rx="4" class="box"/>
   <rect x="454" y="152" width="86" height="22" rx="4" class="box"/>
   <rect x="546" y="152" width="86" height="22" rx="4" class="box"/>
-  <text x="221" y="167" class="t-xs t-mono t-mid">&#9601;ev</text>
+  <text x="221" y="167" class="t-xs t-mono t-mid">&#9251;ev</text>
   <text x="313" y="167" class="t-xs t-mono t-mid">ler</text>
   <text x="405" y="167" class="t-xs t-mono t-mid">im</text>
   <text x="497" y="167" class="t-xs t-mono t-mid">iz</text>
   <text x="589" y="167" class="t-xs t-mono t-mid">den</text>
   <text x="678" y="166" class="t-sm t-mono t-b t-accent">5</text>
 
-  <text x="221" y="192" class="t-xs t-accent t-mid">house</text>
-  <text x="313" y="192" class="t-xs t-accent t-mid">plural</text>
-  <text x="405" y="192" class="t-xs t-accent t-mid">our</text>
-  <text x="497" y="192" class="t-xs t-accent t-mid">&#8212;</text>
-  <text x="589" y="192" class="t-xs t-accent t-mid">from</text>
+  <path d="M364,180 v6 H538 v-6" class="ln-thin"/>
+  <text x="221" y="200" class="t-xs t-accent t-mid">stem: house</text>
+  <text x="313" y="200" class="t-xs t-accent t-mid">plural</text>
+  <text x="451" y="200" class="t-xs t-accent t-mid">possessive: -imiz, our</text>
+  <text x="589" y="200" class="t-xs t-accent t-mid">ablative: from</text>
 
   <path d="M8,216 H752" class="ln-thin"/>
-  <text x="8" y="238" class="t-sm">Nobody told it any Turkish grammar. The splits are very nearly the correct morphological analysis.</text>
-  <text x="8" y="262" class="t-sm t-muted">And the same meaning in English &#8212; <tspan class="t-mono">from our houses</tspan> &#8212; is three separate words and costs three tokens.</text>
-  <text x="8" y="286" class="t-sm t-b">Better linguistics, worse bill. Both halves are real.</text>
+  <text x="8" y="238" class="t-sm">Some BPE boundaries coincide with morpheme boundaries; the suffix -imiz is split over two tokens.</text>
+  <text x="8" y="262" class="t-sm t-muted">In this example <tspan class="t-mono">evlerimizden</tspan> is five tokens and its English equivalent <tspan class="t-mono">from our houses</tspan> three.</text>
+  <text x="8" y="286" class="t-sm t-b">Token count and morphological fit are separate criteria.</text>
 </svg>
 ```
 
 ::: {.fig-cap}
-The accent-coloured box is the stem; the rest are suffixes byte-pair encoding
-learned to split off because they recur, not because anyone described Turkish
-to it. Reading left to right, the token count is also the invoice: the
-longest form costs five tokens where its three-word English translation costs
-three.
+The accent-coloured box shows the stem `ev`. The other boxes hold suffixes or
+parts of suffixes: *-imiz* is split over two tokens, `im` and `iz`. BPE learns
+these units from the merge statistics of its training data, not from rules of
+grammar. The Turkish form in the last row is shown as five tokens and its
+English equivalent as three. If the same price per token applies, the
+difference carries over to the cost of processing those pieces of text. `␣` is
+the sign used here to make a real space visible.
 :::
 ::::
 
-Read that output again, because it is remarkable in two opposite ways.
+This comparison shows that using fewer words does not mean producing fewer
+tokens. How far token boundaries coincide with morphemes is a separate question.
 
-The bad news first. One Turkish word costs five tokens, where its English
-translation *from our houses* costs three — English needed three separate
-words to say it and still paid fewer tokens.
+Three of the four internal boundaries in `ev|ler|im|iz|den` coincide with the
+morpheme analysis `ev|ler|imiz|den`. The extra boundary falls inside the first
+person plural possessive suffix *-imiz* ("our"). So this example shows that BPE
+pieces can partly coincide with morphemes without representing them one for
+one. From the output alone we cannot tell how frequent `im` and `iz` were in the
+training data.
 
-Now the good news, with one honest asterisk. Look at *where* it split.
-`ev|ler|im|iz|den` lines up with the real morphology at three of its four
-boundaries — *ev* (house), *-ler* (plural), *-den* (from) — and nobody supplied
-a rule of Turkish grammar. The asterisk is `im|iz`: *-imiz* ("our") is a
-**single** morpheme that BPE has cut in half, because `im` and `iz` are each
-frequent on their own. That is why the figure above puts a dash under `iz`
-rather than a gloss. The newer `o200k_base` happens to keep `imiz` whole
-(`ev|ler|imiz|den`, four tokens), which shows that the exact cut depends on the
-merge table, not on the language. Frequency is a good proxy for morphology, not
-a substitute for it — and at equal vocabulary size, unigram LM segments closer to morphology
-than BPE does [@bostrom2020byte].
+`o200k_base` does not split *-imiz* in the same word and cuts it into four
+tokens: `ev|ler|imiz|den`. The difference shows that one word can be
+represented differently by different tokenizers; on its own it is not a
+comparison of how well they do on Turkish words in general.
+
+@bostrom2020byte found, in English and Japanese experiments run at equal
+vocabulary size, that the boundaries of Unigram LM, a relative of BPE
+(@sec-tokenizer-algorithms), coincided with morphological references better
+than BPE's did. For Turkish the result would have to be tested separately.
 
 One detail in that output is easy to miss: the first token is not `'ev'` but
 `' ev'`, with a space in front. To see why, look at how a tokenizer handles a
 whole sentence.
 
-**Words first, then pieces.** GPT's BPE tokenizers and BERT's WordPiece do not
-apply their merges to the sentence as a whole. They first cut the text roughly
-into words at whitespace and punctuation, a step called **pre-tokenization**.
-GPT-2 does it with a regular expression. Only then is each word split into
-subwords, *inside* its own boundaries. The result: no token ever spans two
-words.
+**Pre-tokens first, then tokens.** GPT-2's BPE tokenizer and BERT's WordPiece
+tokenizer cut the text into smaller pieces before any subword operation. This
+stage is called **pre-tokenization**. GPT-2 separates runs of letters, digits,
+punctuation and spaces with a regular expression. BERT's basic tokenization
+takes account of whitespace, punctuation and boundaries specific to some
+writing systems. BPE or WordPiece then works on those pieces. The resulting
+tokens cannot cross the boundaries that pre-tokenization set; but those
+boundaries are not word boundaries in every language.
 
-**So where did the spaces go?** Cutting the text into words throws the spaces
-between them away. But tokens have to be turned back into text. How would you
-join the pieces `ev`, `ler`, `geld`, `ik`: as `evler geldik`, or as
-`ev ler geld ik`? The only way to know is to write on the token itself where a
-word starts. Three tokenizer families do that with three different marks. Here
-are the same two words, `evlerimizden geldik` ("we came from our houses"), in
-all three (`␣` stands for a space):
+**How are spaces represented?** To put the pieces back together you need to
+know how the boundaries between them were kept. Seeing only the sequences
+`ev`, `ler`, `geld`, `ik` is not enough to place the spaces: is it
+`evler geldik`, or `ev ler geld ik`? Tokenizers handle this information in
+different ways: some keep the spaces inside tokens, some show a space with a
+visible sign, and some mark the pieces that continue a word. These methods do
+not all recover the original text equally well. Here are the same two words,
+`evlerimizden geldik` ("we came from our houses"), in three tokenizer families:
 
-| Family (tokenizer that was run) | Tokens | How it marks the word boundary |
+| Family (tokenizer that was run) | Tokens | How the boundary information is shown |
 |:--|:--|:--|
-| GPT (`cl100k_base`) | `ev` `ler` `im` `iz` `den` `␣geld` `ik` | Glues the space onto the first token of the *next* word. |
-| SentencePiece (XLM-R) | `▁ev` `lerimiz` `den` `▁geldi` `k` | Puts a visible `▁` at the start of a word. |
-| WordPiece (multilingual BERT) | `ev` `##leri` `##mi` `##zde` `##n` `geldi` `##k` | Puts `##` in front of every piece that *continues* a word. |
+| GPT (`cl100k_base`) | `ev` `ler` `im` `iz` `den` `␣geld` `ik` | In this example the space sits in the same token as `geld`; `␣` is used to make the real space visible. |
+| SentencePiece (XLM-R) | `▁ev` `lerimiz` `den` `▁geldi` `k` | `▁` is the visible form of a space; it can also stand for the leading space the tokenizer adds at the start of the text. |
+| WordPiece (multilingual BERT) | `ev` `##leri` `##mi` `##zde` `##n` `geldi` `##k` | `##` says that the piece continues the same pre-token; it does not record how many spaces there were. |
 
-: The same two words, and three ways to mark a word boundary {tbl-colwidths="[26,40,34]"}
+: Three ways of showing boundary information, on the same two words {tbl-colwidths="[24,36,40]"}
 
-All three carry the same information: "a new word starts here". The space you
-saw in `' ev'` above is GPT's spelling of it: a word in the middle of a
-sentence is encoded together with the space in front of it. The figure uses
-the `▁` spelling because it is easier to see on a page.
+These notations carry different information about how the pieces are to be
+joined. The `' ev'` in the `cl100k_base` output is a token that starts with a
+real space. WordPiece's `##` marks a continuation piece; it does not show the
+number or the kind of the original spaces. In the figure we used the sign `␣`
+to make the real space visible: `␣ev`.
 
-SentencePiece [@kudo2018sentencepiece] differs from the other two in one
-respect: it does not pre-tokenize. It treats the space as an ordinary
-character, replaces it with `▁`, and processes the sentence in one piece. That
-is what makes it work for languages such as Japanese and Chinese, which do not
-put spaces between words.
+SentencePiece [@kudo2018sentencepiece] does not need the training text to be
+split into words beforehand; it can work from raw text. It represents spaces
+with `▁`. The pieces it can form are still limited by its settings: the
+default `split_by_whitespace=True`, for example, limits merging the words on
+either side of a space into one piece. Not needing prior word segmentation
+makes it easier to use on text that is not separated by spaces, such as
+Japanese and Chinese.
 
 ::: {.callout-note appearance="simple"}
-**The four stages of a tokenizer.** Text goes through four stages, in order,
-before it reaches the model. Follow one Turkish sentence ("We drank tea, then
-we left our houses.") through multilingual BERT's tokenizer, step by step
-(with `tokenizers` 0.22):
+**Following tokenization in four stages.** In the Hugging Face `tokenizers`
+library the process can be examined as normalization, pre-tokenization, subword
+encoding and post-processing. A tokenizer does not have to use all of these
+stages. Below we follow one Turkish sentence ("We drank tea, then we left our
+houses.") through multilingual BERT's tokenizer, step by step (with
+`tokenizers` 0.22):
 
 ```python
 from tokenizers import Tokenizer
@@ -1052,67 +1072,92 @@ print("  ids          :", tok.encode(text).ids)
   ids          : [101, 21373, 11797, 13537, 117, 12624, 18110, 12737, 10555, 55567, 10115, 59161, 10167, 119, 102]
 ```
 
-Each line of the output is one stage:
+The first four lines show the processing stages, and the last line the token
+ids that result:
 
-1. **Normalization** brings the spelling of the text into one form. This
-   tokenizer lowercases everything and strips the marks from letters: `Çay` →
-   `cay`, `içtik` → `ictik`. What is deleted here does not come back; the model
-   can no longer tell `çay` (tea) from `cay`. (`ı` survived because Unicode
-   defines it as a letter of its own, not as an `i` with a mark added.)
-2. **Pre-tokenization** cuts the text into words at whitespace and
-   punctuation. The comma and the full stop became pieces of their own.
-3. **Subword encoding** — BPE, WordPiece or Unigram — runs *inside* each word.
-   `evlerimizden` was split into five pieces; `sonra` is in the vocabulary
-   whole, so it was not split.
-4. **Special tokens** are the markers the model expects, added at the start
-   and the end of the sequence; here `[CLS]` and `[SEP]`. The integers on the
-   last line are what the model actually receives.
+1. **Normalization.** This BERT tokenizer lowercases the text and, after
+   Unicode decomposition, removes combining marks. So `Çay` → `cay` and
+   `içtik` → `ictik`. Information deleted at this stage does not come back; the
+   model can no longer tell `çay` (tea) from `cay`. `ı` is kept, because it
+   does not decompose into an `i` and a mark.
+2. **Pre-tokenization.** The text is cut into pre-tokens at whitespace and
+   punctuation. The comma and the full stop are pieces of their own.
+3. **Subword encoding.** WordPiece represents those pre-tokens with units from
+   its vocabulary. In the example `evlerimizden` is five pieces; `sonra` is
+   whole.
+4. **Post-processing.** `[CLS]` is added at the start of this single-text BERT
+   input and `[SEP]` at the end.
 
-Tokenizers do not all fill these four stages the same way. The case-sensitive
-version of the same model (`bert-base-multilingual-cased`) leaves the text
-untouched in the first stage. GPT's byte-level tokenizers do no normalization
-at all. SentencePiece skips pre-tokenization.
+The integers on the last line are the token ids. A model can use auxiliary
+inputs beside them, such as an attention mask.
+
+`bert-base-multilingual-cased` keeps the distinction between upper and lower
+case, but its normalization stage is not empty: text cleaning (dropping control
+characters, for instance) and adding spaces around Chinese characters are
+active. The `cl100k_base` and `o200k_base` encodings used here have no
+lowercasing or accent-stripping stage of the kind BERT has. SentencePiece can
+work without external word segmentation; it has normalization and
+piece-forming settings of its own.
 
 That last stage shows up in the output immediately, so here are the names of
 the special tokens:
 
-| token | what it is for |
+| token | function |
 |:--|:--|
-| `[UNK]` | input with no entry in the vocabulary. Nearly absent in byte-level tokenizers |
-| `[PAD]` | padding that brings short sequences in a batch to the same length; the attention mask ignores it |
-| `[CLS]` | in the BERT family, the token at the front whose vector stands for the whole sequence |
-| `[SEP]` | the boundary between two segments, a question and a passage for instance |
-| BOS / EOS | beginning and end of sequence. In generative models EOS is how the model says it is finished |
+| `[UNK]` | Takes the place of a piece that the encoding scheme in use cannot represent. A tokenizer with full byte coverage does not need it to represent the bytes of valid text. |
+| `[PAD]` | Fills the sequences processed together (in one batch) up to a target length. Padded positions are excluded with the appropriate attention mask. |
+| `[CLS]` | The special token at the start of a BERT input. The contextual representation at this position can be used in tasks such as sequence classification. |
+| `[SEP]` | In BERT, marks the end of a text and the boundary between two texts, a question and a passage for instance. |
+| BOS / EOS | The beginning-of-sequence and end-of-sequence markers a model uses. In generation EOS can serve as the stop signal. |
 
-The spellings differ by model — `<s>`, `</s>`, `<|endoftext|>` all do these
-jobs. When you start counting your own tokens, remember that these take their
-share of the window too.
+The names and the jobs of special tokens differ by model. Markers such as
+`<s>`, `</s>` and `<|endoftext|>` are not interchangeable; follow the token
+ids and the placement rules the model expects. When you start counting your
+own tokens, remember that these take their share of the context window too.
 :::
 
 One last practical detail for anyone working with text like Turkish. A letter
 with a mark, such as `ö`, can be stored in two different ways: as a single code
-point, or as the letter `o` followed by a separate "two dots" mark. The two
-look the same on screen, but a tokenizer counts them differently. So bring the
-text into one standard form with a single line before it reaches the
-tokenizer: `text = unicodedata.normalize("NFC", text)`. Every measurement in
-this chapter was taken after that call.
+point, or as the letter `o` followed by a separate "two dots" mark. The two can
+look the same, but they are different sequences of code points. Depending on
+the tokenizer's normalization rules they can produce the same token sequence or
+different ones. When you use a pretrained model, follow the processing its
+tokenizer expects. If you decide to use the standard form called NFC in your
+own data pipeline, apply it consistently in training and in use:
+
+```python
+import unicodedata
+
+text = unicodedata.normalize("NFC", text)
+```
+
+In comparisons of token counts, which Unicode normalization was applied to the
+inputs should be stated as part of the measurement conditions.
 
 ::: {.callout-tip collapse="true"}
 ## Intuition check: why not just use characters and skip all this?
 
-A character vocabulary is tiny (~100 symbols for English, 256 if you work in
-bytes), has no out-of-vocabulary problem once the character set is closed —
-which bytes guarantee and a hand-picked alphabet does not — and needs no
-training. So why does everyone use subwords?
+Working with a limited character set can give a small vocabulary; but the
+characters met in real text are not only those of the language's alphabet. At
+the byte level, every value can be covered with 256 units. With a fixed
+character or byte vocabulary, cutting text into those units needs no learned
+merge rules of the kind BPE has. The language model still has to be trained.
+Since character-level and byte-level models exist too [@xue2022byt5], let us
+look at what subwords gain.
 
-Cut the Turkish text of Article 1 from above three ways, and count:
+We count three different units in the Turkish text of Article 1 above: the
+Unicode code points Python separates, `cl100k_base` tokens, and the pieces of
+text between spaces. In the last group punctuation stays attached to the word.
+The text form of the tokens is used only to make the output easier to read;
+decoding a single byte token on its own does not always give a valid piece of
+Unicode.
 
 ```python
 import tiktoken
 
 enc = tiktoken.get_encoding("cl100k_base")
 units = {
-    "characters": list(tr),
+    "code points": list(tr),
     "subword tokens": [enc.decode([t]) for t in enc.encode(tr)],
     "words": tr.split(),
 }
@@ -1122,37 +1167,51 @@ for name, seq in units.items():
 ```
 
 ```text
-characters      160 units  25,600 pairs  first six: ['B', 'ü', 't', 'ü', 'n', ' ']
+code points     160 units  25,600 pairs  first six: ['B', 'ü', 't', 'ü', 'n', ' ']
 subword tokens   60 units   3,600 pairs  first six: ['B', 'üt', 'ün', ' insan', 'lar', ' h']
 words            21 units     441 pairs  first six: ['Bütün', 'insanlar', 'hür,', 'haysiyet', 've', 'haklar']
 ```
 
-**The first reason is sequence length.** Attention compares every position
-with every other position (@sec-transformers), so a sequence of $n$ units costs
-$n^2$ comparisons — the `pairs` column. 160 characters make 25,600 pairs; the
-same text as 60 subword tokens makes 3,600. The sequence got 2.7× shorter and
-the comparisons 7.1× fewer. The rest of a transformer layer grows only
-linearly, so lengthening a sequence 5× costs somewhere between 5× and 25×
-depending on where you sit relative to the model width — and the quadratic
-term is the one that eventually wins.
+**The first reason is sequence length.** In full self-attention, each attention
+head handles position relations of size $n \times n$ (@sec-transformers). The
+`pairs` column of the output is that theoretical number of position pairs. In
+this example 160 code points correspond to 25,600 position pairs and 60 subword
+tokens to 3,600. The sequence gets about 2.7 times shorter while that number
+falls about 7.1 times.
 
-**The second is what one unit carries.** Read the first six units of each row.
-`ü` and `t` say nothing about the sentence; a model fed characters has to spend
-its first layers rebuilding pieces like `insan` ("human") before it can use
-them. The subword row hands it ` insan` and `lar` directly.
+At a fixed model width, the computation of full attention grows quadratically
+with sequence length and the per-position operations of the layer linearly
+[@vaswani2017attention]. In this simplified model, lengthening the sequence
+five times raises the sum of the two components by between five and
+twenty-five times. That ratio is not a direct estimate of running time or of
+price; in architectures that use local or sparse attention the growth is
+different, too.
 
-**Words are shorter still, but they fail another way.** 21 units and 441 pairs
-look ideal, until you notice that `hür,` with its comma is a different entry
-from `hür`, and that every new combination of suffixes is a new word. The next
-example shows what that does to a word the vocabulary has not seen.
+**The second is the size of the unit.** Read the first six units of each row.
+Code points such as `ü` and `t` contribute to the spelling of a word; but a
+larger pattern such as `insan` ("human") is not presented as a single input
+unit. A character-level model has to learn such patterns from sequences of
+characters. In the subword row, ` insan` and `lar` are separate units as they
+stand. How that affects learning and task performance has to be evaluated on
+the model and the data.
 
-Subword tokenization is a **representation trade-off** between vocabulary size
-and sequence length: you buy shorter sequences by spending vocabulary. The
-tokenizer is the knob that sets that trade, and BPE sets it from the statistics
-of the data rather than a human's guess. You can think of it as a compression
-problem by analogy — BPE really did start life as a data-compression algorithm
-in 1994 [@gage1994new] — as long as the goal here is not making bytes smaller
-but choosing the units the model is shown.
+**Splitting on spaces gives a shorter sequence still, and brings other
+problems.** In this example splitting on spaces produces 21 units. But
+`tr.split()` does not separate punctuation, so `hür,` stays a different piece
+from `hür`. A more careful word tokenizer can fix that. What remains is that
+inflected forms are kept as separate entries in a fixed vocabulary; new forms
+that are not in the vocabulary need a solution of their own. The next example
+shows this.
+
+In subword tokenization there is a trade-off between vocabulary size and
+sequence length. Taking larger pieces into the vocabulary can shorten the
+sequences; in return more vocabulary entries are needed. The designer sets the
+target vocabulary size and the starting units; under those conditions BPE
+learns which pieces to form from the pair frequencies in the training data.
+The approach resembles a compression problem, and it fits that BPE first
+appeared as a data-compression algorithm in 1994 [@gage1994new]. The goal here,
+though, is not to make a file smaller but to choose the units the model will
+use.
 :::
 
 ### Characters, subwords, whole words: one example {#sec-text-as-data-granularities}
@@ -1161,12 +1220,17 @@ The table below compares the three choices on paper. First, watch all three on
 one small example, so that every row of the table is something you have seen
 happen.
 
-The corpus is sixty Turkish words: twelve stems, each on its own and with the
-same four endings (`-ler`, `-de`, `-den`, `-lerde`), spelled with vowel harmony
-(`-ler`/`-lar`, `-de`/`-da`). The two test
-words, `evlerden` ("from the houses") and `okullardan` ("from the schools"),
-appear nowhere in it, although every piece of them does. Each tokenizer learns
-from the corpus and then splits the two new words. The BPE line reuses
+The corpus is made of the bare forms of twelve stems and of the forms built
+with four endings (`-ler`, `-de`, `-den`, `-lerde`): 60 different word forms in
+all. The endings are spelled with vowel harmony (`-ler`/`-lar`, `-de`/`-da`).
+Counting the frequency the code gives each form, the corpus stands for 216 word
+occurrences in total.
+
+The two test words, `evlerden` ("from the houses") and `okullardan` ("from the
+schools"), are not in the corpus; but the characters that make them up and the
+endings involved occur in other forms. The word and character methods list the
+units in the corpus, while BPE learns merge rules from the frequencies. All
+three are then applied to the same two test words. The BPE line reuses
 `pair_counts`, `merge` and `apply_merges` from @sec-text-as-data-bpe:
 
 ```python
@@ -1206,49 +1270,69 @@ subwords (BPE)  vocabulary 60    6 units: ev ler den</w> okul lar dan</w>
 
 Now read that output against the rows of the table below:
 
-- **Vocabulary size.** Whole words already need 60 entries for twelve stems and
-  four suffixes, and real Turkish stems take far more than four suffix
-  combinations. Characters need 18. BPE was capped at 60: the 18 letters, the
-  end-of-word marker `</w>`, and 41 learned merges.
-- **Out-of-vocabulary words.** The whole-word tokenizer turns both test words
-  into `<UNK>`, so the model receives nothing. The other two never produce
-  `<UNK>`, because every letter of the new words is in their alphabet.
-- **Sequence length.** The same two words are 18 units as characters, 6 as
-  subwords and 2 as whole words.
-- **Meaning per unit.** `e`, `v` and `l` mean nothing on their own. `ev`
-  ("house"), `ler` (plural) and `den` ("from") are exactly the meaningful parts
-  of the word; `</w>` only marks where the word ends.
-- **Morphologically rich languages.** BPE found the stem and both suffixes of
-  words it had never seen, by counting alone.
-- **Needs training.** Only the BPE line ran a learning loop. The other two just
-  listed what they saw.
+- **Vocabulary size.** The word-level method has 60 different word forms. That
+  number, as printed, does not include the `<UNK>` marker it also uses. The
+  character method lists 18 different characters. The 60 shown for BPE covers
+  the 18 characters, the `</w>` symbol and the units added by 41 merges. So the
+  numbers should not be read as a comparison that counts special and structural
+  symbols by one and the same rule. Real Turkish data holds many inflected
+  forms beyond these four endings.
+- **Out-of-vocabulary words.** The word-level method represents both test words
+  with the same `<UNK>` marker. Their spellings, and the fact that they differ
+  from each other, are lost. The character and BPE methods can represent these
+  two inputs with existing units, because every character they need is in the
+  starting alphabets. The functions used in this small example do not check
+  separately for characters outside the alphabet.
+- **Sequence length.** The two test words, processed separately, produce 18
+  character units, 6 BPE units or 2 `<UNK>` units in the output shown. The
+  last option is the shortest, but it does not keep the spelling of the words.
+  The character count also has no separator between the words, while the BPE
+  output uses an end-of-word marker. So the numbers should not be taken as a
+  direct comparison of three full-text encodings that keep the same
+  information.
+- **What the units correspond to grammatically.** `e`, `v` and `l` are
+  characters that make up the spelling of the word; in this example they do not
+  stand for a stem or a suffix on their own. In the BPE output `ev`, `ler` and
+  `den` coincide with the stem, the plural suffix and the ablative suffix
+  respectively. `</w>` is a structural marker for the end of a word.
+- **Morphologically rich languages.** The BPE units learned on this small
+  corpus coincide with stem and suffix boundaries in the two test words. The
+  algorithm does not label these pieces as stems or suffixes; on other words,
+  or with another training corpus, the same match may not occur.
+- **Tokenizer training.** Only the BPE line ran a learning loop. The other two
+  listed the units they saw in the corpus.
 
-The three choices, side by side. Before the table, the summary worth
-remembering:
+Before the table, the summary worth remembering:
 
-- **Word level:** short sequences, a large and open-ended vocabulary.
-- **Character/byte level:** a small closed vocabulary, long sequences.
-- **Subword:** a compromise between the two, learned from data.
+- **Word level:** Usually produces short sequences; word forms outside the
+  fixed vocabulary need an extra mechanism.
+- **Character level:** Uses a vocabulary that depends on the chosen alphabet,
+  and usually produces longer sequences.
+- **Byte level:** Can cover every byte value with 256 units; one Unicode code
+  point can need more than one unit.
+- **Subword level:** Strikes a balance between vocabulary size and sequence
+  length with learned pieces.
 
-Every tokenizer you will ever meet sits somewhere on this line, and the whole
-design problem is that the two ends fail in opposite directions.
+This comparison shows one important dimension of the design. Decisions about
+normalization, keeping boundaries, language coverage and fit with the model
+affect the result too.
 
-| | Characters | Subwords (BPE, WordPiece, Unigram) | Whole words |
+| Criterion | Character or byte | Subword | Whole word |
 |---|---|---|---|
-| Vocabulary size | [~100 for ASCII; tens of thousands for multilingual Unicode — 256 if you work in bytes]{.pro} | roughly 30k–250k | [Unbounded — it never closes]{.con} |
-| Out-of-vocabulary words | [Cannot arise *if* the character set is closed — guaranteed only when you work in bytes]{.pro} | [Rare — an unrecognised word falls back to shorter pieces, provided the vocabulary covers every character or the tokenizer can spell an unknown character out in bytes (byte fallback). WordPiece, which cannot, still emits `[UNK]`]{.pro} | [Constant, and worst for the words you care about]{.con} |
-| Sequence length | [~2.5–5× longer than subwords, ~6–8× longer than words (the Article 1 measurement); long sequences are both slower and more expensive]{.con} | [Moderate]{.pro} | [Shortest]{.pro} |
-| Meaning per unit | [Almost none — `p` means nothing]{.con} | Partial; often morpheme-like | [A whole unit of meaning]{.pro} |
-| Morphologically rich languages | Handles them, expensively | [Handles them well — it recovered Turkish suffixes above]{.pro} | [Falls seriously short here]{.con} |
-| Needs training | [No]{.pro} | [Yes, on a corpus]{.con} | [No]{.pro} |
+| Vocabulary size | For characters, depends on the chosen alphabet; a full byte alphabet is 256 values. | Depends on the target set in training and on the implementation. | Depends on the number of word forms chosen; the vocabulary in use is finite. |
+| Out-of-vocabulary input | A character alphabet can fall short. A full byte alphabet can represent every sequence of bytes. | Alphabet coverage, the rules for the unknown token and byte fallback, if present, decide. | Words that are not in the fixed vocabulary need an extra method. |
+| Sequence length | Usually longer; the ratio depends on the text and on the tokenizer compared with. | Usually between the character and word levels. | Known words can be represented with a single unit. |
+| What the units correspond to grammatically | Represents the spelling with small units. | Pieces sometimes coincide with morphemes; that is not guaranteed. | Keeps the word form; does not fix the word's meaning independently of context. |
+| Rich morphology | Can represent the many word forms, as long as the alphabet covers them. | Can reuse shared pieces across different inflected forms. | The many inflected forms can make vocabulary coverage hard. |
+| Tokenizer training | A fixed alphabet needs no merges to be learned. | Pieces or piece probabilities are usually learned from a corpus. | A word vocabulary is chosen or extracted from a corpus; no subword merging is learned. |
 
-: Three tokenization granularities {tbl-colwidths="[24,20,30,26]"}
+: A comparison of unit sizes in tokenization {tbl-colwidths="[18,28,27,27]"}
 
-Subwords are not best on any single row, but unlike the other two they have no
-weakness bad enough to rule them out on its own. That is why most modern
-language models prefer them: they largely remove the word level's
-out-of-vocabulary problem while keeping sequences far shorter than characters
-would.
+Subwords can produce shorter sequences than the character level while reusing
+shared pieces across different words. That balance is why many language models
+prefer them. Character-level, byte-level and word-level approaches can be used
+too [@xue2022byt5]; the right choice depends on the task, the data, the model
+architecture and the compute budget.
 
 :::: {.callout-note collapse="true"}
 ## Deep dive: three ways to learn the same kind of unit — BPE, WordPiece, Unigram LM
@@ -1256,12 +1340,12 @@ would.
 *You can skip this box on a first reading; the rest of the chapter does not
 depend on it.*
 
-BPE is one of three algorithms that learn a subword vocabulary. The other two
-are WordPiece, which BERT uses, and Unigram LM, which T5 uses. What the three
-are and which model ships which is told where we look at BERT's tokenizer
+This box compares three methods used in subword tokenization: BPE, WordPiece,
+which BERT uses, and Unigram LM, which T5 uses. What the methods are and which
+model ships which is told where we look at BERT's tokenizer
 (@sec-tokenizer-algorithms). This box runs the experiment behind that account,
-for readers who want it: all three side by side on the sixty-word corpus above.
-Their core ideas fit on one line each:
+for readers who want it: all three side by side on the corpus above. Their core
+ideas fit on one line each:
 
 | Method | Core idea |
 |---|---|
@@ -1269,29 +1353,42 @@ Their core ideas fit on one line each:
 | WordPiece | score how much a merge helps, relative to its parts |
 | Unigram LM | start from a large set of pieces and prune it probabilistically |
 
-: The three algorithms in one sentence each {tbl-colwidths="[24,76]"}
+: The three methods in one sentence each {tbl-colwidths="[24,76]"}
 
-**All three produce subwords; what differs is which pieces they count as
-"good" enough to keep.** `SentencePiece` [@kudo2018sentencepiece] is not a
+**These methods differ both in how the vocabulary is built and in which pieces
+new text is split into.** `SentencePiece` [@kudo2018sentencepiece] is not a
 fourth algorithm but a *toolkit* that can run BPE or Unigram LM.
 
-**One corpus, three algorithms.** The table gives each algorithm's rule in one
-line. Here is what that means on the
-sixty-word corpus from @sec-text-as-data-granularities, with the same two
-unseen words and the same budget of 60 vocabulary entries. The code is a
-minimal version of each: WordPiece scored with the ratio below, and a
-simplified Unigram LM that re-estimates its piece probabilities from the single
-best split of each word instead of running full EM.
+**One corpus, three methods.** Let us compare the same two test words, aiming
+at 60 vocabulary entries in each implementation. The starting representations
+are not the same, though: BPE uses an end-of-word marker, WordPiece keeps
+word-initial and continuation pieces apart, and the small Unigram
+implementation uses neither. The experiment shows how the methods behave; it is
+not a comparison of performance that controls for every difference between
+them. The code is a small teaching version of WordPiece and of Unigram LM.
 
 ::: {.callout-note collapse="true"}
 ## Deep dive: minimal WordPiece and Unigram LM
 
-The WordPiece score below — $\mathrm{score}(a,b) = \mathrm{freq}(ab) /
-(\mathrm{freq}(a)\,\mathrm{freq}(b))$ — is the widely used *pedagogical*
-account of the method, and it gets the training logic right. Do not learn it as
-the exact formula of BERT's original WordPiece training algorithm: not every
-detail of that procedure was published, and real tokenizer implementations
-differ in the details.
+The score below,
+
+$$
+\mathrm{score}(a,b)=\frac{\mathrm{freq}(ab)}{\mathrm{freq}(a)\,\mathrm{freq}(b)}
+$$
+
+is a teaching approximation used to explain WordPiece training. It should not
+be taken as an exact reproduction of BERT's original WordPiece trainer. The
+results in this box belong to this scoring rule and to the implementation
+given.
+
+`train_unigram` is likewise a small teaching implementation inspired by the
+Unigram approach. Instead of taking every possible split of each word into
+account, it uses only the highest-scoring one. When it computes the cost of
+removing a piece it holds the other piece scores fixed; after pruning it builds
+new counts from the chosen splits. The starting count of 0.001 given to every
+piece left in the vocabulary prevents zero probabilities. So the `loss` below
+is not the same objective as the marginal likelihood of the full Unigram model
+[@kudo2018subword].
 
 ```python
 import math
@@ -1379,8 +1476,8 @@ def train_unigram(corpus, size):
 wp_vocab, (pairs, score) = train_wordpiece(corpus, 60)
 uni_logp, start_size = train_unigram(corpus, 60)
 
-print("first step, the same starting pairs:")
-print("  highest count (BPE):      ",
+print("first step, WordPiece initial pairs:")
+print("  highest raw pair counts:  ",
       [(a + b.removeprefix("##"), c) for (a, b), c in pairs.most_common(3)])
 print("  highest score (WordPiece):",
       [(a + b.removeprefix("##"), round(s, 3))
@@ -1394,8 +1491,8 @@ for w in test:
 ```
 
 ```text
-first step, the same starting pairs:
-  highest count (BPE):       [('##de', 72), ('##da', 72), ('##rd', 48)]
+first step, WordPiece initial pairs:
+  highest raw pair counts:   [('##de', 72), ('##da', 72), ('##rd', 48)]
   highest score (WordPiece): [('ok', 0.056), ('##ku', 0.056), ('ev', 0.028)]
   Unigram LM starts from 322 substrings and prunes to 60
 
@@ -1407,29 +1504,44 @@ okullardan  BPE       : okul | lar | dan</w>
             Unigram LM: okullarda | n
 ```
 
-**BPE** merges the most *frequent* pair. `d` + `e` occurs 72 times in the
-corpus, so BPE's vocabulary fills with pieces that many words share — `de`,
-`ler`, `den`, `lar`, `dan` — and the unseen words split exactly at their
-suffixes.
+The first two lines of output rank the pairs in WordPiece's starting
+representation by two criteria: raw frequency and the ratio score. That shows
+how the criteria differ. BPE's example has a different starting alphabet and an
+end-of-word marker, so the first line should not be read as its merge log.
 
-**WordPiece** starts from the same pairs but divides each count by how often
-its two parts occur at all, $\frac{c(ab)}{c(a)\,c(b)}$. `o` + `k` wins with
-0.056 instead of `d` + `e`, not because it is frequent but because the two
-symbols never occur apart: a word-initial `o` followed by `##k` appears only in
-`okul`. The rule rewards letters that stick together, so WordPiece spends its
-budget growing stems from the left — `ok`, `oku`, `okul`, `okull`, `okullar` —
-and never builds a suffix piece such as `##den`. The `##` marks a piece that
-continues a word. To split a new word, WordPiece does not replay merges: it
-takes the longest piece it knows from the left, then the longest piece after
-that. For `okullardan` that is `okullar`, and after it only letters are left.
+**BPE** merges the most frequent adjacent pair of symbols at each step. In this
+corpus the repeated stem and suffix sequences lead to pieces that can be reused
+across words. In the result shown both test words are cut at stem and suffix
+boundaries: `ev|ler|den` and `okul|lar|dan`. That match is what was observed
+for this corpus and this vocabulary budget; it is not guaranteed for every new
+word.
 
-**Unigram LM** works in the other direction. It starts from every substring of
-the corpus — 322 candidates — and keeps deleting the pieces it can lose most
-cheaply, those whose removal lowers the probability of the corpus least, until
-60 remain. On a corpus this small, keeping frequent whole forms such as
-`evlerde` is the cheapest way to make the corpus probable, so `evlerden`
-becomes `evlerde` + `n`. It is also the only one of the three that gives every
-split a probability and picks the most probable one:
+**WordPiece.** This teaching implementation divides the frequency of a pair by
+the product of the separate frequencies of its two parts,
+$\frac{c(ab)}{c(a)\,c(b)}$. At the start the pairs `o` + `##k` and
+`##k` + `##u` get the same high score (0.056). The code picks `o` + `##k` by
+the ordering of symbol pairs when scores are equal. In this small corpus those
+pieces occur together in `okul` and its inflected forms. The `##` marks a
+piece that continues a word.
+
+With the given vocabulary budget, the result contains long word-initial pieces
+such as `okullar`; the rest of `okullardan` is split into single letters in the
+output shown. That behaviour cannot be generalised to every WordPiece
+tokenizer. To process a new word, WordPiece does not replay a merge list; it
+moves along by taking the longest vocabulary piece that starts at the current
+position.
+
+**Unigram LM.** The small Unigram implementation collects every contiguous
+substring of the words as a candidate; the printed output starts with 322
+candidates. It then prunes the pieces that contribute least by its own
+approximate loss, down to 60. Real Unigram implementations can use different
+methods for building candidates, estimating probabilities and pruning.
+
+The scores learned here put the split `evlerde|n` first for `evlerden`. That is
+the result of the small corpus and the approximate training procedure; it does
+not mean the best morphological analysis, or the best solution among all
+possible vocabularies. Unigram also scores the alternative splits of the same
+word. Here is every split of `evlerden` that this vocabulary allows:
 
 ```python
 def every_split(word, logp, prefix=()):
@@ -1442,28 +1554,41 @@ def every_split(word, logp, prefix=()):
 splits = sorted(every_split("evlerden", uni_logp), reverse=True)
 print(f"{len(splits)} ways to split 'evlerden' with this vocabulary:")
 for logp, pieces in splits:
-    print(f"  p = {math.exp(logp):.1e}   {' | '.join(pieces)}")
+    print(f"  score = {math.exp(logp):.1e}   {' | '.join(pieces)}")
 ```
 
 ```text
 4 ways to split 'evlerden' with this vocabulary:
-  p = 2.1e-03   evlerde | n
-  p = 1.2e-14   evler | d | e | n
-  p = 1.3e-22   ev | l | e | r | d | e | n
-  p = 1.1e-31   e | v | l | e | r | d | e | n
+  score = 2.1e-03   evlerde | n
+  score = 1.2e-14   evler | d | e | n
+  score = 1.3e-22   ev | l | e | r | d | e | n
+  score = 1.1e-31   e | v | l | e | r | d | e | n
 ```
 
-The probability of a split is the product of its pieces' probabilities, so
-every extra piece multiplies in another number below one. That is why the
-two-piece split beats the eight-letter one by 28 orders of magnitude, and why
-Unigram LM can also *sample* a less probable split during training — the
-subword regularization described below.
+The value printed here is the product of the probabilities of the pieces in a
+split. These values are enough to rank the splits of one word. To turn the
+alternatives into a probability distribution, each value is divided by the sum
+of the values computed for all valid splits of the word.
+
+Using fewer pieces does not by itself guarantee a higher score; the
+probabilities of the pieces compared change too. That the two-piece solution
+is about 28 orders of magnitude ahead in this output is a result of the piece
+probabilities this training produced.
+
+Being able to score alternative splits is what makes it possible to sample
+among them probabilistically. The code above only lists the alternatives; it
+does not sample a split yet.
 
 ::: {.callout-note collapse="true"}
 ## Deep dive: checking the minimal Unigram LM against SentencePiece
 
-The minimal version above is not the library. Here is `sentencepiece` 0.2.2,
-trained on the same corpus with the same 60-piece budget:
+The small version above is not the library. The code below trains a Unigram
+tokenizer with `sentencepiece` 0.2.2 on the same word forms and frequencies.
+The target vocabulary size is 60; with `hard_vocab_limit=False`, though, the
+actual vocabulary can be smaller. That budget includes the unknown token: one
+of the 60 entries of the model trained in this run is `<unk>`. SentencePiece's
+representation of spaces and its other defaults differ from the small
+implementation too, so the comparison is not made under identical conditions.
 
 ```python
 import sentencepiece as spm
@@ -1486,34 +1611,55 @@ evlerden    ▁evlerde | n
 okullardan  ▁okul | l | a | r | d | a | n
 ```
 
-`evlerden` gets the same split, `evlerde` + `n`; the library adds `▁` where a
-word starts. `okullardan` does not: the library kept `okul` but not
-`okullarda`, and spells the rest out letter by letter. The rule is the same; the
-details of pruning and estimation are not.
+The split shown for `evlerden` is again `evlerde|n`. The leading `▁` stands for
+the space SentencePiece adds at the start by default. For `okullardan`,
+`▁okul|l|a|r|d|a|n` was chosen. On its own this output does not show that the
+piece `okullarda` is missing from the vocabulary; it shows only that the chosen
+split does not use it. In Unigram a piece can be in the vocabulary and still
+not be chosen, because another split scores higher. Looking at the vocabulary
+itself, in this run it contains `▁okul` and `▁evlerde`, and does not contain
+`▁okullarda`.
+
+SentencePiece's Unigram training uses a different probability estimation and
+pruning process from the small implementation. Normalization, the starting
+candidates and the training settings can affect the result as well; other
+versions or settings can give different splits.
 :::
 
-A sixty-word corpus exaggerates all of this. The rules are the real ones, but
-with so little text a handful of counts decides every merge, and a 60-entry
-vocabulary can hold whole words. Libraries also implement WordPiece training in
-different ways; the ratio used here is a common reconstruction of its rule.
-For how the three compare on real corpora of millions of words, trust the
-published measurement at the end of this box rather than this small experiment.
+This artificial corpus of sixty different word forms was chosen to make the
+effect of the training rules visible. The WordPiece and Unigram implementations
+here contain teaching simplifications; their results should not be read as a
+general ranking of real tokenizers. The study cited at the end of this box
+compares BPE with Unigram LM on larger corpora; nothing about WordPiece can be
+concluded from that experiment.
 
-Two consequences worth carrying. First, WordPiece's ratio penalises pairs
-whose parts are already common on their own — above, that is why it built stems
-before suffixes. Second, Unigram LM is the only one that assigns a
-*probability* to each segmentation rather than one deterministic answer, which
-is what makes subword regularization possible: sample a different segmentation
-each epoch and the model stops overfitting to one arbitrary split
-[@kudo2018subword]. And the contribution of `SentencePiece`
-[@kudo2018sentencepiece], the toolkit named above, shows up here: it treats the
-raw string, spaces included, as the input, which is why its tokens carry a `▁`
-where a space was.
+Two distinctions matter in this example. First, the teaching WordPiece score
+uses not only the frequency of the pair but also the frequencies of its
+components. With the pair count held the same, more frequent components lower
+the score. That rule does not, however, guarantee in general that stems are
+learned before suffixes.
 
-The choice is not settled in BPE's favour, either: at equal vocabulary size,
-unigram LM segments closer to morphology than BPE does, and models pretrained
-with it matched or outperformed BPE-based ones on downstream tasks
-[@bostrom2020byte].
+Second, Unigram can evaluate splits with probabilistic scores. In use, the
+highest-scoring split can be taken, or one can be sampled from the
+alternatives. The aim of subword regularization is to reduce a model's
+dependence on a single split by letting it see the same text split in different
+ways [@kudo2018subword]. Sampling can happen whenever inputs are processed
+again during training; it is not limited to one choice per epoch. Its benefit
+has to be measured by experiment. Different splits can be produced in a similar
+way with BPE-Dropout [@provilkov2020bpe].
+
+SentencePiece [@kudo2018sentencepiece] is a library for training and applying
+methods such as BPE and Unigram on raw text. `▁` is the visible form of a
+space; depending on the settings, the original spaces can be normalized, or a
+space added at the start of the text.
+
+@bostrom2020byte compared Unigram LM with BPE at equal vocabulary size in
+English and Japanese experiments. The boundaries of Unigram LM coincided
+better with the morphological references used. Models pretrained with that
+tokenization also did as well as or better than their BPE counterparts on the
+downstream tasks evaluated. The findings show Unigram's advantage under those
+experimental conditions; they do not establish a fixed ranking for all
+languages and models.
 ::::
 
 ## Zipf and Heaps: the long tail of words {#sec-text-as-data-zipf}
