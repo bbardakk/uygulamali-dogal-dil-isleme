@@ -1664,10 +1664,10 @@ languages and models.
 
 ## Zipf and Heaps: the long tail of words {#sec-text-as-data-zipf}
 
-Everything above was mechanics — how to cut text, and what each cut costs.
-This section is the two statistical facts underneath, the ones that explain why
-the mechanics have to look like that at all. They are easy to conflate, so here
-they are as two separate questions:
+So far we have seen how to cut text and what each choice costs. This section
+looks at two empirical relationships used to describe how word frequencies are
+distributed and how the number of distinct word forms grows as data is added.
+They are easy to conflate, so here they are as two separate questions:
 
 > **Question 1.** How are frequencies distributed between the commonest and the
 > rarest words in a corpus? **Answer: Zipf's law.**
@@ -1675,14 +1675,20 @@ they are as two separate questions:
 > **Question 2.** As you add more text, how does the number of distinct words
 > grow? **Answer: Heaps' law.**
 
-The answer to the second question is what makes tokenization hard — but the
-first has to come first, because it is what explains the second.
+Zipf's law describes how frequencies are distributed within a given corpus;
+Heaps' law describes how the number of distinct word forms changes as the corpus
+grows. Both are approximate, observed regularities; neither dictates how
+tokenization has to be done. The two can be connected under specific assumptions
+[@lu2010zipf]. We look at the frequency distribution first and vocabulary growth
+second.
 
 ### Zipf: how frequencies are distributed {#sec-text-as-data-zipf-distribution}
 
-Take a real corpus — the 20 Newsgroups collection [@lang1995newsweeder],
-11,314 documents, 2.29 million tokens — count every word, and sort by
-frequency:
+We use the 11,314-document training split of the 20 Newsgroups collection
+[@lang1995newsweeder]. After applying the options that strip headers, signatures
+and quoted text, we lowercase the text and count every string matched by the
+regular expression `[a-z']+` as a token. That yields 2,288,401 tokens, about
+2.29 million. These units do not always coincide with linguistic words:
 
 ```python
 from collections import Counter
@@ -1700,7 +1706,11 @@ print("tokens:", len(tokens), " distinct types:", len(counts))
 tokens: 2288401  distinct types: 78649
 ```
 
-Now the shape of that distribution:
+Two numbers come out, and they need to be kept apart. In this count a *type* is
+each distinct string our splitting produces, and a *token* is each occurrence of
+such a string in the text: if `pump` occurs a hundred times, that is one type
+and a hundred tokens. Both counts depend on the normalization and splitting
+rules. Now the shape of the distribution:
 
 ```text
 top     10 types -> 20.99% of all tokens
@@ -1712,39 +1722,75 @@ types appearing exactly once: 38571  (49.0% of the vocabulary,
                                       1.69% of all tokens)
 ```
 
-Ten words are a fifth of the corpus. Meanwhile [half the vocabulary appears
-exactly once]{.hl}. Those single-occurrence words (*hapax legomena*) are
-49% of everything you would have to store, and 1.7% of what you would ever
-see. That one line is also why growing a word-level vocabulary to fix
-out-of-vocabulary words does not scale: new data does not only raise the counts
-of words you have, it keeps producing new types.
+The ten most frequent types make up about a fifth of the tokens in this corpus.
+Meanwhile [about 49% of the types are seen exactly once]{.hl}. Those
+single-occurrence types (*hapax legomena*) are nearly half of the observed types
+and only 1.7% of the tokens in this corpus. Whether all of them belong in a
+model's vocabulary depends on the task and on how the vocabulary is built.
 
-This is **Zipf's law** [@zipf1949human]: frequency falls off as a power of
-rank, $f(r) \propto r^{-\alpha}$, which is close to a straight line on log-log
-axes. "Close to" is doing work in that sentence. On this corpus the
-tenth-ranked word appears 26,985 times, not the roughly 10,600 a clean
-$\alpha = 1$ would predict (the top word's 106,425 divided by 10) — the head
-of the distribution is flatter than the law, which is what Mandelbrot's
-correction $f(r) \propto (r + b)^{-\alpha}$
-exists to absorb. Take the straight line as a *shape*, not as a fitted model.
+This result shows that most observed types are rare. How many new types more
+data would bring is a separate question, taken up below with Heaps' law
+(@sec-text-as-data-heaps).
+
+**Zipf's law** [@zipf1949human] is the observation that, when types are ranked
+by frequency, frequency follows an approximate power relationship with rank:
+
+$$
+f(r) \propto r^{-\alpha}.
+$$
+
+Here $r$ is the type's position in the ranking and $f(r)$ the number of times
+the type at that position occurs. On a plot with both axes logarithmic the
+relationship looks approximately like a straight line.
+
+"Approximately" matters here. If we take the 106,425 occurrences of the
+top-ranked *the* as the scale and choose $\alpha = 1$, we expect about 10,600
+occurrences at rank ten. The observed value is 26,985, roughly two and a half
+times that simple reference. The comparison shows that the first ranks do not
+follow the $1/r$ curve we chose.
+
+The Zipf–Mandelbrot form,
+
+$$
+f(r) \propto (r + b)^{-\alpha},
+$$
+
+adds a parameter $b$ to the rank, which gives the head of the distribution more
+flexibility. We do not estimate these parameters here or compare how well the
+two forms fit. Take the straight line as a reference that summarizes the *shape*
+of the distribution, not as a model estimated from the data.
 
 ::: {.callout-warning appearance="simple" collapse="true"}
 ## Deep dive: actually estimating the Zipf exponent
 
-Reading a slope off a log-log rank-frequency plot with least squares is the
-standard way to get a wrong power-law exponent, and it is wrong for three
-separate reasons: ranking is a transform of the data, so rank and frequency are
-mechanically correlated; the log transform makes the errors heteroscedastic,
-which breaks the OLS assumption; and every point in the long, noisy tail counts
-as much as the well-estimated head. The published fix is maximum likelihood
-with a fitted lower cutoff $x_{\min}$, plus a Kolmogorov–Smirnov
-goodness-of-fit test rather than an $R^2$ [@clauset2009powerlaw]. Nothing in
-this chapter depends on the exact value; the shape is the lesson.
+Fitting a straight line by least squares (OLS) to a log-log rank–frequency plot
+can be used to describe the shape of a distribution. The slope alone, however,
+is neither a reliable estimate of a power-law exponent nor evidence that a power
+law fits. The sampling structure of ranked frequencies, the dependence between
+observations and the large number of rare types can mislead the uncertainty
+calculations of a simple regression. The range chosen for the fit and the
+weighting of the points also affect the slope. Heteroscedasticity by itself does
+not make OLS coefficients biased. There are three separate questions here:
+estimating the coefficient, computing its standard error, and whether a power
+law is an appropriate model at all.
+
+A stronger analysis starts by defining which quantity is being modelled and over
+what range. The approach of Clauset and colleagues [@clauset2009powerlaw]
+estimates a discrete or continuous power-law model by maximum likelihood,
+together with a lower cutoff $x_{\min}$ estimated from the data. It assesses the
+fit with the Kolmogorov–Smirnov (KS) distance rather than $R^2$: the distance in
+the data is compared with the distances in synthetic samples drawn from the
+model, and the parameters are re-estimated on every synthetic sample. The power
+law is also compared with alternative distributions. The exponent this method
+estimates belongs to the distribution of occurrence counts; it is not the same
+parameter as the rank–frequency exponent $\alpha$ above. We do no such
+estimation in this chapter, and no result here depends on the exact value of the
+exponent.
 :::
 
 ::: {.anlp-widget}
 ```{=html}
-<div class="widget-title">Rank vs. frequency, 20 Newsgroups — 50 log-spaced sample ranks from a vocabulary of 78,649 types (2.29M tokens)</div>
+<div class="widget-title">Rank and frequency in 20 Newsgroups — 50 ranks chosen at logarithmic intervals from 78,649 types</div>
 ```
 
 ```{ojs}
@@ -1784,7 +1830,7 @@ Plot.plot({
   marginBottom: 42,
   x: {
     type: zipfScale === "log-log" ? "log" : "linear",
-    label: "rank of the word (1 = most frequent)",
+    label: "frequency rank of the type (1 = most frequent)",
     grid: true
   },
   y: {
@@ -1805,28 +1851,49 @@ Plot.plot({
 ```{ojs}
 //| echo: false
 html`<p style="font-size:0.86rem; color:var(--fig-muted); margin-top:0.5rem;">
-  Switch to <b>linear</b> axes to see the practical problem: on a linear
-  scale the distribution looks like a single spike and a flat line, and the
-  flat line is where almost all of your vocabulary lives.
+  On <b>linear</b> axes the differences between rare types are squeezed into
+  the bottom of the plot; logarithmic axes make them easier to see. The
+  distribution does not change, only its appearance. The dots are observations
+  at the selected ranks; the line joining them is not a model fit.
 </p>`
 ```
 :::
 
-Three consequences follow directly, and they shaped everything in modern NLP:
+These observations bring out three practical points for vocabulary design and
+feature selection:
 
-1. **A word-level vocabulary can never be complete.** New words arrive
-   forever — names, part numbers, typos, compounds. This is the argument for
-   subwords, in one sentence.
-2. **Most of your vocabulary is statistically useless.** A word seen once
-   supports no estimate of anything. This is why `min_df` exists, and why it
-   cuts the matrix far more than stop word removal does.
-3. **Frequency and informativeness are almost opposites.** The words you see
-   most tell you least. That observation is the seed of the next section.
+1. **A fixed word vocabulary may not cover new input completely.** Text whose
+   topic and source are not restricted keeps bringing new names, part numbers,
+   spellings and compounds. Subwords help represent those new forms with
+   existing pieces.
+2. **Reliable statistics are hard to learn for rare types, yet a rare term can
+   still matter.** A single observation is weak ground for generalizing, but a
+   rare product code or proper name can be decisive for a task. `scikit-learn`'s
+   `min_df` parameter drops terms that occur in few documents: an integer is a
+   number of documents, a float a proportion of documents. On this corpus, with
+   `CountVectorizer`'s defaults, `min_df=2` removes 62,208 of 101,631 columns
+   (61%); the removed columns carry only 3.4% of token occurrences. The English
+   stop word list removes 309 columns, but those carry 43% of the occurrences
+   (the default setting does not produce the one-letter tokens *a* and *i*, so
+   the count is two short of the 311 in the normalization section).
+   The numbers belong to this corpus and this threshold; how the filter affects
+   accuracy has to be measured separately.
+3. **How frequent a term is does not by itself determine how useful it is for a
+   task.** Terms found in many documents may do less to tell documents apart.
+   IDF, in the next section, takes that spread into account. But occurring in
+   few documents is no guarantee of meaning or usefulness either, as the `'ax`
+   example below shows.
 
 ### Heaps: why the vocabulary keeps growing {#sec-text-as-data-heaps}
 
-Zipf describes the corpus you already have. The second question above — *how many new words does the next million bring?* — needs a second law.
-Count the distinct types as you walk through the corpus:
+Now the second question: as the number of tokens processed grows, how many
+distinct types do we meet? We first measure the cumulative number of types along
+the corpus we have, then fit a straight line to that curve in log-log space. The
+line is a descriptive summary of cumulative growth in the present document
+order. Because we measure ever-longer prefixes of the same token sequence, the
+points are not independent samples. The coefficients belong to this order and
+this range; they should not be read as a confidence interval or as a prediction
+validated on new data.
 
 ```python
 import numpy as np
@@ -1838,50 +1905,94 @@ for i, tok in enumerate(tokens, 1):
         curve.append((i, len(seen)))
 
 N, V = np.array(curve).T
+# Descriptive straight-line fit in log-log space to the cumulative curve.
 beta, logK = np.polyfit(np.log(N), np.log(V), 1)
 print(f"|V| ~ {np.exp(logK):.1f} * N^{beta:.3f}")
+print("new types in the first 100,000 tokens:", V[9])
+print(f"new types in tokens {N[-11] + 1:,}-{N[-1]:,}:", V[-1] - V[-11])
 ```
 
-This is **Heaps' law** [@heaps1978information]: vocabulary grows as a power of
-corpus size, $|V| \approx K N^{\beta}$, with $\beta$ typically between 0.4 and
-0.6. The exponent is below 1, so the curve keeps rising without ever reaching a
-finite ceiling — the derivative $\mathrm{d}|V|/\mathrm{d}N = K\beta N^{\beta-1}$
-is strictly positive for every $N$, while shrinking towards zero. It looks flat
-on a plot while it is still growing, which is the trap.
+```text
+|V| ~ 16.5 * N^0.580
+new types in the first 100,000 tokens: 13497
+new types in tokens 2,180,001-2,280,000: 1814
+```
 
-[On realistic natural-language corpora you keep meeting new types as the data
-grows; there is only a size at which you stop meeting them *quickly*.]{.hl}
-Heaps' law is an empirical relationship that models that growth approximately —
-a regularity observed again and again in corpora, not a proven theorem. That is the whole argument
-for subwords, and it is also why `min_df` deletes most of your columns while
-deleting very little of your text.
+**Heaps' law** [@heaps1978information] relates the number of tokens processed,
+$N$, to the number of distinct types observed, approximately as
+
+$$
+|V(N)| \approx K N^{\beta}.
+$$
+
+$K$ and $\beta$ depend on the corpus and on the preprocessing. On this corpus,
+in this document order, we found $K \approx 16.5$ and $\beta \approx 0.58$; the
+values reported for the Reuters-RCV1 corpus are $K \approx 44$ and
+$\beta \approx 0.49$ [@manning2008introduction].
+
+With $K > 0$ and $0 < \beta < 1$ this continuous model grows, but ever more
+slowly:
+
+$$
+\frac{\mathrm{d}|V|}{\mathrm{d}N} = K\beta N^{\beta-1} > 0 \qquad (N > 0).
+$$
+
+Our measurement shows the same thing: the first 100,000 tokens bring 13,497
+types, while the last 100,000 tokens we measured bring only 1,814 new ones. [New
+types keep arriving, but ever more rarely.]{.hl} Because $\beta > 0$ in the
+model, its value grows without bound as $N$ does. That is a property of the
+model; it does not mean that finite data has proved the language will produce
+new types forever. The measured type count is also a step-wise integer sequence,
+and the power curve is an approximate summary of it.
+
+On many natural-language corpora new types keep appearing as data grows; how
+fast depends on the content of the corpus and on preprocessing. Heaps' law is an
+empirical regularity that models that growth approximately over a given range,
+not a proven theorem.
+
+Continuing to meet new forms is one of the things that make subword
+representations useful. The effect of the `min_df` filter, however, does not
+follow from Heaps' law; it follows from how types are spread over documents,
+that is, from document frequencies. In the measurement above many rare columns
+were dropped while a small share of token occurrences was left out; whether that
+holds on another corpus has to be measured. `min_df` does not change the source
+text; it only drops features from the vectorizer's vocabulary.
 
 ::: {.callout-important appearance="simple"}
-**Always look at your top-50 list.** In this corpus the *second* most
-frequent token is `'ax`, with 62,043 occurrences — ahead of *to*, *a*, and
-*of*. It is not a word. It comes from 13 documents out of 11,314 — one quoted
-copy of a corrupted binary posting and twelve replies that quoted it back, the
-largest single document contributing 11,147 of the 62,043 occurrences.
+**Always look at your top-50 list.** In this count the *second* most frequent
+token is `'ax`, with 62,043 occurrences, ahead of *to*, *a* and *of*. It is not
+a word of natural language. All of its occurrences sit in 13 of the 11,314
+documents. Twelve of those are parts 3–14 of a fourteen-part posting of a file
+called `roman.bmp`. Their bodies hold the file's content encoded as text
+(uuencode), and runs of identical bytes produce lines of the form
+`>'AX>'AX>'AX`. The thirteenth document is a separate posting with another
+encoded file and contributes a single occurrence. One document alone, part 12,
+accounts for 11,147 of the 62,043 occurrences.
 
-Term frequency says `'ax` is the second most important word in the English
-language. Document frequency says it appears in 0.1% of documents. That gap
-between "appears often" and "appears in many places" is precisely what the
-next section is built on — and it is a real bug that has been sitting in a
-famous benchmark dataset for thirty years.
+By total count `'ax` ranks second in this processed corpus, yet it is found in
+only 0.1% of the documents. The example shows that frequency in the corpus as a
+whole and spread across documents are different things.
 
-One nuance that sharpens the point rather than weakening it: the leading
-apostrophe in `'ax` is *ours*. Our regex `[a-z']+` treats `'` as a word
-character, so the corpus junk and our own tokenizer choice combine into this
-particular string; under `scikit-learn`'s default `token_pattern` the same junk
-surfaces as plain `ax`. The artefact is in the data, but its shape is a
-preprocessing decision — which is the lesson of this whole section.
+TF-IDF uses both pieces of information, but it does not recognize non-language
+content by itself: a noise string that occurs in few documents can receive a
+high IDF. That is why looking at the list of most frequent tokens is a simple
+way to catch data and preprocessing problems before any weighting.
 :::
 
-One distinction to carry into the next section: a word can be very frequent
-across the corpus yet concentrated in a handful of documents — `'ax` is exactly
-that — while another word appears a little in almost every document. TF-IDF
-uses precisely this difference: **frequency within a document** and
-**spread across documents** are not the same thing.
+The leading apostrophe of the token `'ax` is already in the raw data: the lines
+read `>'AX>'AX`. Our regular expression `[a-z']+` keeps that character inside
+the token, and lowercasing turns `AX` into `ax`. `scikit-learn`'s default
+`token_pattern` does not include the apostrophe and produces the token `ax` from
+the same documents; under that setting too, `ax` ranks second after *the*, with
+62,387 occurrences. The source content stays the same, but the form of the token
+depends on a preprocessing decision.
+
+Before moving on, keep three counts apart: the number of times a term occurs
+**in one particular document**, its total number of occurrences **in the whole
+corpus**, and the **number of documents that contain it**. For `'ax` the corpus
+total is high and the number of documents containing it is low. TF-IDF combines
+the term's frequency in each document (TF) with an IDF weight computed from how
+many documents contain the term.
 
 ## How a text becomes a vector {#sec-text-as-data-vectors}
 
