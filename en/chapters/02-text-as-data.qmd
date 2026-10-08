@@ -2482,15 +2482,18 @@ is the last piece of arithmetic in this chapter, and it is a multiplication
 followed by a division.
 
 Before the mathematics, the reason for that division, as a question: why should
-two documents on the same topic — one 20 words long, the other 2,000 — look far
-apart only because one is longer? Every count in the long document is bigger, so
-its vector is longer. L2 normalization removes exactly that length effect and
-leaves behind how the document distributes its weight across terms.
+two documents that use similar terms in similar proportions — one 20 words long,
+the other 2,000 — look far apart only because one is longer? In longer documents
+some term counts and the vector norm can grow, but not every term's count
+necessarily does. L2 normalization brings the norm of a non-zero vector to 1
+while keeping the ratios between its components. The comparison then turns on
+the vector's direction rather than its absolute size.
 
 ::: {#gloss-tf-idf .column-margin .term-gloss}
 **TF-IDF** — score each word in a document by how often it appears here, and
 reduce that score as the word becomes more widespread across the collection.
-Frequent-and-rare wins; frequent-and-everywhere loses. [↩](#term-tf-idf){.term-back}
+Other things being equal, the TF-IDF weight rises with the term's count in the
+document, and the IDF factor falls as more documents contain the term. [↩](#term-tf-idf){.term-back}
 :::
 
 [TF-IDF](#gloss-tf-idf){#term-tf-idf .term-ref} is the product, computed cell by cell. For d1 (`the pump failed`):
@@ -2516,9 +2519,12 @@ normalized    : [0.6404 0.     0.6404 0.     0.     0.     0.4239 0.     0.    ]
 sklearn row d1: [0.6404 0.     0.6404 0.     0.     0.     0.4239 0.     0.    ]
 ```
 
-That last pair of lines is the point of this whole section: the hand
-computation and `TfidfVectorizer` agree to every digit. There is no magic in
-the library.
+The last two lines show that our hand computation and the `TfidfVectorizer`
+result agree to the four decimal places displayed. On this example, comparing
+the two results without rounding also gives a largest absolute difference of
+0.0. In general, floating-point results should be compared with a tolerance,
+for instance with `np.allclose`. The library performs the same calculation we
+have just built step by step.
 
 Follow one row all the way through. d1 is `the pump failed`, so three
 positions are non-zero, each with a count of 1. Multiply each by its IDF and
@@ -2534,8 +2540,10 @@ $$
 Intermediate values are rounded for display; carried at full precision the norm
 is $2.35906509\ldots$, which is what the library uses.
 
-The six zero entries contribute nothing, which is why this stays cheap even
-when the vocabulary has 200,000 columns. Divide through:
+The six zero entries do not change the sum. To benefit from that during
+computation on large vocabularies we keep the matrix in sparse form; the
+`toarray()` conversion used here to display intermediate values is not something
+to apply to large matrices. Divide through:
 
 $$
 \frac{1.5108}{2.3591} = 0.6404
@@ -2545,19 +2553,22 @@ $$
 
 and those are exactly the numbers `TfidfVectorizer` printed above.
 
-That final division by $\lVert v \rVert_2$ is [L2 normalization]{.hl}, and it
-is not cosmetic. Without it, a long document has a large vector simply for
-being long, and every comparison based on a dot product or Euclidean distance
-— including a linear classifier's score — becomes partly a comparison of
-document lengths. (Cosine divides by the norms itself, so it is immune; see
-below.) Normalizing puts every document on the unit sphere, so only
-*direction* — the mix of words — carries information.
+That final division by $\lVert v \rVert_2$ is [L2 normalization]{.hl}. It
+changes how a model uses the size of the vector. Without it, a long document
+usually has a vector with a larger norm, and every comparison based on a dot
+product or Euclidean distance — including a linear classifier's score — becomes
+partly a comparison of vector sizes. (Cosine divides by the norms itself, so it
+is unaffected; see below.) Normalizing moves every non-zero document vector onto
+the unit sphere, so only *direction*, the weighted mix of terms, is left in the
+comparison. That is useful when we want the size effect removed; its effect on
+classification accuracy is something we measure on validation data.
 
 The particular combination you have just built — term frequency, times
 inverse document frequency, then length-normalized — is not the only one
-anyone tried. Salton and Buckley [@salton1988term] compared a large family of
-weighting schemes empirically and this is roughly the one that won, which is
-why it became the default in every library you will touch.
+anyone tried. Salton and Buckley [@salton1988term] compared different term-weighting
+schemes empirically. The combination used here — raw TF, smoothed IDF and L2 —
+is `scikit-learn`'s default; other tools may choose a different formula and
+normalization.
 
 ::: {.column-margin}
 Think of it as putting every document on a sphere of the same radius. A 50-word
@@ -2565,12 +2576,14 @@ report and a 5,000-word report both end up at unit *length* — the squares of
 the components sum to one, not the components themselves — so the question
 becomes which direction each one points, not how far it reaches.
 
-One document cannot be put on the sphere: an empty one, or one whose every
-word is out of vocabulary, has $\lVert v \rVert_2 = 0$ and no direction to
-normalize. Cosine with it is $0/0$ — undefined. `scikit-learn` returns a zero
-row and a cosine of 0, which is a convention rather than an answer; if such
-documents exist in your corpus, count them before you trust any similarity
-built on them.
+A document left with no active term after preprocessing and vocabulary
+filtering gives the zero vector. The cause can be empty text, only
+out-of-vocabulary terms, or every term being filtered out. Such a document has
+$\lVert v \rVert_2 = 0$; the zero vector has no direction, and cosine with it
+is $0/0$, undefined. `scikit-learn` returns a zero row and a cosine of 0, which
+is a convention. Count these rows and handle them separately. Do not read the 0
+the library returns for them as a measured semantic dissimilarity between two
+valid documents.
 :::
 
 ::: {.anlp-widget}
@@ -2669,9 +2682,11 @@ html`<div style="font-size:0.86rem; color:var(--fig-muted);">
         document, so TF-IDF fades it to the lightest non-zero weight in each
         row, while <code>valve</code> — unique to d3 — becomes one of the
         darkest cells in the matrix.`
-      : html`Under raw counts, <code>the</code> is indistinguishable from
-        <code>valve</code>: both are 1. Switch to TF-IDF to see the
-        difference appear.`}
+      : html`In d3's raw-count row <code>the</code> and <code>valve</code> get the
+        same value, 1. Looking down the columns shows that they are spread
+        differently: <code>the</code> occurs in four documents,
+        <code>valve</code> only in d3. TF-IDF carries that difference into d3's
+        weights; switch to TF-IDF to see it.`}
   </p>
 </div>`
 ```
