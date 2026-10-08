@@ -3701,9 +3701,11 @@ ilgilidir.
 **S: İki belgenin kosinüs benzerliği 0. Bu ne demek ve pratikte ne kadar
 olası?**
 
-Bu bölümün temsillerinde — bütün ağırlıkları negatif olmayan kelime torbası ve
-TF-IDF vektörlerinde — ağırlığı pozitif olan hiçbir ortak öznitelikleri yok
-demek; pratikte hiçbir terimi paylaşmıyorlar. Genel olarak kosinüsün 0 olması
+İki vektör de sıfırdan farklıysa ve negatif bileşen taşımıyorsa — bu bölümün
+kelime torbası ve TF-IDF vektörlerinde olduğu gibi — sıfır kosinüs, ağırlığı
+pozitif olan hiçbir ortak özniteliğin bulunmadığını gösterir. Sıfır vektörlerde
+matematiksel kosinüs tanımsızdır; kütüphanenin döndürdüğü 0 bu durumdan ayrı
+tutulmalıdır. Genel olarak kosinüsün 0 olması
 vektörlerin dik olması demektir ve bu, negatif bileşen taşıyabilen
 temsillerde "ortak kelime yok" anlamına gelmez; @sec-gommeler'teki
 embedding'lere geçince bu ayrım önem kazanıyor. Stop word'lerin korunduğu uzun İngilizce
@@ -3711,17 +3713,19 @@ belgelerde bu nadirdir, çünkü ortak işlev kelimelerini paylaşma eğiliminde
 Kısa olanlarda — bu kitabın 19 kelimelik Türkçe yorumları, bir log satırı, bir
 arama sorgusu — olağandır; iki belgenin gerçekten ortak söz varlığının olmadığı alan
 metinlerinde de öyle. Çok
-sayıda sıfır görüyorsanız muhtemelen fazla agresif filtrelemişsinizdir ya
-da belgeleriniz aşırı kısadır — ki bu da başlı başına yoğun temsillere
-geçme sinyalidir (@sec-gommeler).
+sayıda sıfır puan görürseniz önce boş vektörleri, sözlük dışı terimleri,
+filtreleri ve karşılaştırılan çiftlerin gerçekten ilişkili olup olmadığını
+inceleyin. İlgili metinler farklı sözcüklerle anlatılıyorsa yoğun temsillerin
+yararını bir değerlendirme kümesinde ölçün (@sec-gommeler).
 
 **S: Belge-terim matrisiniz 10⁶ × 10⁵. Bu matrisi nasıl saklar, onunla
 nasıl çalışırsınız?**
 
 Önce sayının ne demek olduğunu söyleyin: bir milyon belge, yüz bin kelimelik
-bir sözlük, yani $10^{11}$ hücre. Her hücre için 8 baytlık bir ondalık sayı
-tutarsanız bu **800 GB** eder — soru bir bilmece değil; matris sıkıştırılmadan
-gerçekten hiçbir makineye sığmaz.
+bir sözlük, yani $10^{11}$ hücre. Her hücreyi 8 baytlık `float64` olarak
+saklarsanız yalnızca matrisin veri alanı **800 GB** eder. Bu, sıradan bir
+bilgisayar için çok yüksek bir maliyettir; ara hesaplar ve model için gereken
+bellek de buna eklenir.
 
 Sonra işi neyin kurtardığını söyleyin: bu hücrelerin neredeyse hepsi sıfır. Tek bir
 belgede yüz bin kelimenin belki birkaç yüzü geçer; metin matrislerinde
@@ -3732,34 +3736,43 @@ saklamanın hiçbir anlamı yok.
 bunu yapar: matrisi bir tablo olarak değil üç listeyle tutar — sıfırdan
 farklı değerler, her değerin hangi sütuna ait olduğu ve her satırın bu
 listede nereden başladığı. Böylece maliyet hücre sayısıyla değil, *sıfırdan
-farklı hücre* sayısıyla ölçeklenir. %0,1 yoğunlukta bu $10^8$ değer demek;
-değer başına 12 bayttan yaklaşık **1,2 GB** — yani 800 GB'ın yerine 1,2 GB,
-kabaca **670×** kazanç. %1 yoğunlukta bile 12 GB'da kalırsınız.
+farklı hücre* sayısıyla ölçeklenir. %0,1 yoğunlukta bu $10^8$ değer demek.
+`float64` değer ve 32 bit sütun indeksiyle, kayıt başına 12 bayttan yaklaşık
+**1,2 GB** gerekir; satır işaretçileri ve nesne ek yükü ayrıca eklenir. Yani 800
+GB yerine yaklaşık 1,2 GB, kabaca **670×** kazanç. Aynı varsayımla %1 yoğunlukta
+değerler ve sütun indeksleri yaklaşık 12 GB tutar. 64 bit indeks gereken
+uygulamalarda maliyet daha yüksektir.
 
 İyi bir cevabı asıl ayıran kısım şurası: seyreklik bir depolama numarası değil,
 hangi işlemleri yapabileceğinizi belirleyen bir kısıttır.
 
-- **Seyrekliği yok eden işlemler.** Sütunlardan ortalama çıkarmak (ortalama
-  merkezleme) her sıfırı sıfırdan farklı yapar ve sizi bir anda 800 GB'a geri
-  götürür. Ders kitabındaki PCA da bunu yapar, çünkü önce ortalama merkezleme
-  uygular. (Yeni `scikit-learn` sürümleri seyrek bir matrisi örtük olarak
-  merkezleyebiliyor, ama yalnızca belirli çözücülerle; güvenmeden önce kontrol
-  edin.)
-- **Seyrekliği koruyan işlemler.** Satır bazında L2 normalleştirme ve
-  matris–vektör çarpımları yalnızca sıfırdan farklı hücrelere dokunur; biçimi
-  bozmazlar.
+- **Seyrekliği bozan işlemler.** Sıfır olmayan sütun ortalamalarını çıkarıp
+  merkezlenmiş matrisi açıkça saklamak, o sütunlardaki sıfırları sıfırdan farklı
+  yapar ve yoğun matris maliyetini geri getirir. Ders kitabındaki PCA da önce
+  ortalama merkezleme uygular. Bazı çözücüler merkezlemeyi örtük uygular (yeni
+  `scikit-learn` sürümlerinde belirli çözücüler seyrek girdiyi bu yolla
+  destekler); bu nedenle kullandığınız PCA çözücüsünün seyrek girdi desteğini ve
+  bellek davranışını ayrıca inceleyin.
+- **Seyrekliği koruyan işlemler.** Satır bazında L2 normalleştirme seyrek
+  yapıyı korur. Seyrek matris–vektör çarpımı da girdi matrisini
+  yoğunlaştırmadan hesaplanabilir; ancak sonuç vektörü yoğun olabilir.
 - **Girdisi seyrek kalan, *çıktısı* kalmayabilen işlemler.** Asıl dikkat edilmesi
-  gereken, tüm çiftler arasındaki kosinüs matrisidir: $XX^{\top}$, iki belgenin
-  tek bir terim paylaştığı her yerde sıfırdan farklı bir hücre üretir; yani her belgede ortak bir kelimenin
-  geçtiği bir derlemde tamamen yoğundur — $n^2$ float, ki $n = 50.000$'de 20 GB
+  gereken, tüm çiftler arasındaki benzerlik matrisidir. $X$ matrisinin sıfır
+  olmayan satırları önceden L2 ile normalleştirilmişse $XX^{\top}$ kosinüsleri
+  verir. Negatif olmayan ağırlıklarda ortak pozitif bir terim, ilgili çiftin iç
+  çarpımını pozitif yapar; yani her belgede ortak bir kelimenin geçtiği bir
+  derlemde bu matris tamamen yoğundur — $n^2$ float, ki $n = 50.000$'de 20 GB
   eder. `cosine_similarity` varsayılan olarak yoğun bir dizi döndürür ve seyrek bir
   çıktı istemek saklama biçimini değiştirir, sıfırdan farklı hücre sayısını değil.
   Bloklar hâlinde hesaplayın ya da her satırın yalnızca en yakın komşularını
   tutun.
 - **Boyut indirmek istiyorsanız kesik (truncated) SVD.** PCA'nın aksine
   merkezleme adımını atlar, dolayısıyla doğrudan seyrek matris üzerinde
-  çalışır. Bunun adı latent semantic analysis'tir (örtük anlamsal analiz, LSA) ve embedding'lere giden tarihsel
-  köprüdür (@sec-gommeler).
+  çalışır. Terim sayımı veya TF-IDF matrisine bu biçimde uygulanan kesik SVD,
+  örtük anlamsal analiz (latent semantic analysis, LSA) olarak adlandırılır.
+  Seyrek girdiyi işleyebilir; fakat düşük boyutlu belge vektörleri ve bileşen
+  matrisi genellikle yoğundur. Bellek hesabına bu çıktıları da katın. LSA,
+  embedding'lere giden tarihsel köprüdür (@sec-gommeler).
 
 ### Bir şeyi yayına alıp almadığınızı sınayanlar
 

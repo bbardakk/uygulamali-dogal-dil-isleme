@@ -3565,9 +3565,10 @@ whether you normalized.
 **Q: Two documents have cosine similarity 0. What does that mean, and how
 likely is it in practice?**
 
-In this chapter's representations — bag-of-words and TF-IDF vectors, whose
-weights are all non-negative — it means they have no shared feature with
-positive weight, which in practice means they share no terms at all. In
+If both vectors are non-zero and have no negative components — as with this
+chapter's bag-of-words and TF-IDF vectors — a cosine of zero means there is no
+shared feature with positive weight. For zero vectors the mathematical cosine is
+undefined; the 0 a library returns has to be kept apart from that case. In
 general a cosine of 0 means the vectors are orthogonal, which in
 representations that can carry negative components does not mean "no shared
 words"; the distinction starts to matter with the embeddings in
@@ -3575,18 +3576,20 @@ words"; the distinction starts to matter with the embeddings in
 this is rare, because they tend to share common function words. On short ones —
 this book's 19-word Turkish reviews, a log line, a search query — it is
 routine, and so is it on domain text where two documents genuinely have no
-vocabulary in common. If you are
-seeing many zeros, you have probably over-aggressively filtered, or your
-documents are extremely short — which is itself a signal to move to dense
-representations (@sec-embeddings).
+vocabulary in common. If you see
+many zero scores, first check for empty vectors, out-of-vocabulary terms and
+filters, and whether the pairs being compared are actually related. If related
+texts are worded differently, measure the benefit of dense representations on an
+evaluation set (@sec-embeddings).
 
 **Q: Your document-term matrix is 10⁶ × 10⁵. How do you store and work with
 it?**
 
 Start by saying what the number means: a million documents against a
-hundred-thousand-word vocabulary is $10^{11}$ cells. At 8 bytes per cell
-that is **800 GB** — the question is not a riddle, the matrix genuinely does
-not fit anywhere without compression.
+hundred-thousand-word vocabulary is $10^{11}$ cells. Stored as 8-byte
+`float64` values, the data area of the matrix alone is **800 GB**. That is a
+very high cost for an ordinary computer, and the memory for intermediate
+computations and the model comes on top.
 
 Then say what rescues it: almost all of those cells are zero. A single
 document uses maybe a few hundred of the hundred thousand words, and text
@@ -3596,30 +3599,41 @@ matrices typically run 0.1–1% non-zero. There is no point storing the zeros.
 as a grid but as three lists — the non-zero values, the column each value
 belongs to, and where each row starts in that list. Cost then scales with
 the number of *non-zeros* rather than the number of cells. At 0.1% density
-that is $10^8$ values, roughly **1.2 GB** at 12 bytes each — 1.2 GB in place
-of 800 GB, about a **670×** saving. Even at 1% density you stay at 12 GB.
+that is $10^8$ values. With `float64` values and 32-bit column indices, 12 bytes
+per entry come to roughly **1.2 GB**; the row pointers and object overhead are
+extra. That is about 1.2 GB in place of 800 GB, roughly a **670×** saving. Under
+the same assumption, values and column indices take about 12 GB at 1% density.
+Where 64-bit indices are needed the cost is higher.
 
 What separates a good answer is the next part: sparsity is not a storage
 trick, it is a constraint on which operations you are allowed to perform.
 
-- **Operations that destroy sparsity.** Subtracting the column mean
-  (mean-centering) makes every zero non-zero and puts you straight back at
-  800 GB. A textbook PCA does the same, because it mean-centers first.
-  (Recent `scikit-learn` versions can center a sparse matrix implicitly, but
-  only with particular solvers; check before you rely on it.)
-- **Operations that preserve it.** Row-wise L2 normalization and
-  matrix–vector products touch only the non-zeros and leave the format intact.
+- **Operations that destroy sparsity.** Subtracting non-zero column means and
+  storing the centred matrix explicitly makes the zeros in those columns
+  non-zero and brings back the cost of a dense matrix. A textbook PCA
+  mean-centres first as well. Some solvers apply the centring implicitly (in
+  recent `scikit-learn` versions particular solvers support sparse input this
+  way), so check the sparse-input support and memory behaviour of the PCA solver
+  you use.
+- **Operations that preserve it.** Row-wise L2 normalization keeps the sparse
+  structure. A sparse matrix–vector product can also be computed without
+  densifying the input matrix, but the resulting vector can be dense.
 - **Operations whose *input* stays sparse and whose *output* need not.** An
-  all-pairs cosine matrix is the one to watch: $XX^{\top}$ has a non-zero
-  wherever two documents share a single term, so on a corpus where every
-  document contains one common word it is completely dense — $n^2$ floats, which
+  all-pairs similarity matrix is the one to watch. If the non-zero rows of $X$
+  have been L2-normalized beforehand, $XX^{\top}$ gives the cosines. With
+  non-negative weights a single shared positive term makes the dot product of
+  that pair positive, so on a corpus where every document contains one common
+  word the matrix is completely dense — $n^2$ floats, which
   at $n = 50{,}000$ is 20 GB. `cosine_similarity` returns a dense array by
   default, and asking for a sparse one changes the storage format rather than
   the number of non-zeros. Compute it in blocks, or keep only each row's nearest
   neighbours.
 - **Truncated SVD if you want fewer dimensions.** Unlike PCA it skips the
-  centering step, so it runs directly on the sparse matrix. That is latent
-  semantic analysis, and the historical bridge to @sec-embeddings.
+  centering step, so it runs directly on the sparse matrix. Truncated SVD applied
+  in this way to a term-count or TF-IDF matrix is called latent semantic
+  analysis (LSA). It can process sparse input, but the low-dimensional document
+  vectors and the component matrix are usually dense, so include those outputs
+  in the memory estimate. LSA is the historical bridge to @sec-embeddings.
 
 ### Testing whether you have shipped something
 
