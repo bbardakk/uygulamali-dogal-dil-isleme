@@ -2201,8 +2201,8 @@ separately.
 
 ### Step 4 — does every word deserve the same weight?
 
-We have numbers now. The question nobody asks early enough is whether they
-are the *right* numbers.
+We now have term counts. The next step is to decide how much weight each term
+should get when we compare documents.
 
 Look at the row for `the`. It appears in all four documents, so it
 contributes to every comparison while distinguishing nothing. Meanwhile
@@ -2226,8 +2226,11 @@ We want a weight that is high when a word is frequent *in this document*
 and rare *across documents*. Splitting that into two factors gives TF-IDF.
 
 **Term frequency** is how often the word occurs in this document — the *raw*
-count we already have. Note *raw*: `scikit-learn` does not divide by document
-length here, because the L2 normalization in step 5 handles length.
+count we already have. `scikit-learn` does not divide that count by document
+length. Had we divided the counts by document length first, the same IDF weights
+and the L2 normalization in step 5 would still give the same vector: a common
+positive factor applied to every component of a row cancels in the final
+division. That does not mean every effect of document length disappears.
 
 ::: {.callout-note collapse="true"}
 ## Practice note: TF-IDF is not one formula
@@ -2235,18 +2238,23 @@ length here, because the L2 normalization in step 5 handles length.
 Many textbooks define term frequency as $\mathrm{tf} = c(t,d)/|d|$, or as the
 logarithmic $1 + \log c(t,d)$, and the resulting numbers differ. The classical
 shorthand for naming a variant is SMART notation, a three-letter code for
-(tf) × (idf) × (normalization): `scikit-learn`'s default is roughly **`ntc`** —
-natural tf, smoothed idf, cosine normalization — where a common classic IR
-choice is **`ltc`**, with logarithmic tf. Setting `sublinear_tf=True` moves you from
-`n` to `l`, and it is the option that wins a row in the experiment at the end
-of this chapter. Say which variant produced a number you report; "TF-IDF" on
+(tf) × (idf) × (normalization). In that notation `scikit-learn`'s default is
+summarized roughly as **`ntc`**: natural (raw) tf, idf and cosine normalization.
+The code does not specify the details of IDF smoothing, though; the full formula
+has to be written out separately. Its counterpart with logarithmic tf is
+**`ltc`**, a common choice in classical IR. Setting `sublinear_tf=True` switches
+the TF component from the raw count to the logarithmic weight
+$1 + \ln c(t,d)$. In the experiment at the end of this chapter that option's
+accuracy is slightly higher than the basic TF-IDF configuration's (0.843 against
+0.831). Say which variant produced a number you report; "TF-IDF" on
 its own is not a specification.
 :::
 
 ::: {#gloss-document-frequency-df .column-margin .term-gloss}
 **document frequency (df)** — in how many documents a word shows up at
-all, no matter how often it shows up in each. A word in every document
-tells you nothing about any of them. [↩](#term-document-frequency-df){.term-back}
+all, no matter how often it shows up in each. A word that occurs
+in every document does not distinguish documents by its mere presence; how often
+it is used in each can still differ. [↩](#term-document-frequency-df){.term-back}
 :::
 
 **[Document frequency](#gloss-document-frequency-df){#term-document-frequency-df .term-ref}**, $\mathrm{df}(t)$, is how many documents contain the
@@ -2254,22 +2262,26 @@ word at all. We want the weight to fall as df rises, so we invert it. But raw
 inversion, $1/\mathrm{df}$, is too aggressive, because its range is far too
 wide. In a collection of a thousand documents, a term in one document gets
 $1/\mathrm{df} = 1$ and a term in every document gets $0.001$: a thousandfold
-gap. A handful of rare terms — often typos and one-off names — would soak up
-nearly all the weight and swamp everything else. A logarithm compresses that
+gap. A ratio that large can let rare terms contribute excessively to the weight
+in some documents. Those terms include distinctive technical names as well as
+typos. A logarithm compresses that
 range: $\log(n/\mathrm{df})$ stays between $\ln 1000 \approx 6.9$ and 0 in the
 same collection, and doubling the document frequency costs the same amount
 ($\ln 2 \approx 0.69$) wherever it happens. The second justification comes
-from information theory: $\log(n/\mathrm{df})$ is the self-information of
-seeing the term in a document (see the intuition check below)
+from information theory: in a model where documents are drawn with equal
+probability, $\log(n/\mathrm{df})$ is the self-information of the event that
+the drawn document contains the term (see the intuition check below)
 [@sparckjones1972statistical]. The basic form is:
 
 $$
 \mathrm{idf}(t) = \ln\!\left(\frac{n}{\mathrm{df}(t)}\right)
 $$
 
-Libraries adjust that basic form a little, because $\mathrm{df}$ can be zero
-and because you rarely want a term that appears in every document to fall to
-exactly zero weight. The smoothed form `scikit-learn` uses is:
+Libraries adjust that basic form a little. In a vocabulary extracted from the
+training corpus every term occurs in at least one document; a vocabulary fixed
+in advance, however, can contain terms never seen in training, with
+$\mathrm{df} = 0$. To handle a zero document frequency safely and to keep terms
+that occur in every document, `scikit-learn` uses this smoothed form:
 
 $$
 \mathrm{idf}(t) = \ln\!\left(\frac{1 + n}{1 + \mathrm{df}(t)}\right) + 1
@@ -2279,14 +2291,15 @@ Read the formula one symbol at a time. $t$ is a term, $n$ is the number of
 documents in the collection, and $\mathrm{df}(t)$ counts how many of them
 contain $t$ at least once. The $1+$ terms are smoothing, and they
 have a clean reading: the formula behaves exactly as if the collection held one
-**extra document containing every term once**. That imaginary document is why
-$\mathrm{df}$ can never be zero and why no weight can run away, and it is the
-same add-one idea you will meet again as Laplace smoothing in
-@sec-language-models. The trailing $+1$ then guarantees that a word appearing
-everywhere still gets a weight of 1 rather than 0, so it is down-weighted
-rather than deleted. This is `scikit-learn`'s exact formula;
-other libraries differ in the details, which is a classic source of "why
-don't my numbers match".
+**extra document containing every term once**. That reading explains why the
+denominator $1 + \mathrm{df}$ always stays positive. For a fixed $n$ the IDF is
+finite; as $n$ grows, that upper bound grows too. The add-one here resembles the
+Laplace smoothing we will meet in @sec-language-models; the denominators of the
+two formulas are not the same. The trailing $+1$ then makes the IDF of a term
+that occurs in every document 1 rather than 0. The term is not zeroed out; it
+gets a smaller IDF factor than terms found in fewer documents. This is
+`scikit-learn`'s exact formula; other libraries differ in the details, which is
+a frequent source of "why don't my numbers match".
 
 **Work two of them by hand.** Our corpus has $n = 4$ documents. The word
 `pump` appears in d1 and d2, so $\mathrm{df} = 2$:
@@ -2303,51 +2316,52 @@ $$
 = \ln(1) + 1 = 0 + 1 = 1
 $$
 
-That second line is the whole design in miniature. A word that is everywhere
-tells you nothing about *which* document you are holding, so the ratio inside
-the log collapses to 1, the log collapses to 0, and the term is left standing
-on the floor weight of 1. It is not deleted — it is told that it gets one
-vote while `pump` gets one and a half.
+The second calculation sums up the design. The presence of a word that occurs
+in every document carries no information about *which* document you are holding,
+so the ratio inside the log falls to 1, the log falls to 0, and the term is left
+on the floor IDF value of 1. The term is not deleted: `pump` gets a factor of
+1.51 and `the` a factor of 1.
 
 ::: {.column-margin}
 The librarian's version. Ask for "the book about pumps" and the word *the*
 narrows the shelf down not at all, while *pumps* narrows it to a metre of
-shelving. IDF is a number for how much a word narrows the search.
+shelving. IDF weights a term inversely to how widespread it is across the documents of
+the collection: the documents that contain a high-IDF term make up a smaller
+part of the collection.
 :::
 
 ::: {.callout-note collapse="true"}
 ## Intuition check: why the logarithm?
 
-This is one of the most common interview questions in the whole field, and
-the weak answer is "to prevent the weight from getting too big."
-
-The better answer has two parts.
+The use of the logarithm can be explained from two angles: it compresses the
+range of the weights, and under a particular probability model it can be related
+to self-information.
 
 **It compresses the range.** Informativeness is not linear in rarity, but that
 alone does not call for a logarithm: $1/\mathrm{df}$ is also a decreasing,
-flattening curve. The difference is the range. In a collection of 10,000
-documents, $1/\mathrm{df}$ puts a ten-thousandfold gap between a term in one
-document and a term in every document, and a few rare terms take over every
-similarity. $\log(n/\mathrm{df})$ stays between 9.2 and 0 and treats equal
+flattening curve. The difference is the range of the weights. In a collection
+of 10,000 documents, $1/\mathrm{df}$ gives a term found in one document ten
+thousand times the weight of a term found in every document. In some comparisons
+that can inflate the effect of rare shared terms. $\log(n/\mathrm{df})$ stays between 9.2 and 0 and treats equal
 ratios equally: raising df from 1 to 10 costs the same weight
 ($\ln 10 \approx 2.3$) as raising it from 1,000 to 10,000.
 
-**It is a probability in disguise.** If $\mathrm{df}(t)/n$ estimates the
-probability that a random document contains $t$, then
-$\log \frac{n}{\mathrm{df}(t)} = -\log P(t)$ — the *self-information* of
-seeing that term, in the information-theoretic sense. Rare events carry more
-information, and the log is not a trick for making numbers smaller; it is what
-information *is*. Robertson's paper [@robertson2004understanding] is the
-careful treatment, and the honest history is that Spärck Jones proposed IDF
-on empirical grounds in 1972 and the theory was reverse-engineered later.
+**Its relation to the self-information of occurring in a document.** When a
+document is drawn from the collection with equal probability, the event "this
+document contains the term $t$" has probability $P(t) = \mathrm{df}(t)/n$.
+Unsmoothed IDF equals the *self-information* of that event, in the
+information-theoretic sense: $\log \frac{n}{\mathrm{df}(t)} = -\log P(t)$.
+This reading does not guarantee that the term matters semantically or is useful
+for every task. Robertson's paper [@robertson2004understanding] is the careful
+treatment. The historical order is that Spärck Jones proposed IDF on empirical
+grounds in 1972, and the theoretical readings were developed later.
 
-**And Zipf closes the loop.** As you saw earlier in this chapter, word
-frequency is roughly inversely proportional to rank: a handful of words have
-enormous counts and tens of thousands have tiny ones. On a scale that skewed,
-raw differences mislead — the log measures a difference as a *ratio* rather
-than a count, and straightens the distribution into a line. It is the same
-reason you log-transform income or city size: there too a few giants flatten
-everyone else off the scale.
+**Its relation to Zipf.** A logarithm turns ratios into differences and makes
+wide ranges of values easier to compare; that is why log transforms are common
+for skewed quantities such as income or city size. A Zipf-type power law looks
+approximately like a straight line on log-log axes, but that does not hold for
+every distribution. Moreover, the total frequency of use in Zipf's law and the
+document frequency in IDF are different quantities.
 :::
 
 Here are the document frequencies and IDF values for our corpus, computed by
@@ -2394,7 +2408,7 @@ gravitational  df=     8  df/N= 0.001  idf= 8.14
 
 ::: {.anlp-widget}
 ```{=html}
-<div class="widget-title">The IDF curve — drag to see how rarity becomes weight</div>
+<div class="widget-title">The IDF curve — drag to see how document frequency becomes an IDF value</div>
 ```
 
 ```{ojs}
@@ -2408,8 +2422,10 @@ viewof dfShare = Inputs.range([0.0005, 1], {
 //| echo: false
 idfCurve = {
   const N = 11314, pts = [];
-  for (let i = 1; i <= 400; i++) {
-    const share = i / 400;
+    // Same grid as the slider (0.0005 … 1 in steps of 0.0005), so the dot always
+  // sits on a plotted point of the curve.
+  for (let i = 1; i <= 2000; i++) {
+    const share = i / 2000;
     const df = Math.max(1, Math.round(share * N));
     pts.push({ share, idf: Math.log((1 + N) / (1 + df)) + 1 });
   }
@@ -2449,10 +2465,11 @@ Plot.plot({
 ```{ojs}
 //| echo: false
 html`<p style="font-size:0.86rem; color:var(--fig-muted); margin-top:0.4rem;">
-  The dashed line is the floor at idf = 1: a word in every document is
-  down-weighted, never deleted. Notice how flat the curve is above ~20% —
-  once a word is common, getting commoner barely changes anything. All the
-  action is in the first few percent, which is where content words live.
+    The dashed line marks the floor at idf = 1: under this formula a term that
+  occurs in every document has an IDF of 1. The same increase in the share of
+  documents changes the weight more at low shares; at higher shares the IDF
+  still keeps falling. The curve shows how widespread a term is across
+  documents, not whether it is a content word.
 </p>`
 ```
 :::
