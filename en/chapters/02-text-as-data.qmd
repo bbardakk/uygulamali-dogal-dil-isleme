@@ -3475,12 +3475,15 @@ that system is cited so you can check the claim yourself.
 **Q: Explain TF-IDF to someone who has not seen it. Then explain why the
 IDF term uses a logarithm.**
 
-Give the two-factor decomposition first: a word matters here if it is
-frequent in this document and rare across the collection. Then give the
-information-theoretic answer from the intuition check above —
-$\log(n/\mathrm{df})$ is the self-information of the term — and mention
-range compression: $1/\mathrm{df}$ gives rare terms thousands of times the
-weight of common ones, while the log keeps the range to a few units. Do not
+Give the two-factor decomposition first: other things being equal, TF-IDF
+gives a higher weight to a term that is frequent in this document and found in
+few documents. That weight is not the same thing as importance for a task. Then
+give the information-theoretic reading from the intuition check above: in a
+model where documents are drawn with equal probability, $\log(n/\mathrm{df})$
+is the self-information of drawing a document that contains the term. Mention
+range compression as well: $1/\mathrm{df}$ gives rare terms thousands of times
+the weight of common ones, while the log keeps the weight between 0 and
+$\log n$ for positive df. Do not
 reach for "1 versus 2 documents matters more than 100 versus 200"; the log
 counts both doublings as equal. If you add that Spärck Jones proposed it empirically in
 1972 [@sparckjones1972statistical] and the theory came later
@@ -3489,15 +3492,21 @@ sources.
 
 **Q: When would raw term counts outperform TF-IDF?**
 
-When document frequency is not informative about importance. Examples: a
-corpus of near-identical documents where every term has similar df;
-generative models like multinomial naive Bayes, whose likelihood is defined
-over counts and whose probabilistic interpretation TF-IDF breaks. And when
+Raw counts can be enough when document frequency adds nothing for telling terms
+apart. If the df values of the terms are close to one another, for instance, IDF
+adds very little extra discrimination to raw counts; if all IDFs are equal, that
+common factor cancels in the final L2 normalization. Whether raw counts are
+actually better still has to be measured. A second case is generative models:
+the generative reading of multinomial naive Bayes rests on integer counts.
+Fractional inputs such as TF-IDF can nevertheless work well in practice, so keep
+the probabilistic interpretation and empirical classification accuracy apart.
+And when
 the numbers feed a statistical test directly rather than a model: tests like
 chi-square or the log-likelihood ratio expect *counts*, because counts add
 up — "this term occurs 47 times across the two categories" is a meaningful
-sentence. TF-IDF weights are scaled fractional values whose sums correspond
-to nothing, and they violate the test's assumption. One warning: in
+sentence. A sum of TF-IDF weights is not a raw count of events. Putting TF-IDF values in
+place of counts in a contingency table built from raw frequencies therefore does
+not amount to applying the same test. One warning: in
 @sec-bake-off, raw counts beating TF-IDF on short Turkish reviews came not from
 IDF but from an untuned `C` interacting with L2 normalization, and it reversed
 under an equal tuning budget. Give both sides the same tuning budget before
@@ -3505,36 +3514,41 @@ you credit the representation.
 
 **Q: You add bigrams and accuracy drops. What happened?**
 
-Variance. The feature space grew by roughly an order of magnitude while the
-data stayed fixed, so most bigrams are seen once or twice and contribute
-noise. The experiment in this chapter shows exactly this: 32,318 → 249,522
-features, 0.831 → 0.819 accuracy. Fixes: raise `min_df` (the threshold for
-how many *separate documents* a term must appear in before it earns a
-column of its own; raising it removes the bigrams seen in only one or two
-documents before they ever enter the vocabulary), strengthen
-regularization, or restrict to bigrams that pass a pointwise-mutual-
-information threshold.
+One possible cause is that the added sparse n-grams increase overfitting: the
+feature space grew by roughly an order of magnitude while the data stayed fixed.
+That cannot be concluded from the accuracy difference alone, though; the n-gram
+frequencies, the strength of regularization, convergence and the paired test
+results all have to be examined. In this chapter's experiment the feature count
+went from 32,318 to 249,522 and accuracy from 0.831 to 0.819; in the paired test
+that difference did not clear the threshold corrected for four comparisons.
+Things to try: raise `min_df` (the threshold for how many *separate documents* a
+term must appear in before it earns a column of its own; raising it removes the
+bigrams seen in only one or two documents before they ever enter the
+vocabulary), strengthen regularization, or select among bigrams that meet a
+minimum frequency by pointwise mutual information (PMI). Measure the effect of
+each choice separately on validation data.
 
 **Q: Why does removing stop words sometimes hurt a sentiment model?**
 
-Because stop word lists are built for topic retrieval, where function words
-carry no signal, and sentiment is not topic. The standard lists delete
-*not*, *no*, *never*, *very*, *only* and *but* — precisely the words that
-invert or intensify an opinion. *This is not good* and *this is good* become
-the same vector. The chapter's own numbers show both sides: stop word
-removal showed a 2.2-point gain on topic classification (borderline on its
-own), and would lose
-badly on the negation example. The rule to state out loud is that
-preprocessing must be chosen against the task, never applied by default.
+Because some stop word lists also contain negation and emphasis words that matter
+for a particular task. If the list in use removes *not*, *no*, *never*, *very*,
+*only* or *but*, for example, distinctions useful for sentiment can be lost;
+`scikit-learn`'s English list contains all six. In that case *This is not good*
+and *this is good* become the same vector. The chapter's own numbers show both
+sides: stop word removal showed a 2.2-point gain on topic classification, and
+would make the two sentences of the negation example indistinguishable. The rule
+to state out loud is that preprocessing must be chosen against the task, not
+applied because it is the default.
 
 **Q: How does the curse of dimensionality show up in text, specifically?**
 
-Sparsely. A TF-IDF matrix can have 10⁵ dimensions and 0.3% density, so
-almost every pair of documents shares almost no non-zero coordinates and
-distances concentrate — everything looks roughly equally far from everything
-else. Note the twist that makes text unusual: the dimensionality is enormous
-but so is the sparsity, which is why linear models with strong
-regularization work far better on text than the raw dimension count would
+As high dimensionality together with sparsity. A TF-IDF matrix can have 10⁵
+dimensions and 0.3% density. That dimensionality can make learning harder, but
+how many terms pairs of documents share cannot be read off the density figure
+alone. The distribution of similarities and how well neighbours can be told
+apart have to be examined in the data. Note what makes text unusual: the
+dimensionality is very large but so is the sparsity. Linear models with strong
+regularization can work better on text than the raw dimension count would
 suggest [@joachims1998text]. The escape routes are feature selection
 (`min_df`), projection (truncated SVD), and learning a dense representation
 instead (@sec-embeddings).
