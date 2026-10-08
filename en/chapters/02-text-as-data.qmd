@@ -3647,9 +3647,11 @@ The expected structure is a checklist, in cost order.
    preprocessing pipeline running in both places? That includes the
    `TfidfVectorizer` object itself. Once fitted, it is no longer just code —
    it carries two things learned from the training data: the vocabulary that
-   maps each word to a column, and the per-term IDF vector. If production
-   refits it instead of loading the same one, the same sentence becomes two
-   different vectors and the model is innocent.
+   maps each word to a column, and the per-term IDF vector. Production
+   has to use the same preprocessing rules, vocabulary and IDF values as
+   training. Refitting the vectorizer on different data can change the column
+   mapping or the weights; the problem then arises in the feature pipeline,
+   before the classifier.
 2. **Vocabulary drift.** New product names, new error codes — absent from
    the vocabulary, they map to no column at all, so the model never sees
    them.
@@ -3658,8 +3660,8 @@ The expected structure is a checklist, in cost order.
    *before* the train/test split.
 5. Only then, the model.
 
-The fitted vectorizer is an output: it has to be saved, versioned and shipped
-alongside the model weights. A good answer is expected to name that nuance.
+The fitted vectorizer is a component that has to be stored with the model: saved,
+versioned and shipped alongside the model weights. A good answer is expected to name that nuance.
 
 **Q: Design a system to detect near-duplicate documents in a corpus of 100
 million.**
@@ -3674,8 +3676,11 @@ sliding word windows (shingles), define similarity as Jaccard overlap,
 compress those sets into fixed-length signatures with MinHash, spread the
 signatures into buckets with locality-sensitive hashing (LSH) so that only
 documents sharing a bucket become candidate pairs, and compute the true
-Jaccard only on the candidates. That turns a quadratic problem into a nearly
-linear one; @sec-near-dupes builds it with measured numbers and shows how the
+Jaccard only on the candidates. With a suitable data distribution and parameters this
+pipeline can cut the number of pairs to examine substantially. The number of
+candidates can still grow quadratically in large buckets, and LSH can miss some
+similar pairs. Both the candidate cost and the recall have to be measured;
+@sec-near-dupes builds it with measured numbers and shows how the
 number of bands sets the threshold.
 
 This chapter's material is the *first* step, and it matters more than it
@@ -3687,24 +3692,34 @@ instead of word windows — each of those changes what counts as a duplicate.
 you start?**
 
 Start with BM25 [@robertson2009probabilistic] via Elasticsearch or a similar
-engine, because it is a strong baseline that ships this week and handles
-exact matches on part numbers that embeddings destroy. Measure it. Then add
-dense retrieval for paraphrase and combine the two — hybrid retrieval, the
-architecture you will build in @sec-retrieval. Candidates who jump straight to
-embeddings without a lexical baseline are giving the wrong answer to a
-question about engineering judgment.
+engine, because it is a strong baseline that can ship quickly and, with a
+suitable analyser and field mapping, makes good use of exact matches on part
+numbers. Check in the token output that the part numbers survive intact, and
+measure the matching behaviour of dense retrieval on the same test queries. Then
+add dense retrieval for paraphrase and combine the two — hybrid retrieval, the
+architecture you will build in @sec-retrieval. A good answer justifies the
+starting method by the requirements and proposes measuring the gain of the more
+complex approach by comparison.
 
 **Q: Your Turkish (or Arabic, or Finnish) product costs far more per request
 than the English one. Explain and fix.**
 
-Tokenizer unfairness: the tokenizer was trained on mostly-English data, so
-morphologically rich languages fragment into more tokens
-[@petrov2023language]. The numbers in this chapter — 1.82× on `cl100k_base`,
-1.39× on `o200k_base` — are the kind of concrete evidence that makes this
-answer credible. Fixes, in increasing order of effort: pick a model whose
-tokenizer has better coverage; measure cost in tokens per *task* rather than
-per request; for a large enough deployment, train a domain and language
-specific tokenizer.
+First compare how many tokens the same content produces under the tokenizer in
+use. Differences between languages can be related to the distribution of the
+training data, the vocabulary, the writing system and the tokenization rules
+[@petrov2023language]. In the cost of a request, also look separately at input
+and output lengths, model prices and any caching conditions. On the short
+parallel text in this chapter the Turkish/English token ratio was 1.82 for
+`cl100k_base` and 1.39 for `o200k_base`. Those figures illustrate a
+tokenizer-dependent difference; to estimate the cost ratio of your product,
+measure over a large number of representative requests. Fixes, in increasing
+order of effort: pick a model whose tokenizer produces fewer tokens in this
+language; measure cost in tokens per *task* rather than per request; given
+enough scale and training budget, consider training a domain- and
+language-specific tokenizer together with a compatible model, or adapting the
+existing model to it [@kudo2018sentencepiece]. The tokenizer of a pretrained
+model cannot be swapped like an independent part without making the model
+compatible.
 
 ### Testing depth on tokenization
 

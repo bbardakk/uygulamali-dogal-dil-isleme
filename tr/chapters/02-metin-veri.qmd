@@ -3782,14 +3782,16 @@ eğittiniz. Hata ayıklama sürecinizi anlatın.**
 Beklenen yapı, maliyet sırasına dizilmiş bir kontrol listesidir.
 
 1. **Training/serving skew** (eğitim/servis kayması: aynı verinin eğitimde ve kullanımda farklı işlenmesi). Buradaki "serving",
-   modelin eğitimi bittikten sonra gerçek isteklere cevap verdiği aşama —
-   yani test/üretim tarafı. Sorulacak soru: *birebir aynı* ön işleme hattı
+   modelin eğitimi bittikten sonra gerçek isteklere tahmin sunduğu kullanım
+   aşamasıdır. Sorulacak soru: *birebir aynı* ön işleme hattı
    her iki yerde de mi çalışıyor? Buna `TfidfVectorizer` nesnesinin kendisi
    de dâhil. `fit` ile eğitildikten sonra o nesne artık yalnızca kod değildir;
    içinde eğitim verisinden öğrenilmiş iki şey taşır — hangi kelimenin hangi
    sütuna düştüğünü tutan sözlük ve terim başına hesaplanmış IDF vektörü.
-   Üretimde bu nesnenin *aynısı* yüklenmiyor, yeniden eğitiliyorsa, aynı
-   cümle iki tarafta iki farklı vektöre dönüşür ve model suçsuzdur.
+   Üretimde eğitimdekiyle aynı ön işleme kuralları, sözlük ve IDF değerleri
+   kullanılmalıdır. Vektörleştiriciyi farklı veride yeniden eğitmek sütun
+   eşlemesini veya ağırlıkları değiştirebilir; bu durumda sorun
+   sınıflandırıcıdan önce öznitelik hattında oluşur.
 2. **Sözlük kayması.** Yeni ürün adları, yeni hata kodları — sözlükte
    olmadıkları için hiçbir sütuna düşmezler; yani model onları hiç
    görmez.
@@ -3798,7 +3800,7 @@ Beklenen yapı, maliyet sırasına dizilmiş bir kontrol listesidir.
    eğitim/test ayrımından *önce* eğitmek.
 5. Ve ancak bundan sonra model.
 
-Eğitilmiş `vectorizer` bir *çıktıdır*: tıpkı model ağırlıkları gibi
+Eğitilmiş `vectorizer`, modelle birlikte saklanması gereken bir bileşendir: tıpkı model ağırlıkları gibi
 kaydedilmesi, sürümlenmesi ve onlarla birlikte yayına alınması gerekir. İyi bir
 yanıtta bu nüansın da belirtilmesi beklenir.
 
@@ -3815,8 +3817,11 @@ Beklenen hattı adlandırmak yeterli: belgeyi kaydırılan kelime pencerelerinde
 kümeleri MinHash ile sabit uzunlukta imzalara sıkıştırın, imzaları
 locality-sensitive hashing (LSH) ile kovalara dağıtıp yalnızca aynı kovaya
 düşen çiftleri aday sayın ve gerçek Jaccard'ı yalnızca adaylar üzerinde
-hesaplayın. Bu hat, problemi karesel olmaktan çıkarıp neredeyse doğrusal hâle
-getirir; @sec-yakin-kopyalar bunu ölçülmüş sayılarla kuruyor ve bant sayısının
+hesaplayın. Bu hat, uygun veri dağılımı ve parametrelerle incelenecek çift
+sayısını büyük ölçüde azaltabilir. Ancak aday sayısı büyük kovalarda karesel
+büyüyebilir; LSH bazı benzer çiftleri de kaçırabilir. Hem aday maliyetini hem
+yakalama oranını ölçmek gerekir; @sec-yakin-kopyalar bunu ölçülmüş sayılarla
+kuruyor ve bant sayısının
 eşiği nasıl belirlediğini gösteriyor.
 
 Bu bölümün malzemesi hattın *ilk* adımıdır ve önemi göründüğünden büyüktür:
@@ -3829,25 +3834,33 @@ doğrudan değiştirir.
 başlarsınız?**
 
 Elasticsearch ya da benzeri bir motor üzerinden BM25 ile
-[@robertson2009probabilistic]; çünkü bu hafta yayına alınabilecek güçlü
-bir baseline'dır ve embedding'lerin yok ettiği birebir parça numarası
-eşleşmelerini sorunsuz yakalar. Ölçün. Sonra başka sözcüklerle anlatım
-için yoğun erişimi ekleyin ve ikisini birleştirin. Bu, @sec-erisim'da
-kuracağınız melez erişim mimarisidir. Sözcük temelli bir baseline
-kurmadan doğrudan embedding'lere atlayan adaylar, mühendislik muhakemesini
-ölçen bir soruya yanlış cevap veriyor demektir.
+[@robertson2009probabilistic]; çünkü kısa sürede yayına alınabilecek güçlü bir
+karşılaştırma modelidir (baseline) ve uygun çözümleyici ile alan eşlemesi
+kullanıldığında birebir parça numarası eşleşmelerini güçlü biçimde
+kullanabilir. Parça numaralarının bozulmadığını token çıktılarında kontrol edin;
+yoğun erişimin eşleşme davranışını da aynı test sorgularıyla ölçün. Sonra başka
+sözcüklerle anlatım için yoğun erişimi ekleyin ve ikisini birleştirin. Bu,
+@sec-erisim'da kuracağınız melez erişim mimarisidir. İyi bir cevap, başlangıç
+yöntemini gereksinimlerle gerekçelendirir ve daha karmaşık yaklaşımın kazancını
+karşılaştırmalı ölçmeyi önerir.
 
 **S: Türkçe (ya da Arapça, ya da Fince) ürününüz İngilizce olandan istek
 başına çok daha pahalıya mal oluyor. Açıklayın ve çözün.**
 
-Tokenizer eşitsizliği: tokenizer ağırlıkla İngilizce veride
-eğitildiğinden, morfolojik olarak zengin diller daha çok token'a parçalanır
-[@petrov2023language]. Bu bölümdeki sayılar — `cl100k_base`'de 1,82 kat,
-`o200k_base`'de 1,39 kat — bu cevabı inandırıcı kılan türden somut
-kanıttır. Çareler, artan emek sırasıyla: tokenizer'ının kapsaması daha
-iyi olan bir model seçmek; maliyeti istek başına değil *görev* başına
-token cinsinden ölçmek; yeterince büyük bir dağıtım için alana ve dile
-özgü bir tokenizer eğitmek [@kudo2018sentencepiece].
+Önce aynı içeriğin kullanılan tokenizer altında kaç token ürettiğini
+karşılaştırın. Diller arası farklar; eğitim verisinin dağılımı, sözlük, yazı
+sistemi ve tokenleştirme kurallarıyla ilişkili olabilir [@petrov2023language].
+İstek maliyetinde girdi ve çıktı uzunluklarını, model fiyatlarını ve varsa
+önbellek koşullarını da ayrı inceleyin. Bu bölümdeki kısa paralel metinde
+Türkçe/İngilizce token oranı `cl100k_base` için 1,82, `o200k_base` için 1,39
+çıktı. Bunlar tokenizer'a bağlı farkı örnekler; ürününüzün maliyet oranını
+kestirmek için temsili çok sayıda istek üzerinde ölçüm yapın. Çareler, artan
+emek sırasıyla: tokenizer'ı bu dilde daha az token üreten bir model seçmek;
+maliyeti istek başına değil *görev* başına token cinsinden ölçmek; yeterli
+ölçek ve eğitim bütçesi varsa, alana ve dile özgü bir tokenizer ile uyumlu bir
+modeli birlikte eğitmeyi veya mevcut modeli buna uyarlamayı değerlendirmek
+[@kudo2018sentencepiece]. Önceden eğitilmiş bir modelin tokenizer'ı, model
+uyumluluğu sağlanmadan bağımsız bir parça gibi değiştirilemez.
 
 ### Tokenization'da derinliği sınayanlar
 
