@@ -3000,7 +3000,8 @@ takes in different uses additionally requires taking context into account.
 
 Yes, and you should be able to say why with numbers rather than opinion.
 Here is a real experiment: four newsgroups, 2,327 training documents, 1,550
-test documents, logistic regression, nothing tuned.
+test documents, logistic regression; no hyperparameter search was done, and
+`max_iter=2000` was set for convergence.
 
 ```python
 from sklearn.datasets import fetch_20newsgroups
@@ -3048,43 +3049,70 @@ numbers.
 
 Read those six lines carefully, because they contain four conclusions:
 
-1. **TF-IDF is worth 6.4 accuracy points over raw counts**, at no extra cost,
-   with no extra data and no tuning. The weighting is not decoration.
+1. **TF-IDF is worth 6.4 accuracy points over raw counts**, without collecting
+   more training documents and without a hyperparameter search. Computing IDF
+   and normalizing still take extra computation.
 2. **Stop word removal helps here** (+2.2 points): on this dataset and this
    topic-classification task, the function words it removes do not appear to
-   carry a strong signal for separating the classes. The same step would hurt
-   on sentiment or negation detection. There is no universal answer. One footnote
-   on that list: `scikit-learn`'s own documentation calls `stop_words='english'`
+   carry a strong signal for separating the classes. In sentiment analysis or
+   negation detection the same step can hurt if the list removes words that
+   matter for the task. The gain here does not by itself show that every removed
+   word was useless. One note on that list: `scikit-learn`'s own documentation calls `stop_words='english'`
    problematic — it is not a general-purpose list, its selection criteria are
    undocumented, and a few of its entries can never be produced by the default
    `token_pattern` in the first place. If stop words matter to your result,
    write the list yourself and print it.
-3. **Bigrams made it worse** while multiplying the feature count by 7.7.
-   More features is not more information; it is more variance.
+3. **Accuracy fell when bigrams were added**, while the feature count grew
+   7.7-fold. More features do not guarantee higher accuracy. The added sparse
+   n-grams can raise the risk of overfitting; pinning down the cause of the
+   difference in this experiment would take a separate comparison of
+   regularization and feature selection.
 4. **`sublinear_tf` points the same way** (0.843 vs 0.831). That option
    replaces the raw count with $1 + \log(\text{tf})$ — the same
    range-compression argument we made for IDF, applied to the
    term-frequency side.
 
-A caution before you quote any of those six numbers, because this book asks the
-same of everyone else. They are point estimates with no intervals attached. The
-test set holds 1,550 documents, so a *single* accuracy near 0.83 carries a 95%
-interval of roughly ±1.9 points. The *difference* between two such accuracies,
-treated as independent estimates, has a wider interval, roughly ±2.6 points.
-Conclusion 1 rests on a gap of 6.4 and clears that easily; conclusion 2 rests on
-2.2 and is borderline; conclusions 3 and 4 each rest on 1.2. So read conclusion
-1 as a finding, conclusion 2 as likely but not proven by this table, and
-conclusions 3 and 4 as *directions*.
+A caution before you quote any of those six numbers. They are point estimates
+with no intervals attached. The test set holds 1,550 documents; under a binomial
+approximation that treats documents as independent, a *single* accuracy near
+0.83 carries a 95% interval of roughly ±1.9 points. If two accuracies are
+treated as independent estimates, the interval of their *difference* is roughly
+±2.6 points. Those intervals give a rough idea of the scale of the uncertainty;
+but the six models are measured on the same test documents, so deciding about
+the differences under an independence assumption is not appropriate. The
+uncertainty of the differences has to be computed from the paired predictions,
+which the note below does. Because six configurations are compared, selection
+of results and multiple comparisons also have to be taken into account.
 
 ::: {.callout-note collapse="true"}
 ## Advanced note: comparing two models that saw the same test items
 
-None of this makes the small differences wrong: the six models see the
-identical test documents. That is the setting for a **paired** test such as
-McNemar's [@mcnemar1947note]. A paired test looks only at the documents where
-two models disagree, which is why it has far more power than comparing two
-independent confidence intervals. This chapter did not run one; run it on your
-own experiment and report it.
+The six models see the identical test documents. That is the setting for a
+**paired** test such as McNemar's [@mcnemar1947note]. McNemar's test compares
+the number of documents one model classifies correctly and the other
+incorrectly; documents that both models get right, or both get wrong, do not
+affect the result. That is how the pairing through the shared test documents is
+taken into account.
+
+The numbers from this experiment for the comparisons behind the four
+conclusions are below; the p-values come from the exact McNemar test, which is
+based on the binomial distribution:
+
+| Comparison | Only the first correct | Only the second correct | p |
+|---|---|---|---|
+| TF-IDF and raw counts | 119 | 20 | 2.4 × 10⁻¹⁸ |
+| TF-IDF + stop words and TF-IDF | 86 | 52 | 0.0048 |
+| TF-IDF + bigrams and TF-IDF | 17 | 35 | 0.018 |
+| TF-IDF + sublinear tf and TF-IDF | 29 | 11 | 0.0064 |
+
+: Paired results for the four comparisons (1,550 test documents) {tbl-colwidths="[40,22,24,14]"}
+
+With four comparisons, a Bonferroni correction puts the threshold at
+0.05/4 = 0.0125. The TF-IDF, stop word and `sublinear_tf` differences fall
+below it; the bigram difference does not. These p-values measure only the
+uncertainty from sampling the test documents. They rest on a single train–test
+split and a single training run, and do not generalize to other datasets or
+tasks.
 :::
 
 One more warning about generalising from six lines. Every number here comes
@@ -3110,15 +3138,20 @@ sci.space            space, nasa, orbit, moon, launch, earth, spacecraft
 talk.politics.guns   gun, guns, weapons, fbi, law, government, firearms
 ```
 
-In a linear bag-of-words model every feature coefficient corresponds directly
-to one token; with modern dense models you rarely get a built-in feature
-coefficient table that direct. (Attribution, SHAP-style explanations and
-probing exist for dense models too — none of them reads as directly as the
-table above.) When you have to defend a model to a safety board, a regulator,
-or a sceptical plant manager, that readability matters more than four points of
-accuracy.
+In a linear bag-of-words model the coefficients can be tied to the terms or
+n-grams of the vocabulary. In a multi-class model we inspect those coefficients
+class by class; the table above shows the terms with the largest coefficients
+for each class. The contribution to the score of a particular document depends
+on the product of the coefficient and the feature value, and a large coefficient
+is not by itself a causal explanation. Dense representations rarely offer a
+term–coefficient mapping that clear. (Attribution, SHAP-style explanations and
+probing exist for dense models too — none of them reads as directly as the table
+above.) When you have to explain a model to a safety board, a regulator, or a
+sceptical plant manager, that readability makes it easier to examine errors and
+to discuss the model's decisions. The trade-off against accuracy is set by the
+requirements of the application.
 
-And the engineering is hard to beat:
+The computational cost is low as well:
 
 ```text
 shape: (2327, 32318)
@@ -3130,30 +3163,39 @@ ratio: 213x
 ```
 
 The matrix is 99.7% zeros, so a sparse representation stores it in 2.8 MB
-instead of 601.6 MB. Training takes seconds on a laptop, inference is a
-sparse dot product, and there is no GPU anywhere in the story.
+instead of 601.6 MB. This example needs no GPU. Computing the classification
+scores comes down to sparse dot products; end-to-end inference also includes
+preprocessing and vectorization. The 2.8 MB is the storage cost of the sparse
+matrix alone; the vocabulary, the IDF values, the model coefficients and working
+memory come on top. Training time depends on hardware and solver settings: on
+the CPU of the laptop used for this chapter's measurements, each of the six
+configurations above finished in under 2 seconds, including vectorization,
+training and prediction on the test set.
 
 Putting the whole chapter's evidence in one place:
 
 | [Why bag-of-words survives]{.pro} | [Why it is not enough]{.con} |
 |---|---|
-| **Fast and tiny.** 2.8 MB for 2,327 documents; seconds to train; no GPU. | **No word order.** *pump failed, valve fine* and *valve failed, pump fine* are the same vector. |
-| **Legible.** The model names its own features — `gun`, `orbit`, `doctor`. Defensible to a regulator. | **No synonymy.** `car` and `automobile` are as unrelated as `car` and `banana`. Exact match or nothing. |
+| **A small sparse matrix.** In this example the matrix for 2,327 documents takes 2.8 MB; total model memory is larger. No GPU needed. | **No word order.** *pump failed, valve fine* and *valve failed, pump fine* are the same vector. |
+| **Legible.** The model names its own features — `gun`, `orbit`, `doctor`. That makes it easier to inspect how terms contribute to a score. | **No synonymy.** `car` and `automobile` are as unrelated as `car` and `banana`. Exact match or nothing. |
 | **Strong baseline.** 0.853 here, and it beat averaged embeddings in @sec-embeddings — then beat them again on Turkish data in @sec-bake-off. | **No polysemy.** One column for `bank`, whatever it meant. |
-| **No training data beyond your own.** Nothing pretrained, nothing downloaded, no vendor. | **Vocabulary never closes.** New documents bring new words your matrix has no column for. |
-| **Deterministic and debuggable.** The same input gives the same output, and you can trace why. | **Negation has no scope.** `not` is a feature like any other and can carry signal; what a bag cannot recover is *what* was negated — and removing stop words deletes it outright. |
+| **No training data beyond your own.** Nothing pretrained, nothing downloaded, no vendor. | **Out-of-vocabulary terms can occur.** New documents can contain terms that are not in the fixed vocabulary built in training. |
+| **Reproducible with a fixed pipeline.** With preprocessing, vocabulary, IDF and model parameters fixed, the same input gives the same output, and term contributions can be inspected. | **Negation has no scope.** `not` is a feature like any other and can carry signal; what a bag cannot recover is *what* was negated — and removing stop words deletes it outright. |
 
 : Bag-of-words, honestly {tbl-colwidths="[50,50]"}
 
-The right reading is not "old technology, still surprisingly good." It is that
-the two columns describe *different tasks*.
+The right reading is not "old technology, still surprisingly good." The two
+columns of the table show the strengths and the limits of one and the same
+representation. Which side weighs more depends on what the task requires.
 
-When the words that matter are literally present in the text and you need
-speed and an audit trail, this is not a fallback. It is the correct answer.
+When exact term matching, speed and traceability matter, bag-of-words is a
+strong starting option. Make the final decision by weighing accuracy, latency,
+memory and the kinds of error together.
 
-When meaning depends on order, on context, or on a word you did not
-anticipate, no amount of tuning on the left column will save you — and you
-need @sec-embeddings and everything after it.
+When the task needs order or context information, the representation has to be
+extended beyond single-word counts. N-grams can help with local relations, and
+character features with new forms. For broader semantic relations we will look
+at dense and contextual representations, starting with @sec-embeddings.
 
 ### Where this is actually deployed
 

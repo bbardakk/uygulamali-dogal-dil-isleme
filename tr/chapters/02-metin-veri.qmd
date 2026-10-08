@@ -3129,7 +3129,8 @@ değişen anlamını ayırmak için ayrıca bağlamı hesaba katmak gerekir.
 
 Var — ve bunu görüşle değil sayılarla söyleyebilmelisiniz. İşte gerçek bir
 deney: dört haber grubu, 2.327 eğitim belgesi, 1.550 test belgesi, lojistik
-regresyon, hiçbir ayar yapılmadı.
+regresyon; hiperparametre araması yapılmadı. Yakınsama için `max_iter=2000`
+kullanıldı.
 
 ```python
 from sklearn.datasets import fetch_20newsgroups
@@ -3177,44 +3178,67 @@ böyle olduğunu sayılarla anlatıyor.
 
 Bu altı satırı dikkatle okuyun, çünkü içlerinde dört çıkarım var:
 
-1. **TF-IDF, ham sayımlara göre 6,4 doğruluk puanı kazandırıyor** — hiçbir ek
-   maliyet olmadan; ek veri yok, ayar yok. Ağırlıklandırma süs değildir.
+1. **TF-IDF, ham sayımlara göre 6,4 doğruluk puanı kazandırıyor** — ek eğitim
+   belgesi toplamadan ve hiperparametre araması yapmadan. IDF hesabı ve
+   normalleştirme yine de ek işlem gerektirir.
 2. **Stop word atmak burada faydalı** (+2,2 puan): bu veri kümesinde ve bu
    konu sınıflandırma görevinde, çıkarılan işlev kelimeleri sınıfları ayıran
-   güçlü bir sinyal taşımıyor gibi görünüyor. Duygu analizinde ya da
-   olumsuzluk tespitinde aynı adım zarar verirdi. Evrensel bir cevap yok. O
-   listeyle ilgili bir dipnot: `scikit-learn`'ün kendi
+   güçlü bir sinyal taşımıyor gibi görünüyor. Duygu analizinde veya
+   olumsuzluk tespitinde, liste görev için önemli kelimeleri çıkarıyorsa aynı
+   adım zarar verebilir. Buradaki artış, çıkarılan bütün kelimelerin yararsız
+   olduğunu tek başına göstermez. O listeyle ilgili bir not: `scikit-learn`'ün kendi
    belgelendirmesi `stop_words='english'`'i sorunlu olarak niteliyor — genel amaçlı
    bir liste değil, seçim ölçütleri belgelenmemiş ve birkaç girdisi zaten
    varsayılan `token_pattern` ile hiç üretilemiyor. Stop word'ler
    sonucunuz için önemliyse listeyi kendiniz yazın ve ekrana basın.
-3. **İkili n-gram'lar durumu kötüleştirdi**; üstelik bunu yaparken öznitelik
-   sayısını 7,7 katına çıkardı. Daha çok öznitelik daha çok bilgi demek
-   değildir; daha çok varyans demektir.
+3. **İkili n-gram'lar eklenince doğruluk düştü**; öznitelik sayısı ise 7,7
+   katına çıktı. Daha çok öznitelik, daha yüksek doğruluk garantisi vermez.
+   Eklenen seyrek n-gram'lar aşırı öğrenme riskini artırabilir; bu deneydeki
+   farkın nedenini belirlemek için düzenlileştirme ve öznitelik seçimini ayrıca
+   karşılaştırmak gerekir.
 4. **`sublinear_tf` aynı yönü işaret ediyor** (0,843'e karşı 0,831). Bu
    seçenek ham sayımı $1 + \log(\text{tf})$ ile değiştirir — IDF için
    kurduğumuz aralık sıkıştırma argümanının, bu kez terim frekansı tarafına
    uygulanmış hâli.
 
-Bu altı sayıdan herhangi birini aktarmadan önce bir çekince; çünkü bu kitap
-herkesten aynı şeyi istiyor. Bunlar, yanında aralık verilmemiş nokta
-kestirimleri. Test kümesinde 1.550 belge var; dolayısıyla 0,83 civarındaki
-*tek* bir doğruluğun %95 aralığı kabaca ±1,9 puan. Bu türden iki doğruluk
-arasındaki *fark*ın aralığı ise, ikisi bağımsız kestirimler gibi ele alındığında,
-daha geniştir: kabaca ±2,6 puan. 1. çıkarım 6,4 puanlık bir farka dayanıyor ve
-bu eşiği rahatça aşıyor; 2. çıkarım 2,2 puana dayanıyor ve sınırda; 3. ve 4.
-çıkarımların her biri ise 1,2 puana. O hâlde 1. çıkarımı bulgu, 2. çıkarımı
-olası ama bu tabloyla kanıtlanmamış, 3. ve 4. çıkarımı ise *yön* olarak okuyun.
+Bu altı sayıdan herhangi birini aktarmadan önce bir çekince. Bunlar, yanında
+aralık verilmemiş nokta kestirimleri. Test kümesinde 1.550 belge var; belgeleri
+bağımsız sayan binom yaklaşımıyla 0,83 civarındaki *tek* bir doğruluğun %95
+aralığı kabaca ±1,9 puandır. İki doğruluk bağımsız kestirimler gibi ele
+alınırsa aralarındaki *fark*ın aralığı kabaca ±2,6 puan olur. Bu aralıklar
+belirsizliğin ölçeğini kabaca gösterir; ancak altı model aynı test belgelerinde
+ölçüldüğü için farklara bağımsız kestirim varsayımıyla karar vermek uygun
+değildir. Farkların belirsizliğini eşleştirilmiş tahminlerden hesaplamak
+gerekir; aşağıdaki not bunu yapıyor. Altı yapılandırma karşılaştırıldığı için
+sonuç seçimi ve çoklu karşılaştırma etkisini de hesaba katmak gerekir.
 
 ::: {.callout-note collapse="true"}
 ## İleri not: aynı test örneklerini gören iki modeli karşılaştırmak
 
-Bu, küçük farkların yanlış olduğu anlamına gelmiyor; altı model birebir aynı
-test belgelerini görüyor. Bu durumda doğru araç, McNemar gibi
-**eşleştirilmiş** bir testtir [@mcnemar1947note]. Eşleştirilmiş test yalnızca
-iki modelin ayrıştığı belgelere bakar; iki bağımsız güven aralığını
-karşılaştırmaktan bu yüzden çok daha güçlüdür. Bu bölüm öyle bir test
-çalıştırmadı; kendi deneyinizde çalıştırın ve sonucunu raporlayın.
+Altı model birebir aynı test belgelerini görüyor. Bu durumda uygun araç, McNemar
+gibi **eşleştirilmiş** bir testtir [@mcnemar1947note]. McNemar testi, bir
+modelin doğru, diğerinin yanlış sınıflandırdığı belgelerin sayılarını
+karşılaştırır; iki modelin de doğru ya da ikisinin de yanlış sınıflandırdığı
+belgeler sonucu etkilemez. Böylece aynı test belgelerinden gelen eşleşme hesaba
+katılır.
+
+Dört çıkarımın dayandığı karşılaştırmalar için bu deneydeki sayılar aşağıda;
+p-değerleri binom dağılımına dayanan kesin McNemar testinden geliyor:
+
+| Karşılaştırma | Yalnızca ilki doğru | Yalnızca ikincisi doğru | p |
+|---|---|---|---|
+| TF-IDF ile ham sayım | 119 | 20 | 2,4 × 10⁻¹⁸ |
+| TF-IDF + stop word ile TF-IDF | 86 | 52 | 0,0048 |
+| TF-IDF + bigram ile TF-IDF | 17 | 35 | 0,018 |
+| TF-IDF + sublinear tf ile TF-IDF | 29 | 11 | 0,0064 |
+
+: Dört karşılaştırma için eşleştirilmiş sonuçlar (1.550 test belgesi) {tbl-colwidths="[40,22,24,14]"}
+
+Dört karşılaştırma yapıldığı için Bonferroni düzeltmesiyle eşik 0,05/4 = 0,0125
+olur. TF-IDF, stop word ve `sublinear_tf` farkları bu eşiğin altında kalıyor;
+bigram farkı kalmıyor. Bu p-değerleri yalnızca test belgelerinin örneklenmesine
+ilişkin belirsizliği ölçer. Tek bir eğitim–test bölmesine ve tek bir eğitim
+koşusuna dayanırlar; başka veri kümelerine ya da görevlere genellenemezler.
 :::
 
 Altı satırdan genelleme yapmaya dair bir uyarı daha. Buradaki her sayı *uzun
@@ -3240,17 +3264,20 @@ sci.space            space, nasa, orbit, moon, launch, earth, spacecraft
 talk.politics.guns   gun, guns, weapons, fbi, law, government, firearms
 ```
 
-Doğrusal kelime torbası modellerinde her öznitelik katsayısı doğrudan belirli bir
-token'a karşılık gelir; modern yoğun modellerde aynı düzeyde doğrudan ve
-yerleşik bir öznitelik–katsayı tablosu elde etmek genellikle mümkün değildir.
-Yoğun modeller için de öznitelik atfetme (attribution), SHAP benzeri
-açıklamalar ve yoklama (probing) yöntemleri var; ama hiçbiri yukarıdaki tablo
-kadar doğrudan okunmuyor. Bir
-modeli güvenlik kuruluna, düzenleyiciye ya da şüpheci bir tesis müdürüne
-savunmanız gerektiğinde bu okunabilirlik, dört puan doğruluktan daha çok işe
-yarar.
+Doğrusal kelime torbası modellerinde katsayılar, sözlükteki terimlere veya
+n-gram'lara bağlanabilir. Çok sınıflı modelde bu katsayıları sınıflara göre
+inceleriz; yukarıdaki tablo her sınıf için en yüksek katsayılı terimleri
+gösteriyor. Belirli bir belgedeki puan katkısı katsayı ile öznitelik değerinin
+çarpımına bağlıdır; yüksek katsayıyı tek başına nedensel açıklama saymayız.
+Yoğun temsillerde aynı açıklıkta bir terim–katsayı eşlemesi genellikle bulunmaz.
+Yoğun modeller için de öznitelik atfetme (attribution), SHAP benzeri açıklamalar
+ve yoklama (probing) yöntemleri var; ama hiçbiri yukarıdaki tablo kadar doğrudan
+okunmuyor. Bir modeli güvenlik kuruluna, düzenleyiciye ya da şüpheci bir tesis
+müdürüne anlatmanız gerektiğinde bu okunabilirlik, hataları incelemeyi ve model
+kararlarını tartışmayı kolaylaştırır. Doğrulukla yapılacak ödünleşimi ise
+uygulamanın gereksinimleri belirler.
 
-Mühendislik tarafını yenmek de kolay değil:
+Hesaplama maliyeti de düşük:
 
 ```text
 shape: (2327, 32318)
@@ -3263,31 +3290,40 @@ ratio: 213x
 
 Matrisin %99,7'si sıfır; dolayısıyla seyrek temsil onu 601,6 MB yerine
 2,8 MB'ta saklıyor (bunu sağlayan CSR biçimi ve hangi işlemlerin seyrekliği
-bozduğu mülakat sorularında). Eğitim bir dizüstü bilgisayarda saniyeler sürüyor, çıkarım seyrek
-bir iç çarpım ve hikâyenin hiçbir yerinde GPU yok.
+bozduğu mülakat sorularında). Bu örnek GPU gerektirmez. Sınıflandırma
+puanlarının hesabı seyrek iç çarpımlara dayanır; uçtan uca çıkarım ayrıca ön
+işlemeyi ve vektörleştirmeyi içerir. 2,8 MB yalnızca seyrek matrisin saklama
+maliyetidir; sözlük, IDF, model katsayıları ve çalışma belleği buna eklenir.
+Eğitim süresi donanıma ve çözücü ayarlarına bağlıdır: bu bölümün ölçümlerinin
+yapıldığı dizüstü bilgisayarın işlemcisinde yukarıdaki altı yapılandırmanın her
+biri, vektörleştirme, eğitim ve test tahmini dâhil 2 saniyenin altında
+tamamlandı.
 
 Bütün bölümün kanıtını tek yere koyalım:
 
 | [Kelime torbası neden ayakta kaldı]{.pro} | [Neden yeterli değil]{.con} |
 |---|---|
-| **Hızlı ve minik.** 2.327 belge için 2,8 MB; eğitim saniyeler; GPU yok. | **Kelime sırası yok.** *pompa arızalandı, vana sağlam* ile *vana arızalandı, pompa sağlam* aynı vektör. |
-| **Okunabilir.** Model kendi özniteliklerini adlandırır — `gun`, `orbit`, `doctor`. Bir düzenleyiciye savunulabilir. | **Eş anlamlılık yok.** `araba` ile `otomobil`, `araba` ile `muz` kadar ilgisizdir. Ya birebir eşleşme ya hiç. |
+| **Küçük bir seyrek matris.** Bu örnekte 2.327 belgenin matrisi 2,8 MB; toplam model belleği daha büyüktür. GPU gerekmez. | **Kelime sırası yok.** *pompa arızalandı, vana sağlam* ile *vana arızalandı, pompa sağlam* aynı vektör. |
+| **Okunabilir.** Model kendi özniteliklerini adlandırır — `gun`, `orbit`, `doctor`. Terimlerin puana katkısını incelemeyi kolaylaştırır. | **Eş anlamlılık yok.** `araba` ile `otomobil`, `araba` ile `muz` kadar ilgisizdir. Ya birebir eşleşme ya hiç. |
 | **Güçlü baseline.** Burada 0,853; @sec-gommeler'te ortalaması alınmış embedding'leri (gömme) yendi — sonra @sec-karsilastirma'te Türkçe veride tekrar yendi. | **Çok anlamlılık yok.** `yüz` için tek sütun var; surat mı, sayı mı, fiil mi, fark etmez. |
-| **Kendi verinizin ötesinde eğitim verisi gerekmez.** Ön eğitimli hiçbir şey, indirilen hiçbir şey, tedarikçi yok. | **Sözlük asla kapanmaz.** Yeni belgeler, matrisinizde sütunu olmayan yeni kelimeler getirir. |
-| **Belirlenimci ve hata ayıklanabilir.** Aynı girdi aynı çıktıyı verir ve nedenini izleyebilirsiniz. | **Olumsuzlamanın kapsamı yok.** `değil` de diğerleri gibi bir özniteliktir ve sinyal taşıyabilir; torbanın geri getiremediği şey *neyin* olumsuzlandığıdır — stop word'leri atmak ise onu tümüyle siler. |
+| **Kendi verinizin ötesinde eğitim verisi gerekmez.** Ön eğitimli hiçbir şey, indirilen hiçbir şey, tedarikçi yok. | **Sözlük dışı terimler olabilir.** Yeni belgelerde, eğitimde oluşturulan sabit sözlükte bulunmayan terimler görülebilir. |
+| **Sabit hatla tekrarlanabilir.** Ön işleme, sözlük, IDF ve model parametreleri sabitken aynı girdi aynı çıktıyı verir; terim katkıları incelenebilir. | **Olumsuzlamanın kapsamı yok.** `değil` de diğerleri gibi bir özniteliktir ve sinyal taşıyabilir; torbanın geri getiremediği şey *neyin* olumsuzlandığıdır — stop word'leri atmak ise onu tümüyle siler. |
 
 : Kelime torbası: güçlü ve zayıf yanları {tbl-colwidths="[50,50]"}
 
-Doğru okuma "eski teknoloji, hâlâ şaşırtıcı derecede iyi" değildir. Doğru
-okuma şudur: sol sütun ile sağ sütun *farklı görevleri* anlatıyor.
+Doğru okuma "eski teknoloji, hâlâ şaşırtıcı derecede iyi" değildir. Tablonun iki
+sütunu aynı temsilin güçlü yanlarını ve sınırlılıklarını gösteriyor. Hangi
+tarafın ağır bastığı, görevin gereksinimlerine bağlıdır.
 
-Önemli kelimeler metinde harfi harfine geçiyorsa ve size hız ile denetim izi
-gerekiyorsa, bu bir yedek seçenek değil — doğru cevaptır.
+Birebir terim eşleşmesi, hız ve izlenebilirlik önemliyse kelime torbası güçlü
+bir başlangıç seçeneğidir. Son kararı doğruluk, gecikme, bellek ve hata
+türlerini birlikte değerlendirerek verin.
 
-Anlam sıraya, bağlama ya da öngörmediğiniz bir kelimeye bağlıysa, sol sütunda
-ne kadar ayar yaparsanız yapın kurtulamazsınız;
-@sec-gommeler'e ve sonrasındaki her şeye ihtiyacınız
-var.
+Görev sıra veya bağlam bilgisine ihtiyaç duyuyorsa, tek kelimelik sayımlarla
+sınırlı temsili genişletmek gerekir. Yerel ilişkiler için n-gram'lar, yeni
+biçimler için karakter öznitelikleri yararlı olabilir. Daha kapsamlı anlamsal
+ilişkiler için embedding bölümünden (@sec-gommeler) başlayarak yoğun ve
+bağlamsal temsilleri inceleyeceğiz.
 
 ### Bunlar gerçekte nerede çalışıyor
 
