@@ -3319,30 +3319,38 @@ Not for the reason you think. Do not panic about memory just because you see
 number of non-zeros, not on rows × columns.
 
 The real worry is statistical: 5,000 observations against 200,000 features.
-That is a `p ≫ n` problem — the situation every statistician has
-been trained to fear.
+That is a `p ≫ n` problem, a situation in which regularization and the design of
+validation become important.
 
-The answers are the usual ones. Strong regularization (L2 or L1), and cutting
-the feature count with `min_df`.
+The usual answers are strong regularization (L2 or L1) and cutting the feature
+count with `min_df`.
 
-Why is that second lever so effective? The Zipf section already answered it:
-most of the vocabulary occurs too rarely to support any estimate at all. On
-the four-category corpus from the classification experiment above, `min_df=5`
-takes the vocabulary from 32,318 down to 6,281 — 81% of the columns gone.
+The Zipf section showed why that second lever removes so many columns: most of
+the vocabulary occurs in few documents, which can make the effect of those terms
+hard to learn reliably. Some rare terms are nevertheless useful for telling
+particular classes apart. On the four-category corpus from the classification
+experiment above, `min_df=5` takes the vocabulary from 32,318 down to 6,281 —
+81% of the columns gone.
 
-Do not mistake that for something free. Those deleted columns still carry
-11.6% of the token occurrences, so what you are throwing away is not only
-the words that appear exactly once (*hapax legomena*) — you are throwing
-away words a reader actually meets. Whether the trade is worth it is an
-empirical question rather than a rule. Exercise 4 asks you to measure it.
+Do not mistake that for something free. The deleted columns carry 11.6% of the
+token occurrences. `min_df=5` does not only drop terms seen once in total
+(*hapax legomena*); it drops every term that occurs in fewer than five different
+documents. Such a term may be repeated many times within one document, which is
+why we report the share of columns removed and the share of token occurrences
+removed separately. Whether the trade is worth it is an empirical question
+rather than a rule, and Exercise 4 asks you to measure it.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Should IDF be computed on the training set or on all your data?
 
-On the training set only, then applied unchanged to test data. IDF is a
-parameter estimated from data, so computing it over train + test leaks
-information about the test distribution into your features.
+In a supervised classification evaluation the vocabulary and the IDF are learned
+from the training portion only and applied unchanged to validation and test
+data. In cross-validation that learning is repeated on each training fold. IDF
+is a parameter estimated from data, so computing it over train + test leaks
+information about the test distribution into your features. In search systems,
+computing IDF from the indexed document collection is a separate evaluation
+setting.
 
 In `scikit-learn` this is exactly what `fit_transform` on train and
 `transform` on test does — and it is why calling `fit_transform` twice is a
@@ -3355,35 +3363,44 @@ otherwise your features drift silently as traffic changes.
 ## 3. A word appears in every document. What is its TF-IDF weight?
 
 With `scikit-learn`'s smoothed formula, $\mathrm{df} = n$ gives
-$\ln\frac{1+n}{1+n} + 1 = 1$, so it survives with weight 1 and is then
-shrunk relative to rarer terms by L2 normalization.
+$\ln\frac{1+n}{1+n} + 1 = 1$, so the IDF factor is 1. Before normalization the
+TF-IDF value is the term's TF value. L2 divides the whole row by one common
+norm; the step that creates the difference in weight relative to rarer terms is
+the multiplication by IDF.
 
-With the textbook unsmoothed formula $\log(n/\mathrm{df})$ it would be
-exactly 0 — the term is deleted. Knowing that the two conventions differ,
-and that `smooth_idf=True` is the default, is the kind of detail that
-separates someone who has used the tool from someone who has read about it.
+With the textbook unsmoothed formula $\log(n/\mathrm{df})$ it would be exactly
+0 and the term would drop out of the vector. `smooth_idf=True` is the default.
+With `smooth_idf=False`, however, `scikit-learn` still keeps the outer $+1$:
+$\mathrm{idf} = \ln(n/\mathrm{df}) + 1$. A term that occurs in every document
+therefore has an IDF of 1 under that setting too, and the result is not the
+textbook formula.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Why do we normalize document vectors but not feature columns?
 
 Because the two normalizations answer different questions. L2 row
-normalization removes document *length* so that comparisons are about topic
-rather than size.
+normalization brings non-zero document vectors to unit norm, so that comparisons
+rest on the proportions of the weighted terms rather than on the absolute size
+of the vector.
 
-Column standardization — subtracting the mean of each word — would be a
-disaster here: it destroys sparsity. Subtracting a non-zero mean from a
-column that is 99.7% zeros makes every one of those zeros non-zero, and your
-2.8 MB matrix becomes 601.6 MB. Sparsity is not an implementation detail; it
-is a constraint that dictates which operations you are allowed to perform.
+Subtracting non-zero column means and storing the result explicitly turns the
+existing zeros into non-zero values and destroys sparsity. In the example about
+99.7% of all cells of the matrix are zero; that share need not be the same in
+every column. If we subtract the column means and store the result in a dense
+`float64` array, this 2.8 MB matrix needs about 601.6 MB. Not every column
+scaling behaves this way, though: scaling without centring, for instance
+`StandardScaler(with_mean=False)`, can keep the sparse structure. Sparsity is a
+constraint that determines which operations are practical.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Your search engine returns nothing for the part number "P-101". Why?
 
-Almost certainly your tokenizer. `scikit-learn`'s default
-`token_pattern=r"(?u)\b\w\w+\b"` requires two or more word characters and
-does not cross the hyphen:
+Start by comparing the tokens produced by the query analyser and the document
+analyser. `scikit-learn`'s default `token_pattern=r"(?u)\b\w\w+\b"` requires
+two or more word characters and does not cross the hyphen, so it loses the
+prefix of `P-101`:
 
 ```python
 text = ["P-101 / P-102 pump tripped"]
@@ -3397,10 +3414,13 @@ default    : ['101', '102', 'pump', 'tripped']
 custom     : ['p-101', 'p-102', 'pump', 'tripped']
 ```
 
-Your equipment tag `P-101` silently became `101`, and `P-102` also became a bare number. The two are still different tokens, but the equipment prefix is gone: `101` is now the same token as the 101 in a page number, a quantity or a pressure reading. In technical
-domains this class of bug is more damaging than any choice of model. It is
-also invisible: nothing errors, accuracy just quietly sits lower than it
-should.
+Your equipment tag `P-101` silently became `101`, and `P-102` also became a bare number. The two are still different tokens, but the equipment prefix is gone: `101` is now the same token as the 101 in a page number, a quantity or a pressure reading. If the same transformation is applied on the
+query side and the document side, a match through `101` is still possible;
+getting no result at all can also come from a mismatch between the query and
+index analysers or from other filters. In technical domains tokenization errors
+of this kind lose important identifiers and can seriously affect model
+performance. They are also easy to miss: nothing raises an error, and accuracy
+just stays lower than it should.
 
 The habit that prevents it: after fitting any vectorizer, print
 `get_feature_names_out()` and read it. Actually read it.
@@ -3416,7 +3436,8 @@ numbers, gene names, legal citations); you must explain every prediction to
 someone with authority over you; you have no GPU or a hard latency budget;
 or your documents are long and topical rather than short and nuanced.
 
-And unconditionally: as the baseline. When a team reports "our transformer
+In suitable classification and retrieval tasks, use it also as a strong classical
+baseline for measuring what more complex methods gain. When a team reports "our transformer
 gets 0.91" without reporting that TF-IDF gets 0.89, we simply do not know how
 much of a gain 0.91 is (@sec-llm-eval).
 :::
