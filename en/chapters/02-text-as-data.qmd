@@ -3157,9 +3157,10 @@ need @sec-embeddings and everything after it.
 
 ### Where this is actually deployed
 
-None of the following are old history, and each one is documented
-by the company that built it. Three new terms appear below; each is a
-production form of an idea from this chapter:
+The examples below show sparse text representations in use. Some rest on dated
+system reports published by companies, others on method papers; read the
+architectures described as limited to the period those sources cover. Three new
+terms appear below; each is an applied form of an idea from this chapter:
 
 - **BM25:** the TF-IDF family's weighting, developed for search.
 - **Feature hashing:** a way to get a fixed-size sparse representation without
@@ -3168,24 +3169,31 @@ production form of an idea from this chapter:
 
 The deployments themselves:
 
-- **Ticket triage at Uber.** COTA, Uber's customer support system, runs the
-  pipeline from this chapter almost line for line: clean, tokenize, remove
-  stop words, lemmatize, TF-IDF, reduce with LSA (latent semantic analysis, a
-  truncated SVD of the TF-IDF matrix; see the interview questions below), then
-  rank candidate
-  solutions by cosine similarity to the ticket [@uber2018cota]. It cut ticket
-  handling time by around 10% on average, and the write-up notes that the
-  cosine-similarity ranker beat a multi-class classifier fed the LSA topic
-  vectors directly by 25% relative accuracy — because those topic vectors
-  needed hundreds or thousands of dimensions, most of them close to zero. That is this
-  chapter's sparsity problem, in production, with a number attached.
+- **Ticket triage at Uber.** COTA, the customer support system Uber described
+  in 2018, uses most of the pipeline from this chapter: clean the text,
+  tokenize, remove stop words, lemmatize, compute TF-IDF, reduce with LSA
+  (latent semantic analysis, a truncated SVD of the TF-IDF matrix; see the
+  interview questions below). It then feeds the cosine similarity computed from
+  the LSA vectors, together with ticket and trip features, to a random-forest
+  matching model and ranks candidate solutions by that model's score
+  [@uber2018cota]. According to the write-up the system can reduce ticket
+  resolution time by over 10%. The same write-up compares this ranker with a
+  multi-class classifier fed the LSA topic vectors directly, on the same
+  dataset, with the same type of algorithm and the same hyperparameters; the
+  ranker is 25% better in relative accuracy. The result shows that, in this
+  experiment, deriving matching features from the LSA vectors was more useful
+  than using the vectors directly. The problem the write-up mentions is that
+  most of the hundreds or thousands of dimensions needed for a meaningful
+  representation have values close to zero; that is not the same kind of
+  sparsity as the many exact zeros of the original count matrix.
 - **Search ranking.** Lucene, and therefore Elasticsearch and OpenSearch,
-  scores documents with BM25 — a direct descendant of TF-IDF that adds
-  document-length normalization and saturating term frequency
+  scores documents with BM25 by default. BM25 comes from the TF-IDF family and
+  adds document-length normalization and a saturating term frequency
   [@robertson2009probabilistic]. Elastic's
   [Practical BM25](https://www.elastic.co/blog/practical-bm25-part-2-the-bm25-algorithm-and-its-variables)
-  series explains the formula and its two tuning constants better than most
-  textbooks. If you have ever used a site search box, you have used this.
+  series explains the formula and its two tuning constants with detailed
+  examples. BM25 is a common scoring method in many Lucene-based text search
+  systems; it cannot be assumed that every search box uses it.
 
 ::: {.callout-note collapse="true"}
 ## BM25 in one formula, and why both its knobs are already familiar
@@ -3195,51 +3203,65 @@ $$
 \frac{c(t,d)\,(k_1 + 1)}{c(t,d) + k_1\!\left(1 - b + b\,\frac{|d|}{\mathrm{avgdl}}\right)}
 $$
 
+In this simplified formula the sum runs over the distinct terms of the query;
+repeated query terms are not weighted separately. $c(t,d)$ is the count of term
+$t$ in the document, $|d|$ the number of tokens in the analysed document, and
+$\mathrm{avgdl}$ the average document length in the same collection.
+
 Read it against what you just built. The $\mathrm{idf}$ factor is the same idea
 as ours (BM25 uses a probabilistic variant). The fraction replaces raw term
-frequency with a *saturating* one: as $c(t,d)$ grows the term approaches
-$k_1 + 1$ and stops growing, so the tenth occurrence of a word adds almost
-nothing — that is `sublinear_tf` with a tunable ceiling. And $b \in [0,1]$
-interpolates between ignoring document length ($b = 0$) and dividing the term
-frequency by the document's length relative to the corpus average ($b = 1$).
-That is the same *concern* L2 normalization addresses — long documents should
-not win on length alone — handled by a different formula and with a dial
-instead of a switch.
-Lucene's defaults are $k_1 = 1.2$ and $b = 0.75$ [@robertson2009probabilistic].
+frequency with a *saturating* one: with the other variables fixed, document
+length in particular, the fraction approaches the limit $k_1 + 1$ as $c(t,d)$
+grows, and additional repetitions contribute less and less. `sublinear_tf` also
+slows the effect of repetitions, but $1 + \log(\mathrm{tf})$ grows without
+bound and is not the same function as BM25. And $b \in [0,1]$ interpolates
+between ignoring document length ($b = 0$) and dividing the term frequency by
+the document's length relative to the corpus average ($b = 1$). That is the same
+*concern* L2 normalization addresses — long documents should not win on length
+alone — handled by a different formula and with a dial instead of a switch; the
+two are not the same operation. In Lucene 9.12.1 the defaults of the
+[`BM25Similarity`](https://lucene.apache.org/core/9_12_1/core/org/apache/lucene/search/similarities/BM25Similarity.html) class are $k_1 = 1.2$ and $b = 0.75$.
 :::
-- **Google's own text classification guide** still recommends this
+- **Google's text classification guide** recommends this
   representation [@google2022textclassification]: it reports TF-IDF n-grams
-  as the most accurate of the encodings it compares, and observes that
-  accuracy peaks around 20,000 features, beyond which extra features
-  contribute nothing and eventually cause overfitting. Our bigram result —
-  249,522 features, *worse* accuracy — is the same finding on a smaller
-  corpus.
+  as the most accurate of the encodings it compares. In the guide's experiments
+  on English text, accuracy levels off at around 20,000 selected features for
+  many datasets; more features contribute very little and sometimes lower
+  performance. That is not a fixed threshold for every language. Our bigram
+  result (249,522 features, lower accuracy) likewise shows that more features do
+  not bring an automatic gain; whether the drop has the same cause in the two
+  experiments would have to be tested separately.
 - **Hybrid retrieval.** Modern retrieval stacks combine dense
   embedding search with sparse BM25 search, because the sparse half catches
   the exact matches — part numbers, error codes, surnames — that embeddings
-  blur together. You will build one in @sec-retrieval; @sec-rag wires it to a
+  can miss. You will build one in @sec-retrieval; @sec-rag wires it to a
   language model.
 - **Spam and abuse filtering at scale.** Sparse text features remain a
-  first-line filter because they are cheap enough to run on every message and
-  retrain in minutes when attackers change tactics. The feature-hashing trick
-  [@weinberger2009feature] is what makes this work without ever materializing
-  a vocabulary.
-- **Near-duplicate detection.** Near-duplicate detection at web scale runs on
-  hashing, not neural networks, because it has to work over billions of
-  documents. Google's web-crawl deduplication [@manku2007detecting] computes
-  simhash fingerprints from weighted document features; the other standard
-  method is MinHash over sets of shingles [@broder1997resemblance]. A
+  first-line filter because they are cheap enough to run on every message and,
+  depending on data size, model and hardware, can be retrained quickly when
+  attackers change tactics. One method that can be used for this is feature
+  hashing, which maps terms to a fixed number of columns with a hash function
+  [@weinberger2009feature]. It stores no explicit vocabulary; in exchange,
+  different terms can fall into the same column, and tracing a coefficient back
+  to a single term becomes harder.
+- **Near-duplicate detection.** Hash-based methods have an important place in
+  near-duplicate detection at web scale: short signatures make comparison
+  feasible over very large document collections. Google's web-crawl
+  deduplication work, published in 2007 [@manku2007detecting], is one example;
+  it computes simhash fingerprints from weighted document features. The other
+  standard method is MinHash over sets of shingles [@broder1997resemblance]. A
   **shingle** is a
   fixed-length window of words (or characters) slid across the document; the
   windows overlap like roof tiles, which is where the name comes from. The
   three-word shingles of *the pump failed last night* are `the pump failed`
-  and `pump failed last` and `failed last night`. So shingles are exactly the
-  n-grams we used above to recover some word order.
+  and `pump failed last` and `failed last night`. So shingles have the same
+  structure as the n-grams we used above to recover some word order.
 
 The practical rule: reach for TF-IDF when your labels are few, your
 documents are long, your vocabulary is technical and exact-match matters, or
-when you need a baseline by this afternoon. [Always build the TF-IDF
-baseline first.]{.hl} If your transformer cannot beat it, you have learned
+when you need a baseline quickly. [For tasks it suits, such as text
+classification and lexical retrieval, include a TF-IDF baseline in the
+comparison.]{.hl} If your transformer cannot beat it, you have learned
 something important about your data, and you have learned it cheaply.
 
 ## Intuition checks
