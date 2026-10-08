@@ -3850,26 +3850,37 @@ goes past this chapter.
 
 1. **Tokenizer economics.** *(Applied)* Take a paragraph of your own technical writing
    in Turkish and its English translation. Using the Tokenizer Playground or
-   `tiktoken`, count tokens under two different tokenizers. Compute the cost
-   ratio, then estimate what that ratio does to your annual API bill at
-   100,000 requests per month.
+   `tiktoken`, count tokens under two different tokenizers. First compute the
+   ratio of token counts for the same content in the two languages. Then
+   estimate the annual cost at 100,000 requests per month, using the unit prices
+   of the model you choose and stating their date. Report input and output
+   tokens, the shared prompt and any cached input separately, and state
+   explicitly the assumption that one paragraph represents all requests.
 2. **Break the vectorizer.** *(Applied)* Fit a `CountVectorizer` on ten documents from
    your own domain and print `get_feature_names_out()`. Find at least two
    tokens that are wrong — a destroyed identifier, a merged pair, a lost
-   unit. Fix them with `token_pattern` and report what changed.
+   unit. If the problem comes from token boundaries, fix it with `token_pattern`;
+   where needed, also adjust lowercasing, preprocessing or a custom tokenizer.
+   Report which example each change fixes and which new errors it could
+   introduce.
 3. **Derive it by hand.** *(Basic)* For the four-document corpus in this chapter,
    compute the TF-IDF vector for d3 with pen and paper, then verify against
-   `TfidfVectorizer`. If they disagree, the disagreement is almost always in
-   one of three places — the smoothing, the L2 normalization, or the
-   tokenizer's `token_pattern`. Find which.
+   `TfidfVectorizer`. If they disagree, first compare the TF definition, the IDF
+   formula, the L2 normalization and the token output. Check the column order,
+   the corpus used and the rounding precision as well, and state where the
+   difference comes from.
 4. **Replicate and extend.** *(Applied)* Reproduce the classification table above, then
    add one row: TF-IDF with `min_df=5`. Does accuracy fall? By how much did
-   the feature count fall? Argue for one of the two configurations to a
-   colleague who has to maintain it.
+   the feature count fall? Compare the two configurations on a validation portion
+   split off from the training data, by accuracy, feature count, memory and
+   processing time. Justify your choice to a colleague with those criteria, and
+   use the final test set only after the choice is made.
 5. **Find the negation failure.** *(Applied)* Construct two documents from your own
    field with opposite operational meaning and cosine similarity above 0.9
-   under TF-IDF. Then write the sentence you would put in a design review
-   explaining why this model must not be used for that decision.
+   under TF-IDF. Then write a design-review sentence explaining why it is
+   not appropriate to conclude, from a high TF-IDF cosine alone, that the two
+   documents express the same operational decision. Add that a classifier can
+   use distinguishing terms such as *not* when they are kept.
 6. **Zipf on your own data.** *(Basic)* Plot rank against frequency on a log-log scale
    for a corpus you own. Does the line look straight? What are the top five
    tokens, and is any of them an artifact like `'ax`?
@@ -3878,20 +3889,28 @@ goes past this chapter.
    [§8.2.1 of Chip Huyen's book](https://huyenchip.com/ml-interviews-book/contents/8.2.1-natural-language-processing.html)
    with pen and paper, including its follow-up: if one document mentions the
    query term three times instead of once, what happens to its rank, and is
-   that a desirable property of TF-IDF? Then check yourself with
-   `TfidfVectorizer`. The follow-up is really a question about term-frequency
-   saturation, which is exactly what BM25 adds and what `sublinear_tf`
-   approximates.
-8. **Get the Turkish bill off a single sentence.** *(Applied)* The measurement
-   above used one sentence pair, and the 1.82 and 1.39 factors there are not
-   general. Collect 50 to 100 sentence pairs from a parallel text you have —
-   articles of the Universal Declaration of Human Rights, a piece of
+   that a desirable property of TF-IDF? Before checking with the library, define
+   explicitly the term set of the question, the mappings between word forms and
+   the TF-IDF variant; say, for instance, how you map `birds → bird`,
+   `gets → get` and `loves → love`. Then configure `TfidfVectorizer` to use the
+   same vocabulary, preprocessing, IDF and normalization. In the follow-up, look
+   at both the contribution of the repeated term to the numerator and the change
+   in the normalization denominator. With the other variables fixed, BM25 brings
+   the term-frequency contribution towards a finite limit; `sublinear_tf` slows
+   its growth logarithmically but sets no finite ceiling.
+8. **Measure the Turkish token cost over many examples.** *(Applied)* The
+   measurement above used one short pair of texts, and the 1.82 and 1.39 ratios
+   there are not general. Collect 50 to 100 sentence pairs from a parallel text
+   you have — articles of the Universal Declaration of Human Rights, a piece of
    software's interface strings in two languages, your own bilingual reports.
-   For each language and each tokenizer, compute the **median tokens per
-   1,000 characters**; the median rather than the mean, because one long
-   sentence pulls the mean around. Report the spread as well: how much does
-   the ratio move from sentence to sentence, and where in that spread did the
-   single-sentence measurement land?
+   For each tokenizer make two separate measurements: the Turkish/English ratio
+   of token counts for each aligned pair, and the number of tokens per 1,000
+   Unicode code points in each language. The first shows the token difference
+   for the same content, the second the token density relative to the length of
+   the writing. Report the median and the interquartile range; for an estimate
+   of total cost, also use the total token counts over all examples and the
+   expected distribution of requests. Where in that distribution did the
+   single-pair measurement fall?
 
 ::: {.callout-note collapse="true"}
 ## Expected observations
@@ -3899,25 +3918,37 @@ goes past this chapter.
 Not solutions — but knowing what you are meant to see makes it easier to check
 yourself.
 
-1. The Turkish paragraph costs noticeably more tokens than the English one of
-   the same content; the ratio depends on the tokenizer.
+1. The Turkish paragraph can produce more tokens under some tokenizers. Measure
+   the direction and size of the difference, and report the result together with
+   the text pair and tokenizer version you chose.
 2. The default `token_pattern` drops single-character tokens and punctuation,
    which is what splits identifiers (`P-101`, version numbers, code
    fragments).
-3. The hand computation should match the library to the last digit; if it does
-   not, the difference comes from smoothing, L2 normalization or
-   `token_pattern`.
-4. `min_df=5` removes most columns and moves accuracy very little — report the
-   share of token occurrences those columns carried.
-5. The difference negation carries is a single column; cosine can stay above
-   0.9.
-6. On log-log axes the head (the top few ranks) is flatter than a straight
-   line, and corpus artefacts in the top five tokens are normal.
-7. The document mentioning the query term three times ranks higher; without
-   saturation that effect grows out of proportion.
-8. Turkish costs more tokens per 1,000 characters than English, but the ratio
-   moves noticeably from sentence to sentence; the single-sentence measurement
-   is one point inside that spread, not a summary of it.
+3. With the same definitions and enough precision, the hand computation should
+   match the library within numerical tolerance. If there is a difference, check
+   the TF and IDF definitions, the normalization, the tokens, the column order
+   and the rounding.
+4. `min_df=5` drops the terms that occur in fewer than five documents. Measure
+   how much the feature count and the accuracy change, and report the share of
+   token occurrences the dropped terms carried. Do not assume in advance that
+   the loss in accuracy will be small.
+5. Adding a separate negation word can change a single column of the raw counts;
+   L2 normalization then changes the other active values too. Negation expressed
+   inside a word form can produce different term columns. Show on your own
+   example that a high cosine can hide an opposite meaning.
+6. Part of the log-log plot may show an approximately linear trend, with
+   deviations at the head and in the tail. Inspect the top five tokens and
+   explain any artefacts that come from the corpus. Do not take visual
+   resemblance alone as evidence of a power law.
+7. After increasing the number of repetitions of the term, recompute the score
+   and the ranking. In a cosine both the dot product and the document norm
+   change, so more repetitions do not always give a higher score or rank.
+   Explain the result together with the TF-IDF variant and query vector you
+   chose.
+8. Report the token density of each language and the token ratios of the aligned
+   pairs separately. The direction and spread of the difference depend on the
+   examples and on the tokenizer. A single example is one observation inside the
+   distribution, not a summary of it.
 :::
 
 ## What to remember
