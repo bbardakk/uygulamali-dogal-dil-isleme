@@ -635,19 +635,19 @@ So counting works. We built a space by hand, and royalty landed on one side
 and food on the other. Why were prediction-based methods like word2vec taken up
 so quickly?
 
-Scalability was one of the main reasons. The co-occurrence matrix is
-vocabulary-by-vocabulary. At 100,000 words that is ten billion *possible*
-cells — sparse storage keeps only the non-zeros, but it is still one monolithic
-artifact you have to build before you can factorize anything. word2vec proposed
-a different route: rather than build that matrix explicitly, learn the same
-distributional signal from local prediction tasks. The field did not abandon
-counting — GloVe, a few pages from here, and the comparison table at the end of
-this chapter are both evidence of that.
+Scalability was an important factor. A square co-occurrence matrix over 100,000
+words has ten billion *possible* cells; sparse storage keeps only the non-zero
+ones. In the batch PPMI–SVD pipeline used here we first accumulate the counts
+and then factorize the matrix. word2vec, by contrast, learns vectors from local
+training pairs without building the co-occurrence matrix explicitly. Incremental
+versions of count-based methods are possible too, so this is not a distinction
+that holds for every method.
 
 ::: {#gloss-word2vec .column-margin .term-gloss}
-**word2vec** — the 2013 method that learns embeddings by training a model
-to guess nearby words; the product is the numbers it learned along the way,
-not the predictor itself. [↩](#term-word2vec){.term-back}
+**word2vec** — a family of methods from 2013 that learn word vectors from
+context. Skip-gram predicts the context words from the centre word and CBOW
+predicts the centre word from the context words; the learned vectors can be
+used in other tasks. [↩](#term-word2vec){.term-back}
 :::
 
 In 2013 Mikolov and colleagues published [word2vec](#gloss-word2vec){#term-word2vec .term-ref}, a method that skipped the
@@ -658,17 +658,22 @@ context — and then use the weights it learned rather than its predictions.
 Architecturally, that classifier is a **shallow neural network**: an input
 layer, a single hidden layer, an output layer. It is called shallow because
 there is only one hidden layer. Unusually, that layer also has no activation
-function — it is purely linear. The three layers do this:
+function — it is purely linear. In the skip-gram architecture the three layers
+can be read like this:
 
-1. The **input layer** is a word's one-hot vector: as long as the vocabulary,
-   a single 1, zeros everywhere else.
+1. The **input layer** is the centre word's one-hot vector: as long as the
+   vocabulary, a single 1, zeros everywhere else.
 2. The **hidden layer** multiplies that vector by a matrix $\mathbf{W}$.
-   Multiplying a one-hot by a matrix does nothing except pull out the row
-   belonging to that word — so the hidden layer is really a lookup table. The
-   row it pulls out *is* the word's embedding. No sums, no activation, which
-   is why it is often called a *projection layer* instead.
-3. The **output layer** is a second matrix, $\mathbf{W}'$. It scores the
-   hidden vector against candidate words from the vocabulary.
+   Multiplying a one-hot by a matrix selects the row belonging to that word, so
+   the hidden layer is a lookup table. The selected row *is* the word's
+   embedding. No further activation is applied, which is why this layer is
+   often called a *projection layer* instead.
+3. The **output layer** scores the selected vector against candidate context
+   words. For that we use a second table, $\mathbf{W}'$, which holds one row
+   per word under the full softmax and under negative sampling alike.
+
+In CBOW the vectors of the context words are first combined: summed or
+averaged.
 
 The critical point: [the product is not the network you train, it is the
 weights of the network's first layer.]{.hl} In classic word2vec use it is
@@ -676,10 +681,10 @@ mostly the input matrix $\mathbf{W}$ that is kept — one row per word, 300
 numbers per row — and $\mathbf{W}'$ is set aside. That is a common choice,
 not a requirement: some approaches use the output matrix, or the sum or
 average of the two, and GloVe's authors recommend adding them
-[@pennington2014glove]. Either way the model was a pretext; the weights were
-the point. You
-will see why that matters in @sec-transformers: the embedding table at the
-bottom of a transformer is the same kind of object: a learned table with one row per word.
+[@pennington2014glove]. Here we set up the prediction task in order to learn vectors
+we can reuse. The input embedding table in @sec-transformers works in a similar
+way; that table, however, usually has one row per token of the model's
+vocabulary and not one row per word.
 
 There are two ways to set up that prediction, and they are mirror images. Same
 window, same words, arrows reversed:
@@ -755,7 +760,7 @@ often paired with.
   <text x="180" y="256" class="t-xs t-mid t-muted">one hidden vector</text>
   <text x="303" y="256" class="t-xs t-mid t-muted">1 prediction</text>
   <text x="22" y="284" class="t-sm t-muted">One training example per window.</text>
-  <text x="22" y="300" class="t-sm t-muted">Faster; the average blurs rare words.</text>
+  <text x="22" y="300" class="t-sm t-muted">Usually faster; combines the context vectors.</text>
 
   <!-- skip-gram -->
   <text x="402" y="102" class="t-b">Skip-gram</text>
@@ -790,7 +795,7 @@ often paired with.
   <text x="558" y="256" class="t-xs t-mid t-muted">its own vector</text>
   <text x="688" y="256" class="t-xs t-mid t-muted">4 predictions</text>
   <text x="402" y="284" class="t-sm t-muted">Four training examples per window.</text>
-  <text x="402" y="300" class="t-sm t-muted">Slower; much better on rare words.</text>
+  <text x="402" y="300" class="t-sm t-muted">More training pairs; can help on rare words.</text>
 </svg>
 ```
 
@@ -876,10 +881,12 @@ html`<div style="font-size:0.9rem;">
       (<b>${p.centre}</b>, ${p.context})</span>`)}
   </div>
   <p style="color:var(--fig-muted); margin-top:0.7rem; font-size:0.85rem;">
-    This is the entire supervision signal. No labels, no annotation — just
-    the text, cut into pairs. A corpus of 6 billion tokens with window 5
-    yields up to 60 billion of these (fewer in practice, once subsampling
-    and word2vec's randomly shrunk windows are applied).</p>
+    This display lowercases the text, splits it on whitespace and extracts the
+    positive training pairs in a fixed window. No hand annotation is needed; in
+    the next step we give training labels to the positive pairs and to sampled
+    negative ones. Six billion tokens with a window of five tokens on each side
+    produce at most 60 billion pairs; sentence boundaries, subsampling and
+    dynamic windows reduce that number.</p>
 </div>`
 ```
 :::
