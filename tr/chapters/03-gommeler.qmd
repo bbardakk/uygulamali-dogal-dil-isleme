@@ -3671,56 +3671,41 @@ değil, nereye bakmanız gerektiğini gösteren bir harita olarak okuyun.
 
 **S: word2vec'i, regresyon bilen ama yapay sinir ağı bilmeyen birine anlatın.**
 
-Bunun, kelime çiftlerini gerçek ya da uydurma diye sınıflandıran bir lojistik
-regresyon olduğunu söyleyin; doğrusal öngörücü, öğrenilen iki vektörün iç
-çarpımıdır ve sakladığınız şey de o vektörlerdir. $\sigma(v \cdot u)$ yazın,
-`score - labels` ifadesinin artığın (residual) ters işaretlisi, yani log kaybının
-gradyanında kullanılan fark olduğunu belirtin ve tek gizli
-katmanın hiçbir aktivasyon fonksiyonu taşımadığını ekleyin. Akılda tutulacak
-bir çekince: sıradan bir lojistik regresyon *sabit* öznitelikler üzerinde
-ağırlık kestirir, burada ise iki vektör aynı anda eğitiliyor. İç çarpım skoru
-öğrenilen iki vektörde çift doğrusaldır (bilineer); bu yüzden kayıp, iki vektöre
-birlikte bakıldığında dışbükey değildir. Örnek başına aritmetik aynı,
-optimizasyon problemi değil. Soruyu
-soran "ama bu bir sinir ağı değil mi?" derse cevabınız hazır: evet, sığ bir
-sinir ağı; ikisi aynı şeyin iki adı. Sonra kilit noktayı verin: @levy2014neural,
-kısıtsız optimumda kaydırılmış PMI matrisinin çarpanlarına ayrıldığını
-gösterdi; yani "yapay sinir ağı" yöntemi ile "sayma" yöntemi aynı nesneye nişan
-alıyor. Güçlü bir yanıtta şu çekince de bulunmalıdır:
-gerçekte eğittiğiniz düşük rankta ikisi farklı kayıpları optimize eder ve aynı
-sonucu vermek zorunda değildir.
+Negatif örneklemeli skip-gram'ı ele alalım. Gözlenen çiftleri pozitif, gürültü
+örnekleyicisinden gelenleri negatif etiketleriz. Puan, öğrenilen iki vektörün iç
+çarpımı; olasılık $\sigma(v \cdot u)$, tek terimin puana göre türevi
+$\sigma(v \cdot u) - y$'dir. Lojistik regresyonla kayıp biçimi ortaktır, fakat
+her iki vektör tablosu öğrenildiğinden ortak problem dışbükey (konveks) değildir.
+SGNS ayrıca, negatifler bağlam marjinalinden çekilip her iç çarpım serbest
+bırakıldığında $\mathrm{PMI} - \log K$ hedefiyle ilişkilidir [@levy2014neural].
+Gerçek düşük ranklı model ile PPMI–SVD farklı kayıplar ve hedef dönüşümleri
+kullanır; aynı sonucu vermek zorunda değildir.
 
 **S: Skip-gram ve CBOW ayrı ayrı neyi tahmin eder, hangisini ne zaman tercih
 edersiniz?**
 
-Skip-gram merkez kelimeden bağlamı tahmin eder; CBOW bağlam vektörlerinin ortalamasından merkez
-kelimeyi tahmin eder. CBOW birkaç kat daha hızlıdır ve bağlamı düzleştirir, bu
-yüzden sık kelimelerde biraz daha iyi iş çıkarır; skip-gram ise nadir kelimeler
-için daha iyi temsiller üretir ve küçük derlemlerle daha iyi başa çıkar, çünkü
-her geçiş ortalamanın içinde kaybolmak yerine birkaç ayrı eğitim örneği doğurur.
-Nadir kelimeler genellikle önemsediğiniz kelimelerdir; skip-gram'ın genelde
-önerilmesinin sebebi budur — gerçi `gensim`'de ve özgün word2vec aracında
-varsayılan CBOW'dur.
+Skip-gram merkez kelimeden bağlam kelimelerini, CBOW ise birleştirilmiş bağlam
+vektörlerinden merkez kelimeyi tahmin eder. CBOW genellikle daha az eğitim
+tahminiyle çalıştığı için hızlıdır; skip-gram bazı koşullarda nadir kelimelerde
+avantaj sağlayabilir. Hız ve kalite farklarını pencere, negatif sayısı, derlem
+ve uygulama belirler. Seçimi hedef görevde, özellikle önemli sıklık gruplarına
+göre ölçmek gerekir.
 
 **S: Negatif örnekleme dağılımında neden 0,75 üssü kullanılıyor?**
 
-Unigram dağılımını düzleştirmek için: böylece nadir kelimeler, ham frekanslarının
-izin vereceğinden daha sık negatif olarak çıkar ve *bağlam* vektörleri, birlikte
-geçmedikleri merkez kelimelerden uzağa itilir. Üssün ampirik olarak seçildiğini açıkça
-söyleyin. Güçlü devamı şu: @levy2015improving, bu "ayrıntının" word2vec'in
-sayma temelli yöntemlere üstünlüğünün kayda değer bir kısmını açıkladığını
-gösterdi — yalnızca özeti değil, makalenin kendisini okuduğunuzu belli
-eden türden bir nokta.
+0,75 üssü unigram dağılımını düzleştirerek nadir bağlamların göreli örneklenme
+payını artırır. Negatif etiket, çiftin örnekleyiciden gelmesine aittir; derlemde
+hiç birlikte geçmediği anlamına gelmez. Üs ampirik bir tercihtir ve örtük matris
+hedefini de değiştirir [@levy2015improving]; bu nedenle değerlendirmede sabit ve
+önemsiz bir ayrıntı gibi görülmemelidir.
 
-**S: Sık kelimelerin altörneklenmesi neden sadece işi hızlandırmakla kalmayıp
-vektörleri *iyileştiriyor*?**
+**S: Sık kelimelerin altörneklenmesi hızı ve temsil kalitesini nasıl
+etkileyebilir?**
 
-Çünkü (*the*, *pump*) gibi bir çift `pump` hakkında neredeyse hiç bilgi taşımaz
-— *the* her şeyle birlikte geçer — ama veride bu tür çiftler baskındır. Çoğunu
-atmak, etkin sinyal-gürültü oranını yükseltir ve yan etki olarak bağlam
-penceresini token cinsinden genişleterek gerçekten bilgi taşıyan kelimelerin
-birbirini görmesini sağlar. Bu bölümdeki koşuda altörnekleme, sözlük içi
-token'ların %26,6'sını attı.
+Çok sık kelimelerin eğitim çiftlerindeki payını azaltır ve hesap yükünü düşürür.
+Kalan dizide bazı kelimeler birbirine yaklaştığından bağlam çiftlerinin dağılımı
+da değişir. Bu, bazı görevlerde kaliteyi artırabilir; ancak genel bir garanti
+değildir. Bölümde bildirilen koşuda sözlük içi token sayısı %26,6 azalmıştır.
 
 ### Bu bölümden: geometriyi anlayıp anlamadığınızı ölçenler
 
