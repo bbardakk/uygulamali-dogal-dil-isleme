@@ -239,9 +239,10 @@ frequent the words are overall.
 ### Step 2 — PPMI: from raw counts to unexpected co-occurrence
 
 ::: {#gloss-pointwise-mutual-information-pmi .column-margin .term-gloss}
-**pointwise mutual information (PMI)** — how much more often two words
-turn up together than they would if they were unrelated. It measures
-surprise, not popularity. [↩](#term-pointwise-mutual-information-pmi){.term-back}
+**pointwise mutual information (PMI)** — the logarithm of the ratio between
+the observed probability of a word–context pair and the product of its marginal
+probabilities. It is positive for pairs seen more often than the independence
+model expects and negative for pairs seen less often. [↩](#term-pointwise-mutual-information-pmi){.term-back}
 :::
 
 We want to ask: *do these two words co-occur more often than chance would
@@ -257,17 +258,19 @@ completely independently; the numerator ($P(w, c)$) is how often they
 actually do. So PMI is nothing but the log of **observed ÷ expected**. Three
 cases:
 
-- **Ratio 1** — the words co-occur exactly as often as chance predicts, so
-  there is no relationship at all. $\log 1 = 0$, and PMI is zero.
+- **Ratio 1** — the observed probability of this pair equals the value the
+  independence model predicts. Since $\log 1 = 0$, PMI is zero. That does not
+  mean there is no semantic relationship between the words.
 - **Ratio above 1** — they co-occur more often than expected; they *attract*.
   The log is positive.
 - **Ratio below 1** — they co-occur less often than expected; they *avoid*
   each other. The log is negative.
 
-The negative side is notoriously unreliable, because establishing that two
-words co-occur *less*
-than chance takes far more data than establishing that they co-occur more.
-So we clip at zero and call it [positive PMI]{.hl}.
+Particularly for rare words, observing only a few co-occurrences may not be
+enough to estimate a negative association reliably. [Positive PMI (PPMI)]{.hl}
+sets negative PMI values to zero and so keeps only the pairs seen more often
+than the independence model expects. That can be a useful representational
+choice; it does not mean that every negative PMI value is meaningless.
 
 $$
 \mathrm{PPMI}(w, c) = \max\!\left(0,\ \log \frac{c_{wc}\, N}{c_{w\ast}\, c_{\ast c}}\right)
@@ -314,9 +317,8 @@ the log of that ratio: $\log 3.43 = 1.23$ — the value in the table.
 
 Now do the same for `king`–`the`, which occurs **four** times — exactly four
 times as often as `apple`–`sweet`. But `the` is everywhere: its column sums
-to 22, and the `king` row sums to 9. By chance alone we already expect
-$9 \times 22 / 144 = 1.38$ co-occurrences, so this pair had every reason to
-meet.
+to 22, and the `king` row sums to 9. The independence model predicts
+$9 \times 22 / 144 = 1.38$ co-occurrences for this pair.
 
 Put the two calculations side by side:
 
@@ -325,13 +327,13 @@ Put the two calculations side by side:
 | `apple`–`sweet` | 1 | $7 \times 6 / 144 = 0.29$ | 3.43 | **1.23** |
 | `king`–`the` | 4 | $9 \times 22 / 144 = 1.38$ | 2.91 | **1.07** |
 
-: The raw count loses, the ratio wins {tbl-colwidths="[24,17,29,15,15]"}
+: Raw count and frequency relative to the independence model {tbl-colwidths="[24,17,29,15,15]"}
 
-The pair seen once scores **higher** than the pair seen four times. The
-reason is right there: most of the four meetings between `king` and `the` are
-explained by how popular `the` is, whereas the single meeting between `apple`
-and `sweet` is not explained by anything. That reversal is the entire point
-of the formula.
+The `apple`–`sweet` pair, observed once, gets the **higher** PMI because its
+observed-to-expected ratio is larger. The expected count is 1.38 for
+`king`–`the` and 0.29 for `apple`–`sweet`. Those expectations do not say how
+much of what we observed is causally "explained"; PMI compares two relative
+frequencies.
 
 ::: {.column-margin}
 Think of a crowded party. Someone who talks to everyone tells you nothing
@@ -360,11 +362,13 @@ apple       0.94    0.00    0.00    1.23    0.00    0.00
 banana      0.94    0.00    0.00    1.23    0.00    0.00
 ```
 
-Compare with the raw table. Among the columns shown, `apple`–`sweet` was a
-count of 1, half the count for `eats`; it is now 1.23, *higher* than `eats`
-(0.94). The count was small because `sweet` is rare, and PPMI divides that out.
-(Over the full row, the top PPMI goes to `an`, 2.04: in this corpus `an` is
-always followed by `apple`.)
+Compare with the raw table. Among the columns shown, the `apple`–`sweet` count
+is 1, half the `apple`–`eats` count; the PPMI values are nevertheless 1.23 and
+0.94. The reason is the lower marginal frequency of the `sweet` context. The
+transformation takes frequency into account, but it does not guarantee that an
+association resting on a single observation is reliable. The highest PPMI in the
+row is 2.04, for the `an` context; in this corpus `an` is followed by `apple`
+every time it occurs.
 
 ::: {.column-margin}
 PPMI and IDF are not the same formula, but they share an engineering
@@ -377,18 +381,19 @@ words meet often only because each of them is frequent.
 ::: {.callout-note collapse="true"}
 ## Intuition check: why clip the negatives instead of keeping them?
 
-Suppose two words each occur 10 times in a million-token corpus and never
-co-occur. Expected co-occurrence under independence is about 0.0002, so
-observing zero is completely unsurprising — it carries no evidence that
-the two words avoid each other. But $\log(0)$ is $-\infty$, and even
-smoothed it produces a large negative number that dominates the vector.
+Consider two words that each occur 10 times in a million-token corpus and never
+co-occur. Under independence, ignoring sentence boundaries and counting only the
+tokens immediately to the left and right, the expected directed co-occurrence
+count is about $2 \times 10 \times 10 / 10^6 = 0.0002$. Observing zero in this
+example is unsurprising. Widening the window to two tokens on each side roughly
+doubles the expectation. The PMI of a zero count goes to $-\infty$; the finite
+value obtained with smoothing depends on the method chosen.
 
-Negative PMI values are dominated by sampling noise for exactly the words
-you have least data about, which is most of them. Clipping is a crude but
-effective admission that we cannot estimate them. It also has a pleasant
-side effect: it keeps the matrix sparse, and @levy2015improving found that
-tuned PPMI is competitive with word2vec on most benchmarks — the gap people
-attributed to neural networks was largely a gap in hyperparameter care.
+The negative PMI estimates of rare pairs can be strongly affected by sampling
+uncertainty. Clipping at zero leaves those uncertain values out of the
+representation and makes the matrix sparser. @levy2015improving showed that, on
+the similarity and analogy benchmarks they examined, the differences between
+methods mostly stayed small once hyperparameters were tuned comparably.
 :::
 
 ### Step 3 — collect the repeated structure in a few dimensions
