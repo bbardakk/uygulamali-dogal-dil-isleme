@@ -2195,16 +2195,18 @@ you already know the answer to if you read @sec-text-as-data — what happens
 when a word is not in the table?
 
 ::: {#gloss-out-of-vocabulary-oov .column-margin .term-gloss}
-**out-of-vocabulary (OOV)** — a word the model has no entry for, because
-it was not in the training text. With a word-level vocabulary, OOV grows much
-faster in morphologically rich languages; Turkish, where a stem grows dozens of
-endings, makes that especially visible. [↩](#term-out-of-vocabulary-oov){.term-back}
+**out-of-vocabulary (OOV)** — a form that is not in the model's word
+vocabulary. It may never have been seen in training, or it may have been dropped
+from the vocabulary for a reason such as a frequency threshold. In languages
+that produce many inflected forms, such as Turkish, the coverage of a word-level
+vocabulary matters all the more. [↩](#term-out-of-vocabulary-oov){.term-back}
 :::
 
-Everything so far has one vector per word form, learned only for forms seen
-during training. Ask for a word the model never saw — an [out-of-vocabulary](#gloss-out-of-vocabulary-oov){#term-out-of-vocabulary-oov .term-ref}
-word — and you get an exception. For English that is an annoyance. For
-Turkish it is a design failure.
+For a form that is not in the word table — an [out-of-vocabulary](#gloss-out-of-vocabulary-oov){#term-out-of-vocabulary-oov .term-ref}
+word — no row can be fetched directly. The `gensim` word-vector lookup used
+here raises a `KeyError` in that case; other systems may use a special
+unknown-unit representation. The variety of forms in Turkish makes this coverage
+problem especially visible.
 
 Here are two Wikipedia samples of comparable size, one Turkish and one
 English:
@@ -2235,11 +2237,14 @@ vector, each estimated from its own sparse handful of occurrences.
   english   4.72% of tokens unseen, 23.29% of types unseen
 ```
 
-At one million tokens Turkish has seen 112,644 distinct forms to English's
-52,347 — more than twice as many — and the curve is not flattening. Nearly
-one Turkish token in fourteen in held-out text is a form the model has never
-seen. Half the vocabulary occurs exactly once, which means half your
-vectors are estimated from a single observation.
+In this sample one million tokens contain 112,644 Turkish forms and 52,347
+English forms, and new forms keep arriving over the range shown. In the held-out
+Turkish portion about one token in fourteen falls outside the training
+vocabulary. That about half the observed types occur once does not mean half
+the vectors are learned from a single example: a frequency filter can leave
+those types out, and a single token can produce several context pairs. These
+numbers belong to one sample, one tokenization choice and one way of choosing
+the held-out portion; they change on another sample.
 
 ::: {#gloss-subword .column-margin .term-gloss}
 **subword** — a piece smaller than a word. Storing pieces instead of whole
@@ -2251,30 +2256,38 @@ atomic. Represent it as the sum of its character n-grams — its [subwords](#glo
 plus a vector for the whole word:
 
 $$
-\mathbf{v}_{\text{word}} = \mathbf{v}_{\langle\text{word}\rangle}
-+ \sum_{n\text{-grams } g} \mathbf{v}_g
+\mathbf{v}_w = \mathbf{1}_{\{w \in \mathcal{V}\}}\,\mathbf{z}_w
++ \sum_{g \in G(w)} \mathbf{z}_g
 $$
 
-The sum is doing more work than it appears to. Because addition is what
-combines the pieces, every n-gram vector is trained by *every* word that
-contains it — `<pu` is updated by `pump`, `pumps`, `pumped`, `pumping`,
-`punch` and thousands of others. A rare word is no longer estimated from its
-own handful of occurrences; it is assembled from pieces that each had
-plentiful data.
+Here $\mathcal{V}$ is the whole-word vocabulary and $G(w)$ is the multiset of
+the selected character n-grams. The separate whole-word component exists only
+for words in the vocabulary; an out-of-vocabulary word is built from its
+subword components. The sum describes the composition used in training; how the
+exported vector is scaled depends on the implementation.
 
-An unseen word still has n-grams, and those n-grams were trained on other
-words. Vocabulary becomes open.
+Shared character n-grams can receive updates from examples in different words:
+`<pu` is also contained in `pump`, `pumps`, `pumped`, `pumping` and `punch`.
+That lets rare words benefit from forms that are seen more often. Not every
+piece is learned from plentiful data, however. fastText maps the n-grams to a
+fixed number of hash-table buckets, and different pieces can share a bucket.
+That a vector can be produced for an out-of-vocabulary word does not by itself
+show that the vector is semantically reliable.
 
-(The paper writes a sum; the `fastText` and `gensim` implementations divide it
-by the number of pieces, that is, they take the mean. That only rescales the
-vector, so its direction — and every cosine — is unchanged.)
+The sum in the paper and the mean of the same learned components, divided by
+their number (what the `fastText` and `gensim` implementations do), give the
+same direction for a non-zero word vector; the word-to-word cosines of the two
+versions are identical. That should not be read as saying that using a sum or a
+mean in training, or combining different words into a document vector, is
+equivalent under all conditions.
 
 ::: {.column-margin}
-The trade is visible in the equation itself. A word's identity is now spread
-across its spelling, so fastText cannot easily represent a word whose meaning
-has nothing to do with how it is written. Sums are commutative and
-indifferent; they cannot tell `<pu` "you mean something different inside
-`punch` than inside `pump`."
+Shared n-gram vectors tie together the representations of words that are spelled
+alike. That trade-off can provide morphological generalization, and it can also
+create unwanted closeness between unrelated words. The separate whole-word
+component of an in-vocabulary word can learn information apart from that
+effect. The contribution of a given n-gram is shared among the words that
+contain it.
 :::
 
 :::: {.anlp-fig}
@@ -2372,7 +2385,7 @@ n-gram of length 3 to 6, so a real `pumpage` decomposes into 22 pieces, not 7.
 
 ::: {.anlp-widget}
 ```{=html}
-<div class="widget-title">Character n-grams — type a word and see what fastText actually stores</div>
+<div class="widget-title">Character n-grams — see the pieces of the chosen length, and the shared ones</div>
 ```
 
 ```{ojs}
@@ -2391,10 +2404,11 @@ viewof ftN = Inputs.range([3, 6], {label: "n-gram size", step: 1, value: 4})
 ```{ojs}
 //| echo: false
 ftGrams = {
-  const w = "<" + (ftWord || "").toLowerCase().trim() + ">";
-  const out = [];
-  for (let i = 0; i + ftN <= w.length; i++) out.push(w.slice(i, i + ftN));
-  return out;
+  const token = (ftWord || "").toLowerCase().trim();
+  if (!token || /\s/u.test(token)) return [];
+  const chars = Array.from("<" + token + ">");
+  return Array.from({length: Math.max(0, chars.length - ftN + 1)},
+    (_, i) => chars.slice(i, i + ftN).join(""));
 }
 ```
 
@@ -2406,10 +2420,11 @@ viewof ftOther = Inputs.text({label: "Compare with", value: "kitaplar", width: 3
 ```{ojs}
 //| echo: false
 ftShared = {
-  const b = "<" + (ftOther || "").toLowerCase().trim() + ">";
-  const set = new Set();
-  for (let i = 0; i + ftN <= b.length; i++) set.add(b.slice(i, i + ftN));
-  return set;
+  const token = (ftOther || "").toLowerCase().trim();
+  if (!token || /\s/u.test(token)) return new Set();
+  const chars = Array.from("<" + token + ">");
+  return new Set(Array.from({length: Math.max(0, chars.length - ftN + 1)},
+    (_, i) => chars.slice(i, i + ftN).join("")));
 }
 ```
 
@@ -2427,11 +2442,17 @@ html`<div style="font-size:0.9rem;">
     <b>${ftGrams.length}</b> n-grams of size ${ftN};
     <b style="color:var(--fig-accent);">${ftGrams.filter(gm => ftShared.has(gm)).length}</b>
     of them also occur in <i>${ftOther}</i>.
-    fastText uses every size from 3 to 6 at once, so the real count is roughly
-    four times this.</p>
+    When every length from 3 to 6 is used, the total number of character n-grams
+    for <i>L</i> code points, boundary marks included, is
+    Σ<sub><i>n</i>=3..6</sub> max(0, <i>L</i> − <i>n</i> + 1).</p>
   <p style="color:var(--fig-muted); font-size:0.85rem;">
-    The angle brackets mark word boundaries, which is how the model
-    distinguishes a suffix from the same letters mid-word.</p>
+    The angle brackets mark the start and the end of the word; they separate
+    the boundary form of a letter sequence from its word-internal form. The
+    operation does not by itself analyse stems or suffixes.</p>
+  <p style="color:var(--fig-muted); font-size:0.85rem;">
+    Enter a single word. This display lowercases the input and splits it by
+    Unicode code points; it does not show fastText's hash table or its learned
+    vectors.</p>
 </div>`
 ```
 :::
@@ -2449,8 +2470,9 @@ very differently on words the corpus never contained:
     word2vec raises: KeyError
 ```
 
-The same trick handles typos, which is why fastText is a quietly popular
-choice for user-generated text:
+Shared character pieces can be useful for some typos as well. In the examples
+below the out-of-vocabulary forms get vectors close to the expected words; that
+result is not guaranteed for every typo.
 
 ```text
   philosphy       in vocab: False

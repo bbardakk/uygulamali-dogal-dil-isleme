@@ -2199,20 +2199,19 @@ okuduysanız cevabını zaten bildiğiniz bir soruyu gündeme getiriyor: kelime
 tabloda yoksa ne olur?
 
 ::: {#gloss-out-of-vocabulary-oov .column-margin .term-gloss}
-**out-of-vocabulary (OOV)** (sözlük dışı) — modelin karşılığı olmayan kelime;
-çünkü eğitim metninde geçmemiş. Kelime düzeyinde bir sözlük kullanıldığında
-OOV, biçimbilimsel olarak zengin dillerde çok daha hızlı büyüyen bir
-problemdir; Türkçede aynı kökün onlarca yüzey biçimi olması bunu özellikle
-görünür kılar.
+**out-of-vocabulary (OOV)** (sözlük dışı) — modelin kelime sözlüğünde yer
+almayan biçim. Eğitimde hiç görülmemiş olabilir veya sıklık eşiği gibi bir
+nedenle sözlükten çıkarılmış olabilir. Türkçe gibi çok sayıda çekimli biçim
+üreten dillerde, kelime düzeyindeki sözlüğün kapsaması ayrıca önem kazanır.
 [↩](#term-out-of-vocabulary-oov){.term-back}
 :::
 
-Bu modellerin hepsinde kelime biçimi başına tek bir vektör var ve bu
-vektörler yalnızca eğitim sırasında görülen biçimler için öğrenildi. Modelin
-hiç görmediği bir kelimeyi — bir
+Kelime tablosunda bulunmayan bir biçim için — yani bir
 [out-of-vocabulary](#gloss-out-of-vocabulary-oov){#term-out-of-vocabulary-oov .term-ref}
-kelimeyi — sorarsanız karşınıza bir hata çıkar. İngilizce için bu bir
-sıkıntıdır. Türkçe için bir tasarım hatasıdır.
+kelime için — doğrudan satır getiremeyiz. Burada kullanılan `gensim` kelime
+vektörü sorgusu böyle bir durumda `KeyError` üretir; başka sistemler özel bir
+bilinmeyen-birim temsili kullanabilir. Türkçedeki biçim çeşitliliği, bu kapsama
+sorununu özellikle görünür kılar.
 
 İşte karşılaştırılabilir büyüklükte iki Wikipedia örneklemi; biri Türkçe,
 biri İngilizce:
@@ -2243,12 +2242,14 @@ kendi vektörünü ister ve her biri kendi seyrek birkaç geçişinden kestirili
   english   4.72% of tokens unseen, 23.29% of types unseen
 ```
 
-Bir milyon token'a gelindiğinde Türkçe 112.644 farklı biçim görmüş, yani
-İngilizcenin (52.347) iki katından fazla. Üstelik eğri düzleşmiyor. Ayrılmış
-test metninde
-neredeyse her on dört Türkçe token'dan biri, modelin hiç görmediği bir biçim.
-Sözlüğün yarısı tam olarak bir kez geçiyor; yani vektörlerinizin yarısı tek
-bir gözlemden kestiriliyor.
+Bu örneklemde bir milyon token'da 112.644 Türkçe biçim, 52.347 İngilizce biçim
+görülüyor; gösterilen aralıkta yeni biçimler eklenmeye devam ediyor. Ayrılmış
+Türkçe test kesiminde yaklaşık her on dört token'dan biri eğitim sözlüğü dışında
+kalıyor. Gözlenen tiplerin yaklaşık yarısının bir kez geçmesi, vektörlerin
+yarısının tek örnekle öğrenildiği anlamına gelmez: sıklık filtresi bu tipleri
+dışarıda bırakabilir ve tek bir token birden fazla bağlam çifti üretebilir. Bu
+sayılar tek bir örnekleme, tek bir tokenleştirme tercihine ve test kesiminin
+seçilme biçimine aittir; başka bir örneklemde değişirler.
 
 ::: {#gloss-subword .column-margin .term-gloss}
 **subword** (alt kelime) — kelimeden küçük bir parça. Bütün kelimeler yerine
@@ -2262,29 +2263,37 @@ vazgeçmek. Kelimeyi, karakter n-gram'larının — yani
 kelimenin bütünü için bir vektör olarak temsil edin:
 
 $$
-\mathbf{v}_{\text{word}} = \mathbf{v}_{\langle\text{word}\rangle}
-+ \sum_{n\text{-grams } g} \mathbf{v}_g
+\mathbf{v}_w = \mathbf{1}_{\{w \in \mathcal{V}\}}\,\mathbf{z}_w
++ \sum_{g \in G(w)} \mathbf{z}_g
 $$
 
-Bu toplam, göründüğünden fazla iş yapıyor. Parçaları birleştiren şey toplama
-olduğu için, her n-gram vektörü onu içeren *her* kelime tarafından eğitilir —
-`<pu` vektörünü `pump`, `pumps`, `pumped`, `pumping`, `punch` ve binlerce
-başka kelime günceller. Nadir bir kelime artık kendi birkaç geçişinden
-kestirilmiyor; her biri bol veriyle eğitilmiş parçalardan kuruluyor.
+Burada $\mathcal{V}$ tam kelime sözlüğü, $G(w)$ seçilen karakter n-gram'larının
+çoklu kümesidir. Bağımsız tam kelime bileşeni yalnızca sözlükteki kelimeler için
+vardır; sözlük dışı kelime alt kelime bileşenlerinden oluşturulur. Bu toplam,
+eğitimde kullanılan bileşimi anlatır; dışarı aktarılan vektörün ölçeklenmesi
+uygulamaya bağlıdır.
 
-Görülmemiş bir kelimenin de n-gram'ları vardır ve o n-gram'lar başka
-kelimeler üzerinde eğitilmiştir. Sözlük böylece açık uçlu hâle gelir.
+Paylaşılan karakter n-gram'ları farklı kelimelerdeki örneklerden güncelleme
+alabilir: `<pu` parçasını `pump`, `pumps`, `pumped`, `pumping` ve `punch` da
+içerir. Bu, nadir kelimelerin daha sık görülen biçimlerden yararlanmasını
+sağlar. Ancak her parça bol veriyle öğrenilmiş değildir. fastText n-gram'ları
+sabit sayıdaki karma tablosu (hash table) yuvasına eşler; farklı parçalar aynı
+yuvayı paylaşabilir. Sözlük dışı kelime için vektör üretilebilmesi, bu vektörün
+anlamca güvenilir olduğunu tek başına göstermez.
 
-(Makale bir toplam yazıyor; `fastText` ve `gensim` gerçeklemeleri ise bu toplamı
-parça sayısına bölüyor, yani ortalama alıyor. Bu yalnızca vektörün boyunu
-ölçekler; yönü, dolayısıyla her kosinüs değeri aynı kalır.)
+Makaledeki toplam ile aynı öğrenilmiş bileşenlerin sayısına bölünmüş ortalaması
+(`fastText` ve `gensim` gerçeklemelerinin yaptığı), sıfır olmayan bir kelime
+vektörü için aynı yönü verir; bu iki sürümün kelime–kelime kosinüsleri aynıdır.
+Ancak bunu eğitimde toplam ve ortalama kullanmanın veya farklı kelimeleri belge
+vektöründe birleştirmenin her koşulda eşdeğer olduğu biçiminde yorumlamamak
+gerekir.
 
 ::: {.column-margin}
-Bu ödünleşim (trade-off) denklemin kendisinde görünüyor. Bir kelimenin kimliği artık
-yazılışına yayılmış durumda; dolayısıyla fastText, anlamı yazılışıyla hiç
-ilgili olmayan bir kelimeyi kolay kolay temsil edemez. Toplama işlemi
-değişmeli ve kayıtsızdır; `<pu`'ya "sen `punch`'ın içinde, `pump`'ın
-içindekinden farklı bir şey ifade ediyorsun" diyemez.
+Paylaşılan n-gram vektörleri, benzer yazılan kelimelerin temsillerini birbirine
+bağlar. Bu ödünleşim (trade-off) biçimbilimsel genelleme sağlayabileceği gibi
+ilgisiz kelimelerde istenmeyen yakınlık da yaratabilir. Sözlükteki kelimenin
+bağımsız tam kelime bileşeni bu etkiden ayrı bilgi öğrenebilir. Aynı n-gram'ın
+katkısı ise onu içeren kelimeler arasında paylaşılır.
 :::
 
 :::: {.anlp-fig}
@@ -2384,7 +2393,7 @@ bir `pumpage` 7 değil 22 parçaya ayrışır.
 
 ::: {.anlp-widget}
 ```{=html}
-<div class="widget-title">Karakter n-gram'ları — bir kelime yazın, fastText'in gerçekte neyi sakladığını görün</div>
+<div class="widget-title">Karakter n-gram'ları — seçilen uzunluktaki parçaları ve ortak olanları görün</div>
 ```
 
 ```{ojs}
@@ -2403,10 +2412,11 @@ viewof ftN = Inputs.range([3, 6], {label: "n-gram boyu", step: 1, value: 4})
 ```{ojs}
 //| echo: false
 ftGrams = {
-  const w = "<" + (ftWord || "").toLocaleLowerCase("tr").trim() + ">";
-  const out = [];
-  for (let i = 0; i + ftN <= w.length; i++) out.push(w.slice(i, i + ftN));
-  return out;
+  const token = (ftWord || "").toLocaleLowerCase("tr").trim();
+  if (!token || /\s/u.test(token)) return [];
+  const chars = Array.from("<" + token + ">");
+  return Array.from({length: Math.max(0, chars.length - ftN + 1)},
+    (_, i) => chars.slice(i, i + ftN).join(""));
 }
 ```
 
@@ -2418,10 +2428,11 @@ viewof ftOther = Inputs.text({label: "Şununla karşılaştır", value: "kitapla
 ```{ojs}
 //| echo: false
 ftShared = {
-  const b = "<" + (ftOther || "").toLocaleLowerCase("tr").trim() + ">";
-  const set = new Set();
-  for (let i = 0; i + ftN <= b.length; i++) set.add(b.slice(i, i + ftN));
-  return set;
+  const token = (ftOther || "").toLocaleLowerCase("tr").trim();
+  if (!token || /\s/u.test(token)) return new Set();
+  const chars = Array.from("<" + token + ">");
+  return new Set(Array.from({length: Math.max(0, chars.length - ftN + 1)},
+    (_, i) => chars.slice(i, i + ftN).join("")));
 }
 ```
 
@@ -2439,11 +2450,17 @@ html`<div style="font-size:0.9rem;">
     ${ftN} boyunda <b>${ftGrams.length}</b> n-gram;
     bunlardan <b style="color:var(--fig-accent);">${ftGrams.filter(gm => ftShared.has(gm)).length}</b>
     tanesi <i>${ftOther}</i> kelimesinde de geçiyor.
-    fastText 3'ten 6'ya kadar bütün boyları aynı anda kullanır; yani gerçek
-    sayı bunun kabaca dört katı.</p>
+    3–6 uzunluklarının tümü kullanıldığında toplam karakter n-gram sayısı, sınır
+    işaretleri dâhil <i>L</i> kod noktası için
+    Σ<sub><i>n</i>=3..6</sub> max(0, <i>L</i> − <i>n</i> + 1)'dir.</p>
   <p style="color:var(--fig-muted); font-size:0.85rem;">
-    Açılı ayraçlar kelime sınırlarını işaretler; model bir eki, aynı
-    harflerin kelime ortasındaki hâlinden böyle ayırt eder.</p>
+    Açılı ayraçlar kelime başını ve sonunu işaretler; aynı harf dizisinin
+    sınırdaki ve içteki biçimini ayırır. Bu işlem tek başına kök veya ek
+    çözümlemesi yapmaz.</p>
+  <p style="color:var(--fig-muted); font-size:0.85rem;">
+    Tek kelime girin. Bu gösterim Türkçe kurallarıyla küçük harfe dönüştürür ve
+    Unicode kod noktalarına göre parçalar; fastText'in karma tablosunu veya
+    öğrenilmiş vektörlerini göstermez.</p>
 </div>`
 ```
 :::
@@ -2461,8 +2478,9 @@ fastText derlemin hiç içermediği kelimelerde çok farklı davranıyor:
     word2vec raises: KeyError
 ```
 
-Aynı numara yazım hatalarını da hallediyor; fastText'in kullanıcı üretimi
-metinlerde yaygın bir tercih olmasının sebebi bu:
+Paylaşılan karakter parçaları bazı yazım hatalarında da yararlı olabilir.
+Aşağıdaki örneklerde sözlük dışı biçimler beklenen kelimelere yakın vektörler
+veriyor; bu sonuç bütün yazım hataları için garanti değildir.
 
 ```text
   philosphy       in vocab: False
