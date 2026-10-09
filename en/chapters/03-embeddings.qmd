@@ -411,25 +411,28 @@ vectors point the same way, 0 means they are orthogonal.)
   eats     a 0.55, an 0.55, man 0.34, woman 0.34
 ```
 
-`king` → `queen` is right. `apple` → `man` is not, and it is worth looking at:
-both appear in *the man eats an apple*, so a single shared sentence in a
-ten-sentence corpus is enough to fake an association. Sparse count vectors
-are brittle exactly where data is thin.
+`king` → `queen` reflects the relationship we expected. `apple` → `man`, on the
+other hand, cannot be read as synonymy. In this small corpus the two rows carry
+high weights in the same columns, `an` and `eats`, and cosine measures that
+overlap. `man` occurs in only one sentence of the corpus; a context overlap that
+comes from a single example may not be a reliable semantic similarity.
 
 ::: {#gloss-singular-value-decomposition-svd .column-margin .term-gloss}
-**singular value decomposition (SVD)** — a standard way of finding the few
-directions in a large table that carry most of its variation, so you can
-keep those and discard the rest. [↩](#term-singular-value-decomposition-svd){.term-back}
+**singular value decomposition (SVD)** — a way of factorizing a matrix into
+singular vectors and singular values. Keeping the $d$ largest singular values
+and the corresponding directions gives the best rank-$d$ approximation in the
+Frobenius norm. [↩](#term-singular-value-decomposition-svd){.term-back}
 :::
 
 Truncated [singular value decomposition](#gloss-singular-value-decomposition-svd){#term-singular-value-decomposition-svd .term-ref} gives you a regularisation
-and compression mechanism against this brittleness. Keep only the $d$ directions with the
+and compression mechanism against overlaps of that kind, which rest on a single
+example. Keep only the $d$ directions with the
 largest singular values and you force the model to spend its budget on the
 structure that recurs, leaving one-off coincidences only whatever room is left
 over. It is not a guarantee of correctness: on a small or biased corpus a
 low-rank model can generalise the wrong structure too.
 
-In the toy corpus 19 dimensions cost nothing to compute, so compression is not
+In this small example 19 dimensions cost nothing to compute, so compression is not
 needed for speed here; the point is to watch what a low-rank representation
 does to the $V$-dimensional vectors of a real system.
 
@@ -453,33 +456,34 @@ The singular values in $\Sigma$ are those darknesses, sorted from boldest to
 faintest. $U$ says how much each word participates in each pattern.
 
 Truncating to $d$ means keeping only the boldest few transparencies. The
-faint ones are where a coincidence lives: a pattern that a single sentence
-created and nothing else confirms. Dropping them is not a regrettable loss of
-information, it is the *mechanism*. Forcing 19 columns of evidence through 5
-numbers means the model can only afford to store what repeats.
+operation drops the components that belong to the small singular values; it can
+reduce some accidental detail, and it can also lose useful distinctions. What is
+kept is decided by the singular-value structure of the matrix, not by how many
+times something repeats.
 
 ::: {.column-margin}
-This is the same bargain as a low bit-rate audio file. You are not asking for
-a worse recording; you are asking the encoder to spend its budget on what
-matters and let the rest go. When the budget is tight enough, hiss is the
-first thing to disappear.
+It can help to think of a limited storage budget: with fewer components kept,
+some detail is lost. The method's criterion, however, does not line up exactly
+with the detail a person finds important, or with noise.
 :::
 
 ```python
+d = 5
 U, S, Vt = np.linalg.svd(PPMI, full_matrices=False)
 emb = U[:, :d] * S[:d]
 ```
 
-Multiplying by `S` weights each direction by how much of the matrix it
-explains, and that is the textbook choice. It is also, on the evidence, the
-wrong default. @levy2015improving swept the whole family
-$W = U_d \Sigma_d^{\,p}$ and found $p = 0.5$ — often even $p = 0$, dropping
-$\Sigma$ entirely — beating $p = 1$ by up to fifteen points on similarity
-benchmarks. The mechanism is one this chapter meets again later: $\Sigma$ loads
-the dominant direction most heavily, and the dominant direction is largely
-frequency, which is precisely the anisotropy we will measure as a *defect*
-later in this chapter. We keep $p = 1$ here because it keeps the arithmetic
-visible; in production, sweep $p$.
+In this small example we compute the full SVD and take the first five
+components. For large sparse matrices a method that computes only the components
+needed is preferred.
+
+Multiplying by `S` gives more weight to the coordinates that belong to large
+singular values. The scaling that minimizes reconstruction error, however, need
+not be the best choice for word similarity. In the family
+$W = U_d \Sigma_d^{\,p}$ the exponent $p$ can be tuned as well;
+@levy2015improving show that on similarity tasks $p = 0.5$ or $p = 0$ can give
+better results than $p = 1$. We use $p = 1$ here to keep the computation
+visible; in practice $p$ should be chosen on validation data.
 
 ```text
 ### singular values (how much structure each dimension carries)
@@ -494,11 +498,10 @@ visible; in production, sweep $p$.
   castle   are 0.82, is 0.80, king 0.65, queen 0.61
 ```
 
-Those percentages are shares of the *squared* singular values, which is the
-conventional way to report how much of a matrix a set of directions accounts
-for. Five directions out of nineteen carry roughly two-thirds of it — the
-remaining fourteen are splitting the last third between them, which is
-another way of saying none of them is describing much.
+Those percentages are shares of the sum of *squared* singular values. Five
+components carry about two thirds of the total energy and the remaining fourteen
+about one third. The ratios summarize the compression; they do not show that the
+discarded components are unimportant for a task.
 
 ::: {.callout-note collapse="true"}
 ## Deep dive: what SVD "explains" is not PCA's variance
@@ -550,7 +553,7 @@ term–document matrix, and it came before word2vec by more than twenty years.
 ### compression
   one-hot / count row : 19 numbers per word
   svd embedding       : 5 numbers per word
-  any two one-hots    : cosine 0.00 (always)
+    different one-hots  : cosine 0.00 (always)
   king vs queen (2-D) : cosine 0.996
   king vs banana(2-D) : cosine 0.141
 ```
@@ -562,14 +565,16 @@ similarity.
 
 ::: {.callout-warning appearance="simple"}
 **A detail worth noticing, because it comes back at the end of the chapter.**
-In this toy space every single word has a *negative* first coordinate. A
-dimension that all words share the sign of cannot separate any of them — it
-is a common direction, not a contrastive one. Plotting dimensions 1 and 2
-therefore wastes half the picture, which is why the figure below plots
-dimensions 2 and 3.
+In this small example the first coordinate is *negative* for every word (between
+−0.70 and −2.14). That shared direction can contribute to cosine values; the
+magnitudes differ, however, so the dimension is not entirely without
+discriminating information. The figure below plots dimensions 2 and 3 in order
+to make other distinctions visible. That choice is no substitute for the
+similarities in the full space.
 
-Real embedding spaces have the same defect at scale, where it is called
-[anisotropy]{.hl}, and we will measure it on GloVe later.
+A space that is not spread evenly over directions is called
+[anisotropic]{.hl}; a shared mean direction is one of the forms that
+anisotropy can take. We will measure it on GloVe later.
 :::
 
 ::: {.anlp-widget}
@@ -617,9 +622,10 @@ Plot.plot({
 ```{ojs}
 //| echo: false
 html`<p style="font-size:0.85rem; color:var(--fig-muted); margin-top:0.4rem;">
-Royalty sits on the left, food on the right, people in between — from ten
-sentences and nothing else. <code>man</code> and <code>woman</code> land almost
-on top of each other because in this corpus they are used identically.</p>`
+In this ten-sentence corpus the royalty words appear on the left and the food
+words on the right. <code>man</code> and <code>woman</code> are close together in
+this two-dimensional view because they are used in similar sentence structures;
+their contexts are not identical.</p>`
 ```
 :::
 
