@@ -891,7 +891,8 @@ html`<div style="font-size:0.9rem;">
 ```
 :::
 
-### Negative sampling is a logistic regression
+### Negative sampling with a logistic loss {#negative-sampling-is-a-logistic-regression}
+
 
 First, what exactly is skip-gram asking? Take a centre word $w$ with vector
 $\mathbf{v}_w$ (its row of $\mathbf{W}$). Every candidate context word $c$ gets
@@ -912,30 +913,30 @@ $$
 For a statistician this is multinomial logistic regression with one class per
 vocabulary word.
 
-There is one problem left, and it is a bad one. That denominator runs over the
-whole vocabulary — which means every single training pair costs you a sum over
-400,000 words (the size of the GloVe vocabulary we use later in this chapter;
-any realistic vocabulary makes the same point). Sixty billion pairs,
-each costing 400,000 operations, is not a training run anybody finishes.
+The full softmax computes and normalizes $V$ context scores for every training
+pair. With $d$-dimensional vectors that costs about $O(Vd)$. When $V = 400{,}000$
+(the size of the GloVe vocabulary we use later in this chapter), processing a
+large number of pairs that way is expensive.
 
-The fix is almost embarrassingly simple, and it is the reason word2vec was
-practical.
+Negative sampling changes the training objective: it replaces this multi-class
+task with smaller binary classification tasks. The scoring cost per pair becomes
+about $O((K+1)d)$, where $K$ is the number of negative samples drawn per pair.
 
 ::: {#gloss-negative-sampling .column-margin .term-gloss}
-**negative sampling** — instead of scoring every word in the vocabulary,
-score the true neighbour against a handful of randomly drawn fake ones.
-A cheap yes/no question replaces an impossibly expensive one. [↩](#term-negative-sampling){.term-back}
+**negative sampling** — for each observed word–context pair, drawing a small
+number of contexts from a noise distribution and using them as negatively
+labelled training examples. The negative examples need not be unseen in the
+corpus or semantically unrelated. [↩](#term-negative-sampling){.term-back}
 :::
 
-Predicting a context word out of a 400,000-word vocabulary means a softmax
-over 400,000 classes, for every one of billions of pairs. That is
-hopeless. The trick that made word2vec practical replaces it with a question
-a statistician will recognise instantly [@mikolov2013distributed]:
+The step that made word2vec practical replaces the 400,000-class softmax with a
+question a statistician will recognise [@mikolov2013distributed]:
 
-> Given a pair of words, is this a *real* pair from the corpus, or one I made
-> up?
+> Did this training example come from the distribution of observed pairs
+> ($y = 1$) or from the noise sampler ($y = 0$)? The same word pair can be
+> produced either way.
 
-That is binary classification. For each real pair $(w, c)$, draw $K$ fake
+That is binary classification. For each observed pair $(w, c)$, draw $K$
 context words from a noise distribution — a frequency-based distribution over
 the vocabulary, whose exact form we return to in a few pages — and label them
 0; that drawing is
@@ -944,9 +945,14 @@ logistic regression whose linear predictor is the dot product of the two
 words' vectors:
 
 $$
-P(\text{real} \mid w, c) = \sigma(\mathbf{v}_w \cdot \mathbf{u}_c),
+P(y = 1 \mid w, c;\, K, q) = \sigma(\mathbf{v}_w \cdot \mathbf{u}_c),
 \qquad \sigma(z) = \frac{1}{1 + e^{-z}}
 $$
+
+Here $q$ is the noise distribution the negative contexts are drawn from. This
+probability belongs to the training sampling scheme we set up; it is not the
+probability that two words occur together in the real world.
+
 
 Unlike ordinary logistic regression the features are not fixed: the centre and
 context vectors are learned at the same time, which makes the problem
@@ -959,12 +965,11 @@ $$
 - \sum_{k=1}^{K} \log \sigma(-\mathbf{v}_w \cdot \mathbf{u}_{n_k})
 $$
 
-Read it in two halves. The first term is small when $\sigma(\mathbf{v}_w \cdot
-\mathbf{u}_c)$ is close to 1, so it pays you for giving *real* pairs a large
-dot product. The second term is small when $\sigma(-\mathbf{v}_w \cdot
-\mathbf{u}_{n_k})$ is close to 1 — that is, when the dot product with each
-*fake* partner is very negative. One term pulls together, $K$ terms push
-apart. Those two terms are the whole objective.
+The term for the positive pair decreases as the dot product between the centre
+and context vectors grows. The term for a negative sample decreases as the
+corresponding dot product shrinks. The picture of pulling together and pushing
+apart describes that change in score; it does not say that the Euclidean
+distance between the vectors necessarily moves the same way.
 
 **Work one update by hand.** Vectors are 300-dimensional in practice; use 4
 so the arithmetic fits on a line. Say the centre word `failed` currently has
@@ -978,22 +983,28 @@ $$
 (0.4)(0.5) + (-0.2)(0.1) + (0.7)(0.6) + (0.1)(-0.3) = 0.57
 $$
 
-so $\sigma(0.57) = 0.639$ — the model currently gives this pair a 64% chance
-of being genuine — and its contribution to the loss is $-\log 0.639 = 0.448$.
+so $\sigma(0.57) = 0.639$: under this training scheme the model gives the pair
+about a 64% probability of having arrived as a positive example. The
+contribution of the positively labelled example to the loss is
+$-\log 0.639 = 0.448$.
 
 For the fake pair the dot product is $-0.34$, giving $\sigma(0.34) = 0.584$
 and a loss of $-\log 0.584 = 0.538$. The model is already leaning the right
 way on both, but not confidently, so both will be nudged.
 
-The nudge itself is where the whole thing becomes recognisable. The
-derivative of the loss with respect to the dot product is just
+The update itself is where the whole thing becomes recognisable. For a single
+labelled term, the derivative with respect to the dot product
+$z = \mathbf{v}_w \cdot \mathbf{u}_c$ is just
 
 $$
-\frac{\partial \mathcal{L}}{\partial (\mathbf{v}_w \cdot \mathbf{u}_c)}
-= \sigma(\mathbf{v}_w \cdot \mathbf{u}_c) - y
+\ell(z, y) = -y \log \sigma(z) - (1 - y) \log\bigl(1 - \sigma(z)\bigr),
+\qquad
+\frac{\partial \ell}{\partial z} = \sigma(z) - y
 $$
 
-where $y$ is 1 for a real pair and 0 for a fake one. **Prediction minus
+The derivative of the total SGNS (skip-gram with negative sampling) loss is found by adding up the derivatives of
+all the positive and negative terms involved. Here $y$ is 1 for a positive
+example and 0 for a negative one. **Prediction minus
 target** — the same expression that falls out of every logistic regression
 you have ever fitted. For `pump` that is $0.639 - 1 = -0.361$ (negative, so
 the dot product goes up); for `opera` it is $0.416 - 0 = 0.416$ (positive, so
@@ -1054,12 +1065,11 @@ The $\sigma(z)$ cancels. That is a pleasant property, but it is not the
 *main* reason log loss is paired with the sigmoid; the main reason is about
 probability, and it is worth seeing step by step.
 
-Every training pair is a yes/no question: "is this pair real?" The probability
-distribution describing a single trial with a yes/no outcome is called the
-**Bernoulli distribution** — a coin flip, except that the probability $p$ of
-heads can be any number. Our model supplies that $p$: $p = \sigma(z)$. That is
-exactly the sigmoid's job: squeeze any number into the range 0 to 1 so it can
-be read as a probability.
+The label of every training example is 0 or 1. The probability distribution
+describing a single trial with a yes/no outcome is called the **Bernoulli
+distribution**; a coin flip is an example. We model the label with it. Its
+parameter $p$ lies in the interval $[0, 1]$. Our model supplies that $p$: for
+finite $z$ the sigmoid produces $p = \sigma(z)$ in the interval $(0, 1)$.
 
 Now ask: how much probability did the model give to the answer we actually
 observed? If the answer was "yes" ($y = 1$) that probability is $p$; if it was
@@ -1074,13 +1084,11 @@ $$
 -\log(\text{likelihood}) \;=\; -\bigl[\,y \log p + (1 - y)\log(1 - p)\,\bigr]
 $$
 
-That expression *is* **binary cross-entropy**, the log loss. So log loss was
-not borrowed from somewhere: it is the direct answer to "how well do my
-model's probabilities agree with the yes/no outcomes I observed?" That is what
-"a natural probabilistic interpretation" means — making the loss small is
-exactly the same job as making the data's likelihood large. Squared error does
-not ask that question; it compares probabilities as if they were ordinary
-numbers.
+That expression is **binary cross-entropy**: the negative log-likelihood of the
+Bernoulli model. Making it small makes the likelihood of the observed labels
+large. Probability estimates can also be evaluated with a squared loss; that is
+a different criterion, however, and not the same as the Bernoulli log loss
+derived here.
 
 In short, pairing the sigmoid with log loss buys two things at once: a clean
 probabilistic reading through the Bernoulli likelihood *and* a gradient as
@@ -1100,13 +1108,12 @@ $$
 = \bigl(\sigma(z) - y\bigr)\, \mathbf{v}_w
 $$
 
-Each vector is dragged along the direction of the other, by an amount equal
-to how wrong the prediction was. A pair the model already scores correctly
-produces a near-zero gradient and is effectively skipped; the learning
-concentrates on pairs it is currently getting wrong. That self-limiting
-behaviour is why the method survives billions of updates without
-diverging — and why the implementation later in this chapter needs gradient
-clipping only when many updates for the same word are batched together.
+The gradient of each vector is the scalar error $\sigma(z) - y$ multiplied by the
+other vector. When the model gives the correct label a high probability, the
+scalar error becomes small. Vector norms can grow, however, and the
+contributions within a batch can add up, so this property alone does not
+guarantee stable training or convergence. The learning rate, the gradient scale
+and, where needed, clipping have to be considered separately.
 :::
 
 :::: {.anlp-fig}
@@ -1195,29 +1202,21 @@ clipping only when many updates for the same word are batched together.
 ```
 
 ::: {.fig-cap}
-The left panel asks *which of 400,000 words is the context word* — one question with
-400,000 answers. The right panel asks *is this pair real?* six times — six
-questions with two answers each. The second is a logistic regression, and it
-is roughly 67,000 times cheaper.
+The left panel scores all $V = 400{,}000$ candidates and applies a softmax. The
+right panel computes six dot products, for one positive and five negative
+examples. In this example the number of dot products falls by a factor of about
+67,000; the actual training speed-up depends on hardware, sampling and
+implementation.
 :::
 ::::
 
-Notice how the two descriptions meet here.
-
-The network *does* have a hidden layer — the row pulled out of $\mathbf{W}$ is
-exactly that. But it carries no activation function, and the only
-non-linearity in the whole model is the sigmoid at the very end. A single
-linear layer with no activation, followed by a sigmoid and a log loss, is by
-definition a logistic regression.
-
-So "shallow neural network" and "logistic regression" are not competing
-explanations. They are two names for the same object: reach for the first to
-describe the architecture, the second to compute the gradient.
-
-If you have ever fitted a logistic regression, you have fitted 99% of
-word2vec. The
-only unusual part is that *both* the predictors and the coefficients are
-learned, which is what makes it a factorization rather than a regression.
+The sigmoid and the log loss that SGNS uses
+for each labelled pair are familiar from logistic regression. But the vectors on
+both sides of the dot product are learned as well, so the model as a whole is
+not classical logistic regression with fixed features. A more accurate
+description is logistic matrix factorization, in which two vector tables are
+learned together. That distinction explains both the familiar form of the
+gradients and the non-convexity of the joint optimization.
 
 ::: {.column-margin}
 Two matrices are learned, not one: $\mathbf{v}_w$ for words as centres and
@@ -1245,7 +1244,7 @@ nsSigmoid = z => 1 / (1 + Math.exp(-z))
 //| echo: false
 Plot.plot({
   ariaLabel: "The two negative-sampling loss terms as a function of the dot product.",
-  ariaDescription: "The real-pair loss falls as the dot product rises; the fake-pair loss rises. Both are gentle where the model is already right and steep where it is badly wrong, which is what makes the updates self-limiting.",
+  ariaDescription: "The loss of the positively labelled pair falls as the dot product rises; that of the negatively labelled pair rises. When the correct label gets a high probability the scalar derivative becomes small. That does not guarantee that the vector gradients or the total update are bounded.",
   width: 700, height: 260, marginLeft: 55, marginBottom: 42,
   x: {label: "v·u", domain: [-6, 6], grid: true},
   y: {label: "loss  −log σ(±z)", domain: [0, 6], grid: true},

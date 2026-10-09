@@ -892,7 +892,8 @@ html`<div style="font-size:0.9rem;">
 ```
 :::
 
-### Negatif örnekleme bir lojistik regresyondur
+### Negatif örneklemeyi lojistik kayıpla öğrenmek {#negatif-örnekleme-bir-lojistik-regresyondur}
+
 
 Önce şunu netleştirelim: skip-gram neyi soruyor? Vektörü
 $\mathbf{v}_w$ (yani $\mathbf{W}$'deki satırı) olan bir $w$ merkez kelimesi
@@ -915,39 +916,46 @@ $$
 İstatistikçi gözüyle bu, sözlükteki her kelime için bir sınıf bulunan çok
 terimli (multinomial) bir lojistik regresyondur.
 
-Ama ciddi bir sorun var. O paydadaki toplam sözlüğün tamamı
-üzerinden alınıyor; yani her bir eğitim çifti size 400.000 kelime üzerinde bir
-toplama mal olur (400.000, bölümün ilerisinde kullanacağımız GloVe sözlüğünün
-boyutu; gerçekçi her sözlük aynı sonuca götürür). Her biri 400.000 işlem tutan
-altmış milyar çift, pratikte bitirilemeyecek bir eğitim demektir.
+Tam softmax her eğitim çiftinde $V$ bağlam puanını hesaplar ve normalleştirir.
+$d$ boyutlu vektörlerde bu hesap yaklaşık $O(Vd)$ maliyetlidir. $V = 400.000$
+olduğunda (bölümün ilerisinde kullanacağımız GloVe sözlüğünün boyutu) çok sayıda
+çifti bu biçimde işlemek pahalıdır.
 
-Çözüm ise neredeyse utandıracak kadar basit.
+Negatif örnekleme, eğitim amacını değiştirir: bu çok sınıflı görevin yerine daha
+küçük ikili sınıflandırma görevleri kurar. Çift başına puanlama maliyeti
+yaklaşık $O((K+1)d)$ olur; $K$, çift başına çekilen negatif örnek sayısıdır.
 
 ::: {#gloss-negative-sampling .column-margin .term-gloss}
-**negative sampling** (negatif örnekleme) — sözlükteki her kelimeyi
-puanlamak yerine, gerçek komşuyu rastgele çekilmiş birkaç sahte komşuya karşı
-puanlayın. Ucuz bir evet/hayır sorusu, imkânsız derecede pahalı bir sorunun
-yerini alır. [↩](#term-negative-sampling){.term-back}
+**negative sampling** (negatif örnekleme) — gözlenen her kelime–bağlam çifti
+için bir gürültü dağılımından az sayıda bağlam çekip bunları negatif etiketli
+eğitim örnekleri olarak kullanma yöntemi. Negatif örnekler, derlemde hiç
+görülmemiş veya anlamsal olarak ilişkisiz olmak zorunda değildir. [↩](#term-negative-sampling){.term-back}
 :::
 
-word2vec'i uygulanabilir kılan numara, 400.000 sınıflı softmax yerine bir
-istatistikçinin anında tanıyacağı başka bir soru sormaktır [@mikolov2013distributed]:
+word2vec'i uygulanabilir kılan adım, 400.000 sınıflı softmax yerine bir
+istatistikçinin tanıyacağı başka bir soru sormaktır [@mikolov2013distributed]:
 
-> Bir kelime çifti verildiğinde: bu, derlemden gelen *gerçek* bir çift mi,
-> yoksa benim uydurduğum bir çift mi?
+> Bu eğitim örneği, gözlenen çiftler dağılımından mı ($y = 1$), yoksa gürültü
+> örnekleyicisinden mi ($y = 0$) geldi? Aynı kelime çifti her iki yolla da
+> üretilebilir.
 
-Bu, ikili sınıflandırmadır. Her gerçek $(w, c)$ çifti için bir gürültü
+Bu, ikili sınıflandırmadır. Gözlenen her $(w, c)$ çifti için bir gürültü
 dağılımından — sözlük üzerinde, kelime sıklığına dayalı bir dağılım; tam
-biçimine birkaç sayfa sonra döneceğiz — $K$ tane sahte bağlam kelimesi çekin
+biçimine birkaç sayfa sonra döneceğiz — $K$ tane bağlam kelimesi çekin
 ve onları 0 olarak etiketleyin; yöntemin adını aldığı
 [negative sampling](#gloss-negative-sampling){#term-negative-sampling .term-ref}
 işte bu çekme işlemidir. Sonra bir lojistik regresyon modeli eğitin; modelin
 doğrusal öngörücüsü iki kelime vektörünün iç çarpımı olsun:
 
 $$
-P(\text{gerçek} \mid w, c) = \sigma(\mathbf{v}_w \cdot \mathbf{u}_c),
+P(y = 1 \mid w, c;\, K, q) = \sigma(\mathbf{v}_w \cdot \mathbf{u}_c),
 \qquad \sigma(z) = \frac{1}{1 + e^{-z}}
 $$
+
+Burada $q$, negatif bağlamların çekildiği gürültü dağılımıdır. Bu olasılık,
+kurduğumuz eğitim örnekleme düzenine aittir; iki kelimenin gerçek dünyada
+birlikte görülme olasılığı değildir.
+
 
 Sıradan bir lojistik regresyondan bir farkı var: öznitelikler sabit değil,
 hem merkez hem bağlam vektörleri aynı anda öğreniliyor. Bu yüzden iki tablo
@@ -961,12 +969,10 @@ $$
 - \sum_{k=1}^{K} \log \sigma(-\mathbf{v}_w \cdot \mathbf{u}_{n_k})
 $$
 
-İfadeyi iki parçaya ayırarak okuyun. İlk terim, $\sigma(\mathbf{v}_w \cdot
-\mathbf{u}_c)$ 1'e yakınken küçüktür; yani *gerçek* çiftlere büyük bir iç
-çarpım vermeyi ödüllendirir. İkinci terim, $\sigma(-\mathbf{v}_w \cdot
-\mathbf{u}_{n_k})$ 1'e yakınken küçüktür — yani her *sahte* eşle yapılan iç
-çarpım çok negatif olduğunda. Bir terim vektörleri birbirine çeker, $K$ terim
-birbirinden iter. Amaç fonksiyonunun tamamı bu iki terimden ibaret.
+Pozitif çiftin terimi, merkez ve bağlam vektörleri arasındaki iç çarpım büyüdükçe
+azalır. Negatif örneğin terimi ise ilgili iç çarpım küçüldükçe azalır. Çekme ve
+itme benzetmesi bu puan değişimini anlatır; vektörler arasındaki Öklid
+uzaklığının zorunlu olarak aynı yönde değiştiğini söylemez.
 
 **Bir güncellemeyi elle yapın.** Pratikte vektörler 300 boyutludur;
 aritmetik tek satıra sığsın diye 4 boyut kullanalım. Diyelim ki `failed`
@@ -980,23 +986,28 @@ $$
 (0{,}4)(0{,}5) + (-0{,}2)(0{,}1) + (0{,}7)(0{,}6) + (0{,}1)(-0{,}3) = 0{,}57
 $$
 
-dolayısıyla $\sigma(0{,}57) = 0{,}639$ — model şu an bu çiftin gerçek olma
-olasılığını %64 görüyor — ve çiftin kayba katkısı $-\log 0{,}639 = 0{,}448$.
+dolayısıyla $\sigma(0{,}57) = 0{,}639$: model, bu eğitim düzeninde çiftin pozitif
+örnek olarak gelmesine yaklaşık %64 olasılık veriyor. Pozitif etiketli örneğin
+kayba katkısı $-\log 0{,}639 = 0{,}448$'dir.
 
 Sahte çift için iç çarpım $-0{,}34$. Sahte çift terimi
 $\sigma(-\mathbf{v}_w \cdot \mathbf{u}_{n_k})$ kullandığı için işaret döner: $\sigma(-(-0{,}34)) = \sigma(0{,}34) = 0{,}584$ ve
 $-\log 0{,}584 = 0{,}538$ kaybı veriyor. Model ikisinde de zaten doğru yöne
 eğilimli, ama emin değil; bu yüzden ikisi de biraz güncellenecek.
 
-İşin tanıdık hâle geldiği yer, vektörlerin nasıl güncellendiği. Kaybın iç çarpıma göre
-türevi yalnızca şu:
+İşin tanıdık hâle geldiği yer, vektörlerin nasıl güncellendiği. Tek bir etiketli
+terimin, $z = \mathbf{v}_w \cdot \mathbf{u}_c$ iç çarpımına göre türevi yalnızca
+şu:
 
 $$
-\frac{\partial \mathcal{L}}{\partial (\mathbf{v}_w \cdot \mathbf{u}_c)}
-= \sigma(\mathbf{v}_w \cdot \mathbf{u}_c) - y
+\ell(z, y) = -y \log \sigma(z) - (1 - y) \log\bigl(1 - \sigma(z)\bigr),
+\qquad
+\frac{\partial \ell}{\partial z} = \sigma(z) - y
 $$
 
-Burada $y$, gerçek çift için 1, sahte çift için 0. **Tahmin eksi hedef** —
+Toplam SGNS (negatif örneklemeli skip-gram) kaybının türevi, ilgili bütün pozitif ve negatif terimlerin
+türevleri toplanarak bulunur. Burada $y$, pozitif örnek için 1, negatif örnek
+için 0. **Tahmin eksi hedef** —
 bugüne kadar eğittiğiniz her lojistik regresyondan çıkan aynı ifade. `pump`
 için bu $0{,}639 - 1 = -0{,}361$ (negatif, yani iç çarpım yükselir); `opera`
 için $0{,}416 - 0 = 0{,}416$ (pozitif, yani iç çarpım düşer).
@@ -1061,12 +1072,11 @@ $\sigma(z)$ sadeleşiyor. Bu sadeleşme hoş bir özellik, ama sigmoid'i log
 kaybıyla eşleştirmemizin *asıl* sebebi değil; asıl sebep olasılıkla ilgili ve
 adım adım görmeye değer.
 
-Her eğitim çifti bir evet/hayır sorusu: "bu çift gerçek mi?" Evet/hayır
-sonuçlu tek bir denemeyi tarif eden olasılık dağılımına **Bernoulli dağılımı**
-deniyor — yazı tura gibi, ama paranın yazı gelme olasılığı $p$ herhangi bir
-sayı olabilir. Modelimiz bu $p$'yi veriyor: $p = \sigma(z)$. Sigmoid'in işi
-de tam bu: herhangi bir sayıyı 0 ile 1 arasına sıkıştırıp olasılık olarak
-okunabilir kılmak.
+Her eğitim örneğinin etiketi 0 veya 1'dir. Evet/hayır sonuçlu tek bir denemeyi
+tarif eden olasılık dağılımına **Bernoulli dağılımı** denir; yazı tura buna
+örnektir. Etiketi bu dağılımla modelleriz. Dağılımın $p$ parametresi $[0, 1]$
+aralığındadır. Modelimiz bu $p$'yi veriyor: sonlu $z$ için sigmoid,
+$p = \sigma(z)$ değerini $(0, 1)$ aralığında üretir.
 
 Şimdi şunu sorun: model, gerçekten gözlediğimiz cevaba ne kadar olasılık
 vermişti? Cevap "evet" ise ($y = 1$) bu olasılık $p$; "hayır" ise ($y = 0$)
@@ -1080,12 +1090,11 @@ $$
 -\log(\text{olabilirlik}) \;=\; -\bigl[\,y \log p + (1 - y)\log(1 - p)\,\bigr]
 $$
 
-Bu ifade **ikili çapraz entropinin** (binary cross-entropy), yani log kaybının
-ta kendisi. Yani log kaybını bir yerden ödünç almadık: "modelimin olasılıkları
-gözlediğim evet/hayırlarla ne kadar uyuşuyor?" sorusunun doğrudan cevabı o.
-"Doğal olasılıksal yorum" denen şey bu — kaybı küçültmek, verinin
-olabilirliğini büyütmekle birebir aynı iş. Karesel hata bu soruyu sormaz;
-olasılıkları sıradan sayılar gibi karşılaştırır.
+Bu ifade **ikili çapraz entropi** (binary cross-entropy), yani Bernoulli
+modelinin negatif log-olabilirliğidir. Onu küçültmek gözlenen etiketlerin
+olabilirliğini büyütür. Olasılık tahminleri karesel kayıpla da
+değerlendirilebilir; ancak bu başka bir ölçüttür ve burada türettiğimiz
+Bernoulli log kaybıyla aynı değildir.
 
 Özetle sigmoid ile log kaybının eşleşmesi iki şeyi birden veriyor: Bernoulli
 olabilirliği üzerinden temiz bir olasılık yorumu *ve* yukarıdaki kadar sade bir
@@ -1104,13 +1113,11 @@ $$
 = \bigl(\sigma(z) - y\bigr)\, \mathbf{v}_w
 $$
 
-Her vektör diğerinin yönü boyunca sürüklenir; sürüklenme miktarı, tahminin
-ne kadar yanlış olduğuna eşittir. Modelin zaten doğru puanladığı bir çift, sıfıra
-yakın bir gradyan üretir ve fiilen atlanır; öğrenme, modelin o an yanlış bildiği
-çiftlerde yoğunlaşır. Yöntemin milyarlarca güncellemeyi ıraksamadan
-atlatmasının sebebi bu kendi kendini sınırlayan davranıştır. Bölümün ilerleyen kısmındaki
-uygulamanın gradyan kırpmasına yalnızca tek bir durumda ihtiyaç duymasının sebebi
-de bu: aynı kelimeye ait pek çok güncelleme tek bir batch'te toplandığında.
+Her vektörün gradyanı, $\sigma(z) - y$ skaler hatasının diğer vektörle çarpımıdır.
+Model doğru etikete yüksek olasılık verdiğinde skaler hata küçülür. Bununla
+birlikte vektör normları büyüyebilir ve yığındaki (batch) katkılar toplanabilir;
+dolayısıyla bu özellik tek başına kararlı eğitim veya yakınsama garantisi vermez.
+Öğrenme oranı, gradyan ölçeği ve gerekirse kırpma ayrıca değerlendirilmelidir.
 :::
 
 :::: {.anlp-fig}
@@ -1199,26 +1206,19 @@ de bu: aynı kelimeye ait pek çok güncelleme tek bir batch'te toplandığında
 ```
 
 ::: {.fig-cap}
-Soldaki panel *bağlam kelimesi 400.000 kelimeden hangisi* diye soruyor — 400.000
-cevabı olan tek bir soru. Sağdaki panel *bu çift gerçek mi* diye altı kez
-soruyor — her birinin iki cevabı olan altı soru. İkincisi bir lojistik
-regresyondur ve kabaca 67.000 kat daha ucuzdur.
+Soldaki panel $V = 400.000$ adayın tamamını puanlayıp softmax uygular. Sağdaki
+panel bir pozitif ve beş negatif örnek için altı iç çarpım hesaplar. Bu örnekte
+iç çarpım sayısı yaklaşık 67.000 kat azalır; gerçek eğitim hızlanması donanıma,
+örneklemeye ve uygulamaya bağlıdır.
 :::
 ::::
 
-Burada iki anlatım birleşiyor. Ağın gizli katmanı
-*var* — $\mathbf{W}$'den çekilen satır odur — ama üzerinde
-aktivasyon fonksiyonu yok; modeldeki tek doğrusal olmayan öğe, en sondaki
-sigmoid. Aktivasyonsuz tek bir doğrusal katman, ardından sigmoid ve log
-kaybı: bu, tanım gereği bir lojistik regresyondur. Yani "sığ sinir ağı" ile
-"lojistik regresyon" burada rakip iki açıklama değil, aynı nesnenin iki
-adıdır. Mimariyi tarif etmek isterseniz birincisi, gradyanı hesaplamak
-isterseniz ikincisi işinizi görür.
-
-Hayatınızda bir kez lojistik regresyon eğittiyseniz, word2vec'in
-%99'unu eğitmişsiniz demektir. Alışılmadık olan tek kısım, hem öngörücülerin
-*hem de* katsayıların öğrenilmesi. Modeli regresyon olmaktan çıkarıp bir
-çarpanlara ayırma yöntemine dönüştüren de bu.
+SGNS'nin her etiketli çift için kullandığı sigmoid
+ve log kaybı, lojistik regresyondan tanıdıktır. Ancak iç çarpımın iki tarafındaki
+vektörler de öğrenildiği için bütün model, sabit öznitelikli klasik lojistik
+regresyon değildir. Daha doğru tanım, iki vektör tablosunun birlikte öğrenildiği
+lojistik matris çarpanlaştırmasıdır. Bu ayrım hem gradyanların tanıdık biçimini
+hem de ortak optimizasyonun dışbükey (konveks) olmamasını açıklar.
 
 ::: {.column-margin}
 Bir değil, iki matris öğrenilir: kelime merkezdeyken $\mathbf{v}_w$,
@@ -1246,7 +1246,7 @@ nsSigmoid = z => 1 / (1 + Math.exp(-z))
 //| echo: false
 Plot.plot({
   ariaLabel: "Negatif örneklemenin iki kayıp terimi, iç çarpımın bir işlevi olarak.",
-  ariaDescription: "Gerçek çift kaybı iç çarpım yükseldikçe düşüyor, sahte çift kaybı yükseliyor. İkisi de modelin zaten haklı olduğu yerde yumuşak, fena hâlde yanıldığı yerde diktir; güncellemelerin kendi kendini sınırlamasını sağlayan da budur.",
+  ariaDescription: "Pozitif etiketli çiftin kaybı iç çarpım arttıkça azalır; negatif etiketli çiftinki artar. Doğru etikete yüksek olasılık verildiğinde skaler türev küçülür. Bu, vektör gradyanlarının veya toplam güncellemenin sınırlı olduğunu garanti etmez.",
   width: 700, height: 260, marginLeft: 55, marginBottom: 42,
   x: {label: "v·u", domain: [-6, 6], grid: true},
   y: {label: "kayıp  −log σ(±z)", domain: [0, 6], grid: true},
