@@ -1839,27 +1839,23 @@ uygulama ve ayarlara bağlıdır.
 
 ## GloVe: sayma, ama kayıp fonksiyonuyla
 
-Saymak ile tahmin etmek özünde aynı şeyse bariz bir soru doğuyor: sayımı
-*açıkça* yapıp gradyan inişinin yararlarını yine de alabilir misiniz?
+GloVe, eş-oluşum sayımlarını açıkça biriktirir ve vektörleri bu sayımlar üzerinde
+tanımlanan ağırlıklı bir kayıp fonksiyonuyla öğrenir. Böylece sayıma dayalı
+temsil ile gradyan tabanlı öğrenmeyi birleştirir.
 
-Başlıktaki slogan — *sayma, ama kayıp fonksiyonuyla* — iki yarım cümleden
-oluşuyor; ikisini de açalım.
+GloVe'un girdisi kelime–bağlam eş-oluşum tablosudur. Bölüm başındaki $C$ matrisi,
+pencere içindeki her çifte bir ekliyordu. Özgün GloVe uygulamasında uzak
+bağlamlar daha düşük ağırlıkla sayılabilir; bu nedenle $X$ hücrelerinin mutlaka
+tamsayı olması gerekmez. İki yaklaşım da derlem boyunca yerel pencerelerden
+bilgi biriktirir.
 
-*Sayma* kısmı bölümün başında yaptığımız şey: **eş-oluşum** (co-occurrence)
-sayımı, yani iki kelimenin birbirinin penceresine kaç kez düştüğü. Oyuncak
-derlemimizde `king` ile `the` dört kez, `apple` ile `sweet` bir kez aynı
-pencereye düşmüştü; bu iki sayı o iki kelime çifti için eş-oluşum
-sayımlarıdır. Bütün çiftler için tutulduğunda ortaya kelime × kelime boyutunda
-bir tablo çıkar — bölümün başında $C$ dediğimiz matris.
-
-*Kayıp fonksiyonuyla* kısmı ise o tablonun nasıl kullanıldığı. GloVe, her
-kelimeye öyle bir vektör arıyor ki iki kelimenin vektörlerinin iç çarpımı, o
-çiftin (logaritması alınmış) eş-oluşum sayımına olabildiğince yakın çıksın.
-"Olabildiğince yakın"ın ölçüsü **en küçük kareler** (least squares): her çift
-için tahmin ile gözlenen sayı arasındaki farkın karesini alın, hepsini
-toplayın ve bu toplamı küçülten vektörleri bulun. Bir doğrusal regresyonda
-doğruyu noktalara uydururken yaptığınız iş bu; burada uydurulan şey bir doğru
-değil, vektörler.
+GloVe her kelime ve bağlam için vektörler ve sabit terimler (bias) öğrenir.
+$\mathbf{v}_w \cdot \mathbf{u}_c + b_w + b_c$ toplamının, pozitif eş-oluşum
+sayımının logaritmasına yakın olmasını ister. Yakınlığı, çiftin sayımına bağlı
+bir ağırlıkla çarpılan karesel hatayla ölçer; bu ölçüye ağırlıklı **en küçük
+kareler** (least squares) denir. İki vektör tablosu birlikte öğrenildiğinden bu,
+parametreler bakımından sıradan doğrusal regresyonla aynı optimizasyon problemi
+değildir.
 
 Daha resmî söylersek: [GloVe, derlem boyunca yerel pencerelerden biriktirilmiş
 eş-oluşum sayımlarını, ağırlıklı bir en küçük kareler amaç fonksiyonuyla
@@ -1887,7 +1883,7 @@ matrisini kurun, sonra iç çarpımlar log eş-oluşum sayımlarını yeniden ü
 diye vektörleri eğitin ve nadir çiftlerin ağırlığını düşürün:
 
 $$
-\mathcal{L} = \sum_{w,c} f(X_{wc})
+\mathcal{L} = \sum_{(w,c)\,:\,X_{wc} > 0} f(X_{wc})
 \left(\mathbf{v}_w \cdot \mathbf{u}_c + b_w + b_c - \log X_{wc}\right)^2
 $$
 
@@ -1895,21 +1891,16 @@ Bu, log sayımlar üzerinde ağırlıklı en küçük kareler; üstelik kelime b
 bir bias terimiyle (sabit terim) — istatistikte bundan daha klasiği pek yoktur. Parça
 parça sökelim, çünkü her terim bir sebeple orada.
 
-**Neden $X_{wc}$ değil de $\log X_{wc}$?** Eş-oluşum sayımları Zipf yasasına
-uyar: birkaç çift milyonlarca kez, çoğu çift bir kez geçer. Vektörleri ham sayımlar
-üzerinde eğitmek, kaybın bütünüyle `of the` üzerine kurulması ve başka hiçbir
-şeyi umursamaması demek olurdu. Logaritma almak bu oranları farklara çevirir;
-verideki yapı da asıl bu ölçekte ortaya çıkar.
+**Neden $X_{wc}$ değil de $\log X_{wc}$?** Eş-oluşum sayımları çok geniş bir
+aralığa yayılabilir: bazı çiftler sık, pek çoğu seyrek görülür. Ham sayımlardaki
+karesel hata büyük sayımlı çiftleri aşırı öne çıkarabilir. Logaritma, çarpımsal
+oranları toplamsal farklara dönüştürür ve bu ölçek farkını azaltır.
 
-**Bias terimleri neden var?** Bölümün en öğretici kısımlarından biri burası. $b_w$
-yalnızca $w$'ye bağlı olan her şeyi, $b_c$ ise yalnızca $c$'ye bağlı olan her
-şeyi soğurabilir — ki bunlar tam da satır ve sütun toplamlarıdır. Bias
-terimleri kestirilince, her kelimenin genel frekansı hesaba katıldıktan sonra
-*geriye kalanı* açıklama işi $\mathbf{v}_w \cdot \mathbf{u}_c$ ifadesine
-kalır. Bunu bölümün başındaki PMI formülüyle karşılaştırın:
-$c_{w\ast}$ ve $c_{\ast c}$'ye bölmek, onların logaritmalarını çıkarmaktır ve
-bu bias terimlerinin öğrendiği şey de bu çıkarma işlemidir. GloVe,
-PMI'yı yeniden keşfeder; ama onu hesaplamak yerine kestirir.
+**Bias terimleri neden var?** Bias terimleri, kelime ve bağlamın genel kullanım
+eğilimlerinin bir bölümünü modelleyebilir. Bu, PMI'nın marjinal sıklıkları hesaba
+katmasıyla benzer bir sezgi taşır. Ancak GloVe bu terimleri veriden birlikte
+öğrenir; bunların log satır ve sütun toplamlarına eşit olması zorunlu değildir.
+Dolayısıyla GloVe'un iç çarpımlarını tam olarak PMI diye yorumlayamayız.
 
 **$f(X_{wc})$ neden var?** Aynı anda iki problemi çözmek gerekiyor. Hiç bir
 arada geçmeyen bir çift için $\log 0 = -\infty$ olur; sürekli bir arada geçen
@@ -1934,17 +1925,16 @@ $$
 
 : GloVe'un ağırlıklandırma fonksiyonu, $x_{\max} = 100$ için {tbl-colwidths="[16,18,66]"}
 
-$f(0) = 0$'ın kazandırdığı şu: sonsuzluğun hiç hesaplanması
-gerekmez, çünkü katsayısı sıfırdır. Tavan da önemli. 100.000 kez
-görülen bir çift, 100 kez görülen bir çiftle aynı ağırlığı alır;
-böylece derlemdeki en sık çiftler — ki aynı zamanda en az bilgi taşıyanlardır
-— eğitime hükmedemez. Bu, word2vec'in altörneklemesiyle aynı içgüdüdür;
-yalnızca silme yerine ağırlık olarak uygulanmıştır. Üs de tanıdık: 0,75,
-word2vec'in negatif örnekleme dağılımındaki üsle aynı (orada başka bir iş
-görüyor: gürültü dağılımını düzleştiriyor).
+Sıfır sayımlı hücreleri toplamın dışında bıraktığımız için $\log 0$ hesaplamayız.
+Pozitif sayımlarda $f(x)$, nadir çiftlerin ağırlığını azaltır ve $x \geq 100$
+için 1'de kalır. Böylece sayım arttıkça ağırlık sınırsız büyümez; ancak karesel
+artık ve gradyan hâlâ büyük olabilir. Bu yaklaşım, sık çiftlerin etkisini
+denetleme amacı bakımından altörneklemeyle ilişkilidir; aynı işlem değildir. Her
+iki yöntemde görülen 0,75 üssü de farklı işlevler üstlenir.
 
-GloVe'un ön eğitimli vektörleri, statik embedding isteyenlerin en çok
-başvurduğu vektörlerdir; bu yüzden bölümün geri kalanında onları kullanacağız. Vektörler İngilizce metinle eğitildiği için buradan sonraki örnek kelimeler de İngilizce.
+Bölümün geri kalanında, erişimi kolay bir statik temsil örneği olarak GloVe'un
+ön eğitimli vektörlerini kullanacağız. Bu vektörler İngilizce metinlerden
+öğrenildiği için örnek kelimeler de İngilizce olacak.
 
 ```python
 import numpy as np
@@ -1963,11 +1953,10 @@ king[:8] = [-0.323 -0.876  0.22   0.253  0.23   0.739 -0.38  -0.353]
 norm: 6.118
 ```
 
-Bir kelime artık şu demek: tek başına hiçbiri bir şey ifade etmeyen yüz
-sayı. Boyutlar "krallık" ve "cinsiyet" değil; öğrenilmiş bir uzayın keyfî
-bir tabanını oluşturuyorlar. Sözgelimi 37. boyutun ne anlama geldiğini sormak,
-çok değişkenli bir veri kümesindeki bir temel bileşenin tek başına ne anlama
-geldiğini sormaya benzer. Bazen bir cevabı vardır; genellikle yoktur.
+Her kelime artık yüz sayıyla temsil ediliyor. Bu koordinatlara önceden "krallık"
+veya "cinsiyet" gibi etiketler atanmamıştır. Bazı koordinatlar belirli
+özelliklerle ilişkili çıkabilir; ancak bu yorumlar seçilen temsile bağlıdır ve
+koordinat sisteminin değişimine karşı genellikle korunmaz.
 
 ```python
 for w in ["king", "pump", "turkey", "python", "bank"]:
@@ -1985,27 +1974,26 @@ for w in ["king", "pump", "turkey", "python", "bank"]:
 
 Bunlardan üçü ikinci bir bakışı hak ediyor.
 
-`turkey` sorgusu `ankara`, `turkish`, `greece` döndürüyor — yani ülke;
-kuştan eser yok. `python` sorgusu `monty` ile `cleese`'i (komedi grubu), `php`
-ile `perl`'i (programlama dili) ve `flipper`'ı (hayvan) döndürüyor — üç farklı
-anlam tek bir noktada harmanlanmış. `bank` yalnızca finansal anlamı
-döndürüyor; nehir kıyısı oylamayı kaybetmiş.
+`turkey` komşularında ülkeyle, `bank` komşularında finansla ilgili kelimeler öne
+çıkıyor. `python` için ise komedi grubuna (`monty`, `cleese`) ve programlama
+dillerine (`php`, `perl`) ilişkin komşular birlikte görülüyor. `flipper`
+sonucunun hangi kullanım ilişkilerinden kaynaklandığını yalnızca bu listeden
+belirleyemeyiz. Listeler, tek bir kelime vektörünün farklı kullanımların etkisini
+birlikte taşıyabildiğini gösterir; bütün anlamların kapsamlı bir dökümü
+değildir.
 
 Statik bir embedding'in belirleyici sınırı bu: [bağlam ne olursa olsun,
 kelime biçimi başına tek bir vektör]{.hl}.
 
-Türkçe *yüz* kelimesini ele alın. Hem insanın yüzü, hem *100* sayısı, hem de
-*yüzmek* fiilinin emir kipi. Statik bir model ona tek bir satır verir ve o satır
-üç anlamın ağırlıklı ortalamasıdır: uzayda hiçbirini ifade etmeyen, anatomi,
-aritmetik ve yüzme arasında bir yerde duran bir konum.
+Türkçe *yüz* kelimesi insanın yüzünü, 100 sayısını veya *yüzmek* fiilinin emir
+kipini gösterebilir. Statik bir kelime tablosu bu biçime tek vektör verir;
+farklı kullanımlar öğrenmeyi etkiler, fakat sonuç bu anlamların açıkça
+hesaplanmış aritmetik ortalaması değildir. Vektörü tek başına sorgulayarak o
+andaki cümlede hangi anlamın kullanıldığını seçemeyiz. Buna karşılık bu vektörü
+çevredeki kelimelerle birlikte işleyen bir model bağlamdan yararlanabilir.
 
-Şimdi o vektöre, *yüz* kelimesinin geçtiği bir yorumun bir yüz kremiyle mi,
-yoksa yüz liralık bir fiyatla mı ilgili olduğunu sorduğunuzu düşünün. Cevap
-veremez ve bunu hiçbir miktarda eğitim verisi değiştirmez; çünkü cevap cümleye
-bağlıdır, vektör ise cümle var olmadan önce sabitlenmiştir.
-
-Tam da bunu düzeltmek, @sec-transformerlar'deki
-bağlamsal modellerin tek başına en büyük motivasyonudur.
+Bu sınırlılık, transformer bölümünde (@sec-transformerlar) ele alınan, bağlama
+göre değişen token temsillerinin önemli gerekçelerinden biridir.
 
 ## Meşhur analoji ve gizlediği şey
 

@@ -1832,28 +1832,23 @@ depends on the implementation and the settings used.
 
 ## GloVe: counting, with a loss function
 
-If counting and predicting are the same thing underneath, an obvious question
-follows: could you do the counting *explicitly* and still get the benefits of
-gradient descent?
+GloVe accumulates the co-occurrence counts explicitly and learns the vectors
+with a weighted loss function defined on those counts. In that way it combines
+a count-based representation with gradient-based learning.
 
-The slogan in the heading — *counting, with a loss function* — is two half
-sentences; take them one at a time.
+GloVe's input is a word–context co-occurrence table. The matrix $C$ at the start
+of the chapter added one for every pair inside the window. In the original
+GloVe implementation distant contexts can be counted with a lower weight, so
+the cells of $X$ need not be integers. Both approaches accumulate information
+from local windows across the corpus.
 
-The *counting* half is what we did at the start of the chapter:
-**co-occurrence** counts, meaning how many times two words fall inside each
-other's window. In our toy corpus `king` and `the` fell in the same window
-four times and `apple` and `sweet` once; those two numbers are the
-co-occurrence counts for those two pairs. Kept for every pair, they form a
-word-by-word table — the matrix we called $C$ at the start of the chapter.
-
-The *with a loss function* half is how that table is used. GloVe looks for a
-vector for every word such that the dot product of two words' vectors comes
-out as close as possible to the (logged) co-occurrence count of that pair.
-The measure of "as close as possible" is **least squares**: for each pair take
-the squared difference between the prediction and the observed count, add them
-all up, and find the vectors that make that total small. It is what you do
-when you fit a line to points in a linear regression; here what gets fitted is
-not a line but the vectors.
+GloVe learns vectors and bias terms for every word and every context. It asks
+the sum $\mathbf{v}_w \cdot \mathbf{u}_c + b_w + b_c$ to be close to the
+logarithm of the positive co-occurrence count. Closeness is measured by the
+squared error multiplied by a weight that depends on the pair's count: weighted
+**least squares**. Because the two vector tables are learned together, this is
+not the same optimization problem, in its parameters, as ordinary linear
+regression.
 
 More formally: [GloVe factorizes co-occurrence counts accumulated from local
 windows across the whole corpus, using a weighted least-squares
@@ -1881,7 +1876,7 @@ co-occurrence matrix, then fit vectors so that dot products reproduce log
 co-occurrence counts, weighting rare pairs down:
 
 $$
-\mathcal{L} = \sum_{w,c} f(X_{wc})
+\mathcal{L} = \sum_{(w,c)\,:\,X_{wc} > 0} f(X_{wc})
 \left(\mathbf{v}_w \cdot \mathbf{u}_c + b_w + b_c - \log X_{wc}\right)^2
 $$
 
@@ -1889,22 +1884,17 @@ This is weighted least squares on log counts, with a bias term per word —
 about as classical as statistics gets. Take it apart piece by piece, because
 every term is there for a reason.
 
-**Why $\log X_{wc}$ and not $X_{wc}$?** Co-occurrence counts are Zipfian: a
-few pairs occur millions of times, most occur once. Fitting raw counts would
-mean the loss is entirely about `of the` and nothing else. Taking logs turns
-those ratios into differences, which is the scale the structure actually
-lives on.
+**Why $\log X_{wc}$ and not $X_{wc}$?** Co-occurrence counts can span a very
+wide range: some pairs are frequent and a great many are rare. A squared error
+on raw counts can give the pairs with large counts far too much prominence. The
+logarithm turns multiplicative ratios into additive differences and reduces
+that difference in scale.
 
-**Why the bias terms?** This is the part worth pausing on. $b_w$ can absorb
-anything that depends only on $w$, and $b_c$ anything that depends only on
-$c$ — which is exactly the row and column totals. Fitting them means
-$\mathbf{v}_w \cdot \mathbf{u}_c$ is left to explain what is *left over* after
-each word's overall frequency has been accounted for. Compare that to the
-PMI formula at the start of this chapter: dividing by $c_{w\ast}$ and
-$c_{\ast c}$ is subtracting their logs, and subtracting their logs is what
-these biases learn to do. Once the biases absorb the overall frequency effects
-of the word and the context, what remains is a PMI-like residual structure —
-one GloVe fits rather than computes.
+**Why the bias terms?** The bias terms can model part of the overall usage
+tendencies of the word and of the context. That carries an intuition similar to
+the way PMI takes marginal frequencies into account. GloVe learns these terms
+jointly from the data, however, and they need not equal the log row and column
+totals. So GloVe's dot products cannot be read as exactly PMI.
 
 **Why $f(X_{wc})$?** Two problems need solving at once. A pair that never
 co-occurs has $\log 0 = -\infty$, and a pair that co-occurs constantly would
@@ -1928,17 +1918,16 @@ $$
 
 : GloVe's weighting function, at $x_{\max} = 100$ {tbl-colwidths="[16,18,66]"}
 
-Note what $f(0) = 0$ buys: the infinity never has to be evaluated, because
-its coefficient is zero. And note the cap. A pair seen 100,000 times gets
-exactly the same weight as one seen 100 times, so the most frequent pairs in
-the corpus — which are also the least informative — cannot dominate the fit.
-That is the same instinct as word2vec's subsampling, implemented as a weight
-rather than as a deletion. The exponent is familiar too: 0.75, the same as in
-word2vec's negative-sampling distribution (where it does a different job,
-flattening the noise distribution).
+Because cells with a zero count are left out of the sum, $\log 0$ is never
+computed. For positive counts $f(x)$ lowers the weight of rare pairs and stays
+at 1 for $x \geq 100$. The weight therefore does not grow without bound as the
+count grows; the squared residual and the gradient can still be large. In its
+aim of controlling the influence of frequent pairs this is related to
+subsampling; it is not the same operation. The 0.75 exponent that appears in
+both methods does different jobs as well.
 
-The pretrained vectors are the ones most people reach for when they want
-static embeddings, so we will use them for the rest of the chapter.
+For the rest of the chapter we use GloVe's pretrained vectors as an easily
+obtained example of a static representation.
 
 ```python
 import numpy as np
@@ -1957,11 +1946,11 @@ king[:8] = [-0.323 -0.876  0.22   0.253  0.23   0.739 -0.38  -0.353]
 norm: 6.118
 ```
 
-That is what a word is now: one hundred numbers, none of which means
-anything on its own. The dimensions are not "royalty" and "gender" — they
-are an arbitrary basis of a learned space, and asking what dimension 37
-means is like asking what a principal component of some multivariate dataset
-means on its own. Sometimes there is an answer; usually there is not.
+Every word is now represented by one hundred numbers. No labels such as
+"royalty" or "gender" were assigned to these coordinates in advance. Some
+coordinates may turn out to be related to particular properties; such readings
+depend on the chosen representation, however, and are usually not preserved
+when the coordinate system changes.
 
 ```python
 for w in ["king", "pump", "turkey", "python", "bank"]:
@@ -1979,27 +1968,27 @@ for w in ["king", "pump", "turkey", "python", "bank"]:
 
 Three of these deserve a second look.
 
-`turkey` returns `ankara`, `turkish`, `greece` — the country, with no trace
-of the bird. `python` returns `monty` and `cleese` (the comedy troupe),
-`php` and `perl` (the language), and `flipper` (the animal) — three
-different meanings blended into one point. `bank` returns only the financial
-sense; the river bank has been outvoted.
+Among the neighbours of `turkey` the words about the country stand out, and
+among those of `bank` the words about finance. For `python`, neighbours related
+to the comedy troupe (`monty`, `cleese`) and to programming languages (`php`,
+`perl`) appear together. Which usage relations the `flipper` result comes from
+cannot be determined from this list alone. The lists show that a single word
+vector can carry the influence of different usages together; they are not a
+complete inventory of all the senses.
 
 This is the defining limitation of a static embedding: [one vector per word
 form, whatever the context]{.hl}.
 
-Take the Turkish word *yüz*. It means *face*, it means *hundred*, and it is
-the imperative *swim*. A static model gives it one row, and that row is the
-weighted average of all three — a location in the space that means none of
-them, sitting somewhere between anatomy, arithmetic and swimming.
+The Turkish word *yüz* can mean *face*, the number *hundred*, or the imperative
+*swim*. A static word table gives that form a single vector; the different
+usages influence what is learned, but the result is not an explicitly computed
+arithmetic mean of those senses. Querying the vector by itself cannot select
+which sense is in use in the sentence at hand. A model that processes this
+vector together with the surrounding words, on the other hand, can make use of
+the context.
 
-Now imagine asking that vector whether a review mentioning *yüz* is about a
-face cream or a hundred-lira price. It cannot answer, and no amount of
-training data will change that, because the answer depends on the sentence and
-the vector was fixed before the sentence existed.
-
-Fixing exactly this is the single biggest motivation for the contextual models
-in @sec-transformers.
+That limitation is one of the important reasons for the token representations
+that change with context, covered in @sec-transformers.
 
 ## The famous analogy, and what it hides
 
