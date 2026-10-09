@@ -1607,59 +1607,61 @@ why "I reimplemented the paper and it didn't work" is usually about
 optimisation details rather than the equations.
 :::
 
-### The two families were one family all along
+### The link between count-based and prediction-based methods {#the-two-families-were-one-family-all-along}
 
-For a year the field treated counting (LSA, PPMI+SVD) and predicting
-(word2vec) as rival philosophies — @baroni2014dont is the paper that framed it
-as a contest and reported predicting winning. Then @levy2014neural proved that
-skip-gram with negative sampling is *implicitly factorizing* a matrix — and
-that matrix is PMI, shifted by $\log K$:
+
+For a while counting (LSA, PPMI+SVD) and predicting (word2vec) were seen as rival
+approaches; @baroni2014dont compared the two and reported better results for
+prediction-based methods. Then @levy2014neural showed how skip-gram with
+negative sampling relates to matrix factorization. If the negative contexts are
+drawn from the context marginal of the training pairs, and if the dot product
+of every pair can be chosen independently, then for pairs with a positive count
+the optimal target is the shifted **PMI** value below. That does not mean every
+version of word2vec is identical to PPMI–SVD:
 
 $$
 \mathbf{v}_w \cdot \mathbf{u}_c = \mathrm{PMI}(w, c) - \log K
 $$
 
-— at the optimum, with the dot products free to take any value. So
-prediction-based SGNS and matrix-based methods are far closer than they looked:
-the optimal dot products target a shifted PMI. The low-rank constraint,
-different losses and sampling mean they still do not produce the same embedding
-in practice.
+So prediction-based SGNS and matrix-based methods are closer than they looked:
+under those conditions the optimal dot products target a shifted PMI. The
+low-rank constraint, different losses and sampling mean they still do not
+produce the same embedding in practice.
 
-Note that this is PMI, not the PPMI of route A, and the difference is not
-cosmetic. The implicit matrix holds $-\infty$ in every cell for a pair that
-never co-occurs, which no factorization can represent — which is exactly why
-Levy and Goldberg go on to propose the *shifted positive* PMI matrix,
-$\mathrm{SPPMI}(w,c) = \max(\mathrm{PMI}(w,c) - \log K,\ 0)$, as the explicit
-matrix you would actually build. Note where the clipping lives: it is a patch
-applied when you *construct* an explicit SPPMI matrix. Training SGNS clips
-nothing — it simply never has to represent a $-\infty$, because it only ever
-sees the pairs it samples.
+Note that this is PMI, not the PPMI of route A. When building an explicit matrix
+we can clip the PMI values that are negative or go to infinity and obtain the
+*shifted positive* PMI that Levy and Goldberg propose,
+$\mathrm{SPPMI}(w,c) = \max(\mathrm{PMI}(w,c) - \log K,\ 0)$. SGNS does not do
+that explicitly. A pair whose positive count is zero can still be drawn as a
+negative; with $q(c) > 0$ and a positive centre probability, the logistic
+optimum for its free score lies at the limit $z \to -\infty$. The actual model
+works with finite parameters, shared low-dimensional vectors and a finite number
+of updates, so it does not realize all those limits exactly.
 
-Look closely at what that sentence claims. Nowhere in word2vec does anyone
-build a PMI matrix — the algorithm only ever sees one pair at a time and
-nudges two vectors. Yet if you let it run to convergence and then read off
-the dot product for any pair of words, you get that pair's PMI, minus a
-constant. The matrix was never constructed; it was *reached*.
+SGNS does not build this matrix explicitly; it makes updates from sampled pairs.
+Shared low-dimensional vectors may not be able to meet the free optima of all
+pairs at once. The noise distribution with the 0.75 exponent changes the target
+as well. For those reasons not every dot product of a converged implementation
+equals $\mathrm{PMI} - \log K$ directly.
 
-The $-\log K$ term has a plain reading too. Raising $K$ means each real pair
-is contrasted against more fakes, which lowers the target for every dot product
-by the same fixed amount. Be careful with the intuition here: the shift is
-uniform in the *implicit matrix*, and that is not the same as translating every
-word vector by a common offset — no set of $d$-dimensional vectors reproduces a
-constant added to every inner product exactly. In practice $K$ is still one of
-the less important settings, which is an empirical observation rather than a
-consequence of the algebra.
+When $K$ grows, with the other distributions held fixed, the free dot-product
+targets shift down by the same constant. That is not in general equivalent to
+adding the same vector to every word vector. Adding a constant to the target
+matrix raises its rank by at most one; it can be represented with an extra
+coordinate if needed, but the same fit may not be preserved at a fixed $d$. The
+effect of $K$ on a task has to be assessed experimentally.
 
 ::: {.callout-note collapse="true"}
 ## Deep dive: why SGNS learns a shifted PMI
 
-Fix a single pair $(w, c)$ and ask what value of $z = \mathbf{v}_w \cdot
-\mathbf{u}_c$ minimises the loss, treating $z$ as a free number rather than
-something built from vectors. Over the whole corpus that pair contributes a
-positive term proportional to its actual count, and a negative term
-proportional to how often the sampler would produce it by accident, which is
-$K$ times the chance of drawing $c$ at random. Writing those two weights as
-$P(w,c)$ and $K \cdot P(w)P(c)$, the objective for that pair is
+Fix a single pair $(w, c)$ and treat $z = \mathbf{v}_w \cdot \mathbf{u}_c$ as a
+free number, not as something built from vectors. Over the whole corpus that
+pair contributes two terms to the objective: one proportional to its positive
+count, and one proportional to how often the sampler would produce it as a
+negative. Assuming the negatives are drawn from the context marginal $P(c)$,
+those two weights are $P(w,c)$ and $K \cdot P(w)P(c)$. The pair's contribution
+to the objective **to be maximized** is the following; taking the negative of
+the same expression gives the loss to be minimized:
 
 $$
 P(w,c)\,\log \sigma(z) \;+\; K\,P(w)P(c)\,\log \sigma(-z)
@@ -1682,22 +1684,18 @@ z = \log \frac{P(w,c)}{K\,P(w)P(c)}
   = \mathrm{PMI}(w,c) - \log K
 $$
 
-The one assumption doing real work is that $z$ can be chosen freely for every
-pair. It cannot — the dot products all share the same underlying vectors, and
-with $d$ far below the vocabulary size the model must compromise. What the
-theorem fixes is the *target*; it says nothing about how the compromise is
-made, and that is where the two routes part company. A truncated SVD minimises
-squared reconstruction error and weights every cell of the matrix equally.
-SGNS minimises a logistic loss weighted by how often each pair was actually
-sampled. Both are low-rank approximations to the same target and they are
-approximations under different losses, so at a given $d$ they do not
-generally produce the same vectors.
+This derivation assumes that the negatives are drawn from $P(c)$ and that $z$
+can be chosen independently for every pair. In the actual low-dimensional model
+all the dot products are built from shared vectors. Under that constraint SGNS
+optimizes a logistic loss weighted by sampling. PPMI–SVD, by contrast,
+minimizes the squared reconstruction error of a matrix whose negative values
+have been clipped. So the two can differ in their targets as well as in their
+losses, because of the clipping and the noise distribution.
 
-A second assumption is hiding in the notation, and it matters because it
-contradicts the code above. Writing the noise weight as
-$K\,P(w)P(c)$ assumes negatives are drawn from the *raw* unigram distribution.
-word2vec draws them from $P_\alpha(c) \propto f(c)^{0.75}$ instead — the
-exponent from two sections ago — and carrying that through gives
+The assumption that negatives are drawn from $P(c)$, the *raw* unigram
+distribution, does not match the code above. word2vec draws them from
+$P_\alpha(c) \propto f(c)^{0.75}$ instead — the exponent from two sections
+ago — and carrying that through gives
 
 $$
 \mathbf{v}_w \cdot \mathbf{u}_c
@@ -1778,13 +1776,12 @@ matrix the algorithm factorizes.
 ```
 
 ::: {.fig-cap}
-The routes look unrelated — one is linear algebra on a count matrix, the
-other is stochastic gradient descent on a classifier — but @levy2014neural
-showed they are aimed at the same target. Skip-gram with negative sampling is
-implicitly factorizing the PMI matrix that route A approximates by clipping it
-into PPMI, shifted by $\log K$. Aimed at, not landing on: the equivalence is
-exact for unconstrained dot products, and at the low rank you actually use the
-two optimise different losses.
+Count-based methods and SGNS use distributional information in different ways.
+When the negatives are drawn from the context marginal and the dot products are
+free, the target of SGNS is $\mathrm{PMI} - \log K$. The PPMI–SVD route in the
+figure additionally clips at zero and uses a squared loss; it is not expected to
+give the same vectors at low rank. With 0.75-exponent sampling, the actual noise
+distribution $q(c)$ has to replace $P(c)$ in the equality under the figure.
 :::
 ::::
 
@@ -1798,40 +1795,40 @@ every paper you read: when a new method beats an old one, some of the
 improvement is the method and some is the tuning, and the split is rarely
 reported.
 
-Which leaves the practical question of when to take which route. Since they aim
-at the same target and land close enough that @levy2015improving could not
+Which leaves the practical question of when to take which route. Since their
+targets are close and they land close enough that @levy2015improving could not
 separate them once the hyperparameters matched, the choice is mostly about
 engineering:
 
 | | [Counting]{.pro} (PPMI + SVD) | [Predicting]{.pro} (word2vec) |
 |---|---|---|
-| Memory | Holds a $V \times V$ matrix. Stored densely that is 160 billion cells at $V = 400{,}000$ — but nobody stores it densely: the matrix is sparse, and GloVe builds exactly this one, for exactly this vocabulary, to produce the vectors used throughout this chapter. The real cost is that it is a single monolithic artifact, expensive to build and expensive to update | Streams the corpus; memory is $2 \cdot V \times d$ (two tables) regardless of corpus size |
+| Memory | Large corpora need a sparse co-occurrence matrix, the low-rank vectors and the solver's working memory. The small example in this chapter uses a dense matrix for teaching purposes | In a streaming implementation the two vector tables take $O(Vd)$ space; the sampler and buffers need memory too. The NumPy example here stores every pair, so its total memory also depends on corpus size |
 | Corpus size | Comfortable on small corpora, where every count is precious | Needs a lot of text before the gradient noise averages out |
-| Determinism | [Same input, same output — for an exact solver. Randomized truncated SVD, the default at scale, needs a fixed seed, and singular vectors are only determined up to a sign either way]{.pro} | [Random initialisation and sampling; two runs differ]{.con} |
-| New data | [Recount and refactorize from scratch]{.con} | [Keep training from where you stopped]{.pro} |
-| Inspectability | [Every intermediate is a table you can read]{.pro} | [Little to read mid-training beyond the loss and the current nearest neighbours]{.con} |
+| Reproducibility | The solver and the environment are fixed; randomized SVD needs a stated seed. The signs of singular vectors, and some choices of basis in subspaces with equal singular values, are not unique | Controlling the seed, data order, thread count and environment improves reproducibility; different initializations can give different solutions |
+| New data | Counts can be updated incrementally; the reweighting and the factorization need a suitable update method | Training can continue if the two tables, the vocabulary and the necessary training state have been kept. Released word vectors alone may not be enough |
+| Inspectability | Counts and weighted cells can be inspected directly | The sampling distribution, gradients, norms, loss and neighbourhoods can be inspected |
 | Tuning burden | Window size, PPMI variant, $d$ | Window, $d$, $K$, subsampling $t$, learning rate, epochs |
 
-: The same destination, different engineering {tbl-colwidths="[19,40,41]"}
+: Close targets, different engineering {tbl-colwidths="[19,40,41]"}
 
-One difference does not fit in that table because it is statistical rather
-than practical, and for a reader with a statistics background it is the most
-important one. Truncated SVD gives the best rank-$d$ approximation in Frobenius
-norm — the Eckart–Young–Mirsky theorem — which means it weights *every cell
-equally*, and the overwhelming majority of cells in a PPMI matrix are zero. So
-SVD spends most of its budget faithfully reproducing "these two words never
-met", a fact it holds millions of copies of. SGNS never sees a cell it did not
-sample, so it weights each cell by how often the pair actually occurred (as a
-real pair) or would be drawn by chance (as a negative). That,
-and not the neural framing, is where SGNS's advantage on rare words comes from
-— and it is exactly the defect that GloVe's weighting function $f(X_{wc})$ was
-designed to fix, as the next section shows. Read the three methods as three
-answers to one question: *how much should a cell you barely observed count?*
+One more difference does not fit in that table, and it is statistical. Truncated
+SVD gives the best rank-$d$ approximation in Frobenius norm (the
+Eckart–Young–Mirsky theorem), which means it gives an equal coefficient to the
+squared reconstruction error of every cell of the PPMI matrix. The zeros in
+PPMI cover pairs that were never observed and also observed pairs whose PMI is
+zero or negative. The sheer number of zeros does not by itself show that most of
+the error, or of the model's capacity, goes to them. SGNS uses a logistic loss
+under weights set by the positive pair frequencies and the negative-sampling
+distribution. GloVe chooses yet another weighting, one that depends on the
+counts, as the next section shows. Those differences affect how the methods
+behave; they do not prove an unconditional advantage for any of them on rare
+words.
 
-The row that decides it in practice is new data. Counting is the better
-pedagogy, the better choice for a modest corpus, and the only one of the two
-that is deterministic and inspectable; predicting is what survives contact with
-a corpus that keeps growing.
+The choice should weigh corpus size, the need for updates, memory,
+inspectability and the target task together. PPMI–SVD makes the steps of the
+computation visible on small examples; streaming SGNS can be convenient for
+training on large text that keeps arriving. How well either approach does
+depends on the implementation and the settings used.
 
 ## GloVe: counting, with a loss function
 
