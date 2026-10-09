@@ -3435,10 +3435,10 @@ the circumstances.
 
 | | [Strengths]{.pro} | [Weaknesses]{.con} | Reach for it when |
 |---|---|---|---|
-| **PPMI + SVD** | No training loop; deterministic when you use an exact solver, so the same corpus gives the same vectors twice. With the randomised truncated SVD used at scale, the seed and the implementation can change the result. Every step is inspectable. Works on small corpora. | Needs the $V \times V$ co-occurrence matrix — sparse, so the cost is the number of non-zeros, and a truncated SVD never forms the dense version. Still the largest object in the pipeline. No out-of-vocabulary handling. Awkward to update with new text. | The corpus is small, the vocabulary is modest, and you need to be able to explain every number. |
-| **word2vec** | Streams over the corpus, so you never hold the whole thing in memory — the model itself is still two $V \times d$ tables. Fast, well-understood, implementations everywhere. Skip-gram is strong on rare words. | Classic word-level word2vec has no learned vector for a word form it never saw in training; depending on the library that either raises an error or falls back to some unknown-word handling. Sensitive to hyperparameters. Little to inspect mid-training beyond the loss. | You have a large domain corpus in a language without heavy morphology and want vectors specific to it. |
-| **GloVe** | Trained on co-occurrence counts accumulated from local windows across the corpus; it sees each pair as a total rather than one occurrence at a time. Pretrained vectors are excellent and free. | Requires building the co-occurrence matrix first, which is the memory cost you were avoiding. Same OOV failure. | You want good English vectors immediately and have no reason to train anything. |
-| **fastText** | Any word gets a vector, including one invented five seconds ago. Typo-tolerant. Far better out-of-vocabulary coverage on agglutinative languages — whether that converts into task accuracy is a separate measurement, and @sec-bake-off found it did not on one. | Slower and larger — it stores n-gram vectors on top of word vectors, and every lookup is a sum. Assumes spelling similarity implies meaning similarity: `kitap`/`kitle` at 0.667. Weakest on short words. | Rich morphology, a high out-of-vocabulary rate, spelling variation and a modest corpus come together — and you can tolerate false similarity on short words. Turkish, Finnish, Hungarian, Arabic and user-generated text typically meet those criteria. |
+| **PPMI + SVD** | The counts and the transformations can be inspected directly; an instructive starting point on small corpora. With a fixed solver and environment the results are reproducible, though sign and equal-singular-value subspace ambiguities remain. | Needs the sparse count matrix plus the low-rank factors and the solver's working memory. Which of them is the largest object depends on the data. No row is directly available for out-of-vocabulary forms. | You want to inspect the steps of the computation, or to set up a count-based baseline on a modest vocabulary. |
+| **word2vec** | Can be implemented as a streaming method; the two basic tables are of size $O(Vd)$. Skip-gram gives good results on rare words in some tasks. | Performance depends on sampling, training settings and coverage. Keeping only the final vectors is not enough to continue training. The NumPy example in this chapter holds every pair in memory. | You want to learn word vectors from a domain corpus — measuring against fastText, with the language's morphology and the OOV rate in view. |
+| **GloVe** | Accumulates co-occurrences and learns with a weighted loss; provides accessible pretrained vectors. | Training requires the co-occurrence data to be prepared. The coverage of a released vocabulary varies with language and domain. | You want a quick start with released static vectors that cover the language and domain you need. |
+| **fastText** | By sharing character pieces it can produce representations for out-of-vocabulary and rarely seen forms; robust to some spelling variation. | The subword table needs extra memory. Building an OOV vector requires combining pieces; in-vocabulary vectors can be precomputed. Similar spelling can create unwanted closeness (`kitap`/`kitle` 0.667). | The OOV rate, inflectional variety or spelling variability is high — evaluating the coverage gain on task performance and hard negatives (see the measurement in @sec-bake-off). |
 
 : Static word embedding methods {tbl-colwidths="[12,29,29,30]"}
 
@@ -3447,22 +3447,17 @@ suggests:
 
 | | [Strengths]{.pro} | [Weaknesses]{.con} |
 |---|---|---|
-| **Averaged word vectors** | Nothing to train. Works on a document the model has never seen, instantly. Trivially explainable. | Destroys word order and negation. Frequent words dominate the average unless you weight them down. |
-| **doc2vec** | Scored 0.839 against averaging's 0.820 here — about two standard errors on one split, so a direction rather than a verdict. | A new document has no vector — inference means running gradient steps at query time. Needs many epochs to be worth it. |
+| **Averaged word vectors** | With word vectors already available, no extra training of a document representation is needed; computed directly for new documents. | Loses word order and syntactic relations; does not reliably keep the scope of negation. OOV behaviour and weighting matter. |
+| **doc2vec** | Gives higher accuracy than averaged GloVe in this experiment (0.839 against 0.820); the uncertainty of the difference has to be measured with a paired evaluation. | The vector of a new document is estimated by optimization; inference cost and training settings have to be assessed. |
 
 : Turning a document into one vector {tbl-colwidths="[20,40,40]"}
 
-On the accuracy numbers in this chapter, doc2vec's advantage over averaging
-was 1.9 points and neither beat a TF-IDF baseline from @sec-text-as-data.
-That ordering is the honest headline: for document classification,
-**embeddings did not beat counting.** They win at similarity and retrieval,
-where the vocabulary mismatch that breaks TF-IDF is the whole problem.
-
-One benchmark proves nothing, and English newsgroup posts are the easiest
-possible case for a bag of words. @sec-bake-off runs the comparison properly —
-a different language, a different domain, seventeen times more data, and a
-learning curve that finds the point where the ordering flips. Treat the
-sentence above as a hypothesis until you have read it.
+On the single split of this experiment doc2vec scored 1.9 points above averaged
+GloVe, and none of the dense methods examined beat the TF-IDF row. That finding
+does not cover every document classification or retrieval task. Whether dense
+representations help with vocabulary mismatch has to be measured on the target
+task. The comparison in @sec-bake-off, with a different language, domain and
+amount of data, will provide further evidence for those conditions.
 
 ## Where this is actually deployed
 
