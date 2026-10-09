@@ -3304,8 +3304,8 @@ detect, and what it structurally cannot.
 
 ## How do you know an embedding is any good?
 
-Two families of evaluation, and the distinction matters in interviews. Each
-comes down to a single question.
+Intrinsic and extrinsic evaluation measure different aspects of a
+representation. Each can be summed up in one question.
 
 ::: {.callout-tip appearance="simple"}
 **Two questions.**
@@ -3325,11 +3325,12 @@ engine. It is slow, and it is the only one that pays.
 
 ```python
 from gensim.test.utils import datapath
-# gensim defaults: restrict_vocab=300000, case_insensitive=True — so answers
-# are searched only among the 300,000 most frequent words. Given what we
-# measured above about the quality of the tail, that default quietly makes the
-# evaluation look better than it is: the 100,000 rarest GloVe vectors are
-# never allowed to be wrong.
+# gensim defaults: restrict_vocab=300000, case_insensitive=True.
+# In the word-pair evaluation, pairs containing a word outside that limit
+# are skipped by default; no search for a candidate answer takes place.
+# In the analogies, both the questions covered and the candidate vocabulary
+# searched are limited. Report the number of examples scored and the coverage
+# together with the results.
 pear, spear, oov = g.evaluate_word_pairs(datapath("wordsim353.tsv"))
 pear_s, spear_s, oov_s = g.evaluate_word_pairs(datapath("simlex999.txt"))
 score, sections = g.evaluate_word_analogies(datapath("questions-words.txt"))
@@ -3365,74 +3366,65 @@ score, sections = g.evaluate_word_analogies(datapath("questions-words.txt"))
 ```
 
 ::: {.column-margin}
-Add the category counts up and you get **19,486**, not the 19,544 in the
-heading. The 58 in between are questions gensim skipped because one of their
-words is out of vocabulary: 19,544 is what the file contains, 19,486 is what
-was actually scored.
+The category counts add up to **19,486**, whereas the file has 19,544
+questions. All 58 questions in between contain the word `denar`. It is in
+GloVe's 400,000-word vocabulary (frequency rank 394,434), but it falls outside
+`gensim`'s default `restrict_vocab=300000` limit, so those questions are
+skipped. Being skipped therefore does not mean the word is missing from the
+model's full vocabulary.
 :::
 
 
-The per-category breakdown is where the analogy score stops being one number
-and starts being informative.
-
-`capital-common-countries` is 0.939 and `capital-world` 0.890. That makes
-sense: text states which city is the capital of which country constantly, so
-the relation is densely attested.
-
-Now look at `currency` — **0.152** — and `gram2-opposite`, **0.202**.
-
-[The model is not reasoning about relations. It reproduces the ones its corpus
-repeats often.]{.hl} The headline 0.633 averages over categories ranging from
-nearly solved to mostly failed, which is why a single analogy number should
-never be used to rank two embeddings. (Not "nearly chance": guessing one word
-out of 300,000 candidates would score essentially zero, so even 0.152 is far
-above chance.)
+The per-category breakdown shows differences that the overall score hides: the
+capital categories are high (`capital-common-countries` 0.939, `capital-world`
+0.890), while `currency` (**0.152**) and `gram2-opposite` (**0.202**) get lower
+accuracy. Those differences can be affected by corpus coverage, the type of
+relation and the scoring method; they do not by themselves prove which cause
+dominates. The overall analogy accuracy should be reported together with the
+category scores, the coverage and simple baselines. Even the scores in the low
+categories are far above what random choice from a set of 300,000 candidates
+would give.
 
 ::: {.callout-warning appearance="simple"}
-**A comparison that looks better than it is.** The from-scratch vectors score
-**0.627** on WordSim-353 against GloVe's 0.533 — apparently beating a model
-trained on a thousand times more text. Do not believe it. Their vocabulary is
-18,677 words, so 11.9% of benchmark pairs are skipped as out-of-vocabulary,
-and the skipped pairs are the rare ones, which are the hard ones. GloVe is
-scored on all 353 pairs; the NumPy model is scored on the easy 88%.
+**The same dataset name does not mean the same evaluated examples.** The NumPy
+model scores 0.627 on WordSim-353 and GloVe 0.533; but 11.9% of the pairs are
+skipped for the NumPy model, while GloVe covers all of them. The two scores were
+therefore not computed on the same sample. Measured on the 311 pairs (88.1%)
+that both models cover, GloVe scores 0.549 and the NumPy model still 0.627: the
+coverage difference moves GloVe's score by 0.016 and does not close the gap. On
+the 42 pairs the NumPy model skips, GloVe's correlation is 0.473, so those pairs
+are somewhat harder than average for GloVe. This result on a single relatedness
+set does not show that the small model is better in general; the analogy
+numbers below say the opposite.
 
-This is worth dwelling on, because it is the most common way embedding
-comparisons are quietly wrong: **a model that refuses to answer looks more
-accurate than one that answers and is sometimes mistaken.** Always report
-coverage next to the score.
-
-Including here. It would be convenient to say the analogy numbers — 0.200
-against 0.633 — escape the problem because both models face the same
-questions. They do not. `evaluate_word_analogies` defaults to
-`dummy4unknown=False`, which *skips* any question containing a word the model
-does not have, and the margin note above already showed GloVe losing 58
-questions that way. A model with an 18,677-word vocabulary loses far more of
-them, and it loses the hard ones, so the two scores do not share a
-denominator. To compare them properly, score both with `dummy4unknown=True`,
-which forces every model to answer all 19,544 questions and counts a miss as
-wrong. Until that is run, quote the two numbers with the count of questions
-actually scored beside each — which is what this book asks of everyone else.
+In the analogy evaluation the default `dummy4unknown=False` skips questions that
+contain an out-of-coverage word. The denominators of 0.633 and 0.200 therefore
+differ: GloVe is scored on 19,486 questions and the NumPy model on only 9,282.
+`dummy4unknown=True` counts the skipped questions as wrong and so reports
+performance on the full question set; it does not give the model vectors for
+unknown words. With that setting GloVe scores 0.631 (12,334 of 19,544 questions
+correct) and the NumPy model 0.095 (1,852 of 19,544 correct). The candidate
+vocabulary, case sensitivity and the input filter should be reported in the
+same way as well. The score on the full question set and the comparison on the
+questions both models cover give different, complementary information.
 :::
 
 ::: {.callout-important appearance="simple"}
-**The rule to remember.** An evaluation score is incomplete unless it is
-reported together with coverage. The score tells you about the questions the
-model *answered*; coverage tells you how many it was able to answer. Report
-one without the other and the model that answers less always gains an unfair
-advantage.
+**The rule to remember.** Give the coverage and the number of examples scored
+together with the evaluation score. Skipped examples can change the results; the
+direction of the change depends on the nature of the examples skipped. Do not
+compare scores computed on different subsets of examples as if they had the
+same coverage.
 :::
 
 ::: {.callout-important appearance="simple"}
-**The gap between the two similarity benchmarks is the headline.** The same
-vectors correlate far better with WordSim-353 (relatedness) than with
-SimLex-999 (strict similarity). That is the quantitative version of
-`increase`/`decrease` scoring 0.881 — and it is why an intrinsic score is
-only interpretable once you know which of the two your task needs.
-
-@schnabel2015evaluation showed that intrinsic rankings frequently disagree
-with extrinsic ones, so the honest workflow is: use intrinsic scores to catch
-gross breakage, and never to choose between two reasonable candidates. For
-that, run the downstream task.
+The WordSim-353 and SimLex-999 correlations differ here (Spearman 0.533 and
+0.296); but the coverage of the datasets and the kinds of judgement they contain
+differ too, so the gap cannot be explained by antonymy alone. Intrinsic
+evaluations are useful for comparing particular properties of a representation
+and for eliminating candidates. For choosing what to deploy, performance and
+cost on the target task should decide; intrinsic rankings have been shown not
+to predict extrinsic rankings every time [@schnabel2015evaluation].
 :::
 
 ## Choosing between them
