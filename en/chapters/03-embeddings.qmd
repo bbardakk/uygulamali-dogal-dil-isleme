@@ -1460,13 +1460,14 @@ For the main storyline, the training loop is six steps:
 5. take the error, prediction minus label;
 6. update the corresponding rows of the two tables with that error.
 
-What follows is that loop, running. If the numerical details — batching,
-sampling, gradient clipping — are not what you are here for, skip to the
-results.
-
-Roughly sixty lines of NumPy, trained on the first 40 million characters of
-`text8` (a cleaned dump of English Wikipedia). No deep learning framework —
-the update rule below is the gradient of the log loss above, written out.
+The NumPy example below shows the training pipeline used with the first 40
+million characters of the `text8` corpus (a cleaned dump of English Wikipedia).
+The data preparation and the update steps are visible; the lines that report
+the loss, the time and the neighbours printed underneath are not part of this
+abridged listing (the full code is in the chapter notebook). The basic gradient
+comes from the logistic loss above; the gradient clipping below changes the
+update rule. If the numerical details — batching, sampling, gradient clipping —
+are not what you are here for, skip to the results.
 
 ```python
 import gzip, time
@@ -1500,11 +1501,10 @@ D, K, WINDOW, EPOCHS, LR0 = 100, 5, 5, 3, 0.02
 Wc = ((rng.random((V, D)) - 0.5) / D).astype(np.float32)   # centre vectors
 Wo = np.zeros((V, D), dtype=np.float32)                    # context vectors
 
-# Two simplifications, stated so you can undo them. The window is fixed at 5,
-# whereas word2vec samples an effective width uniformly from {1..5} for each
-# centre, which weights near neighbours more heavily. And pairs are formed
-# across the whole token stream, ignoring document boundaries — harmless on
-# text8, which is one continuous dump, wrong on a corpus of separate documents.
+# Two simplifications. (1) The window is fixed at 5; no dynamic window is used.
+# (2) text8 is processed as a single token stream. The original sentence and
+# document boundaries are not kept, so artificial context pairs can form
+# across them. With separate documents, build the pairs within each document.
 centres, contexts = [], []
 for off in range(1, WINDOW + 1):
     centres.append(ids[:-off]); contexts.append(ids[off:])
@@ -1517,7 +1517,8 @@ BATCH = 2048
 n_batches = N // BATCH
 
 def sigmoid(x):
-    return 1.0 / (1.0 + np.exp(-np.clip(x, -8, 8)))
+    # Overflow-safe sigmoid; it does not artificially restrict the score to [-8, 8].
+    return np.exp(-np.logaddexp(0.0, -x))
 
 for epoch in range(EPOCHS):
     for b in range(n_batches):
@@ -1560,10 +1561,10 @@ tokens after subsampling: 4698743
 training pairs: 46987400
 ### training
   epoch 1    0.0%  loss  4.159
-  epoch 1  100.0%  loss  2.417
-  epoch 2  100.0%  loss  2.371
-  epoch 3  100.0%  loss  2.351
-  trained in 1865s
+    epoch 1  100.0%  loss  2.409
+  epoch 2  100.0%  loss  2.368
+  epoch 3  100.0%  loss  2.350
+  trained in 611s
 
 ### nearest neighbours, from ~60 lines of NumPy
   king      consort 0.75, kings 0.75, isabella 0.75, aram 0.74, regent 0.73
@@ -1574,6 +1575,9 @@ training pairs: 46987400
   three     four 0.95, five 0.93, two 0.91, six 0.91, one 0.89
   pump      ignition 0.88, pedals 0.87, injected 0.87, compartment 0.86, oven 0.86
 ```
+
+The loss at the end of each epoch is the mean over that epoch's last 1,000
+batches; the time depends on the machine.
 
 ::: {.callout-tip collapse="true"}
 ## Intuition check: why does `np.add.at` need gradient clipping here?
@@ -1588,23 +1592,27 @@ Without clipping this run diverges to `nan` within half an epoch — which is
 exactly what happened the first time it was run for this chapter, at learning
 rate 0.05.
 
-It is worth being precise about what the clip does, because it does not fix the
-stacking described above. `np.clip` is applied to the *per-example* gradient,
-before `np.add.at` sums the duplicates, so it bounds each contribution but not
-the accumulated row update: a word appearing a hundred times in the batch can
-still move by $100 \times \text{lr}$. What it actually prevents is a single
-large residual multiplied by a context vector whose norm has grown. The clean
-fix is to divide each row's accumulated gradient by how many times its index
-occurred in the batch — `np.bincount(targets.ravel(), minlength=V)` gives the
-counts. Be clear about what that buys: it bounds the step a frequent word takes
-and stops the update scaling with batch frequency. It does not reproduce
-sequential SGD, which recomputes the gradient at the parameters left by the
-previous example; averaging gradients all evaluated at the same point is a
-different update, with a different effective step size.
-The clip is not a modelling choice; it is the cheap version, and the price of
-vectorising an inherently sequential algorithm. It is also a good example of
-why "I reimplemented the paper and it didn't work" is usually about
-optimisation details rather than the equations.
+Here the clip is applied before the contributions of repeated indices are summed.
+The total gradient of the centre example and the gradient of each context
+example are restricted to $[-1, 1]$ per coordinate. If a row receives a hundred
+contributions, each of its coordinates can change by at most
+$100 \times \text{lr}$, and its L2 norm in $d$ dimensions by at most
+$100 \times \text{lr} \times \sqrt{d}$. The operation bounds individual
+contributions; it does not directly bound the accumulated row update.
+
+One option is to divide the gradient of the whole batch by the batch size and
+choose the learning rate accordingly. Another is to divide each row's
+accumulated gradient by the number of contributions its index has in the batch;
+`np.bincount` can compute those counts. The second option scales the effective
+learning rates of the rows differently and is not the same as the standard batch
+mean. Neither reproduces sequential SGD, which updates the parameters again at
+every example.
+
+Gradient clipping is an optimization choice made in this implementation, and it
+can affect the vectors that are learned. Vectorization does not necessarily
+require clipping; the scaling of the batch loss, the learning rate and the
+update scheme have to be tuned together. The divergence reported in this example
+belongs to the run made with the settings chosen.
 :::
 
 ### The link between count-based and prediction-based methods {#the-two-families-were-one-family-all-along}

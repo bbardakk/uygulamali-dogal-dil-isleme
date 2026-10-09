@@ -1459,13 +1459,14 @@ Ana akış için bilmeniz gereken, eğitim döngüsünün altı adımı:
 5. hatayı, yani (tahmin − etiket) farkını bul;
 6. iki tablodaki ilgili satırları bu hatayla güncelle.
 
-Aşağısı bu altı adımın çalışan hâli; batchleme, örnekleme ve gradyan kırpma
-gibi sayısal ayrıntıları merak etmiyorsanız doğrudan sonuçlara geçebilirsiniz.
-
-Kabaca altmış satır NumPy; `text8`'in (İngilizce Wikipedia'nın temizlenmiş
-bir dökümü) ilk 40 milyon karakteri üzerinde eğitildi. Hiçbir derin öğrenme
-çerçevesi yok — aşağıdaki güncelleme kuralı, yukarıdaki log kaybının açık açık
-yazılmış gradyanı.
+Aşağıdaki NumPy örneği, `text8` derleminin (İngilizce Wikipedia'nın temizlenmiş
+bir dökümü) ilk 40 milyon karakteriyle kullanılan eğitim akışını gösterir. Veri
+hazırlama ve güncelleme adımları görünürdür; alttaki çıktıyı üreten kayıp, süre
+ve komşuluk raporlama satırları bu kısaltılmış parçada yer almıyor (tam kod
+bölümün notebook'unda). Temel gradyan, yukarıdaki lojistik kayıptan gelir;
+aşağıdaki gradyan kırpması ise güncelleme kuralını değiştirir. Batchleme,
+örnekleme ve gradyan kırpma gibi sayısal ayrıntıları merak etmiyorsanız doğrudan
+sonuçlara geçebilirsiniz.
 
 ```python
 import gzip, time
@@ -1500,11 +1501,10 @@ Wc = ((rng.random((V, D)) - 0.5) / D).astype(np.float32)   # merkez vektörleri
 Wo = np.zeros((V, D), dtype=np.float32)                    # bağlam vektörleri
 
 centres, contexts = [], []
-# İki basitleştirme; isterseniz geri alın diye açıkça yazıyoruz. (1) Pencere
-# 5'te sabit; oysa word2vec her merkez için {1..5} arasından tekdüze bir etkin
-# genişlik çekiyor, bu da yakın komşuları daha çok ağırlıklandırıyor. (2) Çiftler
-# tüm token akışı boyunca kuruluyor, belge sınırları yok sayılıyor — tek sürekli bir döküm olan text8'de
-# zararsız, ayrı belgelerden oluşan bir derlemde yanlış.
+# İki basitleştirme: (1) Pencere 5'te sabit; dinamik pencere kullanılmıyor.
+# (2) text8 tek bir token akışı olarak işleniyor. Özgün cümle ve belge
+# sınırları korunmadığı için sınırlar arasında yapay bağlam çiftleri
+# oluşabilir. Ayrı belgelerle çalışırken çiftleri belge içinde kurun.
 for off in range(1, WINDOW + 1):
     centres.append(ids[:-off]); contexts.append(ids[off:])
     centres.append(ids[off:]); contexts.append(ids[:-off])
@@ -1516,7 +1516,8 @@ BATCH = 2048
 n_batches = N // BATCH
 
 def sigmoid(x):
-    return 1.0 / (1.0 + np.exp(-np.clip(x, -8, 8)))
+    # Taşmaya dayanıklı sigmoid; skoru yapay olarak [-8, 8] ile kısıtlamaz.
+    return np.exp(-np.logaddexp(0.0, -x))
 
 for epoch in range(EPOCHS):
     for b in range(n_batches):
@@ -1560,10 +1561,10 @@ tokens after subsampling: 4698743
 training pairs: 46987400
 ### training
   epoch 1    0.0%  loss  4.159
-  epoch 1  100.0%  loss  2.417
-  epoch 2  100.0%  loss  2.371
-  epoch 3  100.0%  loss  2.351
-  trained in 1865s
+    epoch 1  100.0%  loss  2.409
+  epoch 2  100.0%  loss  2.368
+  epoch 3  100.0%  loss  2.350
+  trained in 611s
 
 ### nearest neighbours, from ~60 lines of NumPy
   king      consort 0.75, kings 0.75, isabella 0.75, aram 0.74, regent 0.73
@@ -1575,7 +1576,8 @@ training pairs: 46987400
   pump      ignition 0.88, pedals 0.87, injected 0.87, compartment 0.86, oven 0.86
 ```
 
-Son satır da öğretici: `pump`'ın komşuları (`ignition`, `pedals`, `oven`) aynı
+Epoch sonundaki kayıp, o epoch'un son 1.000 yığınının (batch) ortalamasıdır; süre
+makineye bağlıdır. Son satır da öğretici: `pump`'ın komşuları (`ignition`, `pedals`, `oven`) aynı
 mekanik dünyadan geliyor ama gevşek. Nadir kelimelerde kalitenin neden
 düştüğünü "Frekans sızıyor" kısmında göreceğiz.
 
@@ -1592,26 +1594,25 @@ görünebilir; yani hiç kımıldamamış bir vektörden hesaplanmış yüz gün
 Kırpma olmadan bu koşu yarım epoch içinde `nan`'a ıraksıyor — bu bölüm için
 ilk çalıştırıldığında, 0,05 öğrenme oranıyla, bu oldu.
 
-Kırpmanın ne yaptığını netleştirelim, çünkü kırpma
-yukarıda anlatılan yığılmayı çözmüyor. `np.clip`, `np.add.at` yinelenenleri toplamadan *önce*,
-örnek başına gradyana uygulanıyor; dolayısıyla her katkıyı sınırlıyor ama
-biriken satır güncellemesini değil: batch'te yüz kez görünen bir kelime hâlâ
-$100 \times \text{lr}$ kadar hareket edebilir. Gerçekte engellediği şey, normu
-büyümüş bir bağlam vektörüyle çarpılan tek bir büyük hata teriminin patlaması.
+Burada kırpma, yinelenen indekslerin katkıları toplanmadan önce uygulanır. Merkez
+örneğinin toplam gradyanı ve her bağlam örneğinin gradyanı, koordinat başına
+$[-1, 1]$ aralığına kısıtlanır. Bir satır yüz katkı alırsa her koordinatının
+değişimi en fazla $100 \times \text{lr}$, $d$ boyuttaki L2 norm değişimi ise en
+fazla $100 \times \text{lr} \times \sqrt{d}$ olabilir. Bu işlem tek katkıları
+sınırlar; birikmiş satır güncellemesini doğrudan sınırlamaz.
 
-Temiz çözüm, her satırın biriken gradyanını o indeksin batch'te kaç kez geçtiğine
-bölmek — `np.bincount(targets.ravel(), minlength=V)` sayıları veriyor. Bu bölme
-işleminin neyi kazandırdığı da açık olmalı: sık geçen bir kelimenin attığı adımı
-sınırlar ve güncellemenin batch sıklığıyla ölçeklenmesini durdurur. Ardışık
-SGD'yi ise yeniden üretmez, çünkü ardışık SGD gradyanı bir önceki örneğin
-bıraktığı parametrelerde yeniden hesaplar. Hepsi aynı noktada hesaplanmış
-gradyanların ortalamasını almak farklı bir güncellemedir ve etkin adım boyu da
-farklıdır.
+Bir seçenek, bütün yığının gradyanını yığın büyüklüğüne bölüp öğrenme oranını
+buna göre seçmektir. Başka bir seçenek, her satırın birikmiş gradyanını o
+indeksin yığındaki katkı sayısına bölmektir; `np.bincount` bu sayıları
+hesaplayabilir. İkinci seçenek satırların etkin öğrenme oranlarını farklı
+biçimde ölçekler ve standart yığın ortalamasıyla aynı değildir. İkisi de
+parametreleri her örnekte yeniden güncelleyen ardışık SGD'yi birebir üretmez.
 
-Kırpma bir modelleme tercihi değil; ucuz bir emniyet önlemi ve doğası gereği
-ardışık bir algoritmayı vektörleştirmenin bedeli. Ayrıca "makaleyi yeniden
-kodladım ama çalışmadı" şikâyetinin neden genellikle denklemlerden değil,
-optimizasyon ayrıntılarından kaynaklandığını gösteren güzel bir örnek.
+Gradyan kırpması, bu uygulamada kullanılan bir optimizasyon tercihidir ve
+öğrenilen vektörleri etkileyebilir. Vektörleştirme zorunlu olarak kırpma
+gerektirmez; yığın kaybının ölçeklenmesi, öğrenme oranı ve güncelleme düzeni
+birlikte ayarlanmalıdır. Bu örnekte bildirilen ıraksama, seçilen ayarlarla
+yapılan koşuya aittir.
 :::
 
 ### Sayıma ve tahmine dayalı yöntemler arasındaki bağ {#iki-aile-aslında-baştan-beri-tek-aileymiş}
