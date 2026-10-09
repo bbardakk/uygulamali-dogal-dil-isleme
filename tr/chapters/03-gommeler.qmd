@@ -1340,10 +1340,10 @@ neye karşı gösteriyoruz?" sorusunun bir parçasına cevap veriyor.
 
 | tercih | neyi ayarlar | tipik değer | etkisi |
 |:--|:--|:--|:--|
-| **Negatif örnekleme** ($K$) | her gerçek çifte karşı kaç sahte çift çekileceği | küçük derlemde 5–20, büyük derlemde 2–5 | sözlük boyu softmax'ı ucuz bir evet/hayır sorusuna çevirir |
-| **Bağlam penceresi** | merkez kelimenin kaç komşusunun "bağlam" sayılacağı | 5; her merkez için 1 ile 5 arasında rastgele daraltılır | dar pencere sözdizimsel, geniş pencere konusal benzerlik öğretir |
-| **Sık kelimelerin altörneklenmesi** ($t$) | çok sık kelimelerin ne kadarının atılacağı | $t \approx 10^{-3}$ | `the` gibi kelimelerin eğitimi boğmasını önler |
-| **Gürültü dağılımı** (0,75 üssü) | sahte kelimelerin hangi dağılımdan çekileceği | $f(w)^{0{,}75}$ | nadir kelimelere de eğitim sinyali düşer |
+| **Negatif örnek sayısı** ($K$) | pozitif çift başına çekilen negatif sayısı | özgün çalışmada küçük derlem için 5–20, büyük derlem için 2–5 | maliyet ile eğitim sinyali arasındaki dengeyi değiştirir |
+| **Bağlam penceresi** | aday komşular ve uzaklığa göre ağırlık | örneğin en fazla 5; dinamik pencere seçeneğiyle | dar pencereler işlevsel, geniş pencereler konusal ilişkileri daha fazla öne çıkarabilir |
+| **Sık kelimelerin altörneklenmesi** ($t$) | çok sık token'ların tutulma olasılığı | örneğin $t = 10^{-3}$ | sık kelimelerin eğitimdeki payını azaltır |
+| **Gürültü dağılımı** (0,75 üssü) | negatiflerin çekilme olasılığı | $q(w) \propto f(w)^{0{,}75}$ | ham unigram dağılımına göre nadir kelimelerin göreli örneklenme payını artırır |
 
 : word2vec'in dört eğitim tercihi {tbl-colwidths="[24,30,22,24]"}
 
@@ -1356,15 +1356,11 @@ için 5–20, büyük derlemler için 2–5 öneriyor [@mikolov2013distributed] 
 bolken her kelime zaten çok sayıda güncelleme aldığı için az sayıda negatif
 yetiyor.
 
-**Bağlam penceresi.** "Bağlam" derken neyi kastettiğimiz bir tercih. Pencere
-5 ise merkez kelimenin solundaki ve sağındaki beşer kelime aday bağlamdır. Bu
-tek sayı, modelin *ne tür* bir benzerlik öğreneceğini belirliyor:
-
-- **Dar pencere** (1–2) yalnızca hemen yandaki kelimeleri görür. Hemen yanda
-  duran şey çoğunlukla dilbilgisel bir komşudur; bu yüzden aynı *işlevi* gören
-  kelimeler — iki fiil, iki sıfat — birbirine yaklaşır.
-- **Geniş pencere** (5–10) aynı cümlenin, hatta aynı paragrafın kelimelerini
-  görür; bu yüzden aynı *konuda* geçen kelimeler birbirine yaklaşır.
+**Bağlam penceresi.** Pencere 5 ise aynı girdi dizisinde merkezin solundaki ve
+sağındaki en fazla beşer token aday bağlamdır. Dar pencereler (1–2) çoğu zaman
+yakın sözdizimsel ilişkileri, geniş pencereler (5–10) ise konusal ilişkileri daha
+fazla yansıtır. Bunlar eğilimdir; derlem, dil ve ön işleme de sonucu etkiler.
+Cümle sınırları korunuyorsa pencere bu sınırları aşmaz.
 
 word2vec'in bir inceliği daha var: pencereyi sabit tutmaz. Her merkez kelime
 için etkin genişliği 1 ile en büyük değer arasından rastgele çeker (dinamik
@@ -1373,10 +1369,11 @@ pencere). Sonuç, yakın komşuların uzak olanlardan daha sık eğitim çifti
 sayma yönteminde pencereyi elle değiştirip bu farkı kendiniz görebilirsiniz
 (1. alıştırma).
 
-**Sık kelimelerin altörneklenmesi.** Aşırı sık kelimeler eğitim çiftlerinin
-çoğunu üretir ama çok az ayırt edici bilgi taşır: *the* her şeyin yanında
-geçer. Bu yüzden her geçişi tutmak yerine, token'ları sıklığa bağlı bir
-olasılıkla atıyoruz. word2vec, $w$ kelimesini şu olasılıkla tutar:
+**Sık kelimelerin altörneklenmesi.** Sık kelimeler çok sayıda eğitim çifti
+üretir. Bu kelimelerin göreli etkisini azaltmak için her token'ı sıklığına bağlı
+bir olasılıkla tutarız. Aşağıda $f(w)$, sözlük filtresinden sonra kalan
+token'lar içindeki göreli sıklıktır; $t$ aynı ölçekte bir eşiktir. Kullanılan
+tutma olasılığı şöyledir:
 
 $$
 p_{\text{tut}}(w) = \min\!\left(1,\ \left(\sqrt{\frac{f(w)}{t}} + 1\right)\cdot\frac{t}{f(w)}\right),
@@ -1393,12 +1390,12 @@ orada tam 1'e eşit olur.)
 ::: {.callout-note collapse="true"}
 ## Derinleşme: makaledeki formül ile koddaki formül
 
-Yukarıdaki biçim, word2vec'in özgün C kaynak kodunun kullandığı formüldür ve
-yaygın uygulamaların önemli bir kısmı bu davranışı izler. Yayımlanan makale
-ise farklı bir formül veriyor: $P(\text{atma}) = 1 - \sqrt{t/f}$. İkisi
-uyuşmuyor ve fiilen çalıştırılan, koddaki formül. Bu durum, yalnızca makaleyi
-değil uygulamayı da okumak gerektiğini küçük ama yararlı bir biçimde
-hatırlatıyor.
+Özgün C uygulaması yukarıdaki tutma formülünü kullanır. Makale ise
+$P(\text{atma}) = 1 - \sqrt{t/f}$ verir; $f < t$ olduğunda bu ifade negatif
+çıktığı için olasılık olarak $P(\text{atma}) = \max(0,\ 1 - \sqrt{t/f})$, yani
+$P(\text{tutma}) = \min(1,\ \sqrt{t/f})$ biçiminde okunur. İki formül aynı
+değildir; bir deneyi yeniden üretirken hangi uygulamanın kullanıldığını
+belirtmek gerekir.
 :::
 
 | derlemdeki pay | örnek | $p_{\text{tut}}$ | atılan |
@@ -1408,7 +1405,7 @@ hatırlatıyor.
 | %0,1 ($=t$) | orta frekanslı kelime | 1,00 | %0 |
 | %0,01 ve altı | kuyruktaki her şey | 1,00 | %0 |
 
-: Altörnekleme aslında neyi çöpe atıyor {tbl-colwidths="[22,30,24,24]"}
+: Altörneklemenin attığı token'lar {tbl-colwidths="[22,30,24,24]"}
 
 Yani bu nazik bir yeniden ağırlıklandırma değil — `the`'nin her altı
 geçişinden beşini siliyor ve kuyruğa hiç dokunmuyor. Nadir kelimeleri olduğu
@@ -1421,10 +1418,10 @@ geliyor? Koşunun çıktısındaki `tokens read: 6794527` değerinden
 Altörnekleme oranı da bu sayıya uygulanır.
 
 ::: {.column-margin}
-Daha az göze çarpan ikinci bir faydası var. Bir token'ı silmek, etrafındaki
-pencereleri de *genişletir*: `the` kaldırılınca onun iki yanındaki kelimeler
-komşu olur. Altörnekleme yalnızca bilgi taşımayan çiftleri kaldırmakla
-kalmaz, bilgi taşıyan yeni çiftler de yaratır.
+Bir token çıkarıldığında, kalan dizide onun iki yanındaki kelimeler birbirine
+yaklaşır. Pencere boyu değişmese de özgün metinde daha uzakta olan kelimeler
+yeni bağlam çiftleri oluşturabilir. Bu, eğitimin hem örnek sayısını hem de
+bağlam dağılımını değiştirir.
 :::
 
 **Gürültü dağılımı: 0,75 üssü.** *Gürültü dağılımı* (noise distribution), sahte
@@ -1440,20 +1437,16 @@ geçiyorsa, üsten sonra negatif olarak çekilme olasılığı yalnızca
 $5000^{0{,}75} \approx 595$ kat daha yüksek olur. Aradaki fark kabaca sekizde
 birine iner ve bu daralma nadir kelimenin lehinedir.
 
-Bu neden önemli? Çünkü negatif olarak çekilmek, bir kelimenin *bağlam*
-vektörü $\mathbf{u}$'nun hangi merkez kelimelere *ait olmadığını* öğrenmesinin
-yoludur. Neredeyse hiç negatif olarak çekilmeyen nadir bir kelimenin bağlam
-vektörü hep bir şeylere doğru çekilir, hiçbir şeyden itilmez; bu yüzden onunla
-karşılaşan her merkez kelime için zayıf bir referans noktası olur. (Sakladığınız
-$\mathbf{W}$ vektörleri bundan yalnızca dolaylı olarak etkilenir: bu bağlam
-vektörlerine karşı eğitilirler.) Böylece üs, sözlüğün kuyruğundaki kelimelere ham
-frekanslarının asla kazandıramayacağı bir eğitim sinyali payı ayırır. Daha
-kesin gerekçeyi biraz ileride bir derinleşme kutusu veriyor: üs, algoritmanın
-örtük olarak çarpanlarına ayırdığı PMI matrisinin kendisini değiştirir. Üs
-ampirik olarak seçilmiştir — 0,75'in arkasında bir türetme yoktur — ve
-önemlidir. @levy2015improving, insanların modele atfettiği başarının önemli
-bir kısmını aslında bazı hiperparametrelerin üstlendiğini saptadı; bu üs de
-onlardan biridir.
+Negatif örnekler, bağlam vektörlerinin yalnızca gözlenen pozitif çiftlerle değil,
+gürültü dağılımından gelen çiftlerle de güncellenmesini sağlar. 0,75 üssü, ham
+unigram örneklemesine göre nadir bağlamların göreli payını artırır; onlara daha
+önce hiç var olmayan bir sinyal türü kazandırmaz. Merkez vektörleri de bu
+değişen bağlam vektörleri üzerinden dolaylı olarak etkilenir. Bu üs, SGNS'nin
+örtük hedefindeki gürültü dağılımını da değiştirir; bağlantıyı ilerideki
+Derinleşme kutusunda inceleyeceğiz. 0,75 evrensel bir kuramsal optimum değil,
+ampirik bir tercihtir. Levy ve arkadaşları [@levy2015improving], bu tür
+hiperparametrelerin karşılaştırma sonuçlarını önemli ölçüde etkileyebildiğini
+gösterir.
 
 ### Uygulama: word2vec'i sıfırdan yazmak
 

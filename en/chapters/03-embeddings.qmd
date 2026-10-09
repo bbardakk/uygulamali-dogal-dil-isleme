@@ -1337,10 +1337,10 @@ show, how often, and against what?"
 
 | choice | what it sets | typical value | effect |
 |:--|:--|:--|:--|
-| **Negative sampling** ($K$) | how many fake pairs are drawn against each real one | 5–20 on a small corpus, 2–5 on a large one | turns the vocabulary-wide softmax into a cheap yes/no question |
-| **Context window** | how many of the centre word's neighbours count as "context" | 5; shrunk at random between 1 and 5 for each centre | narrow windows teach syntactic similarity, wide ones topical similarity |
-| **Subsampling frequent words** ($t$) | how much of the very frequent words is discarded | $t \approx 10^{-3}$ | stops words like `the` from swamping training |
-| **Noise distribution** (the 0.75 exponent) | which distribution the fake words are drawn from | $f(w)^{0.75}$ | gives rare words a share of the training signal |
+| **Number of negatives** ($K$) | negatives drawn per positive pair | 5–20 for a small corpus and 2–5 for a large one in the original work | changes the balance between cost and training signal |
+| **Context window** | candidate neighbours and weighting by distance | for example at most 5, with the dynamic-window option | narrow windows can bring out functional relations more, wide ones topical relations |
+| **Subsampling frequent words** ($t$) | probability of keeping very frequent tokens | for example $t = 10^{-3}$ | reduces the share of frequent words in training |
+| **Noise distribution** (the 0.75 exponent) | probability of drawing each negative | $q(w) \propto f(w)^{0.75}$ | raises the relative sampling share of rare words compared with the raw unigram distribution |
 
 : word2vec's four training choices {tbl-colwidths="[24,30,22,24]"}
 
@@ -1353,16 +1353,12 @@ paper suggests 5–20 for small corpora and 2–5 for large ones
 [@mikolov2013distributed] — with plenty of data every word already gets many
 updates, so a few negatives are enough.
 
-**The context window.** What we mean by "context" is a choice. With a window
-of 5, the five words to the left and the five to the right of the centre word
-are candidate contexts. That one number decides *what kind* of similarity the
-model learns:
-
-- A **narrow window** (1–2) sees only the immediately adjacent words. What
-  sits right next to a word is mostly a grammatical neighbour, so words that
-  do the same *job* — two verbs, two adjectives — end up close.
-- A **wide window** (5–10) sees words from the same sentence, even the same
-  paragraph, so words that occur in the same *topic* end up close.
+**The context window.** With a window of 5, up to five tokens to the left and up
+to five to the right of the centre, within the same input sequence, are
+candidate contexts. Narrow windows (1–2) mostly reflect close syntactic
+relations, and wide windows (5–10) reflect topical relations more. Those are
+tendencies; the corpus, the language and the preprocessing affect the outcome
+too. If sentence boundaries are kept, the window does not cross them.
 
 word2vec adds one more refinement: it does not keep the window fixed. For each
 centre word it draws the effective width at random between 1 and the maximum
@@ -1371,11 +1367,11 @@ more often than distant ones — an implicit weighting by distance. You can
 change the window by hand in the counting method at the start of the chapter
 and see the difference yourself (exercise 1).
 
-**Subsampling frequent words.** Very frequent words produce most of the
-training pairs while carrying little discriminative information: *the* appears
-next to everything. So rather than keep every occurrence, we discard tokens
-with a probability that depends on frequency. word2vec keeps word $w$ with
-probability
+**Subsampling frequent words.** Frequent words produce a large number of
+training pairs. To reduce their relative influence, each token is kept with a
+probability that depends on its frequency. Below, $f(w)$ is the relative
+frequency among the tokens left after the vocabulary filter, and $t$ is a
+threshold on the same scale. The keep probability used is
 
 $$
 p_{\text{keep}}(w) = \min\!\left(1,\ \left(\sqrt{\frac{f(w)}{t}} + 1\right)\cdot\frac{t}{f(w)}\right),
@@ -1392,11 +1388,12 @@ expression equals exactly 1.)
 ::: {.callout-note collapse="true"}
 ## Deep dive: the formula in the paper and the formula in the code
 
-The form above is the one in word2vec's original C source, and a good share of
-common implementations follow that behaviour; the published paper states a
-different one, $P(\text{discard}) = 1 - \sqrt{t/f}$. The two disagree, and the
-code is what was actually run — a small but useful reminder to read the
-implementation, not only the paper.
+The original C implementation uses the keep formula above. The paper gives
+$P(\text{discard}) = 1 - \sqrt{t/f}$; that expression is negative when
+$f < t$, so as a probability it is read as
+$P(\text{discard}) = \max(0,\ 1 - \sqrt{t/f})$, that is
+$P(\text{keep}) = \min(1,\ \sqrt{t/f})$. The two formulas are not the same;
+when reproducing an experiment, state which implementation was used.
 :::
 
 | share of corpus | example | $p_{\text{keep}}$ | discarded |
@@ -1422,10 +1419,10 @@ their friends.
 subsampling rate applies to that.)
 
 ::: {.column-margin}
-There is a second, less obvious benefit. Deleting a token also *widens* the
-windows around it: with `the` removed, the words either side of it become
-neighbours. Subsampling does not only remove uninformative pairs, it creates
-informative ones.
+When a token is removed, the words on either side of it move closer together in
+the remaining sequence. The window size does not change, but words that were
+further apart in the original text can now form new context pairs. That changes
+both the number of training examples and the context distribution.
 :::
 
 **The noise distribution: the 0.75 exponent.** The *noise distribution* is
@@ -1442,22 +1439,15 @@ then after the exponent it is only $5000^{0.75} \approx 595$ times more
 likely to be drawn as a negative. The gap narrows by a factor of about eight,
 and it narrows in the rare word's favour.
 
-Why does that matter? Because being sampled as a negative is how a word's
-*context* vector $\mathbf{u}$ learns which centre words it does *not* belong
-with. A rare word that is almost never drawn as a negative has a context vector
-that is only ever pulled towards things, never pushed away, so it is a poor
-reference point for every centre word that meets it. (The vectors you keep, in
-$\mathbf{W}$, are affected only indirectly: they are trained against these
-context vectors.)
-
-So the exponent buys the tail of the vocabulary a share of the training signal
-its raw frequency would never earn it. A deep dive a little further on gives
-the more precise reason: the exponent changes which PMI matrix the algorithm
-is implicitly factorizing.
-
-And it was chosen empirically — 0.75 has no derivation behind it. It is also
-one of the hyperparameters @levy2015improving identified as doing much of the
-work people were crediting to the model.
+Negative samples make the context vectors receive updates from pairs drawn from
+the noise distribution as well as from the observed positive pairs. The 0.75
+exponent raises the relative share of rare contexts compared with raw unigram
+sampling; it does not give them a kind of signal that did not exist before. The
+centre vectors are affected indirectly too, through those changing context
+vectors. The exponent also changes the noise distribution in the implicit
+objective of SGNS; a later Deep dive box examines that connection. 0.75 is an
+empirical choice, not a universal theoretical optimum. @levy2015improving show
+that hyperparameters of this kind can affect comparison results substantially.
 
 ### Deep dive: writing word2vec from scratch
 
