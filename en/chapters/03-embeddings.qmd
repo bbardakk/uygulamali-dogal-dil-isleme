@@ -3064,14 +3064,14 @@ domain-adapted and subword representations with task metrics; a few neighbour
 lists do not settle the choice of method by themselves.
 :::
 
-### Coordinates mean nothing on their own, and runs do not agree
+### The arbitrariness of the coordinate system and the variability between training runs {#coordinates-mean-nothing-on-their-own-and-runs-do-not-agree}
 
-Next to the three defects, add two properties that are not defects but will
-make you misread embedding geometry if you do not know them. One experiment
-measures both: train word2vec twice on the same corpus with the same settings,
-changing only the random seed. The corpus is the `text8` slice the
-from-scratch model used (6,794,527 tokens); `sents` is that slice cut into
-1,000-token pieces. `workers=1` makes the run reproducible.
+
+We train two models on the same `text8` slice, changing only the random seed.
+`sents` is the 6,794,527 tokens the from-scratch model also used, cut into
+1,000-token pieces. `workers=1` reduces the variability that comes from thread
+ordering. Exact reproduction also requires fixing, along with the seed, the data
+order, `PYTHONHASHSEED`, the library versions and the execution environment.
 
 ```python
 from gensim.models import Word2Vec
@@ -3085,10 +3085,10 @@ a, b = train(1), train(2)                    # same corpus, same settings, two s
 A, B = a.get_normed_vectors(), b.get_normed_vectors()
 
 raw = np.mean(np.sum(A * B, axis=1))         # same word, same coordinates?
-R, _ = orthogonal_procrustes(A, B)           # the best rotation from run A onto run B
+R, _ = orthogonal_procrustes(A, B)           # best orthogonal alignment; may include a reflection
 aligned = np.mean(np.sum((A @ R) * B, axis=1))
 
-Q, _ = np.linalg.qr(rng.standard_normal((100, 100)))   # a random rotation
+Q, _ = np.linalg.qr(rng.standard_normal((100, 100)))   # a random orthogonal transformation
 rotated = A @ Q
 ```
 
@@ -3168,7 +3168,7 @@ for name, r in bands:
 print("\n### are the coordinates comparable?")
 same = float(np.mean(np.sum(A * B, axis=1)))
 print(f"  mean cosine, same word, raw coordinates      : {same:+.3f}")
-R, _ = orthogonal_procrustes(A, B)          # best rotation taking run A onto run B
+R, _ = orthogonal_procrustes(A, B)          # best orthogonal alignment; may include a reflection
 aligned = float(np.mean(np.sum((A @ R) * B, axis=1)))
 print(f"  mean cosine, same word, after one rotation   : {aligned:+.3f}")
 
@@ -3193,23 +3193,24 @@ simple: rotating a space does not change the angles between its arrows. For an
 embedding matrix $E$, $ER$ (for any orthogonal $R$) preserves every dot
 product and every cosine.
 
-The consequence is surprising and important: the training objective looks only
-at dot products, so it has no preference among the infinitely many rotated
-copies. The coordinate system you hold is an arbitrary one of them. That is
-why a reading like "dimension 37 of the embedding encodes animal-ness" cannot
-be made in general. [Meaning is not in the individual coordinates but in where
-the vectors sit relative to one another — in angles and distances.]{.hl}
+To preserve every dot product of SGNS we multiply the centre table and the
+context table by the same orthogonal transformation:
+$(WR)(UR)^\top = WU^\top$. The training objective is then unchanged. For that
+reason the name of a single coordinate is not something the model is forced to
+determine. A coordinate may turn out to be related to a property in a particular
+training run; that reading may not survive an equivalent change of coordinates.
+[Meaning is not in the individual coordinates but in where the vectors sit
+relative to one another — in angles and distances.]{.hl}
 
-**Coordinates from two runs cannot be compared directly.** The middle block
-shows the same fact across two training runs. The mean cosine between the same
-word's vectors in the two runs is **−0.016**: the two runs gave the same word
-coordinates as unrelated as two random vectors. But fit one run's whole space
-onto the other's *with a single rotation* (orthogonal Procrustes alignment)
-and the same mean rises to **+0.951**. So the two runs learned almost the same
-*shape*; they only wrote it down in different coordinate systems. The
-practical rule: if you are going to compare two embeddings trained at
-different times, with different seeds, or on different corpora — to ask
-whether a word's meaning drifted over the years, say — align them first.
+**Coordinates from two training runs cannot be compared directly.** The mean
+direct cosine of the same words in the two runs is **−0.016**; after orthogonal
+(Procrustes) alignment it is **+0.951**. That shows the choice of coordinates
+accounts for an important part of the difference; it does not show that the two
+spaces are merely rotated copies of each other. The neighbour overlaps indeed
+show that local differences remain. When comparing different periods or
+corpora, the alignment should use shared anchor words that are as stable as
+possible, and care is needed not to absorb the change under study into the
+alignment itself.
 
 ::: {.callout-important appearance="simple"}
 **Embedding training is stochastic.** Same corpus + different seed →

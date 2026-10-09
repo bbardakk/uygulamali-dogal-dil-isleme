@@ -3059,14 +3059,15 @@ uyarlanmış ve alt kelime temsillerini karşılaştırın; birkaç komşu liste
 başına yöntem seçimini kesinleştirmez.
 :::
 
-### Koordinatların kendisi bir şey söylemez, koşular da birbirini tutmaz
+### Koordinat sisteminin keyfîliği ve eğitimler arasındaki değişkenlik {#koordinatların-kendisi-bir-şey-söylemez-koşular-da-birbirini-tutmaz}
 
-Üç kusurun yanına, kusur olmayan ama bilmeden embedding geometrisini yanlış
-okuyacağınız iki özellik ekleyelim. İkisini de aynı deneyle ölçebiliriz:
-word2vec'i aynı derlemde, aynı ayarlarla, yalnızca rastgele tohumu değiştirerek
-iki kez eğitin. Derlem, sıfırdan yazdığımız modelin kullandığı `text8` dilimi
-(6.794.527 token); `sents` onun 1.000 token'lık parçaları. `workers=1`, koşunun
-tekrarlanabilir olması için.
+
+Aynı `text8` diliminde yalnızca rastgele tohumu (seed) değiştirerek iki model
+eğitiyoruz. `sents`, sıfırdan yazdığımız modelin de kullandığı 6.794.527 token'ın
+1.000 token'lık parçalara ayrılmış hâlidir. `workers=1`, iş parçacığı sırasından
+kaynaklanan değişkenliği azaltır. Tam yeniden üretim için aynı tohumla birlikte
+veri sırası, `PYTHONHASHSEED`, kütüphane sürümleri ve yürütme ortamı da
+sabitlenmelidir.
 
 ```python
 from gensim.models import Word2Vec
@@ -3080,10 +3081,10 @@ a, b = train(1), train(2)                    # aynı derlem, aynı ayarlar, iki 
 A, B = a.get_normed_vectors(), b.get_normed_vectors()
 
 raw = np.mean(np.sum(A * B, axis=1))         # aynı kelime, aynı koordinatlar mı?
-R, _ = orthogonal_procrustes(A, B)           # A koşusunu B'nin üzerine oturtan en iyi döndürme
+R, _ = orthogonal_procrustes(A, B)           # en iyi dik hizalama; yansıma da içerebilir
 aligned = np.mean(np.sum((A @ R) * B, axis=1))
 
-Q, _ = np.linalg.qr(rng.standard_normal((100, 100)))   # rastgele bir döndürme
+Q, _ = np.linalg.qr(rng.standard_normal((100, 100)))   # rastgele dik dönüşüm
 rotated = A @ Q
 ```
 
@@ -3162,7 +3163,7 @@ for name, r in bands:
 print("\n### are the coordinates comparable?")
 same = float(np.mean(np.sum(A * B, axis=1)))
 print(f"  mean cosine, same word, raw coordinates      : {same:+.3f}")
-R, _ = orthogonal_procrustes(A, B)          # A koşusunu B'nin üzerine oturtan en iyi döndürme
+R, _ = orthogonal_procrustes(A, B)          # en iyi dik hizalama; yansıma da içerebilir
 aligned = float(np.mean(np.sum((A @ R) * B, axis=1)))
 print(f"  mean cosine, same word, after one rotation   : {aligned:+.3f}")
 
@@ -3187,23 +3188,22 @@ bir uzayı döndürmek okların birbirine göre açılarını değiştirmez. Bir
 embedding matrisi $E$ için $ER$ (herhangi bir dik $R$ ile) bütün iç çarpımları
 ve kosinüsleri korur.
 
-Bunun sonucu şaşırtıcı ama önemli: eğitim amacı yalnızca iç çarpımlara bakar,
-dolayısıyla sonsuz sayıdaki döndürülmüş kopyadan hiçbirini diğerine tercih
-etmez. Elinizdeki koordinat sistemi onlardan rastgele biridir. Bu yüzden
-"embedding'in 37. boyutu hayvanlık özelliğini kodluyor" gibi bir okuma genel
-olarak yapılamaz. [Anlam tek tek koordinatlarda değil, vektörlerin birbirine
-göre konumunda — yani açılarda ve uzaklıklarda — durur.]{.hl}
+SGNS'nin bütün iç çarpımlarını korumak için merkez ve bağlam tablolarını aynı dik
+dönüşümle çarparız: $(WR)(UR)^\top = WU^\top$. Böylece eğitim amacı değişmez. Bu
+nedenle tek bir koordinatın adı model tarafından zorunlu olarak belirlenmiş
+değildir. Belirli bir eğitimde bir koordinatın bir özellikle ilişkili çıkması
+mümkündür; fakat bu yorum eşdeğer bir koordinat dönüşümünde korunmayabilir.
+[Anlam tek tek koordinatlarda değil, vektörlerin birbirine göre konumunda — yani
+açılarda ve uzaklıklarda — durur.]{.hl}
 
-**İki koşunun koordinatları doğrudan karşılaştırılamaz.** Ortadaki blok aynı
-olguyu iki eğitim koşusu arasında gösteriyor. Aynı kelimenin iki koşudaki
-vektörleri arasındaki ortalama kosinüs **−0,016**: iki koşu, aynı kelimeye
-birbiriyle rastgele iki vektör kadar ilgisiz koordinatlar vermiş. Ama bir
-koşunun bütün uzayını *tek bir döndürmeyle* diğerinin üzerine oturttuğunuzda
-(dik Procrustes hizalaması) aynı ortalama **+0,951**'e çıkıyor. Yani iki koşu
-neredeyse aynı *şekli* öğrenmiş; yalnızca farklı koordinat sistemlerinde
-yazmış. Pratik kural: farklı zamanlarda, farklı tohumlarla ya da farklı
-derlemlerde eğitilmiş iki embedding'i karşılaştıracaksanız — örneğin bir
-kelimenin anlamı yıllar içinde kaydı mı diye bakıyorsanız — önce hizalayın.
+**İki eğitimin koordinatları doğrudan karşılaştırılamaz.** Aynı kelimelerin iki
+eğitimdeki doğrudan kosinüsü ortalama **−0,016**, dik hizalama (Procrustes)
+sonrasında ise **+0,951**'dir. Bu, koordinat seçiminin farkın önemli bir bölümünü
+açıkladığını gösterir; iki uzayın yalnızca dönmüş kopyalar olduğunu göstermez.
+Nitekim komşuluk örtüşmeleri yerel farklılıkların sürdüğünü gösteriyor. Farklı
+zaman veya derlemleri karşılaştırırken ortak ve mümkün olduğunca kararlı dayanak
+kelimelerle hizalama yapmak, incelenecek değişimi hizalamanın içine soğurmamaya
+dikkat etmek gerekir.
 
 ::: {.callout-important appearance="simple"}
 **Embedding eğitimi stokastiktir.** Aynı derlem + farklı tohum → geometrik
