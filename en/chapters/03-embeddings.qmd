@@ -1281,8 +1281,8 @@ built into the loss indirectly.</p>`
 
 ### Which vectors get updated in one step?
 
-This is the question to settle before writing the code, and the answer on its
-own explains why word2vec is fast.
+To understand the computational cost of negative sampling, look at which rows a
+single training pair contributes to.
 
 For a single training pair, with $K = 5$ negatives, there are **seven row
 updates** across the two matrices:
@@ -1296,37 +1296,37 @@ If the sampled negatives repeat, or collide with the true context word, the
 number of *distinct* rows touched is fewer than seven; the number of update
 contributions does not change.
 
-Everything else — the rows of every other word in the vocabulary, in both
-matrices — **does not move**. Not "moves a little": the gradients are
-*exactly zero*. The reason is simple. Those rows never entered any dot
-product in this step, so they never appear in the loss, and the derivative
-with respect to a parameter that does not appear in the loss is zero.
+The remaining rows — those of every other word in the vocabulary, in both
+matrices — do not enter the SGNS data loss of this pair, so their gradients are
+*zero*. Under the SGD update used here, which has no momentum and no weight
+decay, those rows do not change. With regularization, or with an optimizer that
+carries past updates forward, the parameter update has to be examined
+separately.
 
-For scale, take the model we train from scratch below: a vocabulary of
-18,677 words, 100 dimensions, two matrices — 37,354 rows and 3,735,400
-parameters. One training
-pair touches **7 rows**, which is **0.019%** of them. That is why billions of
-updates finish in hours on one machine.
+For scale, take the model we train from scratch below: two tables of 18,677
+words and 100 dimensions hold 37,354 rows and 3,735,400 parameters in total. A
+single training pair with five negatives contributes to **at most seven
+distinct rows**, about **0.019%** of them. That sparsity is one of the important
+reasons training is efficient.
 
 You can see it directly in the update lines of the code below: `targets` in
 `np.add.at(Wo, targets.ravel(), ...)` holds only $K+1$ indices per pair, so
 only that many rows of `Wo` are added into. The rest are untouched.
 
-**With a full softmax it would be completely different**, and the difference
-is precisely why negative sampling exists. The softmax denominator sums over
-*every* word in the vocabulary, so every word's output vector enters the loss
-and every one of them receives a non-zero gradient. Rows touched per pair
-jumps from 7 to 18,678 — half of all rows — which is **2,668 times** the
-arithmetic, for *every* pair.
+**With a full softmax** every output vector takes part in the scoring in the
+denominator and usually receives a non-zero gradient. In this example that is
+one centre row and 18,677 output rows, 18,678 rows in total. The ratio of about
+**2,668** against seven rows compares the number of rows affected; it is not a
+ratio of total computational cost or of running time.
 
 ::: {.column-margin}
-The practical consequence: the gradient of an embedding matrix is **sparse**.
-PyTorch's `nn.Embedding(..., sparse=True)` and the matching `SparseAdam`
-optimizer come straight out of this fact. A second consequence: a word's
-centre vector learns only when the word occurs as a centre, and its context
-vector only when it appears as a true context or gets drawn as a negative.
-That is another way to read why the 0.75 exponent matters — it buys tail words'
-context vectors a place in the update queue.
+In SGNS the table is accessed only through the selected indices, so the gradient
+of the data loss is **sparse** at the level of rows. PyTorch's
+`nn.Embedding(..., sparse=True)` produces sparse gradients for accesses of this
+kind. If the embedding parameters are also used in other operations, such as a
+full softmax, the gradient of the whole parameter need not be sparse. Here the
+centre vector is updated directly when the word is selected as a centre, and
+the context vector when it is used as a positive or a negative context.
 :::
 
 ### Four training choices that decide how well word2vec works

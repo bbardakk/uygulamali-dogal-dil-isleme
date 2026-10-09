@@ -1283,8 +1283,8 @@ kayıp fonksiyonuna dolaylı olarak gömülüdür.</p>`
 
 ### Bir adımda hangi vektörler güncellenir?
 
-Kodu yazmadan önce netleşmesi gereken soru bu — ve cevabı, word2vec'in neden
-bu kadar hızlı olduğunu tek başına açıklıyor.
+Negatif örneklemenin hesap maliyetini anlamak için bir eğitim çiftinin hangi
+satırlara katkı verdiğine bakalım.
 
 Tek bir eğitim çiftinde, $K = 5$ negatifle, iki matriste **toplam yedi satır
 güncelleme katkısı** oluşur:
@@ -1298,40 +1298,38 @@ güncelleme katkısı** oluşur:
 çakışırsa, güncellenen *farklı* satır sayısı yediden az olur; katkıların
 toplamı değişmez.
 
-Geri kalan her şey — sözlükteki diğer bütün kelimelerin her iki matristeki
-satırları — **kıpırdamaz**. Bu "çok az değişir" demek değil: gradyanları
-*tam olarak sıfırdır*. Sebebi de basit. O satırlar bu adımın iç çarpımlarına
-hiç girmedi, dolayısıyla kaybın formülünde hiç görünmüyorlar; formülde
-görünmeyen bir parametreye göre türev de sıfırdır.
+Geri kalan satırlar — sözlükteki diğer bütün kelimelerin her iki matristeki
+satırları — bu çiftin SGNS veri kaybına girmez; dolayısıyla gradyanları
+*sıfırdır*. Burada kullandığımız, momentum ve ağırlık azalması (weight decay)
+içermeyen SGD güncellemesinde bu satırlar değişmez. Düzenlileştirme veya geçmiş
+güncellemeleri taşıyan bir optimizer kullanılırsa parametre güncellemesini
+ayrıca incelemek gerekir.
 
-Ölçek hakkında fikir edinmek için aşağıda sıfırdan eğiteceğimiz modeli alın: 18.677
-kelimelik sözlük, 100 boyut, iki matris — yani 37.354 satır ve 3.735.400
-parametre. Bir eğitim çifti bunların **7 satırına**, yani satırların
-**%0,019'una** dokunuyor.
-Milyarlarca güncellemenin tek bir makinede saatler içinde bitmesinin sebebi
-bu.
+Ölçek hakkında fikir edinmek için aşağıda sıfırdan eğiteceğimiz modeli alın:
+18.677 kelimelik, 100 boyutlu iki tabloda toplam 37.354 satır ve 3.735.400
+parametre bulunur. Beş negatif kullanan tek bir eğitim çifti **en fazla yedi
+farklı satıra**, yani satırların yaklaşık **%0,019'una** katkı verir. Bu
+seyreklik, eğitimin verimli olmasının önemli nedenlerinden biridir.
 
 Bunu aşağıdaki kodun güncelleme satırlarında doğrudan görebilirsiniz:
 `np.add.at(Wo, targets.ravel(), ...)` çağrısındaki `targets`, çift başına
 yalnızca $K+1$ indeks taşır — dolayısıyla `Wo`'nun yalnızca o kadar satırına
 ekleme yapılır. Gerisine dokunulmaz.
 
-**Tam softmax kullansaydınız durum tamamen farklı olurdu** ve negatif örneklemenin
-var olma sebebi de bu fark. Softmax'ın paydası sözlükteki
-*bütün* kelimeler üzerinden toplanır; dolayısıyla her kelimenin çıktı vektörü
-kaybın formülüne girer ve her biri sıfırdan farklı bir gradyan alır. Çift
-başına dokunulan satır sayısı 7'den 18.678'e, yani bütün satırların yarısına
-fırlar — aynı iş için **2.668 kat** daha fazla hesap, üstelik *her* çiftte.
+**Tam softmax'te** bütün çıktı vektörleri paydadaki puanlamaya katılır ve
+genellikle sıfırdan farklı gradyan alır. Bu örnekte bir merkez satırı ile 18.677
+çıktı satırı, toplam 18.678 satır söz konusudur. Yedi satıra göre yaklaşık
+**2.668 katlık** bu oran, etkilenen satır sayısını karşılaştırır; toplam hesap
+maliyeti veya çalışma süresi oranı değildir.
 
 ::: {.column-margin}
-Buradan çıkan pratik sonuç: bir embedding matrisinin gradyanı **seyrektir**.
-PyTorch'taki `nn.Embedding(..., sparse=True)` seçeneği ve ona eşlik eden
-`SparseAdam` optimizer'ı doğrudan bu olgudan doğar. Aynı olgunun ikinci
-sonucu da şu: bir kelimenin merkez vektörü yalnızca kelime merkezde
-geçtiğinde öğrenir; bağlam vektörü ise yalnızca gerçek bağlam olarak
-göründüğünde ya da negatif olarak çekildiğinde. Birazdan göreceğimiz 0,75
-üssünün neden önemli olduğunu buradan da okuyabilirsiniz: o üs, kuyruktaki
-kelimelerin bağlam vektörlerine güncellenme şansı kazandırıyor.
+SGNS'de tabloya yalnızca seçilen indekslerle erişildiği için veri kaybının
+gradyanı satır düzeyinde **seyrektir**. PyTorch'un
+`nn.Embedding(..., sparse=True)` seçeneği bu tür erişimler için seyrek gradyan
+üretir. Ancak embedding parametreleri tam softmax gibi başka işlemlerde de
+kullanılıyorsa bütün parametrenin gradyanı seyrek olmak zorunda değildir.
+Buradaki merkez vektörü, kelime merkez olarak seçildiğinde; bağlam vektörü ise
+pozitif ya da negatif bağlam olarak kullanıldığında doğrudan güncellenir.
 :::
 
 ### word2vec'in başarısını belirleyen dört eğitim tercihi
