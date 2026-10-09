@@ -2549,27 +2549,43 @@ the mean, the centroid of the word vectors in a document, which gives a
 
 ```python
 def average(docs):
+    # docs: a list of documents, each one a list of tokens (not a raw string).
+    # Out-of-vocabulary tokens are skipped; a document with no vector stays a zero row.
     out = np.zeros((len(docs), g.vector_size), dtype=np.float32)
-    for i, d in enumerate(docs):
-        vs = [g[w] for w in d if w in g.key_to_index]
+    for i, tokens in enumerate(docs):
+        if isinstance(tokens, str):
+            raise TypeError("each document must be a list of tokens, not a raw string")
+        vs = [g[w] for w in tokens if w in g.key_to_index]
         if vs:
             out[i] = np.mean(vs, axis=0)
     return out
 ```
 
+Tokenization and case conversion have to be applied consistently to the
+training and the test documents. Cosine similarity is undefined for zero
+vectors, so a search application also needs an explicit empty-representation
+rule. In the experiment below, 79 of the 2,327 training documents and 65 of the
+1,550 test documents stay zero rows.
+
 A step up from the plain mean is to weight it by IDF:
 
 $$
-v_d = \frac{\sum_{w \in d} \mathrm{idf}(w)\, v_w}{\sum_{w \in d} \mathrm{idf}(w)}
+\mathbf{v}_d = \frac{\sum_{i \in I_d} \mathrm{idf}(w_i)\, \mathbf{v}_{w_i}}
+                    {\sum_{i \in I_d} \mathrm{idf}(w_i)}
 $$
 
-The idea from @sec-text-as-data carries over: let words that appear in every
-document steer the average less. That variant appears in the table below as
+Here $I_d$ is the set of token positions in the document that have a word
+vector; repeated words contribute at every position. IDF is computed from the
+training documents only and held fixed at test time. If the denominator is zero,
+an explicit empty-representation rule applies, as for the plain mean. As in
+@sec-text-as-data, this weighting reduces the relative contribution of words
+that occur in many documents. The variant appears in the table below as
 `idf-weighted averaged glove`.
 
-doc2vec [@le2014distributed] does something less naive: it learns a vector
-per *document* by the same negative-sampling trick, treating the document id
-as an extra context. It comes in two flavours:
+doc2vec [@le2014distributed] assigns a learnable vector to the document id as
+well. Training is based on predicting target words; output objectives such as
+negative sampling or hierarchical softmax can be used. It has two basic
+architectures:
 
 | Variant | Input | Predicts |
 |---|---|---|
@@ -2582,17 +2598,16 @@ Loosely, they are the CBOW and skip-gram of the document world — the
 input–output columns show they are not literally the same models.
 
 ::: {.column-margin}
-Which flavour wins is not settled by the original paper. @le2014distributed
-recommend PV-DM; @lau2016empirical re-ran both carefully and found PV-DBOW at
-least as strong and much cheaper, which is why much later work uses it — note
-that `gensim`'s default is still PV-DM (`dm=1`), so you must ask for PV-DBOW
-with `dm=0`. doc2vec is also the field's best-known reproducibility case: the
-paper's headline IMDB error rate (7.42%) was never reproduced. A follow-up
-written with one of the original authors got about 11% with paragraph vectors
-alone, and reported that the original figure appeared only when the training
-and test data were *not shuffled*
-([Mesnil et al., 2014](https://arxiv.org/abs/1412.5335)). Read it as a
-cautionary tale about single-number claims.
+The original work favours PV-DM, while @lau2016empirical found that PV-DBOW can
+also be strong, and computationally convenient, on the tasks they examined. In
+`gensim`, `dm=1` (the default) selects PV-DM and `dm=0` selects PV-DBOW. On
+reproducibility, a follow-up written with one of the original authors is
+instructive ([Mesnil et al., 2014](https://arxiv.org/abs/1412.5335)). Its final
+version (v7) reports 88.73% accuracy with paragraph vectors alone, against the
+92.58% IMDB accuracy (7.42% error) of the original paper, and states that 92.6%
+appeared only when the training and test data were *not shuffled*. That is the
+result of one particular replication; it is not a verdict on every replication
+of the method.
 :::
 
 :::: {.anlp-fig}
@@ -2680,18 +2695,18 @@ cautionary tale about single-number claims.
 ```
 
 ::: {.fig-cap}
-Both variants add one row to the input table for every document and let
-gradient descent fill it in. The catch arrives at inference: a document the
-model has never seen has no row, so its vector must be obtained by running
-more gradient steps — which is why averaging word vectors, for all its
-flaws, is still the more common choice.
+Every training document is assigned a learnable vector. For a new document the
+model's word and output parameters are held fixed and the new document vector is
+estimated with a few optimization steps. That requires the trained model, which
+can run inference, and not only the saved document vectors. This extra
+computation is an important difference from averaging word vectors directly.
 :::
 ::::
 
 Same four categories, same train/test split, same logistic regression on top.
 
 ```text
-### documents as vectors: four ways
+### documents as vectors: five representations
 tf-idf (chapter 2 baseline)        accuracy 0.853   dimensions   32014
 averaged glove                     accuracy 0.820   dimensions     100
 idf-weighted averaged glove        accuracy 0.822   dimensions     100
@@ -2699,43 +2714,60 @@ doc2vec (PV-DBOW, 40 epochs)       accuracy 0.839   dimensions     100
 averaged glove + doc2vec           accuracy 0.845   dimensions     200
 ```
 
-A caution on reading those three decimal places. The test set is roughly 1,500
-documents, so the standard error of an accuracy near 0.83 is about 0.010. The
-1.9-point gap between doc2vec and averaging is not proof of superiority on a
-single split, and the 0.2 points between averaged and idf-weighted averaged
-GloVe is noise. The 3.3-point gap between TF-IDF and averaged GloVe is the one
-the argument actually rests on, and it is the one that survives.
+A single accuracy computed from 1,550 documents carries uncertainty. For example,
+the standard error of an accuracy near 0.83 is about 0.010 under the binomial
+approximation; that value is not, however, the standard error of the difference
+between the accuracies of two models. To decide whether gaps of 0.2, 1.9 or 3.3
+points are significant, the predictions on the same documents have to be
+examined as pairs and, where possible, results reported on different splits.
+The note below gives that paired comparison.
 
 ::: {.callout-note collapse="true"}
 ## Advanced evaluation note: comparing two representations on the same documents
 
-Every row here sees the same test documents, so the right test is McNemar's on
-the paired predictions, and the right presentation is a mean over several
-splits with a spread. A paired test looks only at the documents where two
-representations disagree, which is why it has far more power than comparing two
-independent intervals.
+McNemar's test can be used to compare the accuracies of two models that
+classify the same test documents. The test compares the counts, in the two
+directions, of documents that one model gets right and the other gets wrong.
+Predicting different wrong classes does not by itself enter that disagreement.
+An effect size and a paired uncertainty interval should be reported too, and
+the variability across different splits examined separately.
+
+The counts measured on this split:
+
+| Comparison | Only the first right | Only the second right | Exact McNemar $p$ |
+|---|--:|--:|--:|
+| TF-IDF – averaged GloVe | 135 | 84 | 0.0007 |
+| TF-IDF – IDF-weighted averaged GloVe | 129 | 81 | 0.0011 |
+| IDF-weighted – plain averaged GloVe | 66 | 63 | 0.86 |
+
+: Paired comparison on the same 1,550 test documents {tbl-colwidths="[40,20,22,18]"}
+
+The Bonferroni threshold for three comparisons is $0.05 / 3 \approx 0.017$; the
+first two differences fall below it and the 0.2-point gap between the two GloVe
+averages does not. We cannot give the same calculation for the doc2vec rows:
+`gensim`'s `infer_vector` derives its starting vector from a hash value that
+changes in every Python session, so the doc2vec predictions behind the table
+cannot be reproduced exactly. With a fixed hash, the chapter notebook finds
+doc2vec accuracies between 0.830 and 0.836 over three seeds.
 :::
 
-Read that table carefully, because it is not the result the marketing
-promised. **The sparse chapter-2 baseline is not beaten.** TF-IDF loses to no
-dense method: it clearly beats averaged GloVe, while its gaps to doc2vec (1.4
-points) and to the concatenation (0.8 points) are within noise on one split.
-
-What the dense methods buy is not accuracy, it is the number of coordinates:
-0.820 versus 0.853 with **320 times fewer coordinates**. The real memory
-difference is not the same ratio: a sparse representation stores only non-zero
-values, together with their indices. If you are storing ten million document
-vectors, or doing nearest-neighbour search over them, that ratio decides your
-architecture. If you are classifying four newsgroups on 2,327 training
-documents, it buys you nothing.
+On this split the highest accuracy is in the TF-IDF row. The dense
+representations reach accuracies close to the 32,014-dimensional sparse one
+using 100 or 200 coordinates. The paired predictions show that the gap between
+TF-IDF and the two GloVe averages is hard to explain by chance on this split
+(the note above); the same calculation could not be made for the gaps to the
+doc2vec rows. A reduction in the number of coordinates does not translate
+directly into the same ratio of memory saved; sparse storage, running time and
+the search method to be used have to be measured as well. A small
+classification task and large-scale document search can call for different
+choices.
 
 ::: {.column-margin}
-Why does averaging do so well at all, given how crude it is? Because topic
-classification is largely a bag-of-topics problem, and the average of a
-document's word vectors is a decent estimate of its topic centroid.
-@arora2017simple show that a weighted average plus removal of the first
-principal component is a genuinely hard baseline to beat for sentence
-similarity.
+In topic classification the mean of the word vectors can be a useful starting
+representation. The SIF approach of @arora2017simple uses weights
+$a / (a + p(w))$ that depend on word frequency and removes a common dominant
+component. That is not the same method as the IDF-weighted mean above; it is a
+separate baseline that can be compared on tasks such as sentence similarity.
 :::
 
 Two more measurements before leaving this. First, coverage:
@@ -2746,10 +2778,11 @@ Two more measurements before leaving this. First, coverage:
   types covered : 84.5%  (23395 of 27681)
 ```
 
-98.6% of tokens but only 84.5% of types — the missing 15% are rare by
-construction (they add up to 1.4% of the tokens). Some are typos and odd
-strings, but many are exactly the informative, domain-specific words, and
-averaging silently drops them all.
+In this measurement GloVe covers 98.6% of the tokens and 84.5% of the types. The
+forms it does not cover make up 1.4% of the token mass, which shows that the
+group is rare overall. How many of them are typos, proper names or domain terms
+has to be examined separately. The averaging method used here leaves those
+forms out.
 
 Second, the failure that no amount of averaging can fix:
 
@@ -2766,11 +2799,15 @@ vb = np.mean([g[w] for w in b], axis=0)
   identical: True
 ```
 
-Not similar — *identical*, to floating-point precision, because addition is
-commutative. Two sentences that would send a maintenance crew to opposite
-ends of the plant have the same vector. This is chapter 2's bag-of-words
-problem, still completely unsolved, now with 100 dimensions instead of
-32,000.
+The same tokens occur the same number of times in the two sentences, so the
+unordered mean is mathematically the same vector. In floating-point arithmetic
+the order of addition can produce very small rounding differences; bit-level
+equality is not guaranteed in every implementation. The `identical: True` here
+is the result of an `np.allclose` comparison; in the same run the bit-level
+comparison (`np.array_equal`) gives `False`, and the largest difference is
+$1.2 \times 10^{-7}$. The basic limitation does not change: averaging does not
+keep the word order that determines which part failed. This is chapter 2's
+bag-of-words problem, now with 100 dimensions instead of 32,000.
 
 Word order needs a model that reads the sequence. That is @sec-language-models
 and @sec-transformers.

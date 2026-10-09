@@ -2549,27 +2549,42 @@ vektörü.
 
 ```python
 def average(docs):
+    # docs: her elemanı token listesi olan belge listesi (ham metin değil).
+    # Sözlük dışı token'lar atlanır; hiç vektörü olmayan belge sıfır satırı kalır.
     out = np.zeros((len(docs), g.vector_size), dtype=np.float32)
-    for i, d in enumerate(docs):
-        vs = [g[w] for w in d if w in g.key_to_index]
+    for i, tokens in enumerate(docs):
+        if isinstance(tokens, str):
+            raise TypeError("each document must be a list of tokens, not a raw string")
+        vs = [g[w] for w in tokens if w in g.key_to_index]
         if vs:
             out[i] = np.mean(vs, axis=0)
     return out
 ```
 
+Tokenleştirme ve harf dönüşümleri eğitim ve test belgelerinde tutarlı
+uygulanmalıdır. Sıfır vektörler için kosinüs benzerliği tanımsız olduğundan,
+arama uygulamasında ayrıca bir boş-temsil davranışı belirlenmelidir. Aşağıdaki
+deneyde 2.327 eğitim belgesinin 79'u, 1.550 test belgesinin 65'i sıfır satırı
+olarak kalıyor.
+
 Düz ortalamadan bir adım ötesi, ortalamayı IDF ile ağırlıklandırmaktır:
 
 $$
-v_d = \frac{\sum_{w \in d} \mathrm{idf}(w)\, v_w}{\sum_{w \in d} \mathrm{idf}(w)}
+\mathbf{v}_d = \frac{\sum_{i \in I_d} \mathrm{idf}(w_i)\, \mathbf{v}_{w_i}}
+                    {\sum_{i \in I_d} \mathrm{idf}(w_i)}
 $$
 
-@sec-metin-veri'deki fikir burada da geçerli: her belgede geçen kelimeler
-ortalamayı daha az yönlendirsin. Bu varyant aşağıdaki tabloda
-`idf-weighted averaged glove` adıyla görünüyor.
+Burada $I_d$, belgenin kelime vektörü bulunan token konumlarıdır; tekrar eden
+kelimeler her konumda katkı verir. IDF yalnızca eğitim belgelerinden hesaplanır
+ve testte sabit tutulur. Payda sıfırsa, düz ortalamadaki gibi açık bir
+boş-temsil kuralı uygulanır. Önceki bölümdeki (@sec-metin-veri) gibi bu
+ağırlıklandırma, çok sayıda belgede geçen kelimelerin göreli katkısını azaltır.
+Bu varyant aşağıdaki tabloda `idf-weighted averaged glove` adıyla gösteriliyor.
 
-doc2vec [@le2014distributed] daha az naif bir şey yapar: aynı negatif
-örnekleme numarasıyla *belge* başına bir vektör öğrenir ve belge kimliğini
-fazladan bir bağlam gibi görür. İki türü var:
+doc2vec [@le2014distributed], belge kimliğine de öğrenilebilir bir vektör atar.
+Eğitim, hedef kelimeleri tahmin etmeye dayanır; negatif örnekleme veya
+hiyerarşik softmax gibi çıktı amaçları kullanılabilir. İki temel mimarisi
+vardır:
 
 | Varyant | Girdi | Tahmin edilen |
 |---|---|---|
@@ -2583,18 +2598,17 @@ de birebir aynı model olmadıklarını, tablodaki girdi–çıktı farkından
 görebilirsiniz.
 
 ::: {.column-margin}
-Hangi türün üstün geldiğini özgün makale kesinleştirmiyor. @le2014distributed
-PV-DM'i öneriyor; @lau2016empirical ise ikisini de dikkatle yeniden çalıştırdı
-ve PV-DBOW'u en az PV-DM kadar güçlü, üstelik çok daha ucuz buldu. Sonraki
-çalışmaların çoğunun PV-DBOW'u kullanmasının nedeni bu — ama `gensim`'in
-varsayılanı hâlâ PV-DM'dir (`dm=1`); PV-DBOW için `dm=0` demeniz gerekir.
-doc2vec ayrıca alanın en bilinen tekrarlanabilirlik vakası: makalenin manşet
-IMDB hata oranı (%7,42) hiçbir zaman yeniden üretilemedi. Özgün yazarlardan
-birinin de yer aldığı bir takip çalışması, yalnızca paragraf vektörleriyle
-yaklaşık %11 hata elde etti ve özgün sayının ancak eğitim ve test verisinin sırası
-*karıştırılmadığında* (shuffle edilmediğinde) ortaya çıktığını bildirdi
-([Mesnil vd., 2014](https://arxiv.org/abs/1412.5335)). Tek sayılık iddialar
-hakkında bir ibret hikâyesi olarak okuyun.
+Özgün çalışma PV-DM'i öne çıkarırken, Lau ve Baldwin [@lau2016empirical]
+inceledikleri görevlerde PV-DBOW'un da güçlü ve hesaplama açısından elverişli
+olabildiğini buldu. `gensim` içinde PV-DM için `dm=1` (varsayılan), PV-DBOW için
+`dm=0` seçilir. Tekrarlanabilirlik açısından, özgün yazarlardan birinin de yer
+aldığı bir takip çalışması öğreticidir
+([Mesnil vd., 2014](https://arxiv.org/abs/1412.5335)). Çalışmanın son sürümü
+(v7), özgün makaledeki %92,58 IMDB doğruluğuna (%7,42 hata) karşılık yalnızca
+paragraf vektörleriyle %88,73 doğruluk elde ettiklerini ve %92,6'nın ancak eğitim
+ve test verisi *karıştırılmadığında* (shuffle edilmediğinde) ortaya çıktığını
+bildirir. Bu, belirli bir tekrar deneyinin sonucudur; yöntemin bütün tekrarları
+hakkında hüküm değildir.
 :::
 
 :::: {.anlp-fig}
@@ -2682,12 +2696,11 @@ hakkında bir ibret hikâyesi olarak okuyun.
 ```
 
 ::: {.fig-cap}
-Her iki varyant da her belge için girdi tablosuna bir satır ekler ve o satırı
-gradyan inişinin doldurmasına bırakır. Sorun çıkarım anında ortaya çıkar:
-modelin daha önce hiç görmediği bir belgenin satırı yoktur, dolayısıyla
-vektörü ancak yeni gradyan adımları çalıştırılarak elde edilebilir. Kelime
-vektörlerinin ortalamasını almanın, bütün kusurlarına rağmen hâlâ daha yaygın
-tercih olmasının nedeni de bu.
+Her eğitim belgesine öğrenilebilir bir vektör atanır. Yeni belge için modelin
+kelime ve çıktı parametreleri sabit tutulur, yeni belge vektörü birkaç
+optimizasyon adımıyla kestirilir. Bunun için yalnızca kaydedilmiş belge
+vektörleri değil, çıkarım yapabilen eğitilmiş model gerekir. Bu ek hesap
+maliyeti, kelime vektörlerinin doğrudan ortalamasına göre önemli bir farktır.
 :::
 ::::
 
@@ -2695,7 +2708,7 @@ tercih olmasının nedeni de bu.
 eğitim, 1.550 test belgesi) ve temsillerin üzerinde aynı lojistik regresyon.
 
 ```text
-### documents as vectors: four ways
+### documents as vectors: five representations
 tf-idf (chapter 2 baseline)        accuracy 0.853   dimensions   32014
 averaged glove                     accuracy 0.820   dimensions     100
 idf-weighted averaged glove        accuracy 0.822   dimensions     100
@@ -2703,43 +2716,59 @@ doc2vec (PV-DBOW, 40 epochs)       accuracy 0.839   dimensions     100
 averaged glove + doc2vec           accuracy 0.845   dimensions     200
 ```
 
-Üç ondalık basamaklı bu doğrulukları okurken bir uyarı. Test kümesi 1.550
-belge, dolayısıyla 0,83 civarındaki bir doğruluğun standart hatası yaklaşık
-0,010. Bu durumda doc2vec ile ortalama arasındaki 1,9 puanlık fark, tek bir
-bölünmede kesin bir üstünlük kanıtı değil. Ortalama GloVe ile idf ağırlıklı
-ortalama GloVe arasındaki 0,2 puan ise gürültü. Argümanın gerçekte dayandığı
-fark, TF-IDF ile ortalama GloVe arasındaki 3,3 puan ve ayakta kalan da o.
+1.550 belgeden hesaplanan tek bir doğruluk, belirsizlik taşır. Örneğin 0,83
+dolayında bir doğruluğun binom yaklaşımıyla standart hatası yaklaşık 0,010'dur;
+ancak bu değer iki modelin doğruluk farkının standart hatası değildir. 0,2, 1,9
+veya 3,3 puanlık farkların anlamlılığını belirlemek için aynı belgelerdeki
+tahminleri eşleştirerek incelemek ve mümkünse farklı bölünmelerde sonuçları
+raporlamak gerekir. Aşağıdaki not bu eşleştirilmiş karşılaştırmayı veriyor.
 
 ::: {.callout-note collapse="true"}
 ## İleri değerlendirme notu: aynı belgeleri gören iki temsili karşılaştırmak
 
-Bu satırların hepsi aynı test belgelerini görüyor, dolayısıyla doğru araç
-eşleştirilmiş tahminler üzerinde McNemar testidir; doğru sunum ise birkaç
-bölünme üzerinden ortalama ve yayılımdır. Eşleştirilmiş test yalnızca iki
-temsilin ayrıştığı belgelere bakar ve bu yüzden iki bağımsız aralığı
-karşılaştırmaktan çok daha güçlüdür.
+Aynı test belgelerini sınıflandıran iki modelin doğruluklarını karşılaştırırken
+McNemar testi kullanılabilir. Test, bir modelin doğru diğerinin yanlış tahmin
+ettiği belgelerin iki yöndeki sayımlarını karşılaştırır. Farklı yanlış sınıfları
+tahmin etmeleri tek başına bu ayrışmaya girmez. Etki büyüklüğü ve eşleştirilmiş
+belirsizlik aralığı da raporlanmalı; farklı bölünmelerdeki değişkenlik ayrıca
+incelenmelidir.
+
+Bu bölünmede ölçülen sayımlar:
+
+| Karşılaştırma | Yalnızca ilki doğru | Yalnızca ikincisi doğru | Kesin McNemar $p$ |
+|---|--:|--:|--:|
+| TF-IDF – ortalama GloVe | 135 | 84 | 0,0007 |
+| TF-IDF – IDF ağırlıklı ortalama GloVe | 129 | 81 | 0,0011 |
+| IDF ağırlıklı – düz ortalama GloVe | 66 | 63 | 0,86 |
+
+: Aynı 1.550 test belgesinde eşleştirilmiş karşılaştırma {tbl-colwidths="[40,20,22,18]"}
+
+Üç karşılaştırma için Bonferroni eşiği $0{,}05 / 3 \approx 0{,}017$'dir; ilk iki
+fark bu eşiğin altında kalıyor, iki GloVe ortalaması arasındaki 0,2 puanlık fark
+kalmıyor. doc2vec satırları için aynı hesabı veremiyoruz: `gensim`'in
+`infer_vector` çağrısı, başlangıç vektörünü her Python oturumunda değişen bir
+karma değerinden türetir; bu yüzden tablodaki doc2vec tahminleri birebir yeniden
+üretilemiyor. Bölümün notebook'u sabit bir karma ile üç farklı seed'de
+0,830–0,836 arasında doc2vec doğrulukları buluyor.
 :::
 
-Bu tabloyu dikkatle okuyun, çünkü reklamı yapılan sonuç bu değil. **2. bölümün
-seyrek baseline'ı yenilmiyor.** TF-IDF hiçbir yoğun yönteme kaybetmiyor:
-ortalama GloVe'u açıkça geride bırakıyor; doc2vec'le (1,4 puan) ve birleşimle
-(0,8 puan) farkı ise tek bölünmede gürültü sınırında.
-
-Yoğun yöntemlerin size kazandırdığı şey doğruluk değil, boyut sayısı:
-**320 kat daha az koordinatla** 0,853'e karşı 0,820. Gerçek bellek farkı bu
-oranla birebir aynı değildir; seyrek temsil yalnızca sıfırdan farklı
-değerleri, üstelik indeksleriyle birlikte saklar. On milyon belge vektörü saklıyorsanız ya da
-bunlar üzerinde en yakın komşu araması yapıyorsanız, bu oran mimarinizi
-belirler. Dört newsgroup'u 2.327 eğitim belgesiyle sınıflandırıyorsanız size
-hiçbir şey kazandırmaz.
+Bu bölünmede en yüksek doğruluk TF-IDF satırındadır. Yoğun temsiller 100 veya 200
+koordinat kullanarak 32.014 boyutlu seyrek temsile yakın doğruluklar elde ediyor.
+Eşleştirilmiş tahminler, TF-IDF ile iki GloVe ortalaması arasındaki farkın bu
+bölünmede rastlantıyla açıklanmasının zor olduğunu gösteriyor (yukarıdaki not);
+doc2vec satırlarıyla farklar için aynı hesap yapılamadı. Koordinat sayısındaki
+azalma doğrudan aynı oranda bellek kazancı demek değildir; seyrek saklama,
+çalışma süresi ve kullanılacak arama yöntemi de ölçülmelidir. Küçük bir
+sınıflandırma görevi ile büyük ölçekli belge araması farklı tercihler
+gerektirebilir.
 
 ::: {.column-margin}
-Bu kadar kaba bir yöntem olmasına rağmen ortalama alma neden bu kadar iyi
-çalışıyor? Çünkü konu sınıflandırması büyük ölçüde bir konu torbası problemidir
-ve bir belgenin kelime vektörlerinin ortalaması, o belgenin konu merkezinin
-makul bir tahminidir. @arora2017simple, ağırlıklı ortalama artı ilk temel
-bileşenin çıkarılmasının, cümle benzerliğinde gerçekten aşılması zor bir
-baseline olduğunu gösteriyor.
+Konu sınıflandırmasında kelime vektörlerinin ortalaması yararlı bir başlangıç
+temsili olabilir. Arora ve arkadaşlarının SIF yaklaşımı [@arora2017simple],
+kelime sıklığına bağlı $a / (a + p(w))$ ağırlıklarını kullanır ve ortak bir
+baskın bileşeni çıkarır. Bu, yukarıdaki IDF ağırlıklı ortalamayla aynı yöntem
+değildir; cümle benzerliği gibi görevlerde karşılaştırılabilecek ayrı bir temel
+yöntemdir.
 :::
 
 Bu konuyu kapatmadan önce iki ölçüm daha. Önce kapsama:
@@ -2750,10 +2779,11 @@ Bu konuyu kapatmadan önce iki ölçüm daha. Önce kapsama:
   types covered : 84.5%  (23395 of 27681)
 ```
 
-GloVe token'ların %98,6'sını tanıyor, ama tiplerin (farklı kelime
-biçimlerinin) yalnızca %84,5'ini. Eksik kalan %15 tanım gereği nadir kelimeler (hepsi birden token'ların %1,4'ünü oluşturuyor).
-Bazıları yazım hatası ya da tuhaf dizgiler, ama çoğu tam da bilgi taşıyan,
-alana özgü kelimeler; ortalama alma hepsini sessizce düşürüyor.
+Bu ölçümde GloVe token'ların %98,6'sını, tiplerin (farklı kelime biçimlerinin)
+%84,5'ini kapsıyor. Kapsanmayan biçimler toplam token kütlesinin %1,4'ünü
+oluşturuyor; bu, grubun genel olarak seyrek olduğunu gösterir. Ne kadarının
+yazım hatası, özel ad veya alan terimi olduğunu ayrıca incelemek gerekir.
+Buradaki ortalama yöntemi bu biçimleri dışarıda bırakıyor.
 
 İkincisi, ortalama alarak giderilemeyen hata:
 
@@ -2770,10 +2800,14 @@ vb = np.mean([g[w] for w in b], axis=0)
   identical: True
 ```
 
-Benzer değil — kayan nokta hassasiyetinde *özdeş*, çünkü toplama değişmeli bir
-işlem. Bir bakım ekibini tesisin taban tabana zıt iki ucuna gönderecek iki
-cümlenin vektörü aynı. Bu, 2. bölümün bag-of-words problemi; hâlâ tamamen
-çözümsüz, sadece artık 32.000 yerine 100 boyutla.
+İki cümlede aynı token'lar aynı sayıda geçtiği için, sırasız ortalama matematiksel
+olarak aynı vektördür. Kayan noktalı hesapta toplama sırası çok küçük yuvarlama
+farkları üretebilir; bit düzeyinde eşitlik her uygulamada garanti değildir.
+Buradaki `identical: True`, `np.allclose` karşılaştırmasının sonucudur; aynı
+koşuda bit düzeyindeki karşılaştırma (`np.array_equal`) `False` verir ve en büyük
+fark $1{,}2 \times 10^{-7}$'dir. Temel sınırlılık değişmez: ortalama alma, hangi
+parçanın arızalandığını belirleyen kelime sırasını korumaz. Bu, 2. bölümün
+bag-of-words problemidir; yalnızca artık 32.000 yerine 100 boyutla.
 
 Kelime sırası, diziyi okuyan bir model gerektirir. Bu modelleri
 @sec-dil-modelleri ve @sec-transformerlar ele alıyor.
