@@ -33,27 +33,29 @@ A good representation should be able to tell three relations apart:
 morphological closeness like `pump`–`pumps`, semantic or functional closeness
 like `pump`–`impeller`, and unrelatedness like `pump`–`Wednesday`.
 
-How bad is that, really? Bad enough that the model cannot generalise across
-*word forms* at all. Suppose your training data contains *the pump failed*
-and your test data contains *the pumps failed*. The two sentences do share
-`the` and `failed`, so something transfers — but everything the model learned
-about `pump` specifically is filed under a coordinate the second sentence never
-touches.
+An example shows what follows from that. In a linear model that uses only word
+counts, `pump` and `pumps` are separate features. Suppose your training data
+contains *the pump failed* and your test data contains *the pumps failed*. The
+weights learned for `the` and `failed` can be used; the weight learned for
+`pump`, however, does not carry over to the `pumps` feature by itself.
 
 ::: {#gloss-embedding .column-margin .term-gloss}
-**embedding** — a short list of numbers standing in for a word, arranged
-so that words used in similar ways sit close together. Think of it as
-giving every word a set of map coordinates. [↩](#term-embedding){.term-back}
+**embedding** — a learned numerical representation of a unit. In this chapter
+we mostly represent words with dense vectors of relatively few dimensions; in
+distributional methods, words used in similar contexts can end up close together
+in that space. Think of it as giving every word a set of map coordinates. [↩](#term-embedding){.term-back}
 :::
 
-This chapter fixes exactly that, and the whole fix is one idea: instead of
-treating every word as its own axis, we place all words in one shared
-coordinate system. In linear-algebra terms that means
-[replacing the identity matrix with a learned one]{.hl}.
+In this chapter we move from the one-hot representation, which gives every word
+its own axis, to one in which all words are represented with the same small
+number of learned dimensions. In linear-algebra terms that means
+[multiplying the one-hot vectors by a learned matrix]{.hl}.
 
-Instead of giving each word its own axis, give it a short list of numbers —
-100 of them, or 300 — positioned so that words used in similar ways end up
-near each other. That list is an [embedding]{.hl}.
+For each word we get, say, 100 or 300 numbers, and we aim for words used in
+similar ways to end up near each other. That short, **dense** vector is an
+[embedding](#gloss-embedding){#term-embedding .term-ref}. In a dense vector most
+components are usually non-zero; in the **sparse** count vectors of
+@sec-text-as-data most components were zero.
 
 **Three kinds of embedding, one chapter.** The word "embedding" is used for
 three different things, and separating them now makes the rest of the chapter
@@ -62,14 +64,15 @@ easier:
 | Kind | Example | Does the same word get the same vector everywhere? |
 |:--|:--|:--|
 | **Static word embedding** | word2vec, GloVe, fastText | Yes — one vector per word form, whatever the context |
-| **Contextual token embedding** | BERT | No — the vector is computed from the sentence the word appears in |
+| **Contextual token embedding** | BERT | No — each token's vector is computed from its context in the sequence given to the model; one word can consist of several tokens |
 | **Sentence or document embedding** | SBERT and its relatives | Not the question: one vector for the whole sentence or document |
 
 : The three things "embedding" can mean {tbl-colwidths="[28,26,46]"}
 
-[This chapter is about static embeddings.]{.hl} Contextual ones belong to
-@sec-transformers and sentence- and document-level ones to @sec-retrieval; by
-the end of this chapter you will see why both are needed.
+[This chapter is about static word embeddings.]{.hl} It also gives a short
+introduction to document vectors. Contextual representations are covered in
+@sec-transformers, and the use of sentence and document representations in
+retrieval in @sec-retrieval.
 
 **Two reading layers.** The chapter is long; on a first read this spine is
 enough:
@@ -83,22 +86,24 @@ enough:
 Most of the derivations in the second layer sit in collapsible *Deep dive*
 boxes; the main line is complete without opening them.
 
-**What we will look at.** We will build the space twice. First by counting,
-because that version can be checked by hand and every number is small enough
-to print. Then by predicting, which is word2vec — and we will write it from
-scratch, gradients included, before showing that the two routes were the same
-route all along. After that: what the space is good at, the three defects it
-hides, and the one thing it cannot do at all, which is exactly what
-@sec-transformers exists to fix.
+**What we will look at.** We first build the space from counts; on a small
+example every step can be checked by hand. Then we write skip-gram with negative
+sampling from scratch, gradients included, and examine how that method relates
+to PMI. Finally we look at what embeddings are used for, at their geometric
+properties, and at the limits of a representation that does not change with
+context. On a first read you can skip the collapsible *Deep dive* boxes and the
+from-scratch implementation code.
 
 ::: {.callout-note collapse="true"}
 ## Deep dive: the statistician's framing
 
-One-hot encoding is a saturated model with one parameter per category and no
-pooling. An [embedding](#gloss-embedding){#term-embedding .term-ref} is the
-same model with a low-rank constraint, which is a form of partial pooling.
-Words that behave alike are forced to share parameters, and that sharing *is*
-the generalisation.
+One-hot encoding shows categories as separate coordinates. In some models that
+use it, independent parameters are learned for each category. Representing
+word–context interactions with two low-rank matrices, by contrast, gives those
+interactions a shared structure. That structure can let what is learned from
+similar distributions contribute to generalization. It should not be equated
+with a saturated model or with hierarchical partial pooling in the technical
+sense; the comparison is there for intuition only.
 :::
 
 ## The distributional hypothesis
