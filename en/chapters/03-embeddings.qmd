@@ -3554,86 +3554,74 @@ Answer before expanding.
 ::: {.callout-note collapse="true"}
 ## 1. Your embedding has 300 dimensions. Why 300 and not 30 or 3,000?
 
-There is nothing magic about 300: a few hundred dimensions historically gave
-a good capacity–data–cost balance for classic static embeddings. No single
-thing sets the right size — the rank capacity the representation can carry,
-the size of the corpus, the frequency distribution of words, the training
-objective, the downstream task and memory/index cost all weigh in. The
-intuition is a bias–variance trade-off. Too few
-dimensions and unrelated words are forced to share coordinates
-(underfitting — in the toy example, the shared first coordinate inflated
-cosines in 2 dimensions: `king`–`queen` at 0.996). Too many and rare words get
-vectors fitted to their handful of contexts, which is noise, plus you pay
-linearly in memory and search time.
+There is no universal optimum at 300. With fewer dimensions the capacity of the
+representation can be limited; with more, memory and computation cost rise, and
+how well detail learned from little data generalizes has to be assessed
+separately. A low dimension does not force all unrelated words onto the same
+point, however, and a high dimension does not necessarily produce noise. We
+choose the dimension from data coverage and validation performance on the
+target task, taking the storage and latency budget into account together.
 
 Measured on the same benchmarks used above, going from 50 to 100 dimensions
-is clearly worth it:
+raises all three scores:
 
 ```text
   glove-wiki-gigaword-50   d=50   wordsim 0.503  simlex 0.263  analogy 0.464
   glove-wiki-gigaword-100  d=100  wordsim 0.533  simlex 0.296  analogy 0.633
 ```
 
-The published sweeps in @pennington2014glove show the gains flattening
-beyond roughly 300, which is why 300 became the default. A strong answer adds
-the empirical half: you tune it on the downstream task, and past a few
-hundred dimensions the decision is usually made on storage and latency
-rather than accuracy.
+The dimension sweeps in the GloVe paper [@pennington2014glove] show that, in
+particular experiments, the gain can slow down as the dimension grows. That can
+make a few hundred dimensions a good starting range; it is not evidence for a
+universal default. On the real task, compare the dimension options for
+performance, memory and latency.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Why negative sampling instead of a softmax over the vocabulary?
 
-Cost. A full softmax normalises over the whole vocabulary for every training
-pair — 400,000 dot products per pair, times tens of billions of pairs.
-Negative sampling replaces it with $K+1$ binary decisions, where $K$ is
-typically 5 to 20, so the cost per pair no longer depends on vocabulary
-size.
-
-The deeper answer is that it changes the objective, not just the arithmetic:
-you are no longer estimating $P(c \mid w)$ but discriminating real pairs from
-noise. @levy2014neural showed the optimum of that surrogate is shifted PMI,
-which is why the substitution is principled rather than merely cheap. The
-alternative is hierarchical softmax, which keeps the probabilistic
-interpretation at $O(\log V)$; it is not standard in modern large language
-models, but you can still meet it as an option in classic word2vec training.
+The scoring cost of the full softmax is about $O(Vd)$ per pair, and that of
+scoring with $K$ negatives $O((K+1)d)$. The sampling method has a cost of its
+own; the binary search over the cumulative distribution used here takes
+$O(\log V)$ steps per sample. Negative sampling does not merely compute the same
+softmax probability faster: it changes the training objective. With $q = P(c)$
+and free dot products, the shifted-PMI target is obtained [@levy2014neural].
+Hierarchical softmax produces a normalized probability through the decisions
+along a tree path; for a balanced tree its scoring cost is about
+$O(d \log V)$.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. You have 50,000 support tickets in Turkish. Word2vec or fastText?
 
-fastText, and the reason should be three measurable conditions rather than
-"Turkish is agglutinative": the corpus is small, the morphology is rich and
-the expected out-of-vocabulary rate is high. At 1.46 million tokens this
-chapter measured 138,578 distinct Turkish forms with 50% hapax and 7.3%
-out-of-vocabulary tokens on held-out text; at a few dozen tokens per ticket,
-50,000 tickets is a corpus of roughly that size — and support tickets are a rather different domain from
-Wikipedia, so read those figures as a lower bound on the sparsity you will
-face. Word-level
-vectors will therefore be estimated from one or two occurrences for most of
-the vocabulary and will fail outright on inflections that happen not to
-appear.
-
-Say the counter-argument too, because it is what separates a good answer from
-a memorised one: subwords will make `kitap` look like `kitle`, so if your
-task depends on fine semantic distinctions between short words, measure both.
-And mention that user-generated text has typos, which subwords also absorb.
+First measure the number of tokens and types in the support tickets, and the OOV
+rate on a train/test split. The inflectional variety of Turkish makes fastText
+a strong candidate; but the 7.3% OOV rate on Wikipedia is not a lower bound for
+support tickets. The vocabulary of a narrow, repetitive support domain can be
+smaller, too. Compare word2vec and fastText under the same preprocessing and
+evaluation conditions, and weigh the coverage gain of the subword method
+together with the unwanted spelling-based closeness (`kitap`/`kitle`).
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Cosine similarity between two documents' averaged vectors is 0.95. Are they about the same thing?
 
-Probably, but you have much less evidence than the number suggests, for
-three reasons this chapter measured. (a) The space is anisotropic — the
-baseline cosine between *random* words is 0.029, not 0, and for averaged
-documents the floor is far higher still, because averaging amplifies the
-shared component. High cosines are cheap. (b) Averaging destroys word order,
-so opposite claims can average identically. (c) Out-of-vocabulary and rare
-terms — the discriminative ones — are dropped or badly estimated.
+From the value 0.95 alone we cannot conclude that they are about the same thing.
+Averaging loses order; opposite relations can be built from the same words. Nor
+does the shared component have to grow under averaging: the independent,
+varying contributions shrink, and the relative effect of the common direction
+can rise.
 
-The professional move is to calibrate: compute the cosine distribution over
-random document pairs from your own corpus and report the percentile rather
-than the raw number.
+We measured this on the 20 Newsgroups training documents of this chapter: over
+all pairs of the 2,248 documents that have a vector, the cosine between
+averaged GloVe vectors has mean 0.944 and median 0.961, and 65.6% of the pairs
+are above 0.95. Even among pairs from different newsgroups that share is 63.8%.
+In this corpus, then, 0.95 is below what a typical random pair scores.
+
+Examine the distribution over random pairs in your own corpus, but evaluate the
+decision threshold with document pairs labelled as similar, unrelated and,
+especially, hard negatives. A percentile is not by itself a probability of
+semantic equivalence.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -3652,28 +3640,27 @@ vocabulary covers your terms.
 
 : Fine-tune or train from scratch? {tbl-colwidths="[22,24,54]"}
 
-Token count alone does not decide it; coverage and domain shift matter at
-least as much as the amount of data. And there is a diagnostic better than
-the table: take your twenty most important domain terms, look at their
-pretrained neighbours, and see whether they are `turbine`-quality or
-`eutectic`-quality.
+Domain shift and coverage matter alongside the amount of data. Examining the
+neighbours of domain terms is a first check; the choice has to be confirmed on
+the target task. When you say "continue from pretrained", separate two
+operations: giving released vectors to a downstream supervised model as its
+initialization, or continuing the original word-embedding training. The second
+may require the output parameters and the training state as well, and not only
+the `KeyedVectors`.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. Embeddings replaced TF-IDF. True or false?
 
-False as stated, and the table in this chapter is the evidence: on 20
-Newsgroups, TF-IDF scored 0.853 and no dense method beat it (averaged GloVe
-was clearly behind, the others within noise). Sparse
-lexical retrieval (BM25) also remains a strong baseline in information
-retrieval, and production systems routinely run lexical and dense retrieval
-together and fuse the rankings, precisely because they fail differently —
-lexical matching is exact and handles rare identifiers, dense matching
-handles paraphrase.
-
-What embeddings genuinely replaced is the *one-hot word* representation, not
-the TF-IDF *document* representation. That distinction is worth stating
-explicitly, because it is usually the point of the question.
+It depends on the task. On the single split here TF-IDF had the highest accuracy
+(0.853); its gap to averaged GloVe is hard to explain by chance in the paired
+test, and its gap to doc2vec we could not measure. Lexical retrieval (BM25, for
+example) can be useful for exact term matching, and dense retrieval for
+relations between different wordings. Hybrid retrieval combines those two kinds
+of information, but its performance has to be evaluated. Embedding vectors do
+not remove every use of TF-IDF or of one-hot encoding; selecting an embedding
+row can in fact be written mathematically as a matrix product with a one-hot
+vector.
 :::
 
 ## Interview questions

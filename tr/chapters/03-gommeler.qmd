@@ -3543,86 +3543,71 @@ Açmadan önce cevaplayın.
 ::: {.callout-note collapse="true"}
 ## 1. Embedding'inizin 300 boyutu var. Neden 300, neden 30 ya da 3.000 değil?
 
-300'de sihirli bir şey yok: birkaç yüz boyut, klasik statik embedding'ler için
-tarihsel olarak iyi bir kapasite–veri–maliyet dengesi vermiş. Doğru boyutu
-belirleyen tek bir şey yok — temsilin taşıyabileceği rank kapasitesi, derlemin
-büyüklüğü, kelimelerin frekans dağılımı, eğitim amacı, aşağı akıştaki görev ve
-bellek/indeks maliyeti birlikte karar veriyor. Sezgisi bir yanlılık–varyans
-ödünleşimi (bias–variance trade-off; buradaki yanlılık istatistiksel anlamda):
-boyut çok azsa ilgisiz kelimeler koordinatları paylaşmak zorunda kalır (eksik
-öğrenme — oyuncak örnekte 2 boyutta ortak ilk koordinat kosinüsleri
-şişiriyordu: `king`–`queen` 0,996).
-Çok fazlaysa nadir kelimeler, geçtikleri bir avuç bağlama göre eğitilmiş
-vektörler alır; bu da gürültüdür. Üstelik bedelini bellekte ve arama süresinde
-doğrusal olarak ödersiniz.
+300 için evrensel bir optimum yoktur. Boyut azaldığında temsil kapasitesi
+sınırlanabilir; arttığında bellek ve hesaplama maliyeti yükselir, az veride
+öğrenilen ayrıntıların genellenebilirliği ayrıca değerlendirilir. Ancak düşük
+boyut bütün ilgisiz kelimeleri aynı noktaya zorlamaz, yüksek boyut da zorunlu
+olarak gürültü üretmez. Boyutu veri kapsamı ve hedef görevdeki doğrulama
+başarısıyla, saklama ve gecikme bütçesini birlikte dikkate alarak seçeriz.
 
 Yukarıda kullanılan aynı benchmark'larda ölçüldüğünde, 50 boyuttan 100 boyuta
-çıkmak açıkça değiyor:
+çıkmak üç puanı da yükseltiyor:
 
 ```text
   glove-wiki-gigaword-50   d=50   wordsim 0.503  simlex 0.263  analogy 0.464
   glove-wiki-gigaword-100  d=100  wordsim 0.533  simlex 0.296  analogy 0.633
 ```
 
-GloVe makalesinde yayımlanan taramalar [@pennington2014glove], kazancın
-kabaca 300'den sonra düzleştiğini gösteriyor; 300'ün varsayılan olmasının sebebi bu. Güçlü bir
-yanıt buraya bir de görgül ayar cümlesi ekler: bunu gerçek görev üzerinde
-ayarlarsınız ve birkaç yüz boyuttan sonra karar genellikle doğruluğa değil,
-depolamaya ve gecikmeye göre verilir.
+GloVe makalesindeki boyut taramaları [@pennington2014glove], belirli deneylerde
+boyut arttıkça kazancın yavaşlayabildiğini gösterir. Bu, birkaç yüz boyutu iyi
+bir başlangıç aralığı yapabilir; evrensel bir varsayılanın kanıtı değildir.
+Gerçek görevde boyut seçeneklerini başarı, bellek ve gecikme açısından
+karşılaştırın.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Sözlük üzerinde softmax yerine neden negatif örnekleme?
 
-Maliyet. Tam softmax, her eğitim çifti için sözlüğün tamamı üzerinde
-normalleştirir — çift başına 400.000 iç çarpım, çarpı on milyarlarca çift.
-Negatif örnekleme bunun yerine $K+1$ ikili karar koyar; $K$ tipik olarak 5 ile
-20 arasındadır, dolayısıyla çift başına maliyet artık sözlük boyutuna bağlı
-değildir.
-
-Daha derin cevap şu: bu değişiklik yalnızca aritmetiği değil amaç fonksiyonunu
-da değiştirir; artık $P(c \mid w)$ tahmin etmiyor, gerçek çiftleri gürültüden
-ayırt ediyorsunuz. @levy2014neural bu vekil amacın optimumunun kaydırılmış PMI
-olduğunu gösterdi; ikamenin sadece ucuz değil ilkeli olmasının sebebi bu.
-Alternatif, olasılıksal yorumu $O(\log V)$ maliyetle koruyan hiyerarşik
-softmax'tır; modern büyük dil modellerinde standart değildir, ama klasik
-word2vec eğitiminde bir seçenek olarak hâlâ karşınıza çıkabilir.
+Tam softmax'in puanlama maliyeti çift başına yaklaşık $O(Vd)$, $K$ negatifli
+puanlamanınki $O((K+1)d)$'dir. Örnekleme yönteminin ayrıca maliyeti vardır;
+buradaki kümülatif dağılım üzerindeki ikili arama örnek başına $O(\log V)$
+adımdır. Negatif örnekleme aynı softmax olasılığını yalnızca daha hızlı
+hesaplamaz, eğitim amacını değiştirir. $q = P(c)$ ve serbest iç çarpımlar altında
+kaydırılmış PMI hedefi elde edilir [@levy2014neural]. Hiyerarşik softmax ise
+ağaç yolundaki kararlarla normalize olasılık üretir; dengeli ağaç için puanlama
+maliyeti yaklaşık $O(d \log V)$'dir.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. Elinizde Türkçe 50.000 destek talebi var. word2vec mi, fastText mi?
 
-fastText — ve gerekçe "Türkçe eklemeli bir dil" değil, üç ölçülebilir koşul
-olmalı: derlem küçük, biçimbilim zengin ve beklenen sözlük dışı oranı yüksek.
-Bu bölüm 1,46 milyon token üzerinde 138.578 farklı Türkçe biçim ölçtü; %50'si
-hapax'tı (derlemde yalnızca bir kez geçiyordu) ve ayrılmış test metninde
-token'ların %7,3'ü sözlük dışıydı. Talep başına birkaç düzine token'la 50.000 talep, aşağı yukarı aynı büyüklükte bir derlem eder — üstelik destek talepleri Wikipedia'dan
-epey farklı bir alan, yani oradaki sayıları karşılaşacağınız seyrekliğin
-alt sınırı olarak okuyun. Dolayısıyla kelime düzeyindeki vektörler,
-sözlüğün büyük kısmı için bir iki geçişten tahmin edilecek; derlemde tesadüfen
-hiç geçmemiş çekimli biçimlerde ise tamamen çuvallayacaktır.
-
-Karşı argümanı da söyleyin, çünkü iyi bir cevabı ezberlenmiş bir cevaptan ayıran
-şey odur: alt kelimeler `kitap`'ı `kitle`'ye benzetecektir, dolayısıyla göreviniz
-kısa kelimeler arasındaki ince anlam ayrımlarına dayanıyorsa ikisini de ölçün.
-Bir de kullanıcı üretimi metinde yazım hatası olduğunu, alt kelimelerin bunu da
-emdiğini ekleyin.
+Önce destek taleplerinin token sayısını, tip sayısını ve eğitim/test bölünmesindeki
+OOV oranını ölçün. Türkçedeki çekim çeşitliliği fastText'i güçlü bir aday yapar;
+ancak Wikipedia'daki %7,3 OOV oranı destek talepleri için alt sınır değildir.
+Dar ve tekrar eden bir destek alanının sözlüğü daha küçük de olabilir. word2vec
+ile fastText'i aynı ön işleme ve değerlendirme koşullarında karşılaştırın; alt
+kelime yönteminin kapsama kazancını, istenmeyen yazılış yakınlıklarıyla
+(`kitap`/`kitle`) birlikte değerlendirin.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. İki belgenin ortalama vektörleri arasındaki kosinüs benzerliği 0,95. Aynı şeyden mi bahsediyorlar?
 
-Muhtemelen, ama elinizdeki kanıt sayının ima ettiğinden çok daha az. Bunun
-bu bölümde ölçülen üç sebebi var. (a) Uzay anizotropik — *rastgele*
-kelimeler arasındaki referans kosinüs 0 değil 0,029 ve ortalaması alınmış
-belge vektörlerinde taban çok daha yüksek, çünkü ortalama alma ortak bileşeni
-büyütür. Yüksek kosinüsler ucuzdur. (b) Ortalama alma kelime sırasını yok
-eder, dolayısıyla birbirine zıt iddialar özdeş ortalamalar verebilir. (c) Sözlük dışı ve nadir terimler — yani ayırt
-edici olanlar — ya düşürülür ya da kötü tahmin edilir.
+Yalnızca 0,95 değerinden aynı şeyden söz ettikleri sonucunu çıkaramayız. Ortalama
+alma sırayı kaybeder; aynı kelimelerle zıt ilişkiler kurulabilir. Ayrıca ortak
+bileşen ortalama alınırken büyümek zorunda değildir: bağımsız değişken katkılar
+azalırken ortak yönün göreli etkisi artabilir.
 
-Bir profesyonelin yapacağı şey kalibre etmektir: kendi derleminizden rastgele
-belge çiftleri üzerinde kosinüs dağılımını hesaplayın ve ham sayıyı değil
-yüzdelik dilimi raporlayın.
+Bu bölümün 20 Newsgroups eğitim belgelerinde ölçtük: vektörü olan 2.248 belgenin
+bütün çiftlerinde ortalama GloVe vektörleri arasındaki kosinüsün ortalaması
+0,944, ortancası 0,961'dir ve çiftlerin %65,6'sı 0,95'in üzerindedir. Farklı
+haber gruplarından gelen çiftlerde bile bu pay %63,8'dir. Yani bu derlemde 0,95,
+rastgele bir çiftin aldığı değerin altında kalır.
+
+Kendi derleminizde rastgele çiftlerin dağılımını inceleyin, fakat karar eşiğini
+benzer, ilgisiz ve özellikle zor negatif olarak etiketlenmiş belge çiftleriyle
+değerlendirin. Yüzdelik dilim, tek başına anlamsal eşdeğerlik olasılığı
+değildir.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -3641,27 +3626,25 @@ terimlerinizi ne kadar kapsadığı.
 
 : Fine-tune mu, sıfırdan mı? {tbl-colwidths="[22,24,54]"}
 
-Token sayısı tek başına karar verdirmez; kapsama ve alan kayması en az veri
-miktarı kadar önemlidir. Pratik bir teşhis de var: en önemli yirmi alan
-teriminizi alın, ön eğitimli komşularına bakın ve `turbine` kalitesinde mi
-yoksa `eutectic` kalitesinde mi olduklarını görün.
+Veri miktarının yanında alan kayması ve kapsama önemlidir. Alan terimlerinin
+komşularını incelemek bir ilk kontroldür; seçim hedef görevle doğrulanmalıdır.
+"Ön eğitimden devam" derken iki işlemi ayırın: hazır vektörleri sonraki denetimli
+modele başlangıç olarak vermek veya özgün kelime embedding eğitimini sürdürmek.
+İkinci işlem, yalnızca `KeyedVectors` değil, gerekli çıktı parametreleri ve
+eğitim durumunu da gerektirebilir.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. Embedding'ler TF-IDF'in yerini aldı. Doğru mu, yanlış mı?
 
-Bu hâliyle yanlış ve kanıtı bu bölümdeki tablo: 20 Newsgroups'ta TF-IDF 0,853
-aldı ve hiçbir yoğun yöntem onu geçemedi (ortalama GloVe açıkça geride kaldı,
-diğerleri gürültü payı içinde). Seyrek sözlüksel erişim
-(BM25) de bilgi erişiminde güçlü bir baseline olmayı sürdürüyor. Üretim
-sistemleri sözlüksel ve yoğun erişimi rutin olarak birlikte çalıştırıp
-sıralamaları birleştiriyor. Sebebi tam da ikisinin farklı biçimlerde başarısız
-olması: sözlüksel eşleşme tamdır ve nadir tanımlayıcıları halleder,
-yoğun eşleşme ise aynı şeyin başka kelimelerle söylenmesini halleder.
-
-Embedding'lerin gerçekten yerini aldığı şey *one-hot kelime* temsilidir, TF-IDF
-*belge* temsili değil. Bu ayrımı açıkça söyleyin, çünkü sorunun amacı
-genellikle budur.
+Göreve bağlıdır. Buradaki tek bölünmede TF-IDF en yüksek doğruluğu aldı (0,853);
+ortalama GloVe ile farkı eşleştirilmiş testte rastlantıyla açıklamak zor,
+doc2vec ile farkı ise ölçemedik. Sözlüksel erişim (örneğin BM25) tam terim
+eşleşmesinde, yoğun erişim ise farklı ifadeler arasındaki ilişkilerde yararlı
+olabilir. Hibrit erişim bu iki bilgi türünü birleştirir, ancak başarısı
+değerlendirilmelidir. Embedding vektörleri TF-IDF'in veya one-hot kodlamanın
+bütün kullanımlarını ortadan kaldırmaz; hatta embedding satırı seçimi
+matematiksel olarak one-hot vektörle matris çarpımı şeklinde yazılabilir.
 :::
 
 ## Mülakat soruları
