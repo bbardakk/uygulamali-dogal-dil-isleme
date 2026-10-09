@@ -1995,10 +1995,10 @@ andaki cümlede hangi anlamın kullanıldığını seçemeyiz. Buna karşılık 
 Bu sınırlılık, transformer bölümünde (@sec-transformerlar) ele alınan, bağlama
 göre değişen token temsillerinin önemli gerekçelerinden biridir.
 
-## Meşhur analoji ve gizlediği şey
+## Kelime analojileri ve değerlendirme koşulları {#meşhur-analoji-ve-gizlediği-şey}
 
-Bu örneği neredeyse kesinlikle daha önce görmüşsünüzdür. Şimdi gerçekte neyi
-gösterdiğine — ve neyi göstermediğine — bakacağız.
+`king − man + woman` örneğiyle vektör aritmetiğinin neyi gösterdiğini ve sonucun
+hesaplama tercihlerine nasıl bağlı olduğunu inceleyelim.
 
 Embedding'leri NLP dışında meşhur eden sonuç:
 
@@ -2014,61 +2014,62 @@ res = g.most_similar(positive=["king", "woman"], negative=["man"], topn=5)
   princess     0.6521
 ```
 
-$\text{king} - \text{man} + \text{woman} \approx \text{queen}$. Gerçekten
-çarpıcı bir sonuç: kimse modele cinsiyetten söz etmedi, yine de `man` ile
-`woman` arasındaki fark, `king` ile `queen` arasındakiyle kabaca aynı; bu
-yüzden vektör toplamı `queen`'i yeniden bulabiliyor.
+$\text{king} - \text{man} + \text{woman} \approx \text{queen}$. Bu işlemde
+oluşturulan hedefe, izin verilen adaylar arasında en yüksek kosinüs benzerliğini
+veren kelime `queen` oluyor. Sonuç, bazı ilişkilerin benzer vektör farklarıyla
+temsil edilebildiğine işaret eder. Tam bir paralelkenar, aritmetiğin `queen`
+vektörünü birebir üretmesi için yeterlidir; en yakın komşu olarak seçilmesi için
+gerekli değildir. Ayrıca `man` ile `woman` ve `king` ile `queen` arasındaki
+farkların yalnızca tek bir toplumsal cinsiyet yönünden oluştuğunu bu örnekten
+çıkaramayız.
 
-Burada çıkarma işleminin neden bir anlam taşıması gerektiğini açıkça
-söylemekte fayda var. İki vektörün farkı bir *yol tarifidir*:
-$\text{king} - \text{man}$, "`king`'e varmak için `man`'de neyi
-değiştirmeniz gerekiyorsa onu değiştirin" talimatıdır. `woman`'dan başlayıp aynı
-talimatı izlemek sizi `queen`'e ancak talimat her iki yerde de aynıysa
-götürür — yani ancak dört kelime bir paralelkenar oluşturuyorsa.
-
-Ve oluşturmaları için bir sebep de var. `man` ile `woman`, cinsiyet
-belirten birkaç kelime dışında neredeyse tıpatıp aynı bağlamlarda geçer;
-dolayısıyla vektörleri çoğunlukla o cinsiyetli bağlamların ittiği yön boyunca
-farklılaşır. Aynısı `king` ile `queen` için de geçerli. Cinsiyet, her kelimeye
-farklı biçimde dolanmak yerine tek ve tutarlı bir yön olarak kodlanmışsa, iki
-fark çakışır ve aritmetik çalışır.
-
-Her şey o "ancak"a bağlı. Bu kısmın geri kalanı da o koşulun ne sıklıkla
-sağlanmadığını anlatıyor.
-
-Şimdi genellikle atlanan kısım. `gensim`, üç girdi kelimesini sessizce
-sonuçlardan çıkarıyor. Soruyu bu filtre olmadan sorun:
+`gensim.most_similar`, girdi vektörlerini ayrı ayrı birimleştirir (her birini
+uzunluğu 1 olacak biçimde ölçekler) ve girdi kelimelerini adaylardan çıkarır.
+Yalnızca filtrenin etkisini görmek için aynı puanları iki aday kümesiyle
+sıralayalım; `topn=None`, bütün sözlük için puanları filtresiz döndürür:
 
 ```python
-target = g["king"] - g["man"] + g["woman"]
-target /= np.linalg.norm(target)
-sims = g.get_normed_vectors() @ target
-for i in np.argsort(-sims)[:6]:
-    print(f"  {g.index_to_key[i]:<12} {sims[i]:.4f}")
+sims = g.most_similar(positive=["king", "woman"], negative=["man"], topn=None)
+inputs = {"king", "man", "woman"}
+order = np.argsort(-sims)
+for label, excluded in [("unfiltered", set()), ("filtered", inputs)]:
+    chosen = [i for i in order if g.index_to_key[i] not in excluded][:6]
+    print(label)
+    for i in chosen:
+        print(f"  {g.index_to_key[i]:<12} {sims[i]:.4f}")
 ```
 
 ```text
-  king         0.8552
-  queen        0.7834
-  monarch      0.6934
-  throne       0.6833
-  daughter     0.6809
-  prince       0.6713
+unfiltered
+  king         0.8361
+  queen        0.7699
+  monarch      0.6843
+  throne       0.6756
+  daughter     0.6595
+  princess     0.6521
+filtered
+  queen        0.7699
+  monarch      0.6843
+  throne       0.6756
+  daughter     0.6595
+  princess     0.6521
+  prince       0.6517
 ```
 
-$\text{king} - \text{man} + \text{woman}$ ifadesine en yakın vektör, hem de
-açık ara farkla, **`king`**. `man`'i çıkarıp `woman`'ı eklemek vektörü
-oynattı, ama `king`'in mahallesinden çıkacak kadar değil. Meşhur sonuç,
-sonradan uygulanan bir filtreye bağlı; bu filtre de gerçekte sorulan sorunun
-doğru cevabını kaldırıyor.
+Puanlar sabit tutulduğunda filtresiz en yakın komşu **`king`**'dir (0,8361);
+`queen` ikinci sıradadır (0,7699). Bu, sınırsız komşu aramasının sonucudur;
+analojinin beklenen yanıtının `king` olduğunu göstermez. Girdi kelimelerini
+dışlamak farklı bir aday kümesi tanımlar ve `queen` bu aday kümesinde birinci
+olur. Aday kümesi görevin tanımının parçasıdır; sonuçla birlikte belirtilmesi
+gerekir. Girdileri birimleştirmeden toplarsanız puanlar biraz değişir (`king`
+0,8552, `queen` 0,7834); sıralamanın başı aynı kalır.
 
-Bununla kimseyi açığından yakalamaya çalışmıyoruz — filtre savunulabilir,
-çünkü girdinin size geri yansıtılmasını genelde istemezsiniz. Ama gösterinin
-neyi kanıtladığını değiştiriyor ve filtrelenen yöntemin bir adı olduğunu
-bilmekte yarar var. Adı **3CosAdd**. Standart alternatifi **3CosMul**
-[@levy2014linguistic] ise üç kosinüsün toplamı yerine bir oran kullanıyor;
-böylece herhangi bir girdi teriminin tek başına uyguladığı çekimi bastırıyor
-ve aynı soru kümesinde birkaç puan kazandırıyor.
+Bu puanlamanın adı **3CosAdd**'dir: adayın üç girdiyle kosinüslerini iki artı ve
+bir eksi işaretle birleştirir. Girdi kelimelerinin dışlanması ise ayrı bir
+değerlendirme kuralıdır. **3CosMul**, kosinüsleri uygun biçimde kaydırarak
+çarpımsal bir oranla birleştirir; bazı değerlendirmelerde daha iyi sonuç verir
+[@levy2014linguistic]. Puanlama yöntemi ile aday filtresi ayrı ayrı
+raporlanmalıdır.
 
 Daha derin itiraz Linzen'den geliyor [@linzen2016issues]: ilişkiyi tümüyle yok
 sayan bir baseline (karşılaştırma modeli), bazı kategorilerde bildirilen doğruluğun büyük bir
@@ -2079,9 +2080,11 @@ yapının ne kadar işi önceden gördüğünü gösteriyor: daha hiçbir aritme
 yapılmadan `queen`, `king`'in ikinci en yakın komşusu (0,75); aritmetiğe kalan
 iş onu bir sıra yukarı taşımak. Bazı kategorilerde ise ilk sıradaki komşu zaten
 doğru cevap. Yani manşet sayı, komşuluk yapısını en az bir ilişkiyi ölçtüğü
-kadar ölçüyor. @nissim2020fair ise aynı girdi filtresinin yanlılık
-analojilerini de biçimlendirdiğini gösteriyor: filtre kalkınca meşhur
-*man : doctor :: woman : nurse* yerine *man : doctor :: woman : doctor* çıkıyor.
+kadar ölçüyor. Nissim ve arkadaşları [@nissim2020fair], girdi kelimelerini
+dışlamanın yanlılık analojilerinin yorumunu da etkileyebildiğini gösterir.
+İnceledikleri örneklerde filtre kaldırılınca `doctor` yeniden aday olabilir;
+sonucun hangi model, normalleştirme ve aday kümesiyle elde edildiği birlikte
+belirtilmelidir.
 Kendiniz birkaçını deneyin:
 
 ::: {.anlp-widget}
@@ -2091,7 +2094,7 @@ Kendiniz birkaçını deneyin:
 
 ```{ojs}
 //| echo: false
-anaData = [{"a":"king","b":"man","c":"woman","label":"king − man + woman","rows":[{"w":"king","s":0.8552,"inp":true},{"w":"queen","s":0.7834,"inp":false},{"w":"monarch","s":0.6934,"inp":false},{"w":"throne","s":0.6833,"inp":false},{"w":"daughter","s":0.6809,"inp":false},{"w":"prince","s":0.6713,"inp":false},{"w":"princess","s":0.6644,"inp":false},{"w":"mother","s":0.6579,"inp":false},{"w":"elizabeth","s":0.6563,"inp":false},{"w":"father","s":0.6392,"inp":false},{"w":"wife","s":0.6352,"inp":false},{"w":"son","s":0.634,"inp":false}]},{"a":"paris","b":"france","c":"italy","label":"paris − france + italy","rows":[{"w":"rome","s":0.8084,"inp":false},{"w":"milan","s":0.7317,"inp":false},{"w":"italy","s":0.7273,"inp":true},{"w":"naples","s":0.709,"inp":false},{"w":"venice","s":0.701,"inp":false},{"w":"turin","s":0.697,"inp":false},{"w":"paris","s":0.6912,"inp":true},{"w":"italian","s":0.6649,"inp":false},{"w":"vienna","s":0.6573,"inp":false},{"w":"genoa","s":0.6455,"inp":false},{"w":"florence","s":0.6329,"inp":false},{"w":"berlin","s":0.6286,"inp":false}]},{"a":"walking","b":"walk","c":"swim","label":"walking − walk + swim","rows":[{"w":"swim","s":0.855,"inp":true},{"w":"swimming","s":0.8063,"inp":false},{"w":"surfing","s":0.66,"inp":false},{"w":"swam","s":0.6528,"inp":false},{"w":"rowing","s":0.6436,"inp":false},{"w":"jogging","s":0.6327,"inp":false},{"w":"biking","s":0.6298,"inp":false},{"w":"canoeing","s":0.621,"inp":false},{"w":"kayaking","s":0.6197,"inp":false},{"w":"diving","s":0.6171,"inp":false},{"w":"sailing","s":0.6153,"inp":false},{"w":"jumping","s":0.6097,"inp":false}]},{"a":"bigger","b":"big","c":"small","label":"bigger − big + small","rows":[{"w":"larger","s":0.8778,"inp":false},{"w":"smaller","s":0.8575,"inp":false},{"w":"small","s":0.8274,"inp":true},{"w":"large","s":0.7902,"inp":false},{"w":"tiny","s":0.7166,"inp":false},{"w":"bigger","s":0.6993,"inp":true},{"w":"relatively","s":0.6444,"inp":false},{"w":"size","s":0.6427,"inp":false},{"w":"sized","s":0.6238,"inp":false},{"w":"significant","s":0.617,"inp":false},{"w":"less","s":0.6125,"inp":false},{"w":"fewer","s":0.6025,"inp":false}]},{"a":"madrid","b":"spain","c":"germany","label":"madrid − spain + germany","rows":[{"w":"munich","s":0.8566,"inp":false},{"w":"berlin","s":0.8068,"inp":false},{"w":"frankfurt","s":0.761,"inp":false},{"w":"germany","s":0.7464,"inp":true},{"w":"dortmund","s":0.7416,"inp":false},{"w":"hamburg","s":0.7404,"inp":false},{"w":"stuttgart","s":0.7357,"inp":false},{"w":"bayern","s":0.725,"inp":false},{"w":"cologne","s":0.7239,"inp":false},{"w":"leverkusen","s":0.6978,"inp":false},{"w":"borussia","s":0.6707,"inp":false},{"w":"bonn","s":0.6678,"inp":false}]},{"a":"windows","b":"microsoft","c":"google","label":"windows − microsoft + google","rows":[{"w":"windows","s":0.8446,"inp":true},{"w":"window","s":0.7043,"inp":false},{"w":"walls","s":0.6181,"inp":false},{"w":"google","s":0.6165,"inp":true},{"w":"dashboard","s":0.6085,"inp":false},{"w":"web","s":0.5967,"inp":false},{"w":"lights","s":0.5888,"inp":false},{"w":"portal","s":0.5844,"inp":false},{"w":"doors","s":0.5805,"inp":false},{"w":"portals","s":0.5776,"inp":false},{"w":"roofs","s":0.5763,"inp":false},{"w":"roof","s":0.5737,"inp":false}]},{"a":"mice","b":"mouse","c":"goose","label":"mice − mouse + goose","rows":[{"w":"goose","s":0.6856,"inp":true},{"w":"cows","s":0.561,"inp":false},{"w":"rats","s":0.5488,"inp":false},{"w":"infants","s":0.5313,"inp":false},{"w":"geese","s":0.5298,"inp":false},{"w":"turkeys","s":0.5287,"inp":false},{"w":"pigs","s":0.5248,"inp":false},{"w":"calves","s":0.5219,"inp":false},{"w":"diets","s":0.5172,"inp":false},{"w":"chickens","s":0.5071,"inp":false},{"w":"elk","s":0.5068,"inp":false},{"w":"babies","s":0.5035,"inp":false}]},{"a":"einstein","b":"physics","c":"biology","label":"einstein − physics + biology","rows":[{"w":"einstein","s":0.7377,"inp":true},{"w":"genetics","s":0.696,"inp":false},{"w":"biology","s":0.6027,"inp":true},{"w":"evolutionary","s":0.5566,"inp":false},{"w":"freud","s":0.5345,"inp":false},{"w":"genetic","s":0.5326,"inp":false},{"w":"biochemistry","s":0.53,"inp":false},{"w":"neuroscience","s":0.5232,"inp":false},{"w":"molecular","s":0.5065,"inp":false},{"w":"folkman","s":0.4983,"inp":false},{"w":"evolution","s":0.4968,"inp":false},{"w":"genes","s":0.4935,"inp":false}]}]
+anaData = [{"a":"king","b":"man","c":"woman","label":"king − man + woman","rows":[{"w":"king","s":0.8361,"inp":true},{"w":"queen","s":0.7699,"inp":false},{"w":"monarch","s":0.6843,"inp":false},{"w":"throne","s":0.6756,"inp":false},{"w":"daughter","s":0.6595,"inp":false},{"w":"princess","s":0.6521,"inp":false},{"w":"prince","s":0.6517,"inp":false},{"w":"elizabeth","s":0.6465,"inp":false},{"w":"mother","s":0.6312,"inp":false},{"w":"emperor","s":0.6106,"inp":false},{"w":"wife","s":0.6099,"inp":false},{"w":"father","s":0.6053,"inp":false}]},{"a":"paris","b":"france","c":"italy","label":"paris − france + italy","rows":[{"w":"rome","s":0.819,"inp":false},{"w":"italy","s":0.7528,"inp":true},{"w":"milan","s":0.7376,"inp":false},{"w":"paris","s":0.7216,"inp":true},{"w":"naples","s":0.7118,"inp":false},{"w":"venice","s":0.7015,"inp":false},{"w":"turin","s":0.6995,"inp":false},{"w":"italian","s":0.6801,"inp":false},{"w":"vienna","s":0.6685,"inp":false},{"w":"genoa","s":0.6453,"inp":false},{"w":"berlin","s":0.6428,"inp":false},{"w":"prohertrib","s":0.641,"inp":false}]},{"a":"walking","b":"walk","c":"swim","label":"walking − walk + swim","rows":[{"w":"swim","s":0.8385,"inp":true},{"w":"swimming","s":0.8009,"inp":false},{"w":"surfing","s":0.6603,"inp":false},{"w":"swam","s":0.6448,"inp":false},{"w":"rowing","s":0.6413,"inp":false},{"w":"jogging","s":0.6376,"inp":false},{"w":"biking","s":0.6344,"inp":false},{"w":"kayaking","s":0.622,"inp":false},{"w":"canoeing","s":0.6219,"inp":false},{"w":"sailing","s":0.6125,"inp":false},{"w":"diving","s":0.6108,"inp":false},{"w":"jumping","s":0.6086,"inp":false}]},{"a":"bigger","b":"big","c":"small","label":"bigger − big + small","rows":[{"w":"larger","s":0.8925,"inp":false},{"w":"smaller","s":0.8694,"inp":false},{"w":"small","s":0.825,"inp":true},{"w":"large","s":0.7933,"inp":false},{"w":"bigger","s":0.7481,"inp":true},{"w":"tiny","s":0.7139,"inp":false},{"w":"size","s":0.6559,"inp":false},{"w":"relatively","s":0.6467,"inp":false},{"w":"significant","s":0.634,"inp":false},{"w":"sized","s":0.6325,"inp":false},{"w":"less","s":0.6315,"inp":false},{"w":"fewer","s":0.6195,"inp":false}]},{"a":"madrid","b":"spain","c":"germany","label":"madrid − spain + germany","rows":[{"w":"munich","s":0.8562,"inp":false},{"w":"berlin","s":0.8023,"inp":false},{"w":"frankfurt","s":0.7604,"inp":false},{"w":"dortmund","s":0.743,"inp":false},{"w":"hamburg","s":0.7416,"inp":false},{"w":"stuttgart","s":0.7375,"inp":false},{"w":"germany","s":0.7326,"inp":true},{"w":"bayern","s":0.7267,"inp":false},{"w":"cologne","s":0.724,"inp":false},{"w":"leverkusen","s":0.6984,"inp":false},{"w":"madrid","s":0.6821,"inp":true},{"w":"borussia","s":0.6711,"inp":false}]},{"a":"windows","b":"microsoft","c":"google","label":"windows − microsoft + google","rows":[{"w":"windows","s":0.833,"inp":true},{"w":"window","s":0.6895,"inp":false},{"w":"google","s":0.6674,"inp":true},{"w":"web","s":0.6273,"inp":false},{"w":"portal","s":0.603,"inp":false},{"w":"walls","s":0.5955,"inp":false},{"w":"dashboard","s":0.5954,"inp":false},{"w":"portals","s":0.5929,"inp":false},{"w":"browser","s":0.5785,"inp":false},{"w":"clicking","s":0.5782,"inp":false},{"w":"lights","s":0.5746,"inp":false},{"w":"screens","s":0.569,"inp":false}]},{"a":"mice","b":"mouse","c":"goose","label":"mice − mouse + goose","rows":[{"w":"goose","s":0.7279,"inp":true},{"w":"cows","s":0.5407,"inp":false},{"w":"geese","s":0.5354,"inp":false},{"w":"turkeys","s":0.5325,"inp":false},{"w":"elk","s":0.5168,"inp":false},{"w":"calves","s":0.5009,"inp":false},{"w":"pigs","s":0.4998,"inp":false},{"w":"infants","s":0.4988,"inp":false},{"w":"rats","s":0.4984,"inp":false},{"w":"chickens","s":0.4949,"inp":false},{"w":"grouse","s":0.4937,"inp":false},{"w":"diets","s":0.4915,"inp":false}]},{"a":"einstein","b":"physics","c":"biology","label":"einstein − physics + biology","rows":[{"w":"einstein","s":0.7982,"inp":true},{"w":"genetics","s":0.7085,"inp":false},{"w":"biology","s":0.6298,"inp":true},{"w":"evolutionary","s":0.5772,"inp":false},{"w":"freud","s":0.5656,"inp":false},{"w":"biochemistry","s":0.5592,"inp":false},{"w":"neuroscience","s":0.5459,"inp":false},{"w":"molecular","s":0.541,"inp":false},{"w":"genetic","s":0.535,"inp":false},{"w":"evolution","s":0.5183,"inp":false},{"w":"theory","s":0.5037,"inp":false},{"w":"immunology","s":0.5024,"inp":false}]}]
 ```
 
 ```{ojs}
@@ -2102,7 +2105,7 @@ viewof anaPick = Inputs.select(anaData.map(d => d.label),
 
 ```{ojs}
 //| echo: false
-viewof anaHide = Inputs.toggle({label: "Üç girdi kelimesini gizle (gensim'in yaptığı)", value: false})
+viewof anaHide = Inputs.toggle({label: "Girdi kelimelerini adaylardan çıkar (gensim'in varsayılanı)", value: false})
 ```
 
 ```{ojs}
@@ -2128,12 +2131,15 @@ html`<div style="font-size:0.9rem;">
     <span style="color:var(--fig-muted); font-variant-numeric:tabular-nums;">${r.s.toFixed(3)}</span>
   </div>`)}
   <p style="color:var(--fig-muted); margin-top:0.7rem; font-size:0.85rem;">
-    Bu sekiz analojinin beşinde ham en yakın komşu, girdi kelimelerinden
-    biri. <i>mice − mouse + goose</i>'u deneyin: kastedilen cevap
-    <code>geese</code> yalnızca 5. sırada, <code>cows</code> ve
-    <code>rats</code>'in gerisinde. <i>madrid − spain + germany</i>'yi
-    deneyin: <code>berlin</code>'i değil, <code>munich</code>'i döndürüyor —
-    model "Alman şehri"ni öğrenmiş, ama "başkenti"ni öğrenmemiş.</p>
+    Puanlar yukarıdaki kodla aynı biçimde hesaplandı. Bu sekiz seçilmiş örneğin
+    beşinde filtresiz en yakın aday girdilerden biridir; bu oran genel analoji
+    başarısını ölçmez. <i>mice − mouse + goose</i> için beklenen
+    <code>geese</code> yanıtı filtresiz listede üçüncü, girdiler çıkarıldığında
+    <code>cows</code>'un ardından ikinci sıradadır.
+    <i>madrid − spain + germany</i> örneğinde ise <code>munich</code>,
+    <code>berlin</code>'in önünde gelir. Bu sıralama, kullanılan işlemde beklenen
+    yanıtın birinci olmadığını gösterir; modelin başkent ilişkisine dair hiçbir
+    bilgi taşımadığını kanıtlamaz.</p>
 </div>`
 ```
 :::
@@ -2179,9 +2185,9 @@ temiz görünmesinin bir nedeni de bu: PCA grup etiketi kullanmaz, yalnızca bu
 otuz noktanın varyansını en çok taşıyan yönleri seçer; noktalar zaten beş
 belirgin öbekten geldiği için öbekler arası fark bu yönlere yerleşiyor. Bu iki bileşen, 100 boyutlu
 vektörlerin varyansının yalnızca <b>%37,5</b>'ini koruyor; dolayısıyla
-sayfadaki uzaklıklar, uzaydaki uzaklıkların gölgesinden ibaret. Bu bölümde
-verilen her sayı 100 boyutta hesaplandı; hiçbiri böyle bir izdüşümden
-alınmadı.</p>`
+sayfadaki uzaklıklar, uzaydaki uzaklıkların gölgesinden ibaret. Bu kısımdaki
+GloVe benzerlikleri özgün 100 boyutlu vektörlerle hesaplandı; iki boyutlu
+izdüşüm yalnızca görselleştirme amacıyla kullanılıyor.</p>`
 ```
 :::
 
@@ -3696,8 +3702,8 @@ token'ların %26,6'sını attı.
 Önce ötelemeyi açıklayın: cinsiyet yaklaşık olarak tutarlı bir yöndür,
 dolayısıyla onu eklemek ve çıkarmak sizi o yön boyunca hareket ettirir. Sonra
 çekinceyi belirtin: kütüphane girdi kelimelerini dışarıda bırakır. Bu filtre
-olmadan en yakın vektör 0,855 ile `king`'in kendisidir ve 0,783 alan `queen`'in
-önündedir. Görevin kötü genellediğini de ekleyin (`madrid − spain + germany`,
+olmadan, aynı puanlamayla en yakın vektör 0,836 ile `king`'in kendisidir ve
+0,770 alan `queen`'in önündedir. Görevin kötü genellediğini de ekleyin (`madrid − spain + germany`,
 `berlin` değil `munich` veriyor) ve kaynak gösterin
 [@nissim2020fair; @linzen2016issues]. Bu cevap, bir blog yazısı okumuş olanları kodu çalıştırmış
 olanlardan ayırır.
