@@ -3761,49 +3761,47 @@ etkilediğini gösterir; bütün görevlerde eşit performans iddiası değildir
 **S: 50 milyon belge için, 100 ms'nin altında erişimle belge vektörleri
 lazım. Kararı adım adım anlatın.**
 
-Modelden değil kısıttan başlayın. "Erişim" anlamca eşleştirme demekse,
-doğal seçim 100–768 boyutlu yoğun vektörlerdir; 50 milyon belge üzerinde seyrek
-bir ters indeks (TF-IDF ya da BM25) de hızlıdır, ama yeniden ifade edilmiş
-cümleleri değil, birebir terimleri eşleştirir. Sonra: encoder seçimi (ortalaması alınmış
-statik vektörler ucuz ve paralelleşebilir; bir transformer encoder daha iyi ve
-100 kat daha pahalıdır), kaba kuvvet yerine yaklaşık en yakın komşu indeksi
-(HNSW ya da IVF-PQ) ve bununla birlikte gelen doğruluk–gecikme ayarı. Yanında
-sözlüksel erişimi de çalıştırıp sonuçları birleştireceğinizi söyleyin,
-çünkü yoğun erişim tam tanımlayıcılarda çuvallar — @sec-metin-veri'deki `P-101` problemi.
+Önce 100 ms sınırının sorgu kodlama, arama, filtreleme ve yeniden sıralamayı
+kapsayıp kapsamadığını belirleyin; gecikme yüzdeliğini, trafik hacmini ve bellek
+bütçesini de tanımlayın. Belge vektörleri önceden hesaplanabilir. Aday
+temsilleri etiketli erişim verisinde karşılaştırın; kodlayıcı maliyeti ve vektör
+boyutu için evrensel bir oran kullanmayın. HNSW veya IVF-PQ gibi yaklaşık en
+yakın komşu indekslerini geri getirme başarısı, bellek ve gecikme açısından
+ölçün. Tam tanımlayıcılar önemliyse (önceki bölümdeki `P-101` problemi,
+@sec-metin-veri) sözlüksel veya hibrit erişimi de aynı değerlendirmeye katın.
 
 **S: Embedding'leri kendi derleminizde eğittiniz ve ön eğitimli olanlardan kötü
 çıktılar. Ne oldu?**
 
-Büyük ihtimalle veri çok az — birkaç milyon token'ın altında nadir kelimelerin
-vektörleri güvenilmezdir.
-Frekans tabanını (`min_count`), epoch sayısını ve altörnekleme yapıp
-yapmadığınızı kontrol edin. Sonra *değerlendirmeyi* kontrol edin: WordSim-353
-üzerinde puanlıyorsanız genel alandaki ilişkililiği ölçüyorsunuz demektir. Alan
-vektörlerinizin orada daha kötü olması beklenir; bu, sizin göreviniz için kötü
-oldukları anlamına gelmez. Faydalı orta yolla bitirin: ön eğitimliden başlatıp
-eğitime devam edin.
+Önce veri miktarını ve dağılımını, kapsama oranını, tokenleştirmeyi, eğitim
+ayarlarını (`min_count`, epoch sayısı, altörnekleme) ve değerlendirme protokolünü
+kontrol edin. Az gözlem nadir kelimeleri zayıflatabilir, fakat evrensel bir
+token eşiği yoktur. Genel bir benzerlik kümesinde düşük skor almak, alan
+görevinizde de kötü olmayı gerektirmez; alan modeli orada mutlaka geriler de
+denemez. Hazır vektörleri başlangıç olarak kullanmayı veya gerekli eğitim durumu
+mevcutsa eğitime devam etmeyi, sıfırdan eğitimle aynı görevde karşılaştırın.
 
 **S: Üretimdeki embedding modelinizin bayatladığını nasıl tespit edersiniz?**
 
-Canlı trafikteki sözlük dışı oranını zaman içinde izleyin — ucuzdur ve doğruluk
-düşmeden önce yükselir. Alan terimlerinden oluşan sabit bir probe set
-(tanılama kümesi) ekleyin: bu terimlerin komşu listelerini kaydedin ve zaman
-içinde karşılaştırın. Bir de uygulamanın gerçekten önemsediği metriği izleyin, çünkü optimize ettiğiniz şey hiçbir zaman embedding değildir.
-Bunun bir model problemi değil veri kayması problemi olduğunu belirtin: vektörler
-donmuş durumda, değişen şey dünya.
+Canlı trafikte sözlük dışı biçim oranını, token ve alan terimi dağılımlarını,
+ayrıca etiketlenebilen örneklerde görev başarısını izleyin. OOV oranı her kalite
+düşüşünden önce artmaz; alt kelime modellerinde vektör üretilebilmesi de anlam
+kapsamını garanti etmez. Donmuş model ve sabit sözlük için sabit terimlerin
+komşuları değişmez. Sabit bir tanılama kümesi (probe set), yeniden eğitilmiş
+model sürümlerini karşılaştırmakta yararlıdır; güncel veri kaymasını ölçmek
+içinse yeni trafik örnekleri ve zamanla güncellenen görev etiketleri gerekir.
 
 **S: Elinizde 100.000 ürün ve tıklama kayıtları var. Bir ürün embedding'i
 tasarlayın.**
 
-Bunun oturumlar üzerinde çalışan bir word2vec olduğunu fark edin: her kullanıcı
-oturumu bir "cümle", her ürün bir "kelime" ve negatif örneklemeli skip-gram size
-kosinüsü davranıştaki eş-oluşumu yansıtan ürün vektörleri verir. Airbnb sürümü
-için kaynak gösterin [@grbovic2018real] ve iki faydalı iyileştirmesinden bahsedin.
-Birincisi, her pencereye global bağlam olarak eklenen rezerve edilmiş ilan.
-İkincisi, tekdüze örnekleme yerine aynı pazardan çekilen negatifler; böylece
-model pazar içi ayrımları öğreniyor.
-Sonra soğuk başlangıç problemini gündeme getirin (yeni ürünlerin tıklaması yok)
-ve cevap olarak içerik özniteliklerini ya da alt kelime tarzı bileşimi önerin.
+Oturumları ürün dizileri olarak ele alıp skip-gram benzeri bir yöntemle ürün
+vektörleri öğrenebilirsiniz. Airbnb örneği [@grbovic2018real], rezerve edilen
+ilanı ek pozitif bağlam olarak kullanır ve genel negatiflere pazar içi negatifler
+ekleyerek yerel ayrımları öğrenmeye çalışır. Oturum sınırlarını, olumsuz örnek
+tanımını ve değerlendirme zaman ayrımını açık kurmak gerekir. Yeni ürünler için
+(soğuk başlangıç) başlık, kategori ve diğer içerik özelliklerinden temsil
+üretilebilir; keyfî ürün kimliklerini karakter parçalarına bölmenin anlam
+taşıdığı varsayılmamalıdır.
 
 ## Daha derine inmek için
 

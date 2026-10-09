@@ -3785,49 +3785,50 @@ of equal performance on every task.
 **Q: You need document vectors for 50 million documents with sub-100 ms
 retrieval. Walk me through the decision.**
 
-Lead with the constraint, not the model. If "retrieval" means matching by
-meaning, dense vectors at 100–768 dimensions are the natural fit; a sparse
-inverted index (TF-IDF or BM25) over 50 million documents is also fast, but it
-matches exact terms, not paraphrases. Then: choice of
-encoder (averaged static vectors are cheap and parallel; a transformer
-encoder is better and 100× more expensive), an approximate nearest-neighbour
-index (HNSW or IVF-PQ) rather than brute force, and the accuracy–latency
-knob that comes with it. Mention that you would run lexical retrieval
-alongside and fuse, because dense retrieval fails on exact identifiers —
-the `P-101` problem from @sec-text-as-data.
+First establish whether the 100 ms limit covers query encoding, search,
+filtering and re-ranking; define the latency percentile, the traffic volume and
+the memory budget as well. Document vectors can be computed in advance. Compare
+the candidate representations on labelled retrieval data; do not use a
+universal ratio for encoder cost or vector dimension. Measure approximate
+nearest-neighbour indexes such as HNSW or IVF-PQ for recall, memory and latency.
+If exact identifiers matter (the `P-101` problem from @sec-text-as-data),
+include lexical or hybrid retrieval in the same evaluation.
 
 **Q: You trained embeddings on your own corpus and they are worse than
 pretrained. What happened?**
 
-Most likely too little data — under a few million tokens, rare words' vectors
-are unreliable. Check the frequency floor (`min_count`), the number of epochs,
-and whether you subsampled. Then check the *evaluation*: if you are scoring
-on WordSim-353, you are measuring general-domain relatedness, which your
-domain vectors should be worse at; that is not the same as being worse for
-your task. Finish with the useful middle option: initialise from pretrained
-and continue training.
+First check the amount and distribution of the data, the coverage rate, the
+tokenization, the training settings (`min_count`, number of epochs,
+subsampling) and the evaluation protocol. Few observations can weaken rare
+words, but there is no universal token threshold. A low score on a general
+similarity set does not entail being worse on your domain task; nor can it be
+said that a domain model must fall behind there. Compare using released vectors
+as the initialization, or continuing training where the necessary training
+state is available, with training from scratch on the same task.
 
 **Q: How would you detect that your production embedding model has gone
 stale?**
 
-Track the out-of-vocabulary rate on live traffic over time — it is cheap and
-it rises before accuracy falls. Add a fixed probe set of domain terms whose
-neighbour lists you snapshot and diff. And monitor the downstream metric
-that pays, because the embedding is never the thing you are optimising.
-Note that this is a data-drift problem, not a model problem: the vectors are
-frozen, so it is the world that changed.
+On live traffic, track the rate of out-of-vocabulary forms, the distributions of
+tokens and of domain terms, and task performance on examples that can be
+labelled. The OOV rate does not rise before every drop in quality, and the fact
+that a subword model can produce a vector does not guarantee coverage of
+meaning. For a frozen model and a fixed vocabulary, the neighbours of fixed
+terms do not change. A fixed probe set is useful for comparing retrained model
+versions; measuring current data drift requires fresh traffic samples and task
+labels that are updated over time.
 
 **Q: You have 100,000 items and click logs. Design an item embedding.**
 
-Recognise it as word2vec on sessions: each user session is a "sentence",
-each item a "word", and skip-gram with negative sampling gives you item
-vectors whose cosine reflects co-occurrence in behaviour. Cite
-@grbovic2018real for the Airbnb version and mention their two useful
-refinements — the booked listing as a global context added to every window,
-and negatives drawn from the same market rather than uniformly, so the model
-learns within-market distinctions. Then raise the cold-start problem
-(new items have no clicks) and propose content features or subword-style
-composition as the answer.
+You can treat sessions as sequences of items and learn item vectors with a
+skip-gram-like method. The Airbnb example [@grbovic2018real] uses the booked
+listing as an additional positive context and adds within-market negatives to
+the general negatives in order to learn local distinctions. Session boundaries,
+the definition of a negative example and the time split used for evaluation
+have to be set up explicitly. For new items (cold start), a representation can
+be produced from the title, the category and other content features; it should
+not be assumed that splitting arbitrary item IDs into character pieces carries
+meaning.
 
 ## Where to go deeper
 
