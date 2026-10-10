@@ -38,7 +38,7 @@ errors. Finally we show how the result changes as the amount of labelled data
 changes, and which word-order information both representation families are
 blind to.
 
-## Two chapters, one argument to settle
+## Comparing two representation families on one task {#two-chapters-one-argument-to-settle}
 
 @sec-text-as-data taught you to count words. @sec-embeddings taught you to
 place them as coordinates. Each chapter ended with a claim. The two claims do
@@ -48,64 +48,74 @@ time — but which one dominates on a particular dataset is something you only
 learn by measuring.
 
 ::: {#gloss-baseline .column-margin .term-gloss}
-**baseline** — the plain, cheap method a fancier one has to beat before it
-is worth its cost. Reporting a score without one tells the reader nothing. [↩](#term-baseline){.term-back}
+**baseline** — the reference result a new method is judged against, on the
+same data and the same metric. A plain majority-class rule can be a baseline,
+and so can a strong TF-IDF system. Reading a score also takes the class
+distribution and the cost of each kind of error. [↩](#term-baseline){.term-back}
 :::
 
 ::: {#gloss-agglutinative .column-margin .term-gloss}
-**agglutinative** — describes a language, like Turkish, that builds
-meaning by stacking endings onto a stem. One stem can therefore appear as
-hundreds of separate written words. [↩](#term-agglutinative){.term-back}
+**agglutinative** — describes a language in which morphemes mostly attach to
+the word as separable affixes. In Turkish, inflectional and derivational
+suffixes can give one root or stem many surface forms; how many depends on
+usage and on the corpus. [↩](#term-agglutinative){.term-back}
 :::
 
-Chapter 2 said: a sparse count vector is a strong, cheap, interpretable
-[baseline](#gloss-baseline){#term-baseline .term-ref} that people routinely fail to beat. Chapter 3 said: one-hot
-coordinates cannot generalise across word forms, which for an [agglutinative](#gloss-agglutinative){#term-agglutinative .term-ref}
-language like Turkish is a structural defect, not a nuisance — and it
-measured this to prove the point: build the vocabulary on 90% of a Turkish
-Wikipedia sample and test on the remaining 10%, and **7.33%** of test tokens
-are unseen — and 28.99% of word *types*.
+Chapter 2 showed that sparse count vectors can be a strong, cheap,
+interpretable [baseline](#gloss-baseline){#term-baseline .term-ref}. Chapter 3
+argued that giving every word form its own independent feature can leave a
+coverage problem on the inflected forms of an
+[agglutinative](#gloss-agglutinative){#term-agglutinative .term-ref} language
+like Turkish. Its measurement was this: build the vocabulary on 90% of a
+Turkish Wikipedia sample and test on the remaining 10%, and **7.33%** of test
+tokens were never seen in training — and 28.99% of distinct word *types*.
+Those rates belong to that sample and that definition of the vocabulary; they
+are not constants of every Turkish corpus.
 
-Both claims are correct. They are also, on any *particular* dataset,
-in direct competition, and the competition is decided by facts about your
-data rather than by the merits of the methods. This chapter runs the
-competition properly — one dataset, one split, one classifier, seven
-representations — and extracts the decision rule.
+Both claims can hold at once. This chapter compares the two representation
+families on one Turkish review task and one test set. All seven rows use
+logistic regression; but the vectorisers do not share the same preprocessing,
+vocabulary threshold, feature scale or extra training cost. So the results
+compare these concrete setups of the methods, and we do not read the gap
+between them as the effect of the representation family alone.
 
 ::: {.column-margin}
 Chapter 3's own comparison ran on 20 Newsgroups: English, balanced, four
-classes, 2,327 training documents. Every conclusion here that differs from
-that one differs because the *dataset* differs, not because the code does.
-That is the whole lesson in one sentence.
+classes, 2,327 training documents. The Turkish product reviews here differ in
+data, task and training protocol all at once. Where the conclusions differ, we
+cannot say how much each factor contributes without comparisons that change
+them one at a time.
 :::
 
-The setup is deliberately boring. Everything downstream of the
-representation is held fixed: the same train/test split, the same
-`LogisticRegression`, the same class weighting, the same random seed. The
-only thing that varies is how the text becomes numbers. When the scores
-differ, the representation is the *leading* explanation — though not, honestly,
-the only possible one.
+The setup is deliberately plain. Four things are the same in every row: the
+train/test split, the `LogisticRegression` class, the class weighting and the
+random seed. What changes from row to row is the vectoriser's vocabulary
+threshold, the tokenisation path, the scale of the features, and the separate
+training of the dense representations on unlabelled text. So a difference in
+score may be decided by the representation together with these accompanying
+design choices.
 
 Holding a hyperparameter fixed is not the same as being fair to every
-representation. `TfidfVectorizer` L2-normalises its rows for free, so every
-sparse document arrives with norm 1.0; the averaged word2vec and fastText
-vectors are not normalised and their norms vary. `C` is logistic regression's
-regularisation setting; in scikit-learn it is the *inverse* of the penalty
-strength, so a smaller `C` shrinks the coefficients harder. How hard a given
-`C` actually shrinks depends on the scale of the features, so a single
-`C = 1.0` applies materially different effective regularisation to the two
-families. In the main comparison `C` was never searched for either (one later
-ablation tunes it for two sparse rows only). The clean version of this
-experiment gives every representation the same tuning budget — one grid,
-cross-validated on the 40,000-document training split — and normalises the
-dense features first. This one does neither, which is a real limitation and is
-flagged again where it matters.
+representation. Every row of the main comparison uses `C = 1.0`. `C` is
+logistic regression's regularisation setting; in scikit-learn it is the
+*inverse* of the penalty strength, so a smaller `C` shrinks the coefficients
+harder. How hard a given `C` actually shrinks depends on the scale of the
+features. `TfidfVectorizer` L2-normalises its rows by default, so in the TF-IDF
+rows every document arrives with norm 1.0; the averaged word2vec and fastText
+vectors are not normalised and their norms vary. The same `C` need not mean the
+same regularisation on those two scales. In the main comparison `C` was not
+searched for any row (one later ablation tunes it for two sparse rows only). A
+fairer design gives each representation a comparable validation budget for its
+`C` and its normalisation option; it states which data the vocabulary, the IDF
+weights and the embeddings were fitted on, and it keeps the test labels out of
+the selection. This version does not do that, which is a real limitation and
+is flagged again where it matters.
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">One dataset, two roads, one classifier</div>
 <svg viewBox="0 0 760 300" style="max-width:740px" role="img"
-     aria-label="The 40,000-document training split feeds two roads: a counting road producing sparse high-dimensional vectors, 30,195 columns and 9.7 megabytes, and an embedding road producing dense 100-dimensional vectors at 16.0 megabytes. Both feed the same logistic regression. Note that the dense matrix is the larger of the two in bytes despite having about three hundred times fewer columns.">
+     aria-label="The 40,000 training documents of this experiment are turned either into a sparse word TF-IDF matrix with 30,195 columns and 9.7 megabytes, or into a dense document matrix with 100 columns and 16.0 megabytes. Logistic regression is applied to both. These are sizes of the training matrix, not of a model file.">
   <defs>
     <marker id="bo-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0.5 L7.5,4 L0,7.5 z" class="head"/>
@@ -129,8 +139,8 @@ flagged again where it matters.
   <!-- counting road -->
   <text x="206" y="46" class="t-xs t-accent t-b">ROAD 1 — COUNTING (CHAPTER 2)</text>
   <rect x="204" y="56" width="132" height="56" rx="8" class="box-accent"/>
-  <text x="270" y="78" class="t-sm t-mid">one axis per word</text>
-  <text x="270" y="95" class="t-xs t-mid t-muted">FIT ON THE CORPUS</text>
+  <text x="270" y="78" class="t-sm t-mid">one axis per feature</text>
+  <text x="270" y="95" class="t-xs t-mid t-muted">FROM THE TRAINING TEXT</text>
 
   <line x1="338" y1="84" x2="392" y2="84" class="ln-accent" marker-end="url(#bo-b)"/>
 
@@ -142,14 +152,14 @@ flagged again where it matters.
   <!-- embedding road -->
   <text x="206" y="256" class="t-xs t-rose t-b">ROAD 2 — COORDINATES (CHAPTER 3)</text>
   <rect x="204" y="190" width="132" height="56" rx="8" class="box-rose"/>
-  <text x="270" y="212" class="t-sm t-mid">train, then average</text>
-  <text x="270" y="229" class="t-xs t-mid t-muted">SELF-SUPERVISED</text>
+  <text x="270" y="212" class="t-sm t-mid">train word vectors</text>
+  <text x="270" y="229" class="t-xs t-mid t-muted">AVERAGE PER DOCUMENT</text>
 
   <line x1="338" y1="218" x2="392" y2="218" class="ln-rose" marker-end="url(#bo-c)"/>
 
   <rect x="396" y="186" width="150" height="64" rx="8" class="box-rose"/>
   <text x="471" y="208" class="t-sm t-mid t-b">100 dimensions</text>
-  <text x="471" y="224" class="t-xs t-mid t-muted">DENSE — ALL NON-ZERO</text>
+  <text x="471" y="224" class="t-xs t-mid t-muted">DENSE — 100 NUMBERS</text>
   <text x="471" y="239" class="t-xs t-mid t-muted">16.0 MB</text>
 
   <!-- convergence -->
@@ -162,15 +172,15 @@ flagged again where it matters.
   <text x="682" y="170" class="t-xs t-mid t-muted">SAME SEED, SAME SPLIT</text>
 
   <line x1="18" y1="278" x2="742" y2="278" class="ln-thin"/>
-  <text x="380" y="294" class="t-xs t-mid t-muted">EVERYTHING EXCEPT THE REPRESENTATION IS HELD FIXED — SO THE REPRESENTATION IS THE LEADING EXPLANATION OF ANY DIFFERENCE (EXCEPTIONS LISTED BELOW)</text>
+  <text x="380" y="294" class="t-xs t-mid t-muted">SAME TEST SET AND SAME CLASSIFIER; THE DIFFERENCES IN PREPROCESSING AND SCALE ARE EXPLAINED BELOW</text>
 </svg>
 ```
 
 ::: {.fig-cap}
-The experimental design. It is worth being strict about this: the reason
-most published representation comparisons are uninformative is that they
-change the classifier, the tuning budget and the representation at the same
-time, so nothing can be attributed to anything.
+The experimental design. Keeping the test set and the metric the same across
+the models being compared makes the difference easier to read. When the
+classifier, the tuning budget or the preprocessing changes along with the
+representation, the gap you see is their combined effect.
 :::
 ::::
 
