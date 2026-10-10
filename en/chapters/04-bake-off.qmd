@@ -1669,14 +1669,13 @@ am I limited by labels, by the representation, or by the settings?
 
 ## What it costs
 
-We now know which method wins, and at what number of labels. Neither of those
-is what a reviewer will ask you first.
-
-The score is not the only axis. Now put cost next to performance — not "the
-whole bill", only the three axes this experiment measured. The size of the
-model artifact, the memory taken by the vocabulary and embedding table, the
-size of the classifier itself, peak RAM during training, 95th-percentile (p95) latency and the
-cost of deploying an index are all absent here.
+Choosing a method means weighing training and inference cost along with the
+score. This experiment measured three things: the time to build the
+representation, the time to vectorise the 10,000 test documents, and the
+memory of the training matrix. The size of the model artifact, the memory
+taken by the vocabulary and embedding table, the size of the classifier
+itself, peak RAM during training, 95th-percentile (p95) latency and the cost
+of deploying an index are all absent here.
 
 ```text
 ### cost, on one CPU core, 40,000 training documents (single run, not repeated)
@@ -1690,28 +1689,35 @@ fastText + averaging      31.6 s          0.27 s       16.0 MB
 doc2vec                    8.5 s          1.73 s       16.0 MB
 ```
 
+The `training matrix` column is the memory of the training matrix only; it
+does not cover the model, the vocabulary or the embedding table, or peak RAM.
+The timings come from single runs. When we re-measured the vectorising times
+in round 1 five times each, the run-to-run difference stayed around ten
+percent (0.82–0.90 s for the bigram scheme, for example); do not compare small
+timing differences for that reason.
+
 Two entries deserve comment.
 
-**Character n-grams are expensive out of proportion to their benefit.** 144.8
-MB and 301 non-zeros per document, for 70.39 macro-F1 — worse than plain
-word tf-idf at 9.7 MB — fifteen times the memory for a lower macro-F1. (The
-bag-of-words matrix has the same sparsity pattern and therefore the same size;
-only the tf-idf row appears in the table.) They are the right tool when spelling is the problem
-(and at 1,000 labels, where they beat word TF-IDF by 3.2 points, they were
-the better of the two sparse methods on the learning curve), but they are not a free upgrade.
+**For character n-grams the balance of memory and score depends on the
+condition.** With the full training set, character TF-IDF scored 70.39
+macro-F1 from a 144.8 MB matrix (301 non-zeros per document); word TF-IDF
+scored 71.95 from 9.7 MB. (The bag-of-words matrix has the same sparsity
+pattern and therefore the same size; only the tf-idf row appears in the
+table.) At the 1,000-label point, though, the character features were 3.2
+points ahead of word TF-IDF. So re-evaluate the memory–score balance against
+the number of labels and the spelling noise in the text.
 
 **doc2vec must run gradient descent to vectorise a new document.** 1.73
 seconds for 10,000 reviews, against 0.11 for averaging — a 16-fold difference,
 and unlike training that cost recurs on every new document. Look at the
 absolute number too: 0.17 milliseconds per document is still small for most
-services, and the decision belongs to your latency budget. Combined with the
-worst macro-F1 in the comparison (55.13), the recommendation this chapter can
-support is: **do not make doc2vec your default on a short, noisy
-classification task like this one** — there is no performance-cost case for
-it.
-@sec-embeddings had it ahead of averaging on 20 Newsgroups; on 40,000 short,
-noisy Turkish reviews it is 6.3 points behind. Long, clean documents are the
-regime where learning a document vector pays, and reviews are neither.
+services, and the decision belongs to your latency budget. In this setup
+doc2vec's macro-F1, 55.13, is the lowest of the dense rows examined. **No
+measurement here supports making doc2vec the default on this short, noisy
+review task.** In chapter 3's 20 Newsgroups comparison (@sec-embeddings)
+doc2vec was ahead of averaging; here it is 6.3 points behind. This chapter did
+not test whether the difference between the two results comes from document
+length, language or the amount of data.
 
 ### The hybrid, and an honest negative result
 
