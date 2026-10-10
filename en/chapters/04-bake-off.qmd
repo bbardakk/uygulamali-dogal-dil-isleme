@@ -898,9 +898,12 @@ give you the same direct word-to-coefficient table for free.
 
 ## Round 2 — the chapter-3 methods
 
-Now the same problem with coordinates. Three models from @sec-embeddings,
-each trained from scratch on the 40,000 *training* documents only — no
-pretrained vectors, no test text, no labels.
+Now the same task with the three models of chapter 3 (@sec-embeddings).
+The word2vec, fastText and doc2vec models were trained from scratch on the
+text of the 40,000 training reviews, without using the labels; no pretrained
+vectors and no test reviews went into that training. Later, in the learning
+curve, the classifier sees fewer labels while this fixed representation,
+learned from the text of all 40,000 reviews, stays in use.
 
 ```python
 from gensim.models import Word2Vec, FastText
@@ -916,8 +919,15 @@ d2v = Doc2Vec([TaggedDocument(d, [i]) for i, d in enumerate(train_tok)],
               negative=5, workers=1, seed=42)
 ```
 
-A document vector is the mean of its word vectors, which is the standard
-cheap answer from @sec-embeddings; doc2vec gets its vector directly.
+The code above shows only the training settings of the three models; the
+steps from there to a document matrix are these. For word2vec, a document's
+vector is the mean of the vectors of its tokens that are in the vocabulary; a
+document with no token in the vocabulary gets the zero vector. For fastText
+every token of the document goes into the mean, because the model builds a
+vector for out-of-vocabulary forms too, from subword vectors. doc2vec learns
+the vectors of the training documents directly; the vectors of the test
+documents are inferred with `infer_vector` at its default settings. All three
+matrices go to the same logistic regression as in round 1.
 
 ```text
 ### round 2: coordinates
@@ -926,6 +936,13 @@ averaged word2vec        79.92      61.39     34.64     100     14.7 s
 averaged fastText        79.64      61.36     34.79     100     31.6 s
 doc2vec (PV-DBOW)        71.96      55.13     27.66     100      8.5 s
 ```
+
+Unlike the sparse rows, these rows cannot be reproduced to the last digit.
+Re-running the same code with the same seed (42) while this chapter was being
+revised gave 61.37 macro-F1 for word2vec, 61.29 for fastText and 55.44 for
+doc2vec. Changing only the embedding seed (five seeds) kept word2vec between
+61.57 and 62.06, and fastText between 60.86 and 61.68. Read the decimal
+differences in the dense rows together with that spread.
 
 Set against round 1:
 
@@ -942,34 +959,47 @@ majority baseline        93.68      48.37      0.00        —
 ```
 
 ::: {.callout-warning appearance="simple"}
-**Do not read that ordering as a ranking.** The row names are short; in full,
-the three dense rows are averaged static vectors trained *from scratch* on
-this corpus's 0.9 million tokens, not pretrained ones. The dense scores are
-also unnormalised and `C` was tuned for no row at all — recall what the `C`
-experiment in the previous section did on the sparse side. Interpret the large
-gap between the families, not one-point differences.
+**Do not read that ordering as a general ranking.** The row names are short;
+in full, the three dense rows are averaged static vectors trained *from
+scratch* on this corpus's 0.9 million tokens, not pretrained ones. The scale
+of the dense vectors was not equalised and `C` was tuned for no row at all —
+recall what the `C` experiment in the previous section did on the sparse side.
 
-Every row is one run, on one split,
-with one seed, and no interval is attached to any of it. Further down, this
-chapter gets a rough measure of its own variability — the word2vec learning
-curve swings about 2.3 points while its training data grows 160-fold — so the
-gap between the families here (76.21 against 61.39) is enormous and safe, while several adjacent gaps are not
-resolvable by this design at all: 73.51 against 71.95, 71.95 against 70.39, and
-61.39 against 61.36 are all inside it.
+Every row comes from one split and one run. To measure the sampling
+uncertainty of the test set, we paired the two models' predictions on the same
+10,000 reviews and resampled the test rows 10,000 times (a paired bootstrap;
+*both* models' macro-F1 is recomputed on each resample):
 
-One comparison is tested later in the chapter, at least on accuracy: one sparse–dense
-pair — plain word TF-IDF against averaged fastText — gets a McNemar test on
-paired predictions, $\chi^2 = 684.2$. Note what that
-test is about — McNemar compares the two methods' *error rates*, so it settles
-the accuracy column, not the macro-F1 one the ranking is sorted on. A macro-F1
-difference is not a paired count of errors and needs a paired bootstrap or a
-randomisation test instead. (A paired bootstrap resamples the 10,000 test
-reviews with replacement, say 1,000 times, recomputes *both* models' macro-F1
-on each resample, and reports how often — and by how much — the difference
-changes.) The rest do not get either, and this chapter does
-not pretend otherwise. What is missing is a bootstrap interval per row and a
-paired test per adjacent pair — the protocol @dror2018hitchhikers lays out —
-and exercise 8 asks you to supply it.
+```text
+### paired bootstrap on the 10,000 test reviews: macro-F1 difference, 95% interval
+tf-idf 1-2 gram     - bag of words         +2.69   [ +1.60,  +3.82]
+bag of words        - tf-idf               +1.56   [ +0.53,  +2.55]
+tf-idf              - tf-idf char_wb 3-5   +1.57   [ +0.59,  +2.54]
+tf-idf char_wb 3-5  - averaged word2vec    +9.01   [ +7.97, +10.01]
+averaged word2vec   - averaged fastText    +0.08   [ -0.60,  +0.77]
+averaged fastText   - doc2vec (PV-DBOW)    +5.85   [ +5.02,  +6.69]
+tf-idf 1-2 gram     - averaged word2vec   +14.83   [+13.65, +16.01]
+```
+
+The dense rows are taken from the re-run mentioned above. The gap between the
+families, and the adjacent gaps inside the sparse family, are larger than the
+sampling noise of this test set; the gap between word2vec and fastText is not.
+These intervals cover test sampling only: they do not say what happens when
+the training split changes, and for the dense rows the spread over training
+seeds comes on top. The wobble of the learning curve between 250 and 40,000
+labels is not an uncertainty interval of this kind; those points differ both
+in training size and in which documents were sampled.
+
+Error rates need a separate test. McNemar's test compares the two methods'
+*error rates*, so it is about the accuracy column, not the macro-F1 one the
+ranking is sorted on. Later in the chapter, McNemar's test on the right/wrong
+outcomes of plain word TF-IDF and averaged fastText on the same test documents
+gives $\chi^2 = 684.2$; that supports the difference in error rate between
+those two setups. A macro-F1 difference is not a paired count of errors; it
+needs a paired bootstrap, as above, or a randomisation test.
+@dror2018hitchhikers lays the protocol out in detail, and exercise 8 asks you
+to reproduce these intervals in your own run and extend them over the training
+split.
 :::
 
 ::: {#gloss-recall .column-margin .term-gloss}
@@ -982,34 +1012,38 @@ found. Low recall goes with a lot of misses. [↩](#term-recall){.term-back}
 really were. Low precision goes with a lot of false alarms. [↩](#term-precision){.term-back}
 :::
 
-**In this setup the best sparse representation beats the from-scratch averaged
-embedding setup by a wide margin.** The gap between the best sparse method
-and the best dense one is 14.8 macro-F1 points. On the negative class, where
-the value is, it is **21.83** points of F1 — and the shape of that gap matters.
-(A coincidence to disarm before it confuses you: a precision of 21.8% turns up
-a few lines below. The two numbers are unrelated — this one is a difference in
-F1 points, that one is a precision.)
-Averaged word2vec actually *finds* more negatives (84.2% [recall](#gloss-recall){#term-recall .term-ref} against
-76.3%); it is simply wrong about them far more often, at 21.8% [precision](#gloss-precision){#term-precision .term-ref}
-against 44.8%. Per complaint it flags, the sparse model is more than twice as
-likely to be right.
+**In this setup the best sparse representation is well ahead of the
+from-scratch averaged embedding setup.** The gap between the best sparse
+method and the best dense one is 14.8 macro-F1 points; on the negative class
+it is **21.83** points of F1 — and the shape of that gap matters. (A
+coincidence to disarm before it confuses you: a precision of 21.8% turns up a
+few lines below. The two numbers are unrelated — this one is a difference in
+F1 points, that one is a precision.) Averaged word2vec actually *finds* more
+negatives (84.2% [recall](#gloss-recall){#term-recall .term-ref} against
+bigram TF-IDF's 76.3%); but only 21.8% of the reviews it flags as negative
+really are negative ([precision](#gloss-precision){#term-precision .term-ref}),
+where the figure for bigram TF-IDF is 44.8%. These are aggregate rates over
+the test set; do not read them as the probability that one new prediction is
+right.
 
-This reproduces @sec-embeddings' 20 Newsgroups finding on a completely
-different dataset, in a different language, with a different class structure
-and seventeen times more training data. The ordering is not a quirk of one
-benchmark. **For document classification with plenty of labels, averaged
-static embeddings lose to counting.** Say it out loud now, because the rest of
-the chapter is about the conditions under which it stops being true.
+On chapter 3's 20 Newsgroups task (@sec-embeddings) the sparse method in the
+comparison was also ahead of the averaged static embedding. Seeing a similar
+ordering on two different datasets is a useful observation; but the language,
+the class structure, the amount of training data and the preprocessing all
+differ, so no general rule about document classification follows from these
+two results. The rest of the chapter looks at how the ordering is affected, in
+this Turkish review setup, when the number of labels and the kinds of error
+change.
 
-And say the limit out loud too, because it is a large one. All three round-2
-models were trained from scratch on the 903,190 tokens of *this corpus only*.
-The normal training regime for static embeddings is a hundred to a hundred
-thousand times that; @bojanowski2017enriching works at Wikipedia scale. So the
+State the limit plainly too. All three round-2 models were trained from
+scratch on the 903,190 tokens of the training reviews of *this corpus only*;
+work such as @bojanowski2017enriching uses corpora at Wikipedia scale. So the
 measurement above is precisely **"static embeddings trained from scratch on
-0.9M tokens lose to counts extracted from the same 40,000 documents"** — not
-"static embeddings lose to counting". Pre-trained Turkish vectors would be
-expected to lift the dense curve; this chapter did not measure by how much, and
-exercise 13 is where you find out.
+0.9M tokens fell behind, in this setup, counts extracted from the same 40,000
+documents"** — not "static embeddings fall behind counts". Vectors pretrained
+on large Turkish corpora may give a different result; this chapter did not
+measure the direction or the size of the difference. Exercise 13 is where you
+measure it yourself.
 
 What does *not* depend on corpus size is the averaging defect. No amount of
 training data makes `kalite iyi fiyat kötü` and `kalite kötü fiyat iyi` stop
@@ -1017,38 +1051,35 @@ having cosine 1.0000, because that failure is in the pooling step, not in the
 vectors. That is the transferable result of this chapter; the ranking above is
 the local one.
 
-The one thing the dense methods win is *dimensionality*, and they win it
-enormously: 61.39 macro-F1 from **100 numbers per document**, against 76.21
-from 101,659.
+Where the dense methods clearly differ is the *number of dimensions*: 61.39
+macro-F1 from **100 numbers per document**, against 76.21 from 101,659
+columns.
 
-Be careful about what that does and does not buy, because it is easy to read
-"dimensionality" as "size" and the cost table below says the opposite. In bytes
-the dense matrix is the *larger* one: 16.0 MB against word TF-IDF's 9.7 MB. A
-sparse row with 19.8 non-zeros stores 19.8 numbers, not 30,195 — so 100 dense
-floats per document is more storage, not less. Dimensionality pays when
-something downstream scales with the *number of axes*: a nearest-neighbour
-index, an approximate-nearest-neighbour (ANN) search structure, the first
-layer of a network. It does not pay in
-storage, and this chapter's own table is the counter-example.
+Do not read the number of dimensions as memory. In this experiment the dense
+document matrix has 100 columns and the word TF-IDF matrix 30,195; even so,
+the measured memory of the training matrices is 16.0 MB and 9.7 MB
+respectively. A sparse matrix stores only the non-zero values and their
+indices: a row with 19.8 non-zeros on average holds 19.8 values, not 30,195.
+Fewer coordinates can be an advantage in some dense-vector structures — a
+nearest-neighbour index, approximate-nearest-neighbour (ANN) search, the first
+layer of a network; the actual memory and latency of search have to be
+measured with the chosen index, the number of documents and the sparsity.
 
-Put that as a ratio and it depends on which sparse model you compare against.
-Against the best-scoring one — word unigrams *and* bigrams, 101,659 columns —
-it is a 1,017-fold reduction in dimensions for a 19% relative loss. Against
-plain word tf-idf and its 30,195 columns it is 302-fold, which is the figure
-in the summary table later in this chapter.
-
-Does that matter? Entirely depending on what you are building. Running
-nearest-neighbour search over ten million documents, that ratio *is* your
-architecture. Fitting a linear model on 40,000 documents, it buys you nothing
-at all — a sparse matrix with 19.8 non-zeros per row was never the
-bottleneck.
+The ratio depends on which sparse model you compare against. A 100-dimensional
+dense document vector has about 1,017 times fewer coordinates than bigram
+TF-IDF's 101,659 columns, and about 302 times fewer than plain word TF-IDF's
+30,195 (302 is the figure in the summary table later in this chapter). These
+ratios are not, by themselves, ratios of memory, latency or product
+architecture. In your target use, measure the costs of sparse retrieval, dense
+retrieval and classification separately.
 
 ::: {.column-margin}
-Note the direction of the dense models' errors: averaged word2vec recalls
-84.2% of negatives — *better* than any sparse model — at 21.8% precision. It
-is not blind to the minority class; it is imprecise about it. The blur is in
-the representation, and `class_weight="balanced"` converts that blur into
-false alarms rather than misses.
+Note the direction of the dense models' errors: in this run averaged word2vec
+finds 84.2% of the negative reviews — more than any sparse model — but the
+precision of its negative predictions is 21.8%. That pattern of false alarms
+may have as much to do with `class_weight="balanced"`, the decision threshold
+and the choice of `C` as with how well the representation separates the
+classes. Telling the causes apart takes threshold and class-weight ablations.
 :::
 
 ## The out-of-vocabulary test

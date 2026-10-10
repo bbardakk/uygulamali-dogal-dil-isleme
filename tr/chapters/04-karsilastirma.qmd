@@ -891,9 +891,12 @@ aynı doğrudan kelime → katsayı tablosunu kendiliğinden vermiyor.
 
 ## 2. raunt — 3. bölümün yöntemleri
 
-Şimdi aynı problemi koordinatlarla çözelim. @sec-gommeler'ten üç
-model; her biri yalnızca 40.000 *eğitim* belgesi üzerinde sıfırdan eğitildi —
-ön eğitimli vektör yok, test metni yok, etiket yok.
+Şimdi aynı görevi 3. bölümün üç modeliyle (@sec-gommeler) ele alalım.
+Word2vec, fastText ve doc2vec modelleri 40.000 eğitim yorumunun metni üzerinde,
+etiketleri kullanmadan sıfırdan eğitildi; ön eğitimli vektör ve test yorumları
+bu eğitimde kullanılmadı. İleride öğrenme eğrisinde sınıflandırıcı daha az
+etiket görürken de 40.000 yorumun metninden öğrenilmiş bu sabit temsil
+kullanılmaya devam ediyor.
 
 ```python
 from gensim.models import Word2Vec, FastText
@@ -909,7 +912,14 @@ d2v = Doc2Vec([TaggedDocument(d, [i]) for i, d in enumerate(train_tok)],
               negative=5, workers=1, seed=42)
 ```
 
-Bir belge vektörü, kelime vektörlerinin ortalamasıdır — @sec-gommeler'teki standart ucuz cevap; doc2vec ise vektörünü doğrudan alıyor.
+Yukarıdaki kod yalnızca üç modelin eğitim ayarlarını gösteriyor; belge
+matrisine giden adımlar şöyle. word2vec için bir belgenin vektörü, sözlükte
+bulunan token'larının vektörlerinin ortalamasıdır; sözlükte hiç token'ı olmayan
+belge sıfır vektörü alır. fastText'te ortalamaya belgenin bütün token'ları
+girer, çünkü model sözlük dışı biçimlere de alt kelime vektörlerinden bir
+vektör kurar. doc2vec eğitim belgelerinin vektörünü doğrudan öğrenir; test
+belgelerinin vektörü `infer_vector` ile, varsayılan ayarlarla çıkarılır. Üç
+matris de 1. rauntla aynı lojistik regresyona verilir.
 
 ```text
 ### round 2: coordinates
@@ -918,6 +928,13 @@ averaged word2vec        79.92      61.39     34.64     100     14.7 s
 averaged fastText        79.64      61.36     34.79     100     31.6 s
 doc2vec (PV-DBOW)        71.96      55.13     27.66     100      8.5 s
 ```
+
+Bu satırlar, seyrek satırların aksine son hanesine kadar yeniden üretilemiyor.
+Aynı kodu ve aynı tohumu (42) bu bölüm gözden geçirilirken yeniden
+koşturduğumuzda word2vec 61,37, fastText 61,29, doc2vec 55,44 macro-F1 verdi.
+Yalnızca embedding tohumunu değiştirdiğimizde (beş tohum) word2vec 61,57 ile
+62,06, fastText 60,86 ile 61,68 arasında kaldı. Yoğun satırlardaki ondalık
+farkları bu yayılımla birlikte okuyun.
 
 1\. rauntla yan yana:
 
@@ -934,38 +951,48 @@ majority baseline        93.68      48.37      0.00        —
 ```
 
 ::: {.callout-warning appearance="simple"}
-**Bu sırayı bir başarı sıralaması olarak okumayın.** Satır adları kısa
+**Bu sırayı genel bir başarı sıralaması olarak okumayın.** Satır adları kısa
 tutuldu; tam hâlleri şunlar: üç yoğun satır bu derlemin 0,9 milyon token'ı
-üzerinde *sıfırdan* eğitilmiş, ortalaması alınmış statik vektörler, ön
-eğitimli değil. Yoğun skorlar ayrıca normalleştirilmemiş ve `C` hiçbir satır
-için ayarlanmadı — bir önceki kısımdaki `C` deneyinin seyrek tarafta yaptığını
-hatırlayın. Aileler arasındaki büyük farkı yorumlayın; tek puanlık farkları
-değil.
+üzerinde *sıfırdan* eğitilmiş, ortalaması alınmış statik vektörler; ön eğitimli
+değil. Yoğun vektörlerin ölçeği eşitlenmedi ve `C` hiçbir satır için
+ayarlanmadı — bir önceki kısımdaki `C` deneyinin seyrek tarafta yaptığını
+hatırlayın.
 
-Her satır tek bir koşu, tek bir
-bölme, tek bir tohum ve hiçbirine bir aralık iliştirilmiş değil. Bu bölüm
-aşağıda kendi değişkenliğinin kaba bir ölçüsünü de elde ediyor — word2vec
-öğrenme eğrisi, eğitim verisi 160 katına çıkarken yaklaşık 2,3 puan salınıyor —
-dolayısıyla buradaki aileler arası fark (61,39'a karşı 76,21) devasa ve güvenli, buna karşılık komşu farkların birkaçı
-bu tasarımla hiç ayırt edilemiyor. 71,95'e karşı 73,51, 70,39'a karşı 71,95 ve
-61,36'ya karşı 61,39 farklarının üçü de bu oynaklık aralığının içinde.
+Her satır tek bir bölmeden ve tek bir koşudan geliyor. Test kümesinin örnekleme
+belirsizliğini ölçmek için iki modelin aynı 10.000 yorumdaki tahminlerini
+eşleştirip test satırlarını 10.000 kez yeniden örnekledik (eşleştirilmiş
+bootstrap; her örneklemde *iki* modelin macro-F1'i de yeniden hesaplanır):
 
-Bir karşılaştırma bölümün ilerisinde en azından doğruluk açısından sınanıyor: bir
-seyrek–yoğun çiftine — düz kelime TF-IDF'ine karşı ortalaması alınmış
-fastText — eşleştirilmiş tahminler üzerinde bir McNemar testi uygulanıyor,
-$\chi^2 = 684{,}2$.
-O testin neyle ilgili olduğuna dikkat: McNemar iki yöntemin *hata oranlarını*
-karşılaştırır, dolayısıyla doğruluk sütununu karara bağlar; sıralamanın
-dayandığı macro-F1 sütununu değil. Macro-F1 farkı ise eşleştirilmiş bir hata
-sayımı değildir; bu yüzden McNemar yerine eşleştirilmiş bootstrap ya da
-rastgeleleştirme testi gerekir. (Eşleştirilmiş bootstrap, 10.000 test yorumunu
-yerine koyarak diyelim 1.000 kez yeniden örnekler, her örneklemde *iki*
-modelin macro-F1'ini de yeniden hesaplar ve farkın ne sıklıkla, ne kadar
-değiştiğini bildirir.) Geri kalan karşılaştırmalara ikisi de
-uygulanmadı ve bu bölüm aksini iddia etmiyor. Eksik olan şey satır başına bir
-bootstrap aralığı ve komşu çift başına bir eşleştirilmiş test. Bu protokolü
-@dror2018hitchhikers ayrıntısıyla anlatıyor; 8. alıştırma da bunu sizden
-istiyor.
+```text
+### paired bootstrap on the 10,000 test reviews: macro-F1 difference, 95% interval
+tf-idf 1-2 gram     - bag of words         +2.69   [ +1.60,  +3.82]
+bag of words        - tf-idf               +1.56   [ +0.53,  +2.55]
+tf-idf              - tf-idf char_wb 3-5   +1.57   [ +0.59,  +2.54]
+tf-idf char_wb 3-5  - averaged word2vec    +9.01   [ +7.97, +10.01]
+averaged word2vec   - averaged fastText    +0.08   [ -0.60,  +0.77]
+averaged fastText   - doc2vec (PV-DBOW)    +5.85   [ +5.02,  +6.69]
+tf-idf 1-2 gram     - averaged word2vec   +14.83   [+13.65, +16.01]
+```
+
+Yoğun satırlar yukarıda sözü edilen yeniden koşudan alındı. Aileler arasındaki
+fark ve seyrek ailenin içindeki komşu farklar bu test kümesinin örnekleme
+gürültüsünden büyük; word2vec ile fastText arasındaki fark değil. Bu aralıklar
+yalnızca test örneklemesini kapsar: eğitim bölmesi değişince ne olacağını
+söylemez, yoğun satırlarda buna bir de eğitim tohumunun yayılımı eklenir.
+Öğrenme eğrisinde 250 ile 40.000 etiket arasında görülen dalgalanma ise böyle
+bir belirsizlik aralığı değildir; o noktalar hem eğitim büyüklüğünde hem
+örneklenen belgelerde farklılaşır.
+
+Hata oranları için ayrı bir test gerekir. McNemar testi iki yöntemin *hata
+oranlarını* karşılaştırır, dolayısıyla doğruluk sütunuyla ilgilidir; sıralamanın
+dayandığı macro-F1 sütunuyla değil. Bölümün ilerisinde düz kelime TF-IDF'i ile
+ortalaması alınmış fastText'in aynı test belgelerindeki doğru/yanlış
+durumlarına uygulanan McNemar testi $\chi^2 = 684{,}2$ veriyor; bu, o iki
+kurulumun hata oranı farkını destekler. Macro-F1 farkı eşleştirilmiş bir hata
+sayımı değildir; onun için yukarıdaki gibi eşleştirilmiş bootstrap ya da
+rastgeleleştirme testi gerekir. Protokolü @dror2018hitchhikers ayrıntısıyla
+anlatıyor; 8. alıştırma bu aralıkları kendi koşunuzda yeniden üretmenizi ve
+eğitim bölmesi üzerinden genişletmenizi istiyor.
 :::
 
 ::: {#gloss-recall .column-margin .term-gloss}
@@ -980,36 +1007,34 @@ ilişkilidir. [↩](#term-precision){.term-back}
 :::
 
 **Bu kurulumda en iyi seyrek temsil, sıfırdan eğitilmiş ortalama-embedding
-kurulumunu açık farkla geçiyor.** En iyi seyrek yöntemle en iyi
-yoğun yöntem arasındaki fark 14,8 macro-F1 puanı. Asıl değerin yattığı olumsuz
-sınıfta ise fark **21,83** F1 puanı — ve bu farkın biçimi de önemli.
-(Kafanız karışmasın diye bir rastlantıyı baştan açıklayalım: birkaç satır aşağıda
-%21,8'lik bir precision değeri geçiyor. İki sayının ilgisi yok — buradaki bir F1 puan farkı, oradaki bir
-precision.) Ortalaması alınmış
-word2vec aslında *daha çok* olumsuz buluyor (%84,2
-[recall](#gloss-recall){#term-recall .term-ref}, ötekinin %76,3'üne karşı);
-sadece bulduklarının çok daha büyük kısmında yanılıyor: %21,8
-[precision](#gloss-precision){#term-precision .term-ref}, ötekinin %44,8'ine
-karşı. Şikâyet diye işaretlediği her yorumda seyrek modelin haklı çıkma ihtimali,
-yoğun modelinkinin iki katından fazla.
+kurulumunun açık farkla önünde.** En iyi seyrek yöntemle en iyi yoğun yöntem
+arasındaki fark 14,8 macro-F1 puanı; olumsuz sınıfta **21,83** F1 puanı — ve bu
+farkın biçimi de önemli. (Bir rastlantıyı baştan açıklayalım: birkaç satır
+aşağıda %21,8'lik bir precision değeri geçiyor. İki sayının ilgisi yok —
+buradaki bir F1 puan farkı, oradaki bir precision.) Ortalaması alınmış word2vec
+aslında *daha çok* olumsuz buluyor (%84,2
+[recall](#gloss-recall){#term-recall .term-ref}, bigram TF-IDF'in %76,3'üne
+karşı); ama olumsuz diye işaretlediği yorumların yalnızca %21,8'i gerçekten
+olumsuz ([precision](#gloss-precision){#term-precision .term-ref}), bigram
+TF-IDF'te bu oran %44,8. Bunlar test kümesi üzerindeki toplu oranlardır; tek
+bir yeni tahminin doğru olma olasılığı gibi okumayın.
 
-Bu, @sec-gommeler'ün 20 Newsgroups bulgusunu tamamen farklı bir veri
-kümesinde, farklı bir dilde, farklı bir sınıf yapısıyla ve on yedi kat daha
-fazla eğitim verisiyle yeniden üretiyor. Sıralama tek bir benchmark'ın (kıyaslama)
-tuhaflığı değil. **Etiketin bol olduğu belge sınıflandırmasında, ortalaması
-alınmış statik embedding'ler saymaya kaybeder.** Bu cümleyi aklınızda tutun,
-çünkü bölümün geri kalanı onun hangi koşullarda geçerliliğini yitirdiğiyle
-ilgili.
+3\. bölümün 20 Newsgroups görevinde de (@sec-gommeler) karşılaştırılan seyrek
+yöntem ortalama statik embedding'in önündeydi. İki farklı veri kümesinde benzer
+bir sıralama görmek yararlı bir gözlem; ama dil, sınıf yapısı, eğitim miktarı
+ve ön işleme farklı olduğu için bu iki sonuçtan genel bir belge sınıflandırma
+kuralı çıkmaz. Bölümün geri kalanı, bu Türkçe yorum kurulumunda etiket miktarı
+ve hata türleri değiştiğinde sıralamanın nasıl etkilendiğini inceliyor.
 
-Sınırını da açıkça söyleyelim, çünkü büyük bir sınır. 2. rauntun üç modeli
-de yalnızca *bu derlemin* 903.190 token'ı üzerinde sıfırdan eğitildi. Statik
-embedding'lerin normal eğitim rejimi bunun yüz ila yüz bin katıdır;
-@bojanowski2017enriching Wikipedia ölçeğinde çalışıyor. Dolayısıyla yukarıdaki
-ölçüm şudur: **"0,9 milyon token üzerinde sıfırdan eğitilmiş statik
-embedding'ler, aynı 40.000 belgeden çıkarılan sayımlara kaybeder"** — "statik
-embedding'ler saymaya kaybeder" değil. Ön eğitimli Türkçe vektörlerin
-yoğun eğriyi yukarı taşıması beklenir; bu bölüm ne kadar taşıyacağını ölçmedi.
-Ne kadar taşıdığını 13. alıştırmada kendiniz ölçebilirsiniz.
+Sınırını da açıkça söyleyelim. 2. rauntun üç modeli yalnızca *bu derlemin*
+eğitim yorumlarındaki 903.190 token üzerinde sıfırdan eğitildi;
+@bojanowski2017enriching gibi çalışmalar Wikipedia ölçeğindeki derlemlerle
+çalışıyor. Dolayısıyla yukarıdaki ölçüm şudur: **"0,9 milyon token üzerinde
+sıfırdan eğitilmiş statik embedding'ler, bu kurulumda aynı 40.000 belgeden
+çıkarılan sayımların gerisinde kaldı"** — "statik embedding'ler sayımların
+gerisinde kalır" değil. Büyük Türkçe derlemlerde önceden eğitilmiş vektörler
+farklı sonuç verebilir; farkın yönünü ve büyüklüğünü bu bölüm ölçmedi.
+13. alıştırmada kendiniz ölçebilirsiniz.
 
 Derlem boyutuna bağlı *olmayan* şey ise ortalama alma kusuru. `kalite iyi fiyat
 kötü` ile `kalite kötü fiyat iyi` çiftinin (bölümün sonunda göstereceğimiz)
@@ -1017,36 +1042,34 @@ kötü` ile `kalite kötü fiyat iyi` çiftinin (bölümün sonunda göstereceğ
 miktarı düzeltmez, çünkü o arıza vektörlerde değil havuzlama adımındadır. Bu
 bölümün genellenebilir sonucu budur; yukarıdaki sıralama ise yerel bir sonuç.
 
-Yoğun yöntemlerin kazandığı tek şey *boyutsallık* ve orada ezici bir
-üstünlükleri var: **belge başına 100 sayı** ile 61,39 macro-F1'e karşılık,
-101.659 boyutla 76,21.
+Yoğun yöntemlerin belirgin biçimde ayrıldığı yer *boyut sayısı*: **belge başına
+100 sayı** ile 61,39 macro-F1'e karşılık, 101.659 sütunla 76,21.
 
-Bunun neyi kazandırıp neyi kazandırmadığına dikkat edin, çünkü "boyutsallık"ı
-"büyüklük" diye okumak kolay ve aşağıdaki maliyet tablosu tam tersini söylüyor. Bayt
-cinsinden *büyük* olan yoğun matris: kelime TF-IDF'in 9,7 MB'ına karşı 16,0 MB.
-Ortalama 19,8 sıfır dışı değer taşıyan seyrek bir satır, 30.195 değil 19,8
-sayı saklar — yani belge başına 100 yoğun kayan noktalı sayı daha az değil,
-daha çok depolama demek. Boyutsallık, aşağı akıştaki bir şey *eksen sayısıyla* ölçeklendiğinde
-kazandırır: bir en yakın komşu indeksi, bir yaklaşık en yakın komşu (ANN) arama yapısı, bir ağın ilk katmanı.
-Depolamada kazandırmaz ve bu bölümün kendi tablosu bunun karşı örneği.
+Boyut sayısını bellek diye okumayın. Bu deneyde yoğun belge matrisinin 100,
+kelime TF-IDF matrisinin 30.195 sütunu var; buna rağmen ölçülen eğitim matrisi
+belleği sırasıyla 16,0 MB ve 9,7 MB. Seyrek matris yalnızca sıfır dışı değerleri
+ve onların indekslerini saklar: ortalama 19,8 sıfır dışı değer taşıyan bir
+satır 30.195 değil 19,8 değer tutar. Daha az koordinat, bazı yoğun vektör
+yapılarında — bir en yakın komşu indeksi, yaklaşık en yakın komşu (ANN) araması,
+bir ağın ilk katmanı — avantaj sağlayabilir; gerçek arama belleğini ve
+gecikmesini ise seçilen indeks, belge sayısı ve seyreklikle birlikte ölçmek
+gerekir.
 
-Bunu bir orana dökerseniz, sonuç hangi seyrek modelle karşılaştırdığınıza
-bağlı. En yüksek skorlu seyrek modelle — kelime unigram'ları *ve* bigram'ları,
-101.659 sütun — karşılaştırıldığında, %19 göreli kayıp karşılığında 1.017 kat
-boyut azaltma. Düz kelime TF-IDF'i ve onun 30.195 sütunuyla karşılaştırıldığında
-ise 302 kat; bölümün ilerisindeki özet tablosunda geçen rakam budur.
-
-Bu önemli mi? Tamamen ne kurduğunuza bağlı. On milyon belge üzerinde en yakın komşu araması
-koşturuyorsanız, bu oran mimarinizin tamamıdır. 40.000 belge üzerinde
-doğrusal bir model eğitiyorsanız, size hiçbir şey kazandırmaz; çünkü satır
-başına 19,8 sıfırdan farklı değeri olan seyrek bir matris zaten hiçbir zaman
-darboğaz değildi.
+Oranı, hangi seyrek modelle karşılaştırdığınız belirler. Bigram TF-IDF'in
+101.659 sütununa göre 100 boyutlu yoğun belge vektörü yaklaşık 1.017 kat, düz
+kelime TF-IDF'in 30.195 sütununa göre yaklaşık 302 kat daha az koordinat taşır
+(bölümün ilerisindeki özet tablosunda geçen rakam 302'dir). Bu oranlar tek
+başına bellek, gecikme ya da ürün mimarisi oranları değildir. Hedef
+kullanımınızda seyrek erişim, yoğun erişim ve sınıflandırma maliyetlerini ayrı
+ayrı ölçün.
 
 ::: {.column-margin}
-Yoğun modellerin hatalarının yönüne dikkat edin: ortalaması alınmış word2vec
-olumsuzların %84,2'sini yakalıyor — herhangi bir seyrek modelden *daha iyi* —
-ama %21,8 precision'la: olumsuz dediği yorumların yalnızca %21,8'i gerçekten olumsuz. Azınlık sınıfına kör değil; o sınıf için çok sayıda yanlış alarm üretiyor. Bulanıklık temsilin içinde ve `class_weight="balanced"` bu
-bulanıklığı kaçırmalara değil yanlış alarmlara çeviriyor.
+Yoğun modellerin hatalarının yönüne dikkat edin: bu koşuda ortalaması alınmış
+word2vec olumsuz yorumların %84,2'sini buluyor — herhangi bir seyrek modelden
+fazla — ama olumsuz tahminlerinin precision'ı %21,8. Bu yanlış alarm örüntüsü,
+temsilin ayırt ediciliği kadar `class_weight="balanced"`, karar eşiği ve `C`
+seçimiyle de ilişkili olabilir. Sebebi ayırmak için eşik ve ağırlık
+ablasyonları gerekir.
 :::
 
 ## Sözlük dışı (out-of-vocabulary) sınavı
