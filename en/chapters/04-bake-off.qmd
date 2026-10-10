@@ -186,26 +186,29 @@ representation, the gap you see is their combined effect.
 
 ## The problem
 
-To settle an argument you need a case, and the case has to be able to
-embarrass either side. Here is ours.
+We set the comparison up as a binary sentiment task on Turkish product
+reviews, with imbalanced classes and inconsistent spelling.
 
-**Turkish product reviews, labelled positive or negative.** 235,165 reviews
-scraped from a Turkish e-commerce site, distributed as a single parquet file
-[@barmanbay2020turkishreviews].
-Short, informal, unedited: misspellings, missing diacritics, run-together
-words, the whole texture of text people actually write.
+**Turkish product reviews, labelled positive or negative.** The dataset
+published by Fatih Barmanbay holds 235,165 reviews and is distributed as a
+single parquet file [@barmanbay2020turkishreviews]. Its card says the reviews
+were collected online; it does not document which site they came from, when,
+or how the labels were produced. The texts are short and informal:
+misspellings, missing diacritics, run-together words. They are not raw either:
+all of the distributed text has already been lowercased (measured below).
 
-It is chosen for three reasons, each of which stresses something the previous
-chapters claimed.
+We chose this dataset for three reasons:
 
-1. **It is Turkish**, so @sec-embeddings' morphology argument is on trial
-   rather than on paper.
-2. **It is genuinely imbalanced** — the positive class is 14.8 times
-   larger — so the metric question cannot be dodged.
-3. **It is large enough to subsample**, which lets us ask the question that
-   actually decides these things in practice: *how many labels do you have?*
+1. **It is Turkish**, so chapter 3's morphology argument (@sec-embeddings) can
+   be tested on real user text.
+2. **Its classes are imbalanced** — the positive class is 14.8 times
+   larger — so the choice of evaluation metric has to be argued.
+3. **It is large enough to subsample**, so we can compare how the methods
+   behave as the amount of labelled training data changes. That last
+   comparison is a learning curve valid for this data and these settings.
 
 ```python
+import hashlib
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
@@ -213,8 +216,19 @@ URL = ("https://huggingface.co/datasets/fthbrmnby/turkish_product_reviews/"
        "resolve/main/data/train-00000-of-00001.parquet")
 df = pd.read_parquet(URL).rename(
     columns={"sentence": "text", "sentiment": "label"})
+print(f"missing text or label   {int(df.isna().any(axis=1).sum()):>7,}")
 df["text"] = df["text"].astype(str).str.strip()
+labels_per_text = df.groupby("text")["label"].nunique()
+print(f"empty texts             {int(df['text'].eq('').sum()):>7,}")
+print(f"texts with both labels  {int(labels_per_text.gt(1).sum()):>7,}")
 df = df.drop_duplicates(subset="text")
+```
+
+```text
+### checks before de-duplication
+missing text or label         0
+empty texts                  21
+texts with both labels       77
 ```
 
 ```text
@@ -225,60 +239,101 @@ label 1 (positive)      218,747      93.7%
 label 0 (negative)       14,761       6.3%
 ```
 
-Those two numbers can be checked against the source, which is a small piece of
-luck worth taking: the dataset card reports 220,284 positive and 14,881
-negative, and our post-deduplication counts differ by exactly
-$1{,}537 + 120 = 1{,}657$ — the same 1,657 duplicates. The arithmetic above is
-independently verifiable.
+The first three lines are the checks made before de-duplication. Nothing is
+missing. 21 rows have an empty text; de-duplication collapses them into one
+row. 77 texts carry both labels (297 rows in all): the same short review is
+labelled positive in one place and negative in another. `drop_duplicates`
+keeps the first row in which each text appears; in this file every positive
+review comes before every negative one, so all 77 texts stayed with their
+positive label. This chapter left that choice as it was; 17 of the 77 texts
+fall inside the 50,000-review subsample below. On your own data, choose the
+policy for conflicting labels — keep the first, drop them all, or decide by
+hand — explicitly, and report it.
+
+The class counts can be checked against the source. The dataset card reports
+220,284 positive and 14,881 negative reviews. After de-duplicating on the text
+the counts are 218,747 and 14,761; the differences are 1,537 and 120, and
+$1{,}537 + 120 = 1{,}657$ — the number of duplicates removed. That agreement
+shows the counts are consistent; it does not show which records
+de-duplication kept. The check above does.
 
 ::: {.column-margin}
 **Provenance, and what is not documented.** The dataset was compiled by Fatih
-Barmanbay and is distributed on Hugging Face under **CC BY-SA 4.0**
-[@barmanbay2020turkishreviews] — share-alike, which is a stricter licence than
-this book's own CC BY 4.0, so check it before you redistribute anything derived
-from it. Three things the card does not say: which site was scraped, when, and
-**how the positive/negative label was derived** — a star-rating threshold,
-manual annotation, something else. That last gap matters, because
-@sec-data-annotation is built entirely on the label quality of this corpus and
-has to work without knowing how the labels were made.
+Barmanbay [@barmanbay2020turkishreviews]. The licence is stated differently in
+two places: the licensing section of the card and the licence file of the
+original GitHub repository say **CC BY-SA 4.0**, while the licence field at
+the top of the Hugging Face page says "unknown" (checked on 10 October 2026).
+CC BY-SA is share-alike, a stricter licence than this book's own CC BY 4.0, so
+check the original repository's licence and the card together before you
+redistribute the data or anything derived from it. Three things the card does
+not say: which site was scraped, when, and **how the positive/negative label
+was derived** — a star-rating threshold, manual annotation, something else.
+That last gap matters, because @sec-data-annotation is built entirely on the
+label quality of this corpus and has to work without knowing how the labels
+were made.
 :::
 
-De-duplicate *before* splitting, always. 1,657 duplicates is only 0.7% of the
-file, but a duplicate sitting on both sides of the train/test split is a
-memorised answer scoring as a generalisation, and it inflates every method
-unevenly — whichever model memorises hardest benefits most. This one line
-is the difference between an experiment and a demo. It is not claimed to be
-sufficient: exact de-duplication is necessary but not enough, and templated or
-near-duplicate texts can still survive it.
+The same text sitting on both sides of the train/test split can, especially
+with short reviews, let a memorised answer score as a generalisation. That is
+why this experiment de-duplicates on the text *before* splitting; the 1,657
+duplicates are only 0.7% of the file. The step is necessary but not sufficient
+on its own: templated or near-duplicate texts can survive it, and a text that
+carries two different labels needs its own decision. Report the
+de-duplication policy you chose together with the dataset.
 
-We then take a stratified 50,000-review subsample and split it 80/20,
-preserving the imbalance exactly:
+We then take a stratified 50,000-review subsample of the 233,508
+de-duplicated reviews, preserving the class ratio, and split it 80/20, again
+stratified:
+
+```python
+sub, _ = train_test_split(df, train_size=50_000,
+                          stratify=df["label"], random_state=42)
+train, test = train_test_split(sub, test_size=0.2,
+                               stratify=sub["label"], random_state=42)
+
+def fingerprint(frame):
+    rows = ",".join(map(str, sorted(frame.index)))
+    return hashlib.sha256(rows.encode()).hexdigest()[:12]
+
+for name, part in [("train", train), ("test", test)]:
+    pos = int(part["label"].sum())
+    print(f"{name:<6} {len(part):>7,}   {pos:>7,} positive   "
+          f"{len(part) - pos:>6,} negative   rows {fingerprint(part)}")
+```
 
 ```text
 ### the split (stratified, seed 42)
-train    40,000     37,471 positive    2,529 negative
-test     10,000      9,368 positive      632 negative
+train   40,000    37,471 positive    2,529 negative   rows 8205c2be5ebf
+test    10,000     9,368 positive      632 negative   rows 634cdb3bb002
 ```
 
+The `rows` column is a digest computed from the positions of the selected rows
+in the raw file. If your own run prints the same 12 characters, you selected
+the same rows. The class totals do not show that; many other splits give the
+same totals.
+
 ::: {.callout-warning appearance="simple"}
-**Two things about this split, both of which cost the book something later.**
+**Two warnings about this split.**
 
-*It is under-specified.* "Stratified with seed 42" does not name a procedure; it
-names a family of procedures, and they disagree. Before comparing anything to a
-number in this chapter, match all four of these at once — 50,000 subsample,
-40,000 train, 10,000 test, and **101,659 features** from the bigram
-vectoriser. Any one of them can agree by luck; four cannot.
-@sec-classification opens by reverse-engineering exactly this split from those
-fingerprints, having found that a plausible alternative construction yields
-100,350 features instead — and @sec-clustering, drawing from the same source
-with the same seed, ended up with a *different* 50,000 rows.
+*Reproducing it.* The first version of this chapter recorded the split only as
+"stratified with seed 42". That does not name a procedure; it names a *family*
+of procedures, and they disagree: it does not say which call did the sampling,
+in which order, or in how many stages. The two calls above were recovered
+later; the story is in @sec-classification. The numbers 50,000, 40,000 and
+10,000, and the **101,659 features** from the bigram vectoriser, are strong
+diagnostic signs — a plausible alternative construction yields 100,350
+features instead, as you will see there — but they are not proof that you
+selected the same rows. The proof is a matching row digest, or the exact
+sampling code. @sec-clustering, drawing from the same source with the same
+seed, ended up with a *different* 50,000 rows.
 
-*It is used as both test set and selection set.* Every number below is read off
-the same 10,000 rows: seven representations, nine training sizes, a hybrid,
-three diagnostics. That is defensible for one decisive comparison, and it is
-not defensible for a *choice* — and the crossover point is a choice. In real
-work, split `train` again and select on the inner slice. @sec-classification
-does precisely that, and says why it had to.
+*The test set and selection.* Every number below is read off the same 10,000
+test reviews: seven representations, nine training sizes, a hybrid, three
+diagnostics. Read these results as exploratory: you cannot pick a method or a
+crossover point from these rows and then report an unbiased final score on the
+same rows. In real work, split `train` again, select on that validation slice,
+and use the test set only for the final evaluation. @sec-classification does
+precisely that, and says why it had to.
 :::
 
 ::: {.column-margin}

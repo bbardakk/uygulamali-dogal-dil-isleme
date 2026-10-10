@@ -180,26 +180,30 @@ bunların bileşik etkisidir.
 
 ## Problem
 
-Bir tartışmayı karara bağlamak için somut bir vaka gerekir ve bu vaka, iki
-taraftan herhangi birini zor durumda bırakabilecek türden olmalıdır. Bizimki şu.
+Karşılaştırmayı, sınıfları dengesiz ve yazımı değişken Türkçe ürün
+yorumlarında ikili duygu sınıflandırması görevi olarak kuruyoruz.
 
-**Türkçe ürün yorumları, olumlu ya da olumsuz etiketli.** Bir Türk
-e-ticaret sitesinden toplanmış 235.165 yorum, tek bir parquet dosyası olarak
-dağıtılıyor [@barmanbay2020turkishreviews]. Kısa, gündelik, elden geçirilmemiş: yazım hataları, eksik Türkçe
-karakterler, birbirine yapışmış kelimeler — insanların gerçekten
-yazdığı metnin bütün dokusu.
+**Türkçe ürün yorumları, olumlu ya da olumsuz etiketli.** Fatih Barmanbay'ın
+yayımladığı veri kümesi 235.165 yorum içeriyor ve tek bir parquet dosyası
+olarak dağıtılıyor [@barmanbay2020turkishreviews]. Veri kümesi kartı yorumların
+çevrim içi toplandığını söylüyor; hangi siteden ve ne zaman toplandığını,
+etiketlerin nasıl üretildiğini belgelemiyor. Metinler kısa ve gündelik: yazım
+hataları, eksik Türkçe karakterler, birbirine yapışmış kelimeler taşıyor. Ham
+da değiller: dağıtılan metnin tamamı küçük harfe çevrilmiş durumda (bunu
+aşağıda ölçeceğiz).
 
-Bu veri kümesi üç sebeple seçildi ve her biri önceki bölümlerin
-iddialarından birini sınıyor.
+Bu veri kümesini üç nedenle seçtik:
 
-1. **Türkçe**, yani @sec-gommeler'ün biçimbilim argümanı kâğıt
-   üstünde kalmıyor, sınava çıkıyor.
-2. **Gerçekten dengesiz** — olumlu sınıf 14,8 kat daha büyük — yani metrik
-   sorusundan kaçmak mümkün değil.
-3. **Altörnekleme yapacak kadar büyük**; bu da pratikte işi asıl karara
-   bağlayan soruyu sormamıza izin veriyor: *kaç etiketiniz var?*
+1. **Türkçe**; 3. bölümün biçimbilim argümanını (@sec-gommeler) gerçek
+   kullanıcı metninde sınayabiliyoruz.
+2. **Sınıfları dengesiz** — olumlu sınıf 14,8 kat daha büyük — yani uygun
+   değerlendirme metriğini tartışmak zorundayız.
+3. **Altörnekleme yapacak kadar büyük**; etiketli eğitim miktarı değiştikçe
+   yöntemlerin nasıl davrandığını karşılaştırabiliyoruz. Bu son karşılaştırma,
+   bu veride ve bu ayarlarda geçerli bir öğrenme eğrisidir.
 
 ```python
+import hashlib
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
@@ -207,8 +211,19 @@ URL = ("https://huggingface.co/datasets/fthbrmnby/turkish_product_reviews/"
        "resolve/main/data/train-00000-of-00001.parquet")
 df = pd.read_parquet(URL).rename(
     columns={"sentence": "text", "sentiment": "label"})
+print(f"missing text or label   {int(df.isna().any(axis=1).sum()):>7,}")
 df["text"] = df["text"].astype(str).str.strip()
+labels_per_text = df.groupby("text")["label"].nunique()
+print(f"empty texts             {int(df['text'].eq('').sum()):>7,}")
+print(f"texts with both labels  {int(labels_per_text.gt(1).sum()):>7,}")
 df = df.drop_duplicates(subset="text")
+```
+
+```text
+### checks before de-duplication
+missing text or label         0
+empty texts                  21
+texts with both labels       77
 ```
 
 ```text
@@ -219,62 +234,100 @@ label 1 (positive)      218,747      93.7%
 label 0 (negative)       14,761       6.3%
 ```
 
-Bu iki sayıyı kaynakla karşılaştırma şansımız var: veri kümesi kartı 220.284 olumlu ve 14.881 olumsuz bildiriyor; bizim
-tekilleştirme sonrası sayılarımız bunlardan $1.537 + 120 = 1.657$
-farkla ayrılıyor — aynı 1.657 tekrar. Yukarıdaki aritmetik bağımsız olarak
-doğrulanabilir.
+İlk üç satır tekilleştirmeden önceki kontroller. Eksik değer yok. 21 satırın
+metni boş; tekilleştirme bunları tek satıra indiriyor. 77 metin ise iki etiketi
+birden taşıyor (toplam 297 satır): aynı kısa yorum bir yerde olumlu, bir yerde
+olumsuz etiketlenmiş. `drop_duplicates` her metnin dosyada ilk geçtiği satırı
+tutar; bu dosyada olumlu yorumların hepsi olumsuzlardan önce geldiği için 77
+metnin tamamı olumlu etiketiyle kaldı. Bu bölüm o tercihi olduğu gibi bıraktı;
+77 metnin 17'si aşağıdaki 50.000'lik altörnekleme giriyor. Kendi verinizde
+çelişkili etiketler için politikayı — ilkini tut, hepsini at ya da elle karar
+ver — açıkça seçin ve raporlayın.
+
+Sınıf sayılarını kaynakla karşılaştırabiliyoruz. Veri kümesi kartı 220.284
+olumlu ve 14.881 olumsuz yorum bildiriyor. Metne göre tekilleştirme sonrası
+sayılar 218.747 ve 14.761; farklar 1.537 ve 120, toplamı da
+$1.537 + 120 = 1.657$ — atılan tekrar sayısıyla aynı. Bu eşleşme sayımların
+tutarlı olduğunu gösterir; tekilleştirmenin hangi kayıtları bıraktığını
+göstermez. Onu yukarıdaki kontrol gösteriyor.
 
 ::: {.column-margin}
-**Kaynak ve belgelenmemiş olanlar.** Veri kümesini Fatih Barmanbay derledi;
-küme Hugging Face'te **CC BY-SA 4.0** lisansıyla dağıtılıyor
-[@barmanbay2020turkishreviews]
-— "aynı lisansla paylaş" (ShareAlike) koşullu, yani bu kitabın
-kendi CC BY 4.0'ından daha kısıtlayıcı bir lisans; ondan türettiğiniz bir şeyi yeniden
-dağıtmadan önce lisans koşullarını kontrol edin. Kartın söylemediği üç şey:
-verinin hangi siteden toplandığı, ne zaman toplandığı ve
-**olumlu/olumsuz etiketinin nasıl türetildiği** — yıldız eşiği mi, elle
-etiketleme mi, başka bir şey mi. Bu son boşluk önemli, çünkü
-@sec-veri-etiketleme tümüyle bu derlemin etiket kalitesi üzerine kurulu ve
-etiketlerin nasıl üretildiğini bilmeden çalışmak zorunda.
+**Kaynak ve belgelenmeyen noktalar.** Veri kümesini Fatih Barmanbay derledi
+[@barmanbay2020turkishreviews]. Lisans bilgisi iki yerde farklı görünüyor:
+kartın lisans bölümü ve özgün GitHub deposundaki lisans dosyası **CC BY-SA 4.0**
+diyor; Hugging Face sayfasının üstündeki lisans alanında ise "unknown" yazıyor
+(10 Ekim 2026'da kontrol edildi). CC BY-SA "aynı lisansla paylaş" (ShareAlike)
+koşulu taşır, yani bu kitabın kendi CC BY 4.0'ından daha kısıtlayıcıdır; veriyi
+ya da ondan türettiğiniz bir şeyi yeniden dağıtmadan önce özgün depodaki
+lisansı ve kartı birlikte kontrol edin. Kartın söylemediği üç şey: verinin
+hangi siteden toplandığı, ne zaman toplandığı ve **olumlu/olumsuz etiketinin
+nasıl türetildiği** — yıldız eşiği mi, elle etiketleme mi, başka bir şey mi. Bu
+son boşluk önemli, çünkü @sec-veri-etiketleme tümüyle bu derlemin etiket
+kalitesi üzerine kurulu ve etiketlerin nasıl üretildiğini bilmeden çalışmak
+zorunda.
 :::
 
-Tekrarları her zaman bölmeden *önce* temizleyin. 1.657 tekrar, dosyanın
-yalnızca %0,7'si; ama eğitim/test bölmesinin iki yakasına birden düşen bir
-tekrar, ezberlenmiş bir cevabın genelleme diye puanlanması demektir ve her
-yöntemi farklı oranda şişirir — en çok ezberleyen model en çok kazanır. Bu
-tek satır, bir deneyle bir gösteri arasındaki farktır. Yeterli olduğunu da
-iddia etmiyoruz: birebir tekilleştirme gerekli ama yeterli değil, şablondan
-üretilmiş ya da birbirine çok benzeyen metinler elemeden geçebilir.
+Birebir aynı metnin hem eğitimde hem testte bulunması, özellikle kısa
+yorumlarda, ezberlenmiş bir cevabın genelleme diye puanlanmasına yol açabilir.
+Bu yüzden bu deneyde metne göre tekilleştirme bölmeden *önce* yapıldı; 1.657
+tekrar dosyanın yalnızca %0,7'si. Bu adım gerekli ama tek başına yeterli değil:
+şablondan üretilmiş ya da birbirine çok benzeyen metinler elemeden geçebilir,
+aynı metnin farklı etiketler taşıdığı durumlar da ayrıca karar ister. Seçtiğiniz
+tekilleştirme politikasını veri kümesiyle birlikte raporlayın.
 
-Ardından tabakalı (stratified) 50.000 yorumluk bir altörneklem alıp
-dengesizliği aynen koruyacak şekilde 80/20 bölüyoruz:
+Ardından tekilleştirilmiş 233.508 yorumdan sınıf oranını koruyan (tabakalı,
+stratified) 50.000 yorumluk bir altörneklem alıp onu yine tabakalı olarak 80/20
+bölüyoruz:
+
+```python
+sub, _ = train_test_split(df, train_size=50_000,
+                          stratify=df["label"], random_state=42)
+train, test = train_test_split(sub, test_size=0.2,
+                               stratify=sub["label"], random_state=42)
+
+def fingerprint(frame):
+    rows = ",".join(map(str, sorted(frame.index)))
+    return hashlib.sha256(rows.encode()).hexdigest()[:12]
+
+for name, part in [("train", train), ("test", test)]:
+    pos = int(part["label"].sum())
+    print(f"{name:<6} {len(part):>7,}   {pos:>7,} positive   "
+          f"{len(part) - pos:>6,} negative   rows {fingerprint(part)}")
+```
 
 ```text
 ### the split (stratified, seed 42)
-train    40,000     37,471 positive    2,529 negative
-test     10,000      9,368 positive      632 negative
+train   40,000    37,471 positive    2,529 negative   rows 8205c2be5ebf
+test    10,000     9,368 positive      632 negative   rows 634cdb3bb002
 ```
 
+`rows` sütunu, seçilen satırların ham dosyadaki sıra numaralarından hesaplanan
+bir özettir. Kendi koşunuzda aynı 12 karakteri görüyorsanız aynı satırları
+seçmişsiniz demektir. Sınıf toplamları bunu göstermez; aynı toplamları veren
+başka pek çok bölme vardır.
+
 ::: {.callout-warning appearance="simple"}
-**Bu bölme hakkında iki şey; ikisinin de bedeli kitabın ilerisinde ödenecek.**
+**Bu bölme hakkında iki uyarı.**
 
-*Yetersiz tanımlanmış.* "42 tohumuyla tabakalı" bir prosedürü adlandırmaz; bir
-prosedür *ailesini* adlandırır ve bu ailenin üyeleri birbirini tutmaz. Bu bölümdeki
-herhangi bir sayıyla karşılaştırma yapmadan önce şu dördünü aynı anda tutturun:
-50.000'lik altörneklem, 40.000 eğitim, 10.000 test ve bigram vektörleştiriciden
-çıkan **101.659 öznitelik**. Herhangi biri şans eseri tutabilir; dördü birden
-tutamaz. @sec-siniflandirma tam da bu bölmeyi bu parmak izlerinden tersine
-mühendislikle yeniden kurarak açılacak; orada makul bir alternatif kurgunun
-101.659 değil 100.350 öznitelik verdiğini göreceksiniz. @sec-kumeleme-konu ise
-aynı kaynaktan aynı tohumla örneklem çektiği hâlde *farklı* 50.000 satır elde
-edecek.
+*Bölmenin yeniden üretimi.* Bu bölümün ilk sürümü bölmeyi yalnızca "42 tohumuyla
+tabakalı" diye kaydetmişti. Bu ifade bir prosedürü adlandırmaz; bir prosedür
+*ailesini* adlandırır ve ailenin üyeleri birbirini tutmaz: örneklemenin hangi
+çağrıyla, hangi sırayla ve kaç aşamada yapıldığı belli değildir. Yukarıdaki iki
+çağrı sonradan geri kazanıldı; hikâyesi @sec-siniflandirma içinde. 50.000,
+40.000 ve 10.000 sayıları ile bigram vektörleştiriciden çıkan **101.659
+öznitelik** güçlü tanılama işaretleridir — orada makul bir alternatif kurgunun
+101.659 değil 100.350 öznitelik verdiğini göreceksiniz — ama aynı satırları
+seçtiğinizin kanıtı değildir. Kanıt, satır özetinin ya da tam örnekleme kodunun
+tutmasıdır. @sec-kumeleme-konu aynı kaynaktan aynı tohumla örneklem çektiği
+hâlde *farklı* 50.000 satır elde etti.
 
-*Hem test kümesi hem seçim kümesi olarak kullanılıyor.* Aşağıdaki her sayı aynı
-10.000 satırdan okunuyor: yedi temsil, dokuz eğitim boyutu, bir melez model, üç
-tanılama. Tek bir kesin karşılaştırma için savunulabilir; bir *seçim* için
-savunulamaz — ve kesişim noktası bir seçimdir. Gerçek işte `train`'i bir kez
-daha bölün ve seçimi iç dilimde yapın. @sec-siniflandirma bunu yapacak ve
-neden zorunda kaldığını da söyleyecek.
+*Test kümesi ve seçim.* Aşağıdaki her sayı aynı 10.000 test yorumundan
+okunuyor: yedi temsil, dokuz eğitim boyutu, bir melez model, üç tanılama. Bu
+sonuçları keşif amaçlı okuyun: bir yöntemi ya da kesişim noktasını bu
+satırlardan seçip yine aynı satırlarda tarafsız bir nihai skor bildiremezsiniz.
+Gerçek işte `train`'i bir kez daha bölün, seçimi o doğrulama diliminde yapın ve
+test kümesini yalnızca son değerlendirmede kullanın. @sec-siniflandirma bunu
+yapacak ve neden zorunda kaldığını da söyleyecek.
 :::
 
 ::: {.column-margin}
