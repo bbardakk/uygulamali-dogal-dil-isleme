@@ -1428,21 +1428,22 @@ sinyalleri zayıflatabilir; 14,82 puanlık toplam farktaki payını ise bu örne
 
 ## Kesişim noktası: embedding'ler ne zaman kazanır
 
-Buraya kadar her şey yöntemleri 40.000 etiketli yorumla karşılaştırdı. Bu bir
-lüks. Pratikte temsil seçimini asıl karara bağlayan soru şu: *kaç etiketiniz
-var?*
+Buraya kadar her şey yöntemleri 40.000 etiketli yorumla karşılaştırdı. Pratikte
+çoğu zaman bu kadar etiket olmaz; bu yüzden etiket sayısı değiştikçe
+sıralamanın nasıl değiştiğine bakacağız.
 
-Embedding modelleri etiketsiz eğitildi — ham metni okuyup yalnızca
-eş-oluşumdan (hangi kelimelerin birlikte geçtiğinden) öğrendiler. O bilginin bedeli, ilk yorum etiketlenmeden
-önce zaten ödenmişti. TF-IDF'in başlangıç avantajı ise çok daha
-zayıf: eksenleri yalnızca kelimelerden ibaret; duygu hakkında bildiği her şey
-de etiketli kümeden gelmek zorunda.
-Şunu da eklemek gerekir: TF-IDF de etiketsiz veriden bir şey alıyor — IDF
-ağırlıkları 40.000 belgenin tamamından geliyor. Ama aldığı şey yalnızca
-belge frekansları: sözlüğü öğreniyor, anlamı öğrenmiyor.
+Bu öğrenme eğrisinde iki temsil ailesi de 40.000 eğitim yorumunun *metninden*
+yararlanıyor: TF-IDF sözlüğünü ve IDF değerlerini, embedding modelleri
+eş-oluşum (hangi kelimelerin birlikte geçtiği) ve alt kelime parametrelerini bu
+metinden, etiketlere bakmadan öğreniyor. Değişen, sınıflandırıcıya verilen
+etiket sayısı: 100'den 40.000'e. Yani soru şu: etiketsiz metne erişim sabitken,
+ek etiketler karar sınırını nasıl değiştiriyor? TF-IDF'in etiketsiz metinden
+aldığı şey belge frekanslarıyla sınırlı; embedding'ler kelimeler arasındaki
+eş-oluşum ilişkilerini de alıyor.
 
-O hâlde temsilleri sabit tutup yalnızca sınıflandırıcının gördüğü etiket
-sayısını değiştirelim.
+Her `n` için eğitim kümesinden tabakalı bir altörneklem çekiliyor
+(`train_test_split(train_size=n, stratify=…, random_state=42)`) ve
+sınıflandırıcı yalnızca o satırların etiketleriyle eğitiliyor.
 
 ```text
 ### macro-F1 by labelled training size (same test set of 10,000)
@@ -1458,31 +1459,45 @@ sayısını değiştirelim.
 40,000    2,529        71.95       70.39       61.39      61.36
 ```
 
-Başka bir şey okumadan önce word2vec sütununu yukarıdan aşağı okuyun. 250
-etiketten 40.000'e — eğitim verisinde 160 katlık bir artış — 61,59, 61,02,
-59,52, 60,91, 61,52, 61,80, 60,94, 61,39 diye gidiyor: veri miktarıyla hiçbir
-ilişkisi olmayan, yaklaşık 2,3 puanlık düzensiz bir salınım. [Bunu kaba bir
-oynaklık göstergesi olarak alın: bu tasarımda sonuçlar, ölçülen şeyle ilgisi
-olmayan sebeplerle bu kadar oynayabiliyor.]{.hl}
+Tablonun her satırı tek bir altörneklemden geliyor. word2vec sütunu 250 ile
+40.000 etiket arasında 59,52 ile 61,80 arasında değişiyor. Bu dalgalanmanın ne
+kadarının etiket sayısından, ne kadarının hangi belgelerin seçildiğinden ya da
+vektör eğitiminden geldiğini bu tablo söylemez; model çiftleri için bir
+anlamlılık eşiği olarak da kullanılamaz. Yoğun sütunlar ayrıca küçük `n`'de
+vektör eğitimine duyarlı: aynı kodla yeniden eğitilen vektörlerle (2. raunttaki
+yeniden koşu) word2vec 100 etikette 58,23, 250 etikette 65,21 veriyor —
+tablodaki 53,51 ve 61,59'un yerine. Seyrek sütunlar yeniden koşuda birebir aynı
+çıkıyor.
 
-Bu salınım teknik anlamda bir gürültü tabanı değil. Gürültü tabanı, *aynı
-deneyin tekrarlanan koşularının* yayılımıdır. Buradaki sekiz nokta ise hem
-eğitim büyüklüğünde hem de hangi belgelerin örneklendiğinde farklılaşıyor;
-yani gerçek eğri biçimini koşudan koşuya değişimle karıştırıyorlar ve bu ikisi
-burada ayrıştırılamaz. Yine de, veride 160 katlık bir değişime karşılık hiçbir eğilim
-göstermeyen 2,3 puanlık bir salınımı sinyal diye okumak zor; üstelik bu tek
-tohumlu tek bir koşu. Varılacak sonuç şu: bu bölüm bir iki puanlık farkları
-*ayırt edemez* — `bag of words` ile `tf-idf` (1,56), `tf-idf` ile `tf-idf char`
-(1,56) ve word2vec ile fastText (0,03) arasındaki farkların hepsi o aralıkta.
-Bunları karara bağlamak, 8. alıştırmanın istediği şeyi gerektirir: sabit bir eğitim
-büyüklüğünde tekrarlanan koşular ve test kümesi üzerinde eşleştirilmiş
-bootstrap.
+Belirsizliği ölçmek için her eğitim büyüklüğünde on ayrı tabakalı etiket
+örneklemi çektik (temsiller sabit; yoğun sütunlar yeniden koşunun
+vektörleriyle):
+
+```text
+### ten label samples per size: mean macro-F1 [min, max]; representations fixed
+     n   tf-idf                tf-idf 1-2 gram       word2vec              fastText              tf-idf > fastText
+   100   48.49 [48.35, 48.85]  48.45 [48.37, 48.69]  59.68 [54.63, 61.68]  58.66 [53.80, 61.44]      0 / 10
+   250   48.98 [48.35, 49.63]  48.70 [48.37, 49.17]  61.69 [58.58, 65.07]  60.96 [56.55, 64.83]      0 / 10
+   500   50.65 [49.46, 51.94]  49.17 [48.51, 49.95]  61.85 [59.63, 64.18]  61.96 [60.47, 63.84]      0 / 10
+ 1,000   56.57 [55.14, 59.80]  51.68 [50.39, 53.36]  62.15 [61.61, 63.32]  61.96 [61.01, 63.15]      0 / 10
+ 1,250   59.59 [57.39, 62.41]  53.43 [51.60, 56.44]  62.01 [60.81, 62.91]  62.00 [60.83, 63.29]      2 / 10
+ 1,500   61.87 [60.50, 65.01]  55.63 [53.54, 58.41]  62.06 [60.69, 63.43]  61.90 [60.36, 63.52]      4 / 10
+ 1,750   63.95 [62.34, 65.35]  57.81 [56.37, 60.89]  61.89 [60.30, 63.11]  61.64 [60.22, 62.92]     10 / 10
+ 2,000   65.54 [63.74, 67.20]  59.69 [57.89, 61.64]  61.70 [60.38, 62.67]  61.44 [60.35, 62.82]     10 / 10
+ 2,500   67.52 [66.29, 69.69]  63.42 [62.18, 64.71]  61.68 [60.65, 62.70]  61.55 [60.61, 62.53]     10 / 10
+ 5,000   70.97 [69.72, 72.27]  71.49 [70.06, 72.88]  61.48 [60.00, 62.64]  61.18 [59.98, 62.40]     10 / 10
+```
+
+Aynı büyüklükte, yalnızca hangi belgelerin etiketlendiği değişince skorlar
+birkaç puan oynuyor: 1.000 etikette TF-IDF 55,14 ile 59,80, fastText 61,01 ile
+63,15 arasında. Tek bir altörnekleme dayanan bir sıralamayı bu yayılımla
+birlikte okuyun.
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">Hangi temsilin kazanacağı, kaç etiketiniz olduğuna bağlı</div>
+<div class="fig-title">Bu kurulumda sıralama etiket sayısıyla değişiyor</div>
 <svg viewBox="0 0 760 330" style="max-width:740px" role="img"
-     aria-label="Logaritmik eksende etiketli eğitim büyüklüğüne karşı macro-F1. Ortalaması alınmış embedding'ler 54 civarında başlayıp 61'de düzleşiyor. TF-IDF işe yaramaz baseline seviyesi olan 48'den başlıyor ve yaklaşık 1.500 etikette embedding'leri geçerek 72'ye çıkıyor.">
+     aria-label="Logaritmik eksende etiketli eğitim yorumu sayısına karşı macro-F1; tek bir test kümesi ve her büyüklükte tek bir altörneklem. Kelime TF-IDF'i 1.000 etikette iki ortalama-embedding yönteminin altında, 2.500 etikette üstünde. On etiket örnekleminde sıra 1.250 ile 1.750 etiket arasında değişiyor. Kelime bigram TF-IDF'i bu grafikte yok.">
   <!-- axes -->
   <line x1="70" y1="40" x2="70" y2="260" class="ln-thin"/>
   <line x1="70" y1="260" x2="710" y2="260" class="ln-thin"/>
@@ -1514,8 +1529,9 @@ bootstrap.
   <text x="706" y="252" class="t-xs t-end t-rose">ÇOĞUNLUK BASELINE'I 48,37</text>
 
   <!-- crossover band -->
-  <line x1="356" y1="40" x2="356" y2="260" class="ln ln-dash"/>
-  <text x="352" y="54" class="t-xs t-end t-b">KESİŞİM ≈ 1.500 ETİKET</text>
+  <line x1="336" y1="40" x2="336" y2="260" class="ln ln-dash"/>
+  <line x1="371" y1="40" x2="371" y2="260" class="ln ln-dash"/>
+  <text x="330" y="54" class="t-xs t-end t-b">SIRA DEĞİŞİMİ: 1.250–1.750 ETİKET</text>
 
   <!-- word2vec -->
   <polyline points="70,206.5 166,155.7 239,159.3 312,168.7 409,160.0 481,156.2 554,154.4 627,159.8 700,157.0"
@@ -1541,41 +1557,41 @@ bootstrap.
 
   <!-- labels -->
   <text x="90" y="118" class="t-sm t-rose t-b">ortalaması alınmış fastText</text>
-  <text x="90" y="131" class="t-xs t-muted">ilk etiketten önce dili zaten biliyor</text>
+  <text x="90" y="131" class="t-xs t-muted">40.000 etiketsiz yorumla eğitildi</text>
   <text x="560" y="76" class="t-sm t-end t-accent t-b">tf-idf</text>
-  <text x="704" y="114" class="t-xs t-end t-muted">her şeyi etiketlerden öğreniyor</text>
+  <text x="704" y="114" class="t-xs t-end t-muted">sözlük ve IDF eğitim metninden</text>
 
   <line x1="70" y1="312" x2="710" y2="312" class="ln-thin"/>
-  <text x="70" y="326" class="t-xs t-muted">BU VERİDE: ~1.500 ETİKETTEN AZ → KOORDİNATLAR.  FAZLASI → SAYIMLAR.  YÖNTEM DEĞİL, BÜTÇE DEĞİŞTİ.</text>
+  <text x="70" y="326" class="t-xs t-muted">BU KURULUMDA 1.000 ETİKETTE EMBEDDING, 2.500'DE KELİME TF-IDF ÖNDE; SIRA 1.250–1.750 ARASINDA DEĞİŞİYOR.</text>
 </svg>
 ```
 
 ::: {.fig-cap}
-Tablodaki dört temsilin üçü (kelime TF-IDF'i, ortalaması alınmış fastText ve
-etiketsiz kesikli çizgi olarak ortalaması alınmış word2vec; karakter sütunu
-okunabilirlik için çizilmedi), dokuz farklı eğitim büyüklüğü, baştan sona aynı
-test kümesi; tek değişken, sınıflandırıcıya verilen etiketli veri miktarı. 250
-etikette ortalaması alınmış fastText kelime TF-IDF'inin 14,6 macro-F1 puanı
-*önünde* (word2vec 13,1); 40.000'de iki embedding modeli de 10,6 puan geride.
-Hem 2. bölümün hem 3. bölümün iddiaları doğru — ama farklı rejimlerde doğrular
-ve rejimi belirleyen sizin etiketleme bütçenizdir.
+Bu grafikte kelime TF-IDF'i, ortalaması alınmış fastText ve (etiketsiz kesikli
+çizgi olarak) ortalaması alınmış word2vec gösteriliyor; karakter TF-IDF'i
+okunabilirlik için çizilmedi, bigram TF-IDF'inin sonuçları yukarıdaki on
+örneklemli tabloda. Dokuz eğitim büyüklüğü, baştan sona aynı test kümesi, her
+büyüklükte tek bir altörneklem. 250 etikette fastText kelime TF-IDF'inden 14,57
+puan yüksek (word2vec 13,06), 40.000 etikette 10,59 puan düşük. Bu kurulumda
+etiket sayısı sıralamayla ilişkili; farklı yöntem ve ayarlar için aynı kesişim
+beklenmemeli.
 :::
 ::::
 
 ::: {.callout-warning appearance="simple"}
-**Bu kesişim noktasını taşınabilir bir sayı olarak okumayın.** Grafikteki
-"≈ 1.500 etiket", bu veri kümesinde, bu kurulumda ve bu bölmede gözlenen bir
-sonuç; keşfedici bir gösterim, yayına alınacak bir eşik değil. Üç sebebi
-birden var. Tek bir tohum ve tek bir altörneklem dizisi kullanıldı,
-dolayısıyla eğrilere aralık iliştirilmedi; her `n` için tekrarlanan tabakalı
-altörneklemlerle ortalama ve %95 aralık verilmesi gerekirdi. Eşik, aynı
-zamanda *seçim* kümesi olarak da kullanılan test kümesi üzerinden okundu — bu
-bölümün en başta savunulamaz dediği şey; doğrusu `train`'i bir kez daha bölüp
-kesişimi iç dilimde okumaktır. Ve eğride bu bölümün asıl kazananı yok: kelime
-bigram TF-IDF'i eğriye hiç konmadı. Sol uçta da unigram TF-IDF'in üstündeyse
-kesişim *sola* kayar — ama bu ölçülmedi ve bir avuç olumsuz örnekten 3,4 kat
-daha fazla sütun kestirmek zorunda kaldığı için altında kalması da pekâlâ
-mümkün.
+**Kesişim aralığını taşınabilir bir sayı olarak okumayın.** İlk tablodaki tek
+altörneklem dizisinde kelime TF-IDF'i 1.000 etikette embedding yöntemlerinin
+altında, 2.500 etikette üstünde; çizgilerin kesiştiği yer (yaklaşık 1.500) iki
+ölçüm arasından okunan bir değerdi, ölçülmüş bir nokta değil. On etiket
+örnekleminde ölçtüğümüzde TF-IDF fastText'i 1.000 etikette hiç, 1.250'de on
+örneklemin ikisinde, 1.500'de dördünde, 1.750'de onunda da geçiyor: bu
+kurulumda sıra 1.250 ile 1.750 etiket arasında değişiyor. Bu bölümün en yüksek
+skorlu modeli olan kelime bigram TF-IDF'i için aralık daha sağda: az etikette
+unigram TF-IDF'in *altında* kalıyor (3,4 kat fazla sütunu bir avuç olumsuz
+örnekten kestirmek zorunda) ve fastText'i 2.000 etikette on örneklemin
+ikisinde, 2.500'de dokuzunda geçiyor. Bütün bu sayılar aynı test kümesinden
+okundu. Yöntem seçimi için `train`'i bir kez daha bölüp doğrulama diliminde
+karar verin; testte yalnızca önceden seçilmiş yöntemi değerlendirin.
 
 Taşınabilir olan şey eşik değil, biçim: az etiket rejiminde etiketsiz metinden
 öğrenilmiş bir temsilin önceliği olabilir; etiket arttıkça seyrek doğrusal
@@ -1583,49 +1599,49 @@ model bu önceliği kapatır. Kendi göreviniz için kendi eğrinizi çıkarın.
 :::
 
 Grafiğin sol kenarını dikkatle okuyun. **250 etiketli yorumla — ki bunların
-16'sı olumsuz — TF-IDF 48,53 alıyor, yani fiilen hiçbir şey yapmayan baseline'ın
-48,37'sini.** Macro-F1'de baseline'ı geçemiyor — bu, hiçbir şey öğrenmediği
-anlamına gelmez; aynı toplam skor aynı tahminler demek değildir, ama karar
-metriğinde ölçülebilir bir kazanç da yok. Ortalaması alınmış fastText
-aynı 250 etiketle 63,10 alıyor; bu, TF-IDF'in 1.000 etiketle ulaştığından daha iyi.
+16'sı olumsuz — kelime TF-IDF'i 48,53, çoğunluk kuralı 48,37 macro-F1 alıyor.**
+Bu modelin tahminlerine baktık: 10.000 test yorumunun yalnızca birine olumsuz
+diyor (o yorum gerçekten olumsuz). Yani bu koşuda fiilen çoğunluk kuralı gibi
+davranıyor; 0,16 puanlık farkın eşleştirilmiş bootstrap aralığı 0,00 ile 0,51.
+Ortalaması alınmış fastText aynı 250 etiketle 63,10 alıyor. On etiket
+örnekleminde fastText ile TF-IDF arasındaki fark 250 etikette ortalama 12,0
+puan (8,2 ile 16,1 arasında).
 
-Bu örüntü, şu mekanizmayla tutarlı.
-
-16 olumsuz örnekle TF-IDF, 30.195 boyutlu bir
-uzaydan çekilmiş 16 seyrek satır görüyor; bunlardan yalnızca birinde geçip
-başka hiçbir yerde geçmeyen bir kelime, tek bir gözlemle desteklenen kocaman
-bir katsayı alabiliyor ve model hiçbir şeye genelleme yapamıyor.
-
-Embedding modelleri
-ise bambaşka bir noktadan başladı: henüz tek bir etiket yokken 903.190
-token'lık etiketsiz metnin tamamını okumuşlardı; dolayısıyla örneğin word2vec,
-`kalitesiz`, `dandik` ve `dayanıksız` kelimelerini zaten aynı bölgeye
-yerleştiriyor (yukarıdaki komşu listeleri).
-On altı olumsuz örnek (ve 234 olumlu), *o bölgenin bir sınırın hangi tarafına düştüğünü* öğrenmeye
-yetiyor — otuz bin boyutta değil, 100 boyutta tek bir karar.
+Bu örüntüyle uyumlu bir açıklama şu: az etiketle, kelime temelli doğrusal
+modelin nadir özniteliklerine ait katsayılar güvenilir kestirilemeyebilir — 16
+olumsuz örnek, 30.195 sütunlu bir uzaydan çekilmiş 16 seyrek satırdır.
+Embedding modeli ise 40.000 yorumun etiketsiz metninden önceden öğrenilmiş
+ortak bir yapı sunar: örneğin word2vec `kalitesiz`, `dandik` ve `dayanıksız`
+kelimelerini birbirine yakın yerleştiriyor (yukarıdaki komşu listeleri) ve
+sınıflandırıcının 100 boyutta kestirmesi gereken katsayı sayısı çok daha az.
+Bu açıklamayı sınamak için az etiketli koşuldaki katsayılara, hatalara ve daha
+güçlü düzenlileştirme seçeneklerine bakmak gerekir; bu bölüm bunu yapmadı.
 
 ::: {.column-margin}
-Bu kitaptaki her ön eğitimli modelin arkasındaki genel ilkenin
-minyatür hâli. Kendi kendine denetimli (self-supervised) eğitim — etiketi verinin kendisinden türeten eğitim — etiketsiz metni, denetimli problemin düşük boyutlu olduğu bir temsile çeviriyor. Embedding'ler duygu
-hakkında bir şey bilmiyor; Türkçe hakkında biliyorlar ve elinizde on altı
-örnek varken işin büyük kısmı zaten Türkçeyi bilmektir.
+Kendi kendine denetimli (self-supervised) eğitim — etiketi verinin kendisinden
+türeten eğitim — etiketlere bakmadan kelimelerin birlikte görülme
+örüntülerinden bilgi çıkarır. Bu örüntüler az etiketli bir sınıflandırıcıya
+yararlı olabilir; modelin Türkçenin bütün dilbilgisini ya da duygu kutbunu
+öğrendiği anlamına gelmez. Öğrenilen bilginin bu görevde hangi örnekleri
+düzelttiği ayrıca incelenmelidir. Bu kitaptaki ön eğitimli modellerin
+arkasındaki genel ilkenin küçük ölçekli hâli budur.
 :::
 
-Sonra eğri düzleşiyor. Ortalaması alınmış fastText 500 etiketle 61,16,
-40.000 etiketle 61,36 alıyor — **0,2 puan için seksen kat daha fazla
-etiketli veri.** Bilgi darboğazı artık etiketler değil, temsil: bir yorumun
-ortalamasını alıp 100 sayıya indirdiğiniz anda "kargo hızlı geldi" ile "kargo
-yavaş geldi" arasındaki ayrım kısmen kayboluyor ve hiçbir etiket miktarı onu
-geri getirmiyor. TF-IDF ise yaklaşık 10.000 etikete kadar tırmanmaya devam
-ediyor, çünkü her yeni etiket tek bir kelimenin katsayısını
-keskinleştirebiliyor.
+Sonra eğri düzleşiyor. Ortalaması alınmış fastText 500 etiketle 61,16, 40.000
+etiketle 61,36 macro-F1 alıyor; on örneklemli ölçümde de 500 ile 5.000 etiket
+arasındaki ortalamalar 61,2–62,0 bandında kalıyor. Bu yakınlık, mevcut
+havuzlama ve ayarlarla daha fazla etiketin sınırlı kazanç verdiğini düşündürür.
+Bunun temsilin değişmez üst sınırı olduğunu söylemek için normalleştirmeyi,
+`C`'yi, karar eşiğini, farklı tohumları ve kelime sırasını koruyan
+alternatifleri karşılaştırmak gerekir. Kelime TF-IDF'i ise aynı tabloda
+yaklaşık 10.000 etikete kadar yükseliyor, sonra tek koşuda hafifçe düşüyor.
 
-**İki eğri, iki farklı sınır: burada ortalamaya dayalı statik yoğun kurulumun
-önündeki engel temsilin kendisi, seyrek doğrusal modelin önündeki engel ise
-etiket sayısı.** Cümleyi bu kadar dar tutmak önemli — ölçülen şey "yoğun
-temsiller" değil, *bu* kurulum: sıfırdan eğitilmiş 100 boyutlu statik
-vektörlerin ortalaması. Genelleşen kısım, sınırın *türünü* sormak: darboğazım
-etiket mi, temsil mi?
+**İki eğrinin biçimi farklı: bu kurulumda ortalamaya dayalı statik yoğun temsil
+birkaç yüz etiketten sonra neredeyse hiç kazanmıyor, seyrek doğrusal model ise
+etiket geldikçe kazanmayı sürdürüyor.** Cümleyi bu kadar dar tutmak önemli —
+ölçülen şey "yoğun temsiller" değil, *bu* kurulum: sıfırdan eğitilmiş 100
+boyutlu statik vektörlerin ortalaması. Genelleşen kısım, sorunun kendisi: bu
+görevde beni sınırlayan etiket mi, temsil mi, yoksa ayarlar mı?
 
 ## Bunun bedeli ne
 

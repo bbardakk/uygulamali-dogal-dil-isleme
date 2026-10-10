@@ -1446,20 +1446,23 @@ the total 14.82-point gap.
 
 ## The crossover: when embeddings do win
 
-Everything so far has compared methods with 40,000 labelled reviews. That is
-a luxury. The question that actually decides representation choice in
-practice is: *how many labels do you have?*
+Everything so far has compared methods with 40,000 labelled reviews. In
+practice there are often far fewer labels, so we now look at how the ordering
+changes as the number of labels changes.
 
-The embedding models were trained without labels — they read the raw text and
-learned from co-occurrence alone. That knowledge is already paid for before
-the first review is annotated. TF-IDF's head start is far weaker: its axes
-are just words, and everything it knows about sentiment must come out of the
-labelled set. To be exact, TF-IDF does take something from the unlabelled
-data — its IDF weights come from all 40,000 documents — but what it takes is
-only document frequencies. It learns the vocabulary, not the meaning.
+In this learning curve both representation families use the *text* of the
+40,000 training reviews: TF-IDF learns its vocabulary and IDF values from it,
+and the embedding models learn their co-occurrence and subword parameters
+from it, all without looking at the labels. What varies is the number of
+labels given to the classifier: from 100 to 40,000. So the question is: with
+access to unlabelled text held fixed, how do additional labels change the
+decision boundary? What TF-IDF takes from the unlabelled text is limited to
+document frequencies; the embeddings also take co-occurrence relations
+between words.
 
-So hold the representations fixed and vary only the number of labels the
-classifier sees.
+For each `n`, a stratified subsample of the training set is drawn
+(`train_test_split(train_size=n, stratify=…, random_state=42)`) and the
+classifier is trained with the labels of those rows only.
 
 ```text
 ### macro-F1 by labelled training size (same test set of 10,000)
@@ -1475,30 +1478,45 @@ classifier sees.
 40,000    2,529        71.95       70.39       61.39      61.36
 ```
 
-Read the word2vec column downwards before reading anything else. From 250
-labels to 40,000 — a 160-fold increase in training data — it goes 61.59, 61.02,
-59.52, 60.91, 61.52, 61.80, 60.94, 61.39: an irregular swing of about 2.3
-points that has no relationship to the amount of data. [Take that as a rough
-indication of variability — not a noise floor in the technical sense — of how
-much this design moves for reasons unrelated to the thing being
-measured.]{.hl}
+Every row of the table comes from a single subsample. The word2vec column
+moves between 59.52 and 61.80 from 250 to 40,000 labels. The table does not
+say how much of that wobble comes from the number of labels, from which
+documents were selected, or from the training of the vectors; nor can it be
+used as a significance threshold for pairs of models. The dense columns are
+also sensitive, at small `n`, to the training of the vectors: with vectors
+retrained by the same code (the re-run in round 2), word2vec gives 58.23 at
+100 labels and 65.21 at 250 — in place of the table's 53.51 and 61.59. The
+sparse columns come out identical in the re-run.
 
-Be exact about what it is not. A noise floor is the spread of *repeated runs of
-the same experiment*; these eight points differ in training size and in which
-documents were sampled, so they mix real curve shape with run-to-run variation
-and cannot be separated here. Still, a swing of 2.3 points with no trend across
-a 160-fold change in data is hard to read as signal, and it is a single run with
-a single seed. The honest consequence is that this chapter cannot *resolve*
-differences of a point or two — `bag of words` against `tf-idf` (1.56), `tf-idf`
-against `tf-idf char` (1.56), and word2vec against fastText (0.03) are all in
-that range. Settling them takes what exercise 8 asks for: repeated runs at a
-fixed training size, and a paired bootstrap over the test set.
+To measure the uncertainty we drew ten separate stratified label samples at
+each training size (representations fixed; the dense columns use the vectors
+of the re-run):
+
+```text
+### ten label samples per size: mean macro-F1 [min, max]; representations fixed
+     n   tf-idf                tf-idf 1-2 gram       word2vec              fastText              tf-idf > fastText
+   100   48.49 [48.35, 48.85]  48.45 [48.37, 48.69]  59.68 [54.63, 61.68]  58.66 [53.80, 61.44]      0 / 10
+   250   48.98 [48.35, 49.63]  48.70 [48.37, 49.17]  61.69 [58.58, 65.07]  60.96 [56.55, 64.83]      0 / 10
+   500   50.65 [49.46, 51.94]  49.17 [48.51, 49.95]  61.85 [59.63, 64.18]  61.96 [60.47, 63.84]      0 / 10
+ 1,000   56.57 [55.14, 59.80]  51.68 [50.39, 53.36]  62.15 [61.61, 63.32]  61.96 [61.01, 63.15]      0 / 10
+ 1,250   59.59 [57.39, 62.41]  53.43 [51.60, 56.44]  62.01 [60.81, 62.91]  62.00 [60.83, 63.29]      2 / 10
+ 1,500   61.87 [60.50, 65.01]  55.63 [53.54, 58.41]  62.06 [60.69, 63.43]  61.90 [60.36, 63.52]      4 / 10
+ 1,750   63.95 [62.34, 65.35]  57.81 [56.37, 60.89]  61.89 [60.30, 63.11]  61.64 [60.22, 62.92]     10 / 10
+ 2,000   65.54 [63.74, 67.20]  59.69 [57.89, 61.64]  61.70 [60.38, 62.67]  61.44 [60.35, 62.82]     10 / 10
+ 2,500   67.52 [66.29, 69.69]  63.42 [62.18, 64.71]  61.68 [60.65, 62.70]  61.55 [60.61, 62.53]     10 / 10
+ 5,000   70.97 [69.72, 72.27]  71.49 [70.06, 72.88]  61.48 [60.00, 62.64]  61.18 [59.98, 62.40]     10 / 10
+```
+
+At the same size, changing only which documents are labelled moves the scores
+by a few points: at 1,000 labels TF-IDF ranges from 55.14 to 59.80 and
+fastText from 61.01 to 63.15. Read any ordering that rests on a single
+subsample together with that spread.
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">Which representation wins depends on how many labels you have</div>
+<div class="fig-title">In this setup the ordering changes with the number of labels</div>
 <svg viewBox="0 0 760 330" style="max-width:740px" role="img"
-     aria-label="Macro-F1 against labelled training size on a log axis. Averaged embeddings start near 54 and plateau at 61. TF-IDF starts at the useless-baseline level of 48 and rises past the embeddings at about 1,500 labels, reaching 72.">
+     aria-label="Macro-F1 against the number of labelled training reviews on a log axis; one test set and a single subsample at each size. Word TF-IDF is below the two averaged-embedding methods at 1,000 labels and above them at 2,500. Over ten label samples the ordering changes between 1,250 and 1,750 labels. Word bigram TF-IDF is not on this chart.">
   <!-- axes -->
   <line x1="70" y1="40" x2="70" y2="260" class="ln-thin"/>
   <line x1="70" y1="260" x2="710" y2="260" class="ln-thin"/>
@@ -1530,8 +1548,9 @@ fixed training size, and a paired bootstrap over the test set.
   <text x="706" y="252" class="t-xs t-end t-rose">MAJORITY BASELINE 48.37</text>
 
   <!-- crossover band -->
-  <line x1="356" y1="40" x2="356" y2="260" class="ln ln-dash"/>
-  <text x="352" y="54" class="t-xs t-end t-b">CROSSOVER ≈ 1,500 LABELS</text>
+  <line x1="336" y1="40" x2="336" y2="260" class="ln ln-dash"/>
+  <line x1="371" y1="40" x2="371" y2="260" class="ln ln-dash"/>
+  <text x="330" y="54" class="t-xs t-end t-b">ORDER CHANGES: 1,250–1,750 LABELS</text>
 
   <!-- word2vec -->
   <polyline points="70,206.5 166,155.7 239,159.3 312,168.7 409,160.0 481,156.2 554,154.4 627,159.8 700,157.0"
@@ -1557,40 +1576,42 @@ fixed training size, and a paired bootstrap over the test set.
 
   <!-- labels -->
   <text x="90" y="118" class="t-sm t-rose t-b">averaged fastText</text>
-  <text x="90" y="131" class="t-xs t-muted">knows the language before the first label</text>
+  <text x="90" y="131" class="t-xs t-muted">trained on 40,000 unlabelled reviews</text>
   <text x="560" y="76" class="t-sm t-end t-accent t-b">tf-idf</text>
-  <text x="704" y="114" class="t-xs t-end t-muted">learns everything from labels</text>
+  <text x="704" y="114" class="t-xs t-end t-muted">vocabulary and IDF from the training text</text>
 
   <line x1="70" y1="312" x2="710" y2="312" class="ln-thin"/>
-  <text x="70" y="326" class="t-xs t-muted">ON THIS DATA: UNDER ~1,500 LABELS → COORDINATES.  MORE → COUNTS.  SAME METHODS, DIFFERENT BUDGET.</text>
+  <text x="70" y="326" class="t-xs t-muted">IN THIS SETUP EMBEDDINGS LEAD AT 1,000 LABELS, WORD TF-IDF AT 2,500; THE ORDER CHANGES BETWEEN 1,250 AND 1,750.</text>
 </svg>
 ```
 
 ::: {.fig-cap}
-Three of the table's four representations (word TF-IDF, averaged fastText,
-and averaged word2vec as the unlabelled dashed line; the character column is
-left off for readability), nine training sizes, the same test set throughout;
-the only variable is how much labelled data the classifier is given. At 250
-labels averaged fastText is 14.6 macro-F1 points *ahead* of word TF-IDF
-(word2vec 13.1); at 40,000 both embedding models are 10.6 points behind. Both of chapter 2's and chapter 3's claims are true — they are true
-in different regimes, and the regime is set by your annotation budget.
+The chart shows word TF-IDF, averaged fastText and (as the unlabelled dashed
+line) averaged word2vec; character TF-IDF is left off for readability, and the
+results for bigram TF-IDF are in the ten-sample table above. Nine training
+sizes, the same test set throughout, a single subsample at each size. At 250
+labels fastText is 14.57 points above word TF-IDF (word2vec 13.06); at 40,000
+labels it is 10.59 points below. In this setup the number of labels is related
+to the ordering; the same crossover should not be expected for other methods
+and settings.
 :::
 ::::
 
 ::: {.callout-warning appearance="simple"}
-**Do not read that crossover as a transferable number.** The "≈ 1,500 labels"
-on the chart is a result observed on this dataset, in this setup, on this
-split: an exploratory demonstration, not a threshold to ship. Three reasons at
-once. It uses a single seed and a single sequence of subsamples, so no
-interval is attached to either curve; it should be repeated stratified
-subsamples per `n`, reported as a mean with a 95% interval. The threshold was
-read off the test set, which is also serving as the *selection* set — the
-thing this chapter called indefensible up front; the right version splits
-`train` again and reads the crossover on the inner slice. And the chapter's
-actual winner is not on the chart: word bigram TF-IDF was never plotted. If it
-sits above unigram TF-IDF at the left edge too, the crossover moves *left* —
-but that was not measured, and with 3.4 times as many columns to estimate from
-a handful of negatives it could just as well sit below.
+**Do not read the crossover range as a transferable number.** In the single
+sequence of subsamples of the first table, word TF-IDF is below the embedding
+methods at 1,000 labels and above them at 2,500; the place where the lines
+cross (about 1,500) was a value read between two measurements, not a measured
+point. Measured over ten label samples, TF-IDF beats fastText in none of them
+at 1,000 labels, in two of ten at 1,250, in four at 1,500 and in all ten at
+1,750: in this setup the ordering changes between 1,250 and 1,750 labels. For
+word bigram TF-IDF, the chapter's highest-scoring model, the range lies
+further right: with few labels it stays *below* unigram TF-IDF (it has 3.4
+times as many columns to estimate from a handful of negatives), and it beats
+fastText in two of ten samples at 2,000 labels and in nine at 2,500. All of
+these numbers were read off the same test set. To choose a method, split
+`train` again and decide on the validation slice; use the test set only to
+evaluate the method chosen beforehand.
 
 What transfers is not the threshold but the shape: in a low-label regime a
 representation learned from unlabelled text can have a head start, and as
@@ -1599,50 +1620,52 @@ your own task.
 :::
 
 Read the left edge of that chart carefully. **With 250 labelled reviews — of
-which 16 are negative — TF-IDF scores 48.53, essentially the do-nothing
-baseline's 48.37.** It fails to beat the baseline in macro-F1 — which is not the same
-as having learned nothing; the same aggregate score does not mean the same
-predictions, but there is no measurable gain on the decision metric. Averaged
-fastText scores 63.10
-with the same 250 labels, which is better than TF-IDF manages with 1,000.
+which 16 are negative — word TF-IDF scores 48.53 macro-F1 and the majority rule
+48.37.** We looked at this model's predictions: it calls exactly one of the
+10,000 test reviews negative (and that review really is negative). So in this
+run it behaves, in effect, like the majority rule; the paired bootstrap
+interval of the 0.16-point difference runs from 0.00 to 0.51. Averaged
+fastText scores 63.10 with the same 250 labels. Over ten label samples, the
+gap between fastText and TF-IDF at 250 labels averages 12.0 points (between
+8.2 and 16.1).
 
-The pattern is consistent with the following mechanism.
-
-With 16 negative examples, TF-IDF sees 16 sparse rows drawn from a
-30,195-dimensional space. A word appearing in one of them and nowhere else
-can get a large coefficient supported by a single observation, and the model
-generalises to nothing.
-
-The embedding models started somewhere else entirely. They read all 903,190
-tokens of unlabelled text before any label existed, so word2vec, for example,
-already places `kalitesiz`, `dandik` and `dayanıksız` in the same region (the
-neighbour lists above). Sixteen negative examples (and 234 positive ones)
-are then enough to learn *which side of a boundary that region falls on* — one
-decision in 100 dimensions instead of thirty thousand.
+One explanation consistent with this pattern: with few labels, the
+coefficients of the rare features of a word-based linear model may not be
+estimated reliably — 16 negative examples are 16 sparse rows drawn from a
+30,195-column space. The embedding model instead offers a shared structure
+learned beforehand from the unlabelled text of 40,000 reviews: word2vec, for
+example, places `kalitesiz`, `dandik` and `dayanıksız` close to one another
+(the neighbour lists above), and the classifier has far fewer coefficients to
+estimate in 100 dimensions. Testing this explanation means looking at the
+coefficients and errors of the low-label condition and at stronger
+regularisation options; this chapter did not do that.
 
 ::: {.column-margin}
-This is the general principle behind every pretrained model in this book,
-visible in miniature. Self-supervised training converts unlabelled text into a
-representation in which the supervised problem is low-dimensional. The
-embeddings do not know about sentiment; they know about Turkish, and knowing
-about Turkish is most of the work when you have sixteen examples.
+Self-supervised training extracts information from the patterns in which words
+occur together, without looking at labels. Those patterns can be useful to a
+classifier with few labels; that does not mean the model has learned all of
+Turkish grammar, or sentiment polarity. Which examples the learned
+information actually fixes on this task has to be examined separately. This
+is the small-scale version of the general principle behind the pretrained
+models in this book.
 :::
 
-And then the curve flattens. Averaged fastText is at 61.16 with 500 labels
-and 61.36 with 40,000 — **eighty times the supervision for two tenths of a
-point.** The information bottleneck is no longer the labels, it is the
-representation: once you have averaged a review into 100 numbers, the
-distinction between "the shipping was fast" and "the shipping was slow" is
-partly gone, and no quantity of labels restores it. TF-IDF, meanwhile, keeps
-climbing until about 10,000 labels because each new label can sharpen an
-individual word's coefficient.
+And then the curve flattens. Averaged fastText scores 61.16 macro-F1 with 500
+labels and 61.36 with 40,000; in the ten-sample measurement, too, the means
+between 500 and 5,000 labels stay in the 61.2–62.0 band. That closeness
+suggests more labels bring limited gain with the current pooling and settings.
+To say it is a fixed ceiling of the representation, you would have to compare
+normalisation, `C`, the decision threshold, different seeds and alternatives
+that keep word order. Word TF-IDF, in the same table, keeps rising until about
+10,000 labels and then drops slightly in this single run.
 
-**Two curves, two different limits: here the averaging-based static dense
-setup is limited by its representation, and the sparse linear model is limited
-by its labels.** Keeping the sentence that narrow matters — what was measured
-is not "dense representations" but *this* setup: averaged 100-dimensional
-static vectors trained from scratch. What generalises is asking which *kind*
-of limit you are against: is my bottleneck labels, or representation?
+**The two curves have different shapes: in this setup the averaging-based
+static dense representation gains almost nothing after a few hundred labels,
+while the sparse linear model keeps gaining as labels arrive.** Keeping the
+sentence that narrow matters — what was measured is not "dense
+representations" but *this* setup: averaged 100-dimensional static vectors
+trained from scratch. What generalises is the question itself: on this task,
+am I limited by labels, by the representation, or by the settings?
 
 ## What it costs
 
