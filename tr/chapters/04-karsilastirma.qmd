@@ -614,10 +614,10 @@ sınıflandırma skoruyla ilişkisini aşağıda ayrı ayrı inceleyeceğiz.
 
 ## 1. raunt — 2. bölümün yöntemleri
 
-Metrik oturdu, tokenizer düzeldi. Artık gerçekten bir şey çalıştırabiliriz.
-
-Dört sayma şeması; hepsi @sec-metin-veri'den, hepsi aynı
-sınıflandırıcıya veriliyor.
+Değerlendirme metriğini seçtik ve Türkçe küçük harf dönüşümünü açıkça
+tanımladık. Veride daha önce oluşmuş birleştirici nokta hataları ise hâlâ
+duruyor; onlara tablonun altında döneceğiz. Şimdi 2. bölümün dört sayım
+temsilini (@sec-metin-veri) aynı sınıflandırıcıyla karşılaştıralım.
 
 ```python
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
@@ -632,6 +632,7 @@ schemes = {
   "tf-idf":          TfidfVectorizer(min_df=2, sublinear_tf=True, token_pattern=PAT, **LOC),
   "tf-idf 1-2 gram": TfidfVectorizer(min_df=2, sublinear_tf=True,
                                      ngram_range=(1, 2), token_pattern=PAT, **LOC),
+    # ayrı öznitelik çıkarma yolu: token_pattern kullanılmaz, min_df de farklı
   "tf-idf char_wb 3-5": TfidfVectorizer(min_df=3, sublinear_tf=True,
                                         analyzer="char_wb", ngram_range=(3, 5), **LOC),
 }
@@ -648,8 +649,8 @@ tf-idf 1-2 gram          92.57      76.21     56.47  101,659    1.0 s
 tf-idf char_wb 3-5       88.63      70.39     47.14   94,939    3.3 s
 ```
 
-Bu tabloya üç dipnot düşmek gerekiyor; üçü de "temsil dışında her şey sabit
-tutuluyor" ilkesinin istisnaları ve istisnaların hesabı tutulmalı.
+Tablodaki satırlar aynı eğitim/test bölmesini ve aynı sınıflandırıcıyı
+kullanıyor; ama üç noktada birbirlerinden ayrılıyorlar.
 
 **Karakter satırı aynı tokenizer'dan geçmiyor.** `scikit-learn`'de
 `token_pattern` yalnızca `analyzer="word"` iken kullanılır; `char_wb` onu
@@ -671,22 +672,26 @@ analyzer="char_wb", ngram_range=(3, 5)     (3-gram'ların ilk birkaçı)
   — rakam, eğik çizgi, ünlem ve boşluklar öznitelik olarak duruyor
 ```
 
-Dolayısıyla karakter satırı, "aynı tokenizer, farklı temsil" deneyinin saf bir
-örneği değil: noktalama, rakam ve kelime sınırlarını farklı işliyor. Bu
-bölümün ilerisinde karakter n-gram'larından çıkarılan sonuçları okurken bunu
-aklınızda tutun.
+Dolayısıyla karakter satırının skor farkı, karakter öznitelikleriyle birlikte
+bu ön işleme seçimini de yansıtıyor olabilir: `char_wb` kelime token desenini
+uygulamıyor; rakamı, noktalamayı ve boşluğu farklı işliyor. Bu bölümün
+ilerisinde karakter n-gram'larından çıkarılan sonuçları okurken bunu aklınızda
+tutun.
 
 Karakter şeması `min_df=3` kullanıyor; üç kelime şeması ise `min_df=2`.
 Savunulabilir bir tercih — karakter n-gram sayıları patlar — ama yine de bir
 tercih; taranmadı ve bu bölüm diğer ayarın ne yapacağını ölçmedi.
 
 Buradaki `fit` sütunu ile bölümün sonuna doğru gelen maliyet tablosundaki
-`build the representation` sütunu iki kez ölçülmüş aynı nicelik ve birbirini
-tutmuyor: bigram şeması için 1,0 sn'ye karşı 0,9 sn, karakter şeması için
-3,3 sn'ye karşı 2,9 sn. İkisi de paylaşımlı bir makinede tek koşu, hiçbiri
-tekrarlanmadı ve melez modelin maliyet hesabı ileride ikinci seti kullanıyor. Bu
-bölümdeki her süreyi bir ölçüm olarak değil, bir büyüklük mertebesi olarak
-okuyun.
+`build the representation` sütunu aynı adımı ölçmüyor. Süreleri beşer kez
+yeniden ölçtüğümüzde eğitim metnini vektörleştirmek bigram şemasında
+0,82–0,90 sn, karakter şemasında 2,68–2,79 sn; sınıflandırıcıyı eğitmek ise
+sırasıyla 0,09–0,10 sn ve 0,38–0,39 sn sürdü. İki tablo arasındaki farklar
+(1,0 sn'ye karşı 0,9 sn; 3,3 sn'ye karşı 2,9 sn) sınıflandırıcının eğitim
+süresiyle tutarlı: `fit` vektörleştirme ile sınıflandırıcı eğitimini birlikte,
+maliyet tablosu yalnızca vektörleştirmeyi kapsıyor. Tablolardaki süreler tek
+koşudan geliyor ve melez modelin maliyet hesabı ileride ikinci seti kullanıyor;
+hepsini bu makineye ait yaklaşık değerler olarak okuyun.
 
 ::: {.callout-note collapse="true"}
 ## Bu derlemde fark etmedi — ve yine de böyle yazın
@@ -695,24 +700,28 @@ Yukarıdaki `lowercase=False` satırı sonradan eklendi, çünkü ilk sürüm ta
 bu bölümün iki kısım önce uyardığı hatayı yapıyordu. Sonra iki sürüm de
 ölçüldü ve 1. raunt tablosu **bayt bayt aynı** çıktı.
 
-Sebebi derlemin kendisi: bu 233.508 yorumun içinde **tek bir büyük harf yok**;
-veri kümesi zaten küçük harfe çevrilmiş hâlde dağıtılıyor. Yani iki yol
-burada aynı sonuca varıyor.
+Sebebi derlemin kendisi: tekilleştirilmiş 233.508 yorumun 37.076.865 karakteri
+içinde **tek bir büyük harf yok** (`str.isupper()` ile sayıldı). Bu gözlem,
+dağıtılan metnin önceden küçük harfe çevrilmiş olmasıyla tutarlı; hangi araçla
+ve ne zaman çevrildiğini veri kartı belgelemiyor. Yani iki yol burada aynı
+sonuca varıyor.
 
-Bu, derlemin temiz olduğu anlamına gelmiyor; tam tersi. U+0307 (COMBINING DOT
-ABOVE), üzerinde çalıştığımız 50.000 yorumluk altörneklemin **4.183
-belgesinde, yani yaklaşık %8,4'ünde** duruyor; bu da `İ` üzerinde yukarı
-akışta yapılmış bir büyük-küçük harf dönüşümü hatasıyla tutarlı. Bir normalleştirme adımı ya da
-başka bir dönüşüm de aynı işareti bırakabilir, dolayısıyla bunu tek sebep
-değil, en olası sebep olarak okuyun.
-Hata veri bize ulaşmadan önce, yukarı akışta yapıldı ve metne kalıcı olarak
-işlendi. Bizim `[a-zçğıöşü]+` desenimiz de birleştirici işareti kelime karakteri
-saymadığı için o belgelerde `tavsiye`, `tavsi` + `ye` diye ikiye bölünüyor:
-sözlüğümüzdeki 30.195 sütunun **1.607'si yalnızca bu hata yüzünden var olan
-parçalar**. @sec-kumeleme-konu bunu bir kümeleme sonucu olarak yeniden keşfediyor
-ve hasarı satır satır ölçüyor. `tr_lower` bunun hiçbirini geri alamaz — onarım,
-size verilen metinden bu işareti silmektir; küçük harfe farklı biçimde çevirmek
-değil.
+Bu, derlemin temiz olduğu anlamına gelmiyor. U+0307 (COMBINING DOT ABOVE),
+üzerinde çalıştığımız 50.000 yorumluk altörneklemin **4.194 belgesinde, yani
+%8,4'ünde** duruyor ve her seferinde bir `i` harfinin ardından geliyor.
+Varsayılan Unicode küçük harf dönüşümü `İ` için tam bu diziyi üretir. Verinin
+önceki işleme adımları belgelenmediği için kaynağını kesinleştiremeyiz; gözlem
+böyle bir dönüşümle tutarlı. Bizim `[a-zçğıöşü]+` desenimiz birleştirici
+işareti kelime karakteri saymadığı için o belgelerde `tavsiye`, `tavsi` + `ye`
+diye ikiye bölünüyor. Sözlüğe etkisini ölçtük: işareti silip eğitim metnini
+yeniden vektörleştirince 30.195 sütunluk sözlük 29.823'e iniyor. **595 sütun
+yalnızca bu parçalanma yüzünden var** (`alişveri`, `alabi` gibi); onarımdan
+sonra da daha önce tek parça hâlinde hiç görülmemiş 223 biçim sözlüğe giriyor.
+@sec-kumeleme-konu aynı hasarı kendi örnekleminde bir kümeleme sonucu olarak
+yeniden keşfediyor ve satır satır ölçüyor. `tr_lower` metinde zaten bulunan
+birleştirici noktayı silmez — onarım, size verilen metinden bu işareti
+silmektir; küçük harfe farklı biçimde çevirmek değil. Onarımın skorlara
+etkisini 7. alıştırma ölçmenizi istiyor.
 
 Bunu neden yine de düzelttik? Çünkü kodu kopyalayan okurun derlemi böyle
 olmayacak. Farkın küçük bir gösterimi:
@@ -730,33 +739,31 @@ ayara bağlıdır.
 Bu tabloda üç şey dikkat çekiyor.
 
 ::: {#gloss-f1-score-macro-f1 .column-margin .term-gloss}
-**F1 score / macro-F1** (F1 skoru) — precision ile recall'u dengeleyen tek
-bir sayı. *Macro*, skorun her sınıf için ayrı hesaplanıp sonra ortalamasının
-alındığı anlamına gelir; böylece nadir bir sınıf, yaygın olanı kadar sayılır. Burada
-doğrulukla ters düşmesinin sebebi budur. [↩](#term-f1-score-macro-f1){.term-back}
+**F1 score / macro-F1** (F1 skoru) — F1, tek bir sınıf için precision ile
+recall'un harmonik ortalamasıdır. Macro-F1, her sınıfın F1 skorunu eşit
+ağırlıkla ortalar; böylece nadir bir sınıf, yaygın olanı kadar sayılır. Bu
+deneyde, çoğunluk kuralının olumsuz sınıfta F1 = 0 almasını görünür kılan
+metrik budur. [↩](#term-f1-score-macro-f1){.term-back}
 :::
 
 **Doğruluk ile [macro-F1](#gloss-f1-score-macro-f1){#term-f1-score-macro-f1 .term-ref}
-hiçbir şey yapmayan model konusunda anlaşamıyor.** Dört sayma yöntemi
-arasında iki metrik tesadüfen aynı sırayı veriyor — örneğin bag-of-words'ün
-doğruluğu TF-IDF'inkinden *yüksek* (92,14'e karşı 90,07), macro-F1'i de
-*yüksek* (73,51'e karşı 71,95). Ama her sayma yönteminin doğruluğu, hiçbir şey yapmayan
-baseline'ın 93,68'inden *düşük*; buna karşılık macro-F1'de onun 22 ila 28 puan
-üstündeler. Burada değerlendirilen modellerin yaptığı şey şudur: azınlığı
-görmezden gelmenin bedava getirdiği doğruluğun bir kısmını verip karşılığında
-olumsuz sınıfta recall satın alıyorlar. Bu bir yasa değil — olumsuzları
-bulan *ve* yanlış alarmı düşük tutan bir sınıflandırıcı iki sayıyı da
-yükseltir, kusursuz olanı ikisini birden tavana vurdurur. Bu veri kümesinde
-doğruluğu optimize ederseniz, hiçbir şey yapmayan modeli seçersiniz.
+çoğunluk kuralı konusunda ayrışıyor.** Dört sayım yönteminin doğruluğu,
+çoğunluk kuralının %93,68'inin altında; buna karşılık macro-F1'de onun 22 ila
+28 puan üstündeler. (Dört yöntemin kendi arasında iki metrik aynı sırayı
+veriyor: örneğin bag-of-words'ün doğruluğu da macro-F1'i de TF-IDF'inkinden
+yüksek.) Burada değerlendirilen modeller, azınlığı görmezden gelmenin getirdiği
+doğruluğun bir kısmını verip karşılığında olumsuz sınıfta recall kazanıyor. Bu
+kurulumda bir yöntemi yalnızca doğruluğa göre seçerseniz çoğunluk kuralı güçlü
+bir aday görünür. Bu bir yasa değil: başka eşikler ve eğitim ayarlarıyla hem
+doğruluğu hem olumsuz sınıf başarısını yükseltmek mümkündür; o seçenekleri
+burada sınamadık.
 
-**Burada düz TF-IDF, düz saymaya kaybediyor.** 2. bölümün anlatısı sizi bunu
-beklemeye itmezdi ve akla gelen ilk açıklama IDF'i suçlamak olur: yorumlar
-ortalama 22,6 token, çoğu kelime belgede bir kez geçiyor, dolayısıyla IDF tam
-da eldeki en güvenilir kanıt olan sık duygu kelimelerinin — `güzel`, `iyi`,
-`tavsiye` — ağırlığını düşürüyor olabilir.
-
-Bu açıklama test edilebilir, çünkü `CountVectorizer` ile `TfidfVectorizer`
-arasında aynı anda **üç** şey değişiyor: IDF ağırlıklandırması, altdoğrusal
+**Bu kurulumda ham sayımlar TF-IDF'in önünde.** Akla gelen ilk açıklama IDF
+olur: yorumlar ortalama 22,6 token, çoğu kelime belgede bir kez geçiyor,
+dolayısıyla IDF sık geçen duygu kelimelerinin — `güzel`, `iyi`, `tavsiye` —
+ağırlığını düşürüyor olabilir. Bu bir hipotez; sınanabilir de, çünkü
+`CountVectorizer` ile `TfidfVectorizer` arasında aynı anda **üç** şey
+değişiyor: IDF ağırlıklandırması, altdoğrusal
 terim frekansı (`sublinear_tf=True`; bir $c$ sayımını $1 + \log c$ ile
 değiştirir) ve `TfidfVectorizer`'ın varsayılan olarak
 uyguladığı L2 satır normalleştirmesi. Üçünü ayrı ayrı açıp kapatalım — aynı
@@ -773,20 +780,21 @@ log-TF + idf, no norm                yes    yes    none     92.67     71.83    4
 log-TF + idf + L2  (= "tf-idf")      yes    yes     L2      90.07     71.95    49.41
 ```
 
-Sonuç, ilk açıklamayı çürütüyor. Tek başına en pahalı değişiklik **IDF değil,
-L2 satır normalleştirmesi**: ham sayımlardan 3,94 macro-F1 puanı götürüyor.
-IDF ise onun *üstüne eklendiğinde puanı geri veriyor* — 69,57'den 72,16'ya.
-Yani "TF-IDF burada IDF yüzünden kaybetti" cümlesi, deneyin gösterdiği şey
-değil.
+Sonuç, ilk açıklamayı desteklemiyor. `C = 1.0` sabitken ham sayımlara **L2
+satır normalleştirmesi** eklemek macro-F1'i 73,51'den 69,57'ye düşürüyor
+(3,94 puan); IDF onun *üstüne eklendiğinde* skor 72,16'ya çıkıyor. Yani ilk
+fark yalnızca IDF'ten kaynaklanmıyor; "TF-IDF burada IDF yüzünden geride kaldı"
+cümlesi deneyin gösterdiği şey değil. Bu, normalleştirmenin kendiliğinden
+zararlı olduğu anlamına da gelmiyor: etkisi `C` ile birlikte değerlendirilmeli.
 
-Peki normalleştirme neden bu kadar oynatıyor? Çünkü `C`'yi ayarlamadık. L2
-normalleştirilmiş satırların normu 1, ham sayım satırlarınınki ise belge
-uzunluğuyla büyüyor; sabit bir `C = 1.0` bu yüzden iki temsile farklı bir
-etkin düzenlileştirme uyguluyor — bu bölümün yoğun aile için baştan
-işaretlediği çekincenin aynısı, şimdi seyrek ailenin içinde. Her iki temsile
-aynı küçük ayar bütçesini verin: 40.000 eğitim belgesini modeli uydurmak
-(fit) için 32.000 ve doğrulama için 8.000 olarak bölüp `C`'yi orada seçin,
-sonra test kümesini bir kez açın:
+Olası açıklama, `C`'yi ayarlamamış olmamız. L2 normalleştirilmiş satırların
+normu 1, ham sayım satırlarınınki ise belge uzunluğuyla büyüyor; sabit bir
+`C = 1.0` bu yüzden iki temsile farklı bir etkin düzenlileştirme uyguluyor — bu
+bölümün yoğun aile için baştan işaretlediği çekincenin aynısı, şimdi seyrek
+ailenin içinde. Her iki temsile aynı küçük ayar bütçesini verelim: 40.000
+eğitim belgesini modeli uydurmak (fit) için 32.000 ve doğrulama için 8.000
+olarak bölüp `C`'yi doğrulama diliminde seçiyor, sonra seçilen `C` ile modeli
+40.000 belgenin tamamında yeniden eğitip test kümesinde ölçüyoruz:
 
 ```text
 ### C chosen on a validation split carved out of train (32,000 fit / 8,000 val)
@@ -795,42 +803,50 @@ raw counts                  1.0                  73.51
 tf-idf                     10.0                  74.71
 ```
 
-Sıralama tersine dönüyor. Ama bunu ne kadar ileri götürdüğünüze dikkat edin:
-74,71'e karşı 73,51, 1,2 puanlık bir fark; bu bölüm ileride bir iki puanlık
-farkları ayırt edemediğini gösteriyor, dolayısıyla "ayarlandığında TF-IDF ham
-sayımları geçer" cümlesi de kanıtlanmış değil. Deneyin gerçekten gösterdiği
-şey daha dar ve daha kullanışlı: **1. raunt tablosundaki "ham sayımlar
-TF-IDF'i geçiyor" sonucu eşit bir ayar bütçesine dayanamadı; yani temsile ait
-bir gerçek değil, paylaşılan ve ayarlanmamış bir `C`'ye bağlıydı.** Tablo yanlış değil — orada gerçekten ölçülen bu — ama
-ondan çıkarılacak ders "kısa metinde TF-IDF kaybeder" değil: *eşit ayar
-bütçesi verilmeden yapılan bir temsil karşılaştırması, ölçmek istediğiniz
-şeyi ölçmeyebilir.*
+Seçim adımını açık yazıyoruz, çünkü sonucu değiştiriyor: tablodaki test
+skorları, seçilen `C` ile 40.000 belgenin tamamında yeniden eğitilmiş modellere
+ait (32.000 belgelik modeller aynı test kümesinde 73,65 ve 73,83 alıyor). Bu
+test kümesi bölümde daha önce de kullanıldı; dolayısıyla bu satırlar ilk kez
+açılan, bağımsız bir test sonucu değil.
+
+Sıralama tersine dönüyor: doğrulamada seçilmiş `C` ile TF-IDF 74,71, ham
+sayımlar 73,51 macro-F1 alıyor. Bu 1,2 puanlık farkın bu test kümesinde ne
+kadar sağlam olduğunu, iki modelin aynı 10.000 test yorumundaki tahminlerini
+eşleştirerek ölçtük. 10.000 eşleştirilmiş yeniden örneklemede (paired
+bootstrap) macro-F1 farkının %95 aralığı 0,42 ile 1,99 puan arasında kalıyor;
+yalnızca TF-IDF'in doğru bildiği 151, yalnızca ham sayımların doğru bildiği 80
+yorum var (hata oranları için kesin McNemar testi, $p < 0{,}001$; iki testin
+farkı 2. rauntta açıklanıyor). Yani fark bu test kümesinin örnekleme
+gürültüsünden büyük. Aralık tek bir eğitim bölmesine ve tek bir test kümesine
+ait; başka bir eğitim örnekleminde ne olacağını söylemez. Deneyin gösterdiği
+şey şu: **1. raunt tablosundaki "ham sayımlar TF-IDF'in önünde" sonucu eşit bir
+ayar bütçesine dayanamadı; temsilin değişmez bir özelliği değil, paylaşılan ve
+ayarlanmamış bir `C`'ye bağlıydı.** Tablo yanlış değil — orada gerçekten
+ölçülen bu — ama ondan çıkarılacak ders "kısa metinde TF-IDF geride kalır"
+değil: *eşit ayar bütçesi verilmeden yapılan bir temsil karşılaştırması, ölçmek
+istediğiniz şeyi ölçmeyebilir.*
 
 ::: {#gloss-bigram .column-margin .term-gloss}
 **bigram** (ikili n-gram) — tek bir birim olarak sayılan kelime çifti; böylece
 *iyi değil*, *iyi*'den ayırt edilebilir. [↩](#term-bigram){.term-back}
 :::
 
-**[Bigram](#gloss-bigram){#term-bigram .term-ref}'lar 1. rauntta elde
-edilebilecek en büyük kazancı sağlıyor: kelime unigram TF-IDF'ine göre +4,3,
-ham sayımlara göre +2,7 macro-F1.** (Bölümün en büyük farkları bu değil: iki
-aile arasındaki fark 14,8 puan, 250 etikette embedding'lerin sayma
-yöntemlerinin önüne geçtiği fark da 14,6 puan. Bu ise etiket bütçesi sabitken,
-sayma ailesinin içinde elde edilen en büyük kazanç.) Kazancın önemli
-mekanizmalarından biri büyük olasılıkla olumsuzlama — bunu ayrı bir
-ablasyonla sınamadık, dolayısıyla bir hipotez; bigram'lar aynı zamanda çok kelimeli duygu
+**Bu kurulumda kelime unigram + [bigram](#gloss-bigram){#term-bigram .term-ref}
+TF-IDF'i, yalnız unigram TF-IDF'inden 4,26 macro-F1 puanı, ham sayımlardan
+2,70 puan yüksek.** (Bölümün en büyük farkları bu değil: iki aile arasındaki
+fark 14,8 puan, 250 etikette embedding'lerin sayım yöntemlerinin önüne geçtiği
+fark da 14,6 puan. Bu ise etiket bütçesi sabitken, sayım ailesinin içinde
+ölçülen en büyük fark.) Bigram'lar `iyi değil`, `güzel değil` gibi yerel
+dizileri ayrı öznitelik olarak tutar; bu, ayrı bir kelimeyle kurulan
+olumsuzlamayı yakalamaya yardımcı olabilir. Aynı bigram'lar çok kelimeli duygu
 kalıplarını, ürün adlarını ve birlikte geçen sözcük öbeklerini de yakalıyor.
-Olumsuzlama tarafına bakalım. Tek başına unigram olarak `değil` zaten güçlü bir olumsuz
-öznitelik; ama `beğendim` ile `beğenmedim` Türkçe biçimbilim sayesinde
-hâlihazırda ayrı birer unigram — olumsuzluk bir *ek*, kelimenin içinde.
-Bigram'ların eklediği şey, olumsuzlamanın ayrı bir kelimeyle kurulan hâli:
-`iyi değil`, `güzel değil`. `değil` tek başına olumsuz bir sinyal, ama *neyi*
-olumsuzladığını ancak bigram görür. (`tavsiye etmem` ya da `memnun kalmadım`
-gibi çiftlerde olumsuzluk yine ekte: aşağıdaki tabloda `etmem` ve `kalmadım`
-tek başlarına güçlü olumsuz unigram'lar. Bigram'ın oradaki katkısı, olumsuz
-eke `tavsiye` ya da `memnun` bağlamını eklemek.) Türkçe olumsuzlamanın bir kısmını biçimbilime koyuyor
-(orada bag-of-words onu kendiliğinden yakalıyor), bir kısmını da söz dizimine
-(orada bigram'lar gerekiyor).
+Türkçede olumsuzluğun bir kısmı ise ektedir: `beğendim` ile `beğenmedim`
+unigram düzeyinde de ayrı özniteliklerdir. `tavsiye etmem` ya da `memnun
+kalmadım` gibi çiftlerde de olumsuzluk ekte: aşağıdaki tabloda `etmem` ve
+`kalmadım` tek başlarına güçlü olumsuz unigram'lar; bigram oraya `tavsiye` ya
+da `memnun` bağlamını ekliyor. 4,26 puanın ne kadarının hangi olumsuzlama
+türünden geldiğini bu bölüm ölçmedi; bunu söylemek için hedefli bir hata
+çözümlemesi ya da ablasyon gerekir.
 
 ### Model ne öğrendi, kelimelerle
 
@@ -2009,7 +2025,7 @@ bölümün ötesine geçer, **Araştırma** ise açık uçludur.
 7. **Büyük-küçük harf hasarını onarın.** *(Uygulama)* 1. rauntu *bu* derlemde `str.lower()`
    ile koşturmak hiçbir şeyi değiştirmez; yukarıda anlatılan nedenle, yanlış
    işlenebilecek büyük harf kalmamış. Hasar bunun yerine yukarı akışta verilmiş:
-   4.183 belge başıboş bir U+0307 taşıyor. Onu silin, yeniden tokenlaştırın ve
+   4.194 belge başıboş bir U+0307 taşıyor. Onu silin, yeniden tokenlaştırın ve
    1\. raunt tablosunu yeniden koşturun. Sözlük büyüklüğündeki ve macro-F1'deki
    değişimi bildirin, sonra hangisinin daha çok oynamasını beklediğinizi ve
    nedenini söyleyin.

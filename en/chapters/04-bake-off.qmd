@@ -619,10 +619,10 @@ coverage and to the classification score.
 
 ## Round 1 — the chapter-2 methods
 
-Metric settled, tokeniser fixed. Now we can actually run something.
-
-Four counting schemes, all from @sec-text-as-data, all fed to the same
-classifier.
+We have chosen the evaluation metric and defined Turkish lowercasing
+explicitly. The combining-dot errors already present in the data are still
+there; we come back to them below the table. Now we compare the four count
+representations of chapter 2 (@sec-text-as-data) with the same classifier.
 
 ```python
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
@@ -637,6 +637,7 @@ schemes = {
   "tf-idf":          TfidfVectorizer(min_df=2, sublinear_tf=True, token_pattern=PAT, **LOC),
   "tf-idf 1-2 gram": TfidfVectorizer(min_df=2, sublinear_tf=True,
                                      ngram_range=(1, 2), token_pattern=PAT, **LOC),
+    # a separate feature-extraction path: token_pattern is not used, and min_df differs
   "tf-idf char_wb 3-5": TfidfVectorizer(min_df=3, sublinear_tf=True,
                                         analyzer="char_wb", ngram_range=(3, 5), **LOC),
 }
@@ -653,8 +654,8 @@ tf-idf 1-2 gram          92.57      76.21     56.47  101,659    1.0 s
 tf-idf char_wb 3-5       88.63      70.39     47.14   94,939    3.3 s
 ```
 
-Three footnotes on that table, all of which are exceptions to "everything
-except the representation is held fixed", and exceptions should be counted.
+The rows of the table share the same train/test split and the same
+classifier; but they differ from one another in three respects.
 
 **The character row does not go through the same tokeniser.** In
 `scikit-learn`, `token_pattern` is used only when `analyzer="word"`; `char_wb`
@@ -675,10 +676,11 @@ analyzer="char_wb", ngram_range=(3, 5)     (first few of the 3-grams)
   — digits, the slash, the exclamation marks and the spaces all survive as features
 ```
 
-The character row is therefore not a clean instance of "same tokeniser,
-different representation": it treats punctuation, digits and word boundaries
-differently. Keep that in mind when you read the conclusions this chapter
-draws from character n-grams later on.
+So the score difference of the character row may reflect this preprocessing
+choice along with the character features: `char_wb` does not apply the word
+token pattern, and it treats digits, punctuation and spaces differently. Keep
+that in mind when you read the conclusions this chapter draws from character
+n-grams later on.
 
 The character scheme uses `min_df=3` where the three word schemes use
 `min_df=2`. That is a defensible choice — character n-gram counts explode — but
@@ -686,11 +688,15 @@ it is a choice, it was not swept, and this chapter did not measure what the
 other setting would have done.
 
 The `fit` column here and the `build the representation` column in the cost
-table near the end of the chapter are the same quantity measured twice, and
-they disagree: 1.0 s against 0.9 s for the bigram scheme, 3.3 s against 2.9 s
-for the character scheme. Both are single runs on a shared machine, neither was
-repeated, and the hybrid's cost arithmetic later uses the second set. Treat
-every timing in this chapter as an order of magnitude, not a measurement.
+table near the end of the chapter do not time the same step. Re-measured five
+times each, vectorising the training text took 0.82–0.90 s for the bigram
+scheme and 2.68–2.79 s for the character scheme; fitting the classifier took
+0.09–0.10 s and 0.38–0.39 s respectively. The gaps between the two tables
+(1.0 s against 0.9 s; 3.3 s against 2.9 s) are consistent with the classifier's
+fitting time: `fit` covers vectorising plus fitting the classifier, the cost
+table covers vectorising only. The timings in the tables come from single
+runs, and the hybrid's cost arithmetic later uses the second set; read all of
+them as approximate values for this machine.
 
 ::: {.callout-note collapse="true"}
 ## It made no difference on this corpus — write it this way anyway
@@ -700,23 +706,28 @@ committed exactly the bug this chapter warns about two sections earlier. Both
 versions were then measured, and round 1's table came out **byte-identical**.
 
 The reason is the corpus itself: there is **not a single uppercase character**
-in these 233,508 reviews — the dataset ships already lowercased. So the two
-paths coincide here.
+among the 37,076,865 characters of the 233,508 de-duplicated reviews (counted
+with `str.isupper()`). That observation is consistent with the distributed
+text having been lowercased beforehand; the dataset card does not document
+with which tool, or when. So the two paths coincide here.
 
-That is not the same as the corpus being clean; it is the opposite. U+0307
-(COMBINING DOT ABOVE) sits in **4,183 documents of the 50,000-review working
-subsample — about 8.4% of it**, which is consistent with an upstream
-case-conversion error on `İ`; a normalisation pass or another transform can
-leave the same mark, so treat it as the likeliest cause rather than the only
-one.
-The bug was committed upstream, before the data reached us, and baked into the
-text permanently. Our own `[a-zçğıöşü]+` pattern does not treat a combining
-mark as a word character either, so in those documents `tavsiye` splits into
-`tavsi` + `ye`: **1,607 of the 30,195 columns in our vocabulary are fragments
-that exist only because of this bug**. @sec-clustering rediscovers it as a
-clustering result and measures the damage line by line. `tr_lower` cannot undo
-any of it — the repair is to delete the mark from the text you were given,
-not to lowercase it differently.
+That is not the same as the corpus being clean. U+0307 (COMBINING DOT ABOVE)
+sits in **4,194 documents of the 50,000-review working subsample — 8.4% of
+it**, and every time it follows a letter `i`. Unicode's default lowercasing
+produces exactly that sequence for `İ`. The earlier processing steps of the
+data are not documented, so we cannot settle where the mark came from; the
+observation is consistent with such a conversion. Our own `[a-zçğıöşü]+`
+pattern does not treat a combining mark as a word character, so in those
+documents `tavsiye` splits into `tavsi` + `ye`. We measured the effect on the
+vocabulary: deleting the mark and re-vectorising the training text takes the
+30,195-column vocabulary down to 29,823. **595 columns exist only because of
+this splitting** (`alişveri`, `alabi` and the like); after the repair, 223
+forms that had never appeared in one piece enter the vocabulary.
+@sec-clustering rediscovers the same damage in its own sample as a clustering
+result and measures it line by line. `tr_lower` does not delete a combining
+dot that is already in the text — the repair is to delete the mark from the
+text you were given, not to lowercase it differently. Exercise 7 asks you to
+measure what the repair does to the scores.
 
 Why fix it anyway? Because the reader copying this code will not have that
 corpus. A small illustration of the difference:
@@ -734,31 +745,29 @@ locale-dependent.
 Three things in that table are worth stopping for.
 
 ::: {#gloss-f1-score-macro-f1 .column-margin .term-gloss}
-**F1 score / macro-F1** — one number that balances precision against
-recall. *Macro* means it is worked out for each class and then averaged,
-so a rare class counts as much as a common one. This is why it disagrees
-with accuracy here. [↩](#term-f1-score-macro-f1){.term-back}
+**F1 score / macro-F1** — F1 is the harmonic mean of precision and recall
+for one class. Macro-F1 averages the F1 of every class with equal weight, so a
+rare class counts as much as a common one. In this experiment it is the metric
+that makes the majority rule's F1 = 0 on the negative class visible. [↩](#term-f1-score-macro-f1){.term-back}
 :::
 
-**Accuracy and [macro-F1](#gloss-f1-score-macro-f1){#term-f1-score-macro-f1 .term-ref} disagree about the do-nothing model.** Among the four
-counting methods the two metrics happen to give the same order — bag-of-words
-has *higher* accuracy than TF-IDF (92.14 vs 90.07) and *higher* macro-F1
-(73.51 vs 71.95), for example. But every counting method has *lower* accuracy than the
-do-nothing baseline's 93.68, while scoring 22 to 28 macro-F1 points above it.
-That is what the models evaluated here do: they buy negative-class recall with
-some of the free accuracy that ignoring the minority provided. It is not a law —
-a classifier that finds negatives *and* keeps false alarms low improves both
-numbers, and a perfect one maxes out both. If you optimise accuracy on this
-dataset you will select the model that does nothing.
+**Accuracy and [macro-F1](#gloss-f1-score-macro-f1){#term-f1-score-macro-f1 .term-ref} part ways over the majority rule.** All four
+count methods have lower accuracy than the majority rule's 93.68%, while
+scoring 22 to 28 macro-F1 points above it. (Among the four methods the two
+metrics give the same order: bag-of-words, for example, has both higher
+accuracy and higher macro-F1 than TF-IDF.) The models evaluated here give up
+some of the accuracy that ignoring the minority provides, and gain
+negative-class recall in return. If you chose a method by accuracy alone in
+this setup, the majority rule would look like a strong candidate. That is not
+a law: other thresholds and training settings can raise both accuracy and
+performance on the negative class; we did not test those options here.
 
-**Plain TF-IDF loses to plain counting here.** That is not what chapter 2's
-narrative would lead you to expect, and the first explanation that comes to
-mind is to blame IDF: reviews average 22.6 tokens, most words appear once in a
-document, so IDF may be down-weighting exactly the frequent sentiment words —
-`güzel`, `iyi`, `tavsiye` — that are the most reliable evidence available.
-
-That explanation is testable, because **three** things change at once between
-`CountVectorizer` and `TfidfVectorizer`: IDF weighting, sublinear term
+**In this setup raw counts are ahead of TF-IDF.** The first explanation that
+comes to mind is IDF: reviews average 22.6 tokens, most words appear once in a
+document, so IDF may be down-weighting the frequent sentiment words — `güzel`,
+`iyi`, `tavsiye`. That is a hypothesis, and a testable one, because **three**
+things change at once between `CountVectorizer` and `TfidfVectorizer`: IDF
+weighting, sublinear term
 frequency (`sublinear_tf=True`, which replaces a count $c$ by $1 + \log c$),
 and the L2 row normalisation
 `TfidfVectorizer` applies by default. Turn each on and off separately — same
@@ -775,18 +784,22 @@ log-TF + idf, no norm                yes    yes    none     92.67     71.83    4
 log-TF + idf + L2  (= "tf-idf")      yes    yes     L2      90.07     71.95    49.41
 ```
 
-The result refutes the first explanation. The single most expensive change is
-**not IDF but L2 row normalisation**, which costs 3.94 macro-F1 points against
-raw counts. IDF *gives points back* when added on top of it — 69.57 to 72.16.
-So "TF-IDF lost here because of IDF" is not what the experiment shows.
+The result does not support the first explanation. With `C = 1.0` fixed,
+adding **L2 row normalisation** to raw counts takes macro-F1 from 73.51 down
+to 69.57 (3.94 points); IDF, *added on top of it*, brings the score up to
+72.16. So the original gap does not come from IDF alone, and "TF-IDF fell
+behind here because of IDF" is not what the experiment shows. Nor does it mean
+normalisation is harmful in itself: its effect has to be judged together with
+`C`.
 
-Why does normalisation move things so much? Because we did not tune `C`.
-L2-normalised rows have norm 1 while raw count rows grow with document length,
-so a fixed `C = 1.0` applies a different effective regularisation to the two
-representations — the same caveat this chapter flagged up front for the dense
-family, now inside the sparse one. Give both the same small tuning budget:
-split the 40,000 training documents into 32,000 fit and 8,000 validation,
-choose `C` there, then open the test set once:
+A likely explanation is that we did not tune `C`. L2-normalised rows have norm
+1 while raw count rows grow with document length, so a fixed `C = 1.0` applies
+a different effective regularisation to the two representations — the same
+caveat this chapter flagged up front for the dense family, now inside the
+sparse one. Give both the same small tuning budget: split the 40,000 training
+documents into 32,000 for fitting and 8,000 for validation, choose `C` on the
+validation slice, then refit with the chosen `C` on all 40,000 documents and
+measure on the test set:
 
 ```text
 ### C chosen on a validation split carved out of train (32,000 fit / 8,000 val)
@@ -795,43 +808,50 @@ raw counts                  1.0                  73.51
 tf-idf                     10.0                  74.71
 ```
 
-The ordering flips. Be careful how far to take that: 74.71 against 73.51 is a
-1.2-point gap, and this chapter shows further down that it cannot resolve
-differences of a point or two, so "TF-IDF beats raw counts once tuned" is not
-established either. What the experiment does establish is narrower and more
-useful: **the "raw counts beat TF-IDF" result in the round 1 table did not
-survive an equal tuning budget, so it is not a fact about the representations;
-it depended on a shared, untuned `C`.** The table is not wrong — that is
-genuinely what was measured — but the lesson to take from it is not "TF-IDF
-loses on short text": it is that *a representation comparison run without an
-equal tuning budget may not be measuring what you wanted it to measure.*
+The selection step is spelled out because it changes the result: the test
+scores in the table belong to models refitted with the chosen `C` on all
+40,000 documents (the 32,000-document models score 73.65 and 73.83 on the same
+test set). This test set was already used earlier in the chapter, so these
+rows are not an independent test result opened for the first time.
+
+The ordering flips: with `C` chosen on validation, TF-IDF scores 74.71
+macro-F1 and raw counts 73.51. We measured how solid that 1.2-point gap is on
+this test set by pairing the two models' predictions on the same 10,000 test
+reviews. Over 10,000 paired bootstrap resamples the 95% interval of the
+macro-F1 difference runs from 0.42 to 1.99 points; there are 151 reviews only
+TF-IDF gets right and 80 only raw counts get right (exact McNemar test on the
+error rates, $p < 0.001$; round 2 explains how the two tests differ). So the
+gap is larger than the sampling noise of this test set. The interval belongs
+to one training split and one test set; it does not say what would happen on
+another training sample. What the experiment shows is this: **the "raw counts
+ahead of TF-IDF" result in the round 1 table did not survive an equal tuning
+budget; it is not a fixed property of the representations, it depended on a
+shared, untuned `C`.** The table is not wrong — that is genuinely what was
+measured — but the lesson to take from it is not "TF-IDF falls behind on short
+text": it is that *a representation comparison run without an equal tuning
+budget may not be measuring what you wanted it to measure.*
 
 ::: {#gloss-bigram .column-margin .term-gloss}
 **bigram** — a pair of words counted as a single unit, so that *not good*
 can be told apart from *good*. [↩](#term-bigram){.term-back}
 :::
 
-**[Bigrams](#gloss-bigram){#term-bigram .term-ref} are the largest gain available in round 1: +4.3 macro-F1 over word
-unigram TF-IDF, +2.7 over raw counts.** (Not the largest gaps in the chapter — the two
-families are 14.8 points apart, and embeddings lead counts by 14.6 points at
-250 labels. This is the largest gain available within the counting family
-once the label budget is fixed.)
-One important mechanism behind the gain is probably negation — we did not
-ablate it separately, so that is a hypothesis; bigrams also pick up multi-word
-sentiment phrases, product names and collocations. The negation side is worth
-seeing. `değil` ("not")
-as a unigram is a strong negative feature on its own, but `beğendim` ("I
-liked it") and `beğenmedim` ("I did not like it") are already separate
-unigrams thanks to Turkish morphology — the negation is a *suffix*, inside
-the word. What bigrams add is negation built with a separate word: `iyi
-değil` ("not good"), `güzel değil` ("not nice"). `değil` is negative on its
-own, but only a bigram sees *what* it negates. (In pairs like `tavsiye etmem`
-("I do not recommend") or `memnun kalmadım` ("I was not satisfied") the
-negation is still a suffix — `etmem` and `kalmadım` are strong negative
-unigrams in the table below; the bigram's contribution there is to attach the
-`tavsiye` or `memnun` context to it.) Turkish
-puts some negation in the morphology, where a bag of words gets it for free,
-and some in the syntax, where it needs bigrams.
+**In this setup word unigram + [bigram](#gloss-bigram){#term-bigram .term-ref} TF-IDF scores 4.26 macro-F1 points above
+unigram-only TF-IDF, and 2.70 above raw counts.** (Not the largest gaps in the
+chapter — the two families are 14.8 points apart, and embeddings lead counts
+by 14.6 points at 250 labels. This is the largest difference measured within
+the count family once the label budget is fixed.) Bigrams keep local
+sequences such as `iyi değil` ("not good") and `güzel değil` ("not nice") as
+separate features, which can help capture negation built with a separate
+word. The same bigrams also pick up multi-word sentiment phrases, product
+names and collocations. Part of Turkish negation, though, is a suffix:
+`beğendim` ("I liked it") and `beğenmedim` ("I did not like it") are separate
+features at the unigram level too. In pairs like `tavsiye etmem` ("I do not
+recommend") or `memnun kalmadım` ("I was not satisfied") the negation is again
+a suffix: `etmem` and `kalmadım` are strong negative unigrams in the table
+below, and the bigram adds the `tavsiye` or `memnun` context to them. This
+chapter did not measure how much of the 4.26 points comes from which kind of
+negation; saying that takes a targeted error analysis or an ablation.
 
 ### What the model learned, in words
 
@@ -1988,7 +2008,7 @@ past this chapter, and **Research** is open-ended.
    between counting and embeddings before you run it, then run it.
 7. **Repair the case-conversion damage.** *(Applied)* Running round 1 with `str.lower()` on
    *this* corpus changes nothing, for the reason given above — there is no
-   uppercase left to get wrong. The damage was done upstream instead: 4,183
+   uppercase left to get wrong. The damage was done upstream instead: 4,194
    documents carry a stray U+0307. Strip it, re-tokenise, and rerun the round-1
    table. Report the change in vocabulary size and in macro-F1, then say which
    of the two you expected to move more, and why.
