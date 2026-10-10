@@ -1294,35 +1294,34 @@ the 46.4% out-of-vocabulary rate may not show the whole of the representation
 problem. A general conclusion about the quality of rare forms takes a wider
 evaluation by frequency band.
 
-## Why the dense methods lost
+## Error examples for understanding the score gap {#why-the-dense-methods-lost}
 
-The table says counting won. It does not say *why*, and "dense embeddings are
-worse" is not an explanation — it is a restatement. So let us look at the
-documents the two methods disagree about.
+The table shows that the count methods score higher in this setup; it does not
+show why. Measuring how much each cause contributes takes separate
+experiments. Here we look at the predictions the two methods disagree on, at
+negation examples, and at the limits of the representations.
 
 Take two representations: plain word TF-IDF (the 90.07-accuracy row) and
-averaged fastText (79.64). They agree on 84.1% of the test set. Where they
-disagree, TF-IDF is right 1,315 times and averaged fastText is right 272 —
-nearly five to one. (With two classes, whenever the two disagree exactly one
-of them is right, so 1,315 − 272 = 1,043 documents is exactly their accuracy
-gap: 10.43 points.)
+averaged fastText (79.64). They give the same label on 84.1% of the test
+documents. On the 1,587 documents where they differ, TF-IDF is right 1,315
+times and fastText 272. (With two classes, whenever the two disagree exactly
+one of them is right, so 1,315 − 272 = 1,043 documents is exactly their
+accuracy gap: 10.43 points.)
 
-Those two counts are also the whole of a significance test, so we may as well
-run it. The intuition: if the two methods were equally accurate, their
-disagreements would split roughly half and half, and McNemar's test on paired
-predictions [@mcnemar1947note] asks how far from half-and-half the split is.
-It uses exactly these off-diagonal counts:
-$\chi^2 = (|1315 - 272| - 1)^2 / (1315 + 272) = 684.2$ on one degree of
-freedom, far past any conventional threshold. Read it for what it is: a test
-that the two methods make errors at different rates, which is a statement
-about accuracy. The macro-F1 gap is in the same direction and far larger than
-the variability this chapter measures below, but confirming *it* would take a
-paired bootstrap over the test rows, not this test. The sparse–dense gap is
-real and nothing about it is marginal.
+Those two counts are enough for a significance test. The intuition: if the two
+methods were equally accurate, their disagreements would split roughly half
+and half, and McNemar's test on paired predictions [@mcnemar1947note] asks how
+far from half-and-half the split is. It uses exactly these off-diagonal
+counts: $\chi^2 = (|1315 - 272| - 1)^2 / (1315 + 272) = 684.2$ on one degree of
+freedom, far past any conventional threshold. That is strong evidence that the
+two setups make errors at *different rates* on the same test set, which is a
+statement about accuracy. The uncertainty of the macro-F1 gap does not come
+out of this test; we measured it with a paired bootstrap over the test rows:
+the gap is 10.66 points, with a 95% interval from 9.52 to 11.77 (the fastText
+side comes from the re-run mentioned in round 2). Both results hold only for
+the two setups examined and this test data.
 
-That is worth stating precisely *because* most of the other gaps in this
-chapter are not tested at all — see the warning under the combined
-leaderboard above. The interesting question is what the 272 look like.
+The interesting question is what the 272 look like.
 
 ```text
 ### averaged fastText right, tf-idf wrong        (gold: positive)
@@ -1336,19 +1335,26 @@ leaderboard above. The interesting question is what the 272 look like.
   "cok guzel! kedi bayildi buna"       gold positive — fastText says negative
 ```
 
-These are examples, not a systematic categorisation: classifying all 272
-would make the claims much stronger, and this chapter did not do it. The dense
-wins are exactly the promised ones: misspellings and missing
-diacritics, where a count vector sees an unknown column and a subword model
-sees a familiar shape. One of the dense losses is the promised kind too — the
-second example is a `ne … ne …` construction ("neither very bad nor very
-good") in which the individual words give mixed signals and the *structure*
-carries the decision. But the picture is not that clean: the other two losses
-are also texts with missing diacritics, so missing diacritics alone do not
-hand fastText the win. These six examples illustrate both kinds; they do not
-show which side wins and why.
+These six selected examples show the kinds of text on which the two models can
+part ways: missing diacritics, colloquial spelling, and scope relations such
+as `ne … ne …` ("neither … nor …"). Which feature decided each prediction does
+not follow from the list; that takes looking at decision contributions,
+making controlled changes to the text, or labelling and analysing all of the
+disagreements. Texts with missing diacritics appear in both directions, so no
+single explanation is enough.
 
-That points at a representational failure consistent with the classification gap, and it is testable directly.
+We counted two properties over all the disagreements (with the fastText model
+of the re-run, where the counts are 1,323 and 272). The share of tokens
+outside the TF-IDF vocabulary is 9.49% in the reviews only fastText gets right
+and 9.48% in the reviews only TF-IDF gets right; in the reviews both get right
+it is 6.51%. So out-of-vocabulary forms are more frequent among the
+disagreements, but they do not separate which model turns out right. What
+does differ is the class: 31% of the reviews only fastText gets right are
+negative (6.3% in the whole test set), while 98% of those only TF-IDF gets
+right are positive. That is consistent with the averaged-embedding setup
+working at higher recall and lower precision.
+
+Negation examples let us test the representations directly as well.
 
 ```text
 ### cosine between a review and its negation
@@ -1361,11 +1367,15 @@ fiyatına göre gayet kaliteli / … hiç kaliteli değil  0.892       0.690
 bu üründen memnun kaldım / … memnun kalmadım         0.962       0.582
 ```
 
-Averaging places a sentence and its opposite at cosine 0.78–0.96. TF-IDF
-places the same pairs at 0.19–0.69. The mean of a handful of vectors is
-dominated by the words the two sentences share, and in a negated pair that is
-almost all of them — the one word carrying the reversal is averaged into
-nothing along with everything else.
+On these five opposed review pairs the cosine of averaged fastText runs from
+0.78 to 0.96, and that of word TF-IDF from 0.19 to 0.69. (Averaged word2vec
+gives 0.72–0.96 on the same pairs; the high values are not specific to
+fastText's subwords.) Averaging can reduce the effect of the one word that
+changed, through the contribution of the words the two sentences *share*. But
+the two representations use different weights and different vectors, so the
+whole gap in the table cannot be put down to the averaging operation alone.
+Nor does a high cosine mean the classifier will give the two reviews the same
+label; we come back to that below.
 
 ::: {.callout-note collapse="true"}
 ## The arithmetic of why averaging dilutes negation
@@ -1392,44 +1402,47 @@ Be careful reading that $1/5$: it scales the shared words too, and cosine is
 invariant to a common factor, so the factor itself is not the problem. What
 matters is the *ratio* — one differing vector against four shared ones. Lengthen
 the review to twenty words and there is still one differing vector, but now
-nineteen shared ones instead of four, so the two documents' directions
-converge. *The longer
-the review, the more completely the shared content drowns out the word that
-changed its meaning.*
+nineteen shared ones instead of four, and the difference vector is scaled by
+$1/20$. That the cosine of the two means approaches 1 is not guaranteed,
+though: it depends on the *sum* of the shared word vectors dominating the
+words that differ. If the shared contributions cancel or point in opposing
+directions, the result need not follow however long the review gets. The five
+examples above show that a high cosine can happen.
 
-Worse, in a subword model $\mathbf{v}_{\text{liked}}$ and
-$\mathbf{v}_{\text{disliked}}$ are not even far apart, because `beğendim` and
-`beğenmedim` share the n-grams `beğ`, `eğe`, `ğen`. fastText's own mechanism
-pulls the difference $\mathbf{v}_{\text{liked}} - \mathbf{v}_{\text{disliked}}$
-towards zero.
+A subword model adds one more factor: `beğendim` and `beğenmedim` share
+character n-grams such as `beğ`, `eğe`, `ğen`, which gives their vectors
+common contributions. The two words also have separate whole-word components
+and n-grams that differ, so shared spelling alone does not settle the distance
+between them. Measured on this chapter's models, the cosine between `beğendim`
+and `beğenmedim` is 0.74 in fastText and 0.53 in word2vec; for `kaldım` and
+`kalmadım` it is 0.69 and 0.56. For `ederim` / `etmem`, which do not share a
+stem, the two models are in the same place: 0.56 and 0.57.
 
-TF-IDF has the opposite structure. `beğendim` and `beğenmedim` are two
-distinct columns; a document containing one has a hard zero in the other, so
-the contrast is explicit rather than averaged away. It is not immune to
-dilution — with L2 normalisation, two $n$-term documents differing in one term
-(each term used once, all weights equal, i.e. before IDF) sit at cosine
-$(n-1)/n$, which also goes to 1 as $n$ grows. What differs is the
-rate and the mechanism: the distinct columns keep the contrast on the page, and
-IDF can weight it up. That is why its cosines land at 0.19 rather than 0.78 on
-reviews of this length.
+In word unigram TF-IDF, `beğendim` and `beğenmedim` are two distinct columns;
+a document containing one has a zero in the other's column. That helps keep
+the two forms from being confused. TF-IDF is not immune to dilution either:
+with L2 normalisation, two $n$-term documents differing in exactly one term
+(each term used once, all weights equal) sit at cosine $(n-1)/n$, which also
+goes to 1 as $n$ grows. The 0.19–0.69 values on the real reviews, though,
+depend on the IDF weights of the terms and on the token sequences; those
+numbers cannot be put down to the separate columns alone.
 
 **The analogy.** Averaging word vectors is taking the mean colour of a
 painting. Two paintings that differ only in that one is a sunrise and the
 other a sunset have nearly the same mean colour, and the mean colour is the
 only thing your classifier gets to see. A bag of words is instead a list of
-which pigments appear — rougher about relationships, but it never loses the
-one pigment that changed.
+which pigments appear — rougher about relationships, but it keeps the
+pigment that changed as a separate entry.
 :::
 
-Note what the classifier still manages in spite of this. Averaged fastText
-assigns "ürünü çok beğendim" probability 0.82 of being positive and its
-negation 0.02 — it gets the sign right even at cosine 0.776, because logistic
-regression can find a direction in which the small remaining difference
-between the two averages is discriminative. Watering the signal down is not
-the same as deleting it. But it is a much harder problem handed to a linear
-model, and it is a plausible part of the 14.8-point gap — a contributor, not
-the whole explanation, since this chapter did not measure how much of the gap
-it accounts for.
+A high cosine does not mean there is no separation along the decision
+direction. The classifier on averaged fastText assigns "ürünü çok beğendim"
+probability 0.82 of being positive and its negation 0.02 — at cosine 0.776.
+In the re-run, the probability of the negated version stays below 0.5 for all
+five pairs (between 0.02 and 0.33). Logistic regression can find a direction
+in which the small difference between the two averages is discriminative.
+Averaging can weaken some signals; these examples do not measure its share of
+the total 14.82-point gap.
 
 ## The crossover: when embeddings do win
 
