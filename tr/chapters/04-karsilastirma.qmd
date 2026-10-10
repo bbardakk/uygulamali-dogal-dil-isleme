@@ -462,22 +462,26 @@ karar metrikleri olabilir.
 
 ## Türkçeyi token'lara ayırmak ve oradaki tuzak
 
-İki yoldan birine girmeden önce metnin token'lara dönüşmesi gerekiyor.
-@sec-metin-veri Türkçede `str.lower()` kullanmanın doğrudan bir hata olduğunu
-söyleyip düzeltmeyi Türkçe NLP bölümüne (@sec-turkce-nlp), hatanın gerçek bir derlemdeki izini
-sürmeyi de buraya bırakmıştı. O tuzağı şimdi asıl veri üzerinde görelim.
+Sayım ve embedding modellerinden önce, ikisinin de kullanacağı ön işleme
+kararlarını tanımlıyoruz. 2. bölümde değinilen Türkçeye özgü küçük harf
+dönüşümünü (@sec-metin-veri) bu veri üzerinde inceleyecek, ardından
+tokenizer'ın hangi işaretleri koruyup hangilerini attığını göstereceğiz.
+Dönüşümün ayrıntıları Türkçe NLP bölümünde (@sec-turkce-nlp).
 
 ```python
 "IYI".lower()          # → 'iyi'
 "İYİ".lower()          # → 'i̇yi̇'   (üstünde fazladan birleştirici nokta olan bir i)
 ```
 
-Türkçede iki ayrı `i` harfi vardır — noktalı `i`/`İ` ve noktasız `ı`/`I` — ve
-bunlar farklı kelimeleri ayıran farklı harflerdir. Python'ın `str.lower()`
-metodu Unicode'un *varsayılan* — yani dilden bağımsız — büyük-küçük harf
-eşlemesini uygular; bu eşlemede `I`, `i` olur. Türkçede ise `I` mutlaka `ı`, `İ` ise
-mutlaka `i` olmalıdır; bu, standardın tanımladığı ama varsayılanın uygulamadığı
-dile özgü uyarlamalardan biridir.
+Türkçede noktalı `i`/`İ` ile noktasız `ı`/`I` ayrı harflerdir ve farklı
+kelimeleri ayırır. Doğru yazılmış Türkçe metinde küçük harfe çevirirken `I → ı`
+ve `İ → i` eşlemesi gerekir; bu, Unicode standardının tanımladığı ama
+varsayılanın uygulamadığı dile özgü uyarlamalardan biridir. Python'ın
+`str.lower()` metodu Unicode'un *varsayılan* — yani dilden bağımsız — eşlemesini
+uygular ve yerel ayara göre değişmez: `I` için `i`, `İ` için ise `i` ile bir
+birleştirici nokta (U+0307) üretir. ASCII klavyeyle yazılmış bir metinde
+yazarın hangi harfi kastettiğini ise bu eşleme tek başına belirleyemez; o
+sınıra aşağıda döneceğiz.
 
 ```python
 TR_LOWER = str.maketrans({"I": "ı", "İ": "i"})
@@ -495,10 +499,13 @@ tr_lower("İYİ")        # → 'iyi'
 "İYİ"        i̇yi̇             iyi
 ```
 
-Varsayılan kural `ıyı` ile `iyi`'yi sessizce birleştirir ve `İYİ` için
-sözlüğünüzdeki hiçbir şeye uymayan, üstte birleştirici noktalı bir melez üretir. İkisi
-de yanlıştır; ikisi de sessizce başarısız olur; ikisi de size doğruluk
-kaybettirir ve siz bu kaybı modelin hanesine yazarsınız. **Büyük-küçük harf
+Varsayılan işlem, doğru yazılmış `IYI` ile `İYİ`'yi Türkçedeki küçük harf
+karşılıklarına çeviremez: `IYI`'yı `iyi` yapar, `İYİ`'de ise üstte birleştirici
+nokta bırakır. İkisi de hata vermeden çalışır ve tokenleştirmeyi, sözlük
+eşleşmesini bozabilir. Bu deneyin ana skorunda ise iki küçük harf yordamı
+arasında fark ölçülmedi, çünkü dağıtılan veri zaten küçük harfli (1. raunt
+tablosunun altında göreceksiniz); önceden oluşmuş birleştirici nokta hasarı da
+ayrı bir onarım adımı ister. **Büyük-küçük harf
 dönüşümü dile bağlıdır; dile özgü küçük harf politikası da ön işleme ve
 tokenizer (tokenlaştırıcı) sözleşmesinin bir parçasıdır.** (Buradaki işlem
 küçük harfe çevirmedir; Unicode'un *casefolding*'i ise büyük-küçük harften
@@ -510,14 +517,17 @@ doğru yazımı varsayar. İngilizce klavyeyle yazılmış bir kullanıcı metni
 (deasciification; bkz. @sec-turkce-nlp-normalizasyon).
 
 ::: {.column-margin}
-İngilizce bir eğitim yazısındaki "küçük harfe çevir gitsin" adımı, işte bu
-hata sınıfı yüzünden başka dillere taşınabilir bir tavsiye değildir. Başka dillerdeki eşdeğer
-tuzaklar: Almanca ß, Yunanca sondaki sigma ve büyük-küçük harf dönüşümünün
-birebir ve örten (bijektif) bir eşleme olmadığı her dil.
+Yerel ayara ve bağlama duyarlı harf eşlemeleri başka dillerde de var: Yunancada
+kelime sonundaki sigma küçük harfe `σ` değil `ς` olarak çevrilir. Almancadaki
+`ß` ise başka bir işlemin konusudur: `"ß".lower()` onu değiştirmez; `ß` ile
+`ss` eşitlemesini casefolding yapar (`"ß".casefold()` → `ss`). İngilizce bir
+eğitim yazısındaki "küçük harfe çevir gitsin" adımı bu yüzden başka dillere
+olduğu gibi taşınamaz; ama bu örnekleri Türkçedeki `I`/`İ` sorununun birebir
+aynısı da saymayın.
 :::
 
-Bu düzeltildikten sonra tokenizer, Türk alfabesi üzerinde bir düzenli
-ifadeden ibaret ve derlem şöyle görünüyor:
+Türkçe küçük harf dönüşümünden sonra kullandığımız basit token deseni, seçilen
+küçük harflerden oluşan kesintisiz dizileri çıkarır:
 
 ```python
 import re
@@ -526,13 +536,14 @@ def tokenize(s):
     return TOKEN_RE.findall(tr_lower(s))
 ```
 
-Bu desenin bilinçli olarak neyi attığını da söyleyelim: yalnızca harfleri
-tutuyor, dolayısıyla noktalama, rakam ve emoji tümüyle düşüyor. Ürün
+Bu desen yalnızca listelenen harfleri tutuyor: noktalama, rakam ve emoji
+tümüyle düşüyor; şapkalı harfler (`â`, `î`, `û`) ve birleştirici işaretler ise
+token'ı bölüyor. Örneğin `hâlâ` ya da `kâr` tek token olarak korunmuyor. Ürün
 yorumlarında `!!!`, `5/5` ya da bir emoji pekâlâ duygu taşıyabilir; bu deney
-onları modellemiyor. Şapkalı harfler (`â`, `î`, `û`) de desende yok, yani
-`hâlâ` ya da `kâr` gibi bir kelime parçalara bölünüyor; kendi derleminizde
-deseni bu harflerle genişletin. Bunlar birer sadeleştirme, ölçülmüş kararlar
-değil.
+onları modellemiyor. Bu sadeleştirmelerin sınıflandırma skoruna etkisi
+ölçülmedi; kendi derleminizde alternatif desenleri karşılaştırın.
+
+Bu tokenizer'la eğitim derlemi şöyle görünüyor:
 
 ```text
 ### the training corpus, 40,000 reviews
@@ -546,18 +557,20 @@ longest                           296
 ```
 
 ::: {.column-margin}
-Dikkatli okur bu iki sayıyı birbirinden çıkarmayı deneyecek:
-74.317 − 43.579 = 30.738, ama 1. raunt tablosundaki sözlük 30.195 boyutlu.
-Aradaki **543** kelime, derlemde iki veya daha fazla kez geçen ama bütün
-geçişleri *tek bir belgenin içinde* kalan kelimeler. `min_df` derlem frekansını değil, **belge** frekansını sayar.
+74.317 farklı biçimin 43.579'u yalnızca bir kez geçiyor; kalan 30.738 biçim en
+az iki kez görülmüş. `min_df=2` sonrasında vektörleştiricinin ise 30.195 sütunu
+var. Aradaki **543** biçimi tek tek saydık: hepsi derlemde iki ya da daha fazla
+kez geçen ama bütün geçişleri *tek bir belgenin içinde* kalan biçimler.
+`min_df` derlem frekansını değil, **belge** frekansını sayar.
 :::
 
-**Sözlüğün %58,6'sı tam olarak bir kez geçiyor.** @sec-gommeler Türkçe
-Wikipedia'da %50,0 ölçmüştü; kullanıcıların yazdığı yorum metni daha kötü,
-çünkü Türkçe biçimbilimin üstüne bir de yazım hataları biniyor ve her yazım
-hatası yeni bir kelime biçimi yaratıyor.
+**Sözlüğün %58,6'sı tam olarak bir kez geçiyor.** 3. bölümün Türkçe Wikipedia
+örnekleminde bu oran %50,0'dı (@sec-gommeler). İki derlemin konusu, belge
+uzunluğu ve ön işlemesi farklı olduğu için farkı yalnızca yazım hatalarına
+bağlayamayız; kullanıcı metnindeki yazım değişkenliği olası etkenlerden
+biridir.
 
-Kelime biçimlerini ilk beş karakterlerine göre gruplarsanız biçimbilim
+Kelime biçimlerini ilk beş karakterlerine göre gruplarsanız biçim çeşitliliği
 gözle görülür hâle geliyor:
 
 ```text
@@ -575,29 +588,29 @@ sayar, geliş sıralarını unutur. "kalite iyi fiyat kötü" ile "kalite kötü
 iyi" aynı belge hâline gelir. [↩](#term-bag-of-words){.term-back}
 :::
 
-Bir [bag-of-words](#gloss-bag-of-words){#term-bag-of-words .term-ref}
-modelinde, Türkçe konuşan birinin tek bir kök ailesi olarak algıladığı şey —
-`kullan-` kökünden türeyen fiiller, sıfatlar ve isimler — sekiz yüz doksan beş
-ayrı kelime biçimine, yani potansiyel olarak 895 ayrı sütuna dönüşüyor.
-(`min_df=2` ile yalnızca tek bir yorumda geçen biçimler hiç sütun olmuyor;
-doğrudan atılıyorlar.) Ayakta kalan sütunların her biri, kendine ait bir avuç
-örnekten ayrı ayrı kestiriliyor ve `kullanışlı` hakkında öğrenilen hiçbir şey
-`kullanıyorum`'a aktarılmıyor.
+Beş karakterlik `kulla` ön eki bu derlemde 895 farklı biçimde görülüyor. Bu
+grup tek bir kökün 895 çekimi değildir: çekimleri, türetimleri ve yazım
+varyantlarını birlikte içerir. Bir
+[bag-of-words](#gloss-bag-of-words){#term-bag-of-words .term-ref} modelinde
+eğitim sözlüğüne giren her biçim ayrı bir sütun olur (`min_df=2` ile yalnızca
+tek bir yorumda geçen biçimler hiç sütun olmuyor; doğrudan atılıyorlar).
+`kullanışlı` için öğrenilen katsayı kendiliğinden `kullanıyorum` sütununa
+aktarılmaz; aynı belgede geçen başka öznitelikler ve düzenlileştirme ise
+modelin genellemesini yine etkiler.
 
-Bir uyarı: beş karakterlik ön ek gerçek biçimbilimsel çözümleme değil, kaba bir
-vekil ölçüt. `kulla` grubunda `kullanışlı` (sıfat), `kullanım` (isim) ve
-`kullanıcı` (isim) yan yana duruyor; bunlar tek bir fiilin çekimleri değil.
-Aynı ön ek yazım hatalarını da topluyor. Gerçek çözümleme klasik olarak sonlu
-durum dönüştürücüleriyle (finite-state transducers) yapılır [@oflazer1994two];
-Türkçe biçimbilimsel çözümleyiciler ve kullanımları için bkz.
-@sec-turkce-nlp-cozumleme ve @sec-turkce-kaynaklar-araclar. Böyle bir çözümleme
-sayıyı değiştirir — ama argümanı değiştirmez, çünkü mesele grubun tam boyutu
-değil, tek bir kökün onlarca, hatta yüzlerce sütuna dağılması. 3. bölümün
-şikâyetinin, 2. bölümün birimleriyle ve gerçek veri üzerinde ifade edilmiş
-hâli budur.
+Beş karakterlik ön ek, Türkçedeki biçim çeşitliliğini görünür kılan kaba bir
+incelemedir; kök ya da biçimbirim çözümlemesi değildir. `kulla` grubunda
+`kullanışlı` (sıfat), `kullanım` (isim) ve `kullanıcı` (isim) yan yana duruyor;
+aynı ön ek yazım hatalarını da topluyor. Dolayısıyla bu tablo, gerçek bir kök
+ailesinin kaç sütuna dağıldığını ölçmez. O niceliği saptamak için biçimbilimsel
+çözümleme ve yazım varyantlarının ayrıca incelenmesi gerekir; çözümleme klasik
+olarak sonlu durum dönüştürücüleriyle (finite-state transducers) yapılır
+[@oflazer1994two]. Türkçe biçimbilimsel çözümleyiciler ve kullanımları için
+bkz. @sec-turkce-nlp-cozumleme ve @sec-turkce-kaynaklar-araclar.
 
-895 sayısını aklınızda tutun. Embedding'ler lehine bütün savunma buna
-dayanıyor.
+895 biçimlik ön ek grubu, kelime düzeyinde öznitelik sayısının nasıl
+büyüyebildiğini gösteren bir işarettir. Bu çeşitliliğin kapsamayla ve
+sınıflandırma skoruyla ilişkisini aşağıda ayrı ayrı inceleyeceğiz.
 
 ## 1. raunt — 2. bölümün yöntemleri
 

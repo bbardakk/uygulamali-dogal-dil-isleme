@@ -468,22 +468,26 @@ decision metrics.
 
 ## Tokenising Turkish, and the trap inside that
 
-Before either road, the text has to become tokens. @sec-text-as-data already
-warned that `str.lower()` is outright wrong in Turkish, left the fix to
-@sec-turkish-nlp and left the trace of the bug in a real corpus to this
-chapter. Here is that trap on the actual data.
+Before the count and embedding models, we define the preprocessing decisions
+both of them will use. We look at the Turkish-specific lowercasing that
+chapter 2 mentioned (@sec-text-as-data) on this data, and then show which
+characters the tokeniser keeps and which it throws away. The details of the
+conversion are in the Turkish NLP chapter (@sec-turkish-nlp).
 
 ```python
 "IYI".lower()          # → 'iyi'
 "İYİ".lower()          # → 'i̇yi̇'   (an i with an extra combining dot)
 ```
 
-Turkish has two `i` letters — dotted `i`/`İ` and dotless `ı`/`I` — and they
-are different letters, distinguishing different words. Python's `str.lower()`
-implements Unicode's *default* case mapping — the language-independent one —
-under which `I` becomes `i`. In Turkish, `I` must become `ı`, and `İ` must
-become `i`; that is one of the language-specific tailorings the standard
-defines and the default does not apply.
+In Turkish, dotted `i`/`İ` and dotless `ı`/`I` are different letters that
+distinguish different words. Lowercasing correctly spelled Turkish text needs
+the mapping `I → ı` and `İ → i`; that is one of the language-specific
+tailorings the Unicode standard defines and the default does not apply.
+Python's `str.lower()` implements Unicode's *default* case mapping — the
+language-independent one — and does not change with the locale: it produces
+`i` for `I`, and `i` plus a combining dot (U+0307) for `İ`. In text typed on
+an ASCII keyboard, this mapping alone cannot tell which letter the writer
+meant; we come back to that limit below.
 
 ```python
 TR_LOWER = str.maketrans({"I": "ı", "İ": "i"})
@@ -501,22 +505,34 @@ tr_lower("İYİ")        # → 'iyi'
 "İYİ"        i̇yi̇             iyi
 ```
 
-The default rule silently merges `ıyı` into `iyi` and produces a
-combining-dot hybrid for `İYİ` that matches nothing in your vocabulary. Both
-are wrong; both fail quietly; both cost you accuracy you will attribute to
-the model. **Case conversion is language-dependent, and a language-specific
+The default operation cannot turn correctly spelled `IYI` and `İYİ` into
+their Turkish lowercase forms: it makes `IYI` into `iyi`, and it leaves a
+combining dot in `İYİ`. Both run without an error, and both can break
+tokenisation and vocabulary matching. In this experiment's main score,
+however, no difference was measured between the two lowercasing routines,
+because the distributed data is already lowercase (shown below the round 1
+table); combining-dot damage that already exists needs a separate repair
+step. **Case conversion is language-dependent, and a language-specific
 lowercasing policy is part of the preprocessing and tokeniser contract.** (The operation here is lowercasing; Unicode *casefolding* is a
 related but distinct operation intended for caseless matching, and it has its
-own Turkish tailoring.)
+own Turkish tailoring.) One limit up front: `tr_lower` assumes correct
+spelling. In user text typed on an English keyboard, `IYI` may well mean "İYİ",
+and `tr_lower` then produces `ıyı`, a new error. What ASCII-typed text needs
+is the restoration of Turkish characters (deasciification; see
+@sec-turkish-nlp-normalization).
 
 ::: {.column-margin}
-This class of bug is why the "just lowercase it" step in an English tutorial
-is not portable advice. The equivalent traps elsewhere: German ß, Greek final
-sigma, and any language where case is not a bijection.
+Case mappings that depend on the locale or on the context matter in other
+languages too: in Greek, a sigma at the end of a word lowercases to `ς`, not
+`σ`. German `ß` belongs to a different operation: `"ß".lower()` leaves it
+unchanged, and it is casefolding that equates `ß` with `ss`
+(`"ß".casefold()` → `ss`). That is why the "just lowercase it" step in an
+English tutorial is not portable advice; but do not treat these examples as
+the same problem as Turkish `I`/`İ` either.
 :::
 
-With that fixed, the tokeniser is a regex over the Turkish alphabet, and the
-corpus looks like this:
+After Turkish lowercasing, the simple token pattern we use extracts unbroken
+runs of a chosen set of lowercase letters:
 
 ```python
 import re
@@ -525,10 +541,14 @@ def tokenize(s):
     return TOKEN_RE.findall(tr_lower(s))
 ```
 
-Say what this pattern deliberately throws away: it keeps letters only, so
-punctuation, digits and emoji all disappear. In product reviews `!!!`, `5/5`
-or an emoji can carry sentiment; this experiment does not model them. That is
-a simplification, not a measured decision.
+The pattern keeps only the listed letters: punctuation, digits and emoji all
+disappear, and circumflexed letters (`â`, `î`, `û`) and combining marks split
+a token. `hâlâ` or `kâr`, for example, does not survive as one token. In
+product reviews `!!!`, `5/5` or an emoji can carry sentiment; this experiment
+does not model them. The effect of these simplifications on the classification
+score was not measured; on your own corpus, compare alternative patterns.
+
+With this tokeniser the training corpus looks like this:
 
 ```text
 ### the training corpus, 40,000 reviews
@@ -542,18 +562,21 @@ longest                           296
 ```
 
 ::: {.column-margin}
-A careful reader will try subtracting these: 74,317 − 43,579 = 30,738, but
-round 1's table reports a 30,195-dimensional vocabulary. The **543** in
-between are words that occur two or more times in the corpus but all inside
-*one document*. `min_df` counts **document** frequency, not corpus frequency.
+Of the 74,317 distinct forms, 43,579 occur exactly once; the other 30,738 are
+seen at least twice. After `min_df=2` the vectoriser has 30,195 columns. We
+counted the **543** forms in between one by one: every one of them occurs two
+or more times in the corpus but only inside *one document*. `min_df` counts
+**document** frequency, not corpus frequency.
 :::
 
-**58.6% of the vocabulary appears exactly once.** @sec-embeddings measured
-50.0% on Turkish Wikipedia; user-generated review text is worse, because on
-top of Turkish morphology you now have typos, and every typo is a new type.
+**58.6% of the vocabulary appears exactly once.** In chapter 3's Turkish
+Wikipedia sample the rate was 50.0% (@sec-embeddings). The two corpora differ
+in topic, document length and preprocessing, so the gap cannot be put down to
+typos alone; the spelling variation of user-generated text is one possible
+factor.
 
-The morphology is visible if you group word forms by their first five
-characters:
+The variety of forms becomes visible if you group word forms by their first
+five characters:
 
 ```text
 ### distinct word forms sharing a five-character prefix
@@ -570,17 +593,29 @@ order they came in. "Dog bites man" and "man bites dog" become the same
 document. [↩](#term-bag-of-words){.term-back}
 :::
 
-Eight hundred and ninety-five distinct word forms — potentially 895 separate
-columns in a [bag-of-words](#gloss-bag-of-words){#term-bag-of-words .term-ref} model — for
-what a Turkish speaker experiences as one verb and the nouns and adjectives
-built from it [@oflazer1994two]. (A five-character prefix is a crude proxy: it
-also collects typos, and with `min_df=2` the forms seen in only one review
-never become columns at all — they are simply dropped.) Every column that does
-survive is estimated separately, from its own handful of examples, and
-nothing learned about `kullanışlı` transfers to `kullanıyorum`. That is
-chapter 3's complaint, stated in the units of chapter 2, on real data.
+The five-character prefix `kulla` appears in 895 distinct forms in this
+corpus. The group is not 895 inflections of one stem: it holds inflections,
+derivations and spelling variants together. In a
+[bag-of-words](#gloss-bag-of-words){#term-bag-of-words .term-ref} model every
+form that enters the training vocabulary becomes its own column (with
+`min_df=2` the forms seen in only one review never become columns at all —
+they are simply dropped). The coefficient learned for `kullanışlı` does not
+transfer by itself to the `kullanıyorum` column; other features in the same
+document, and regularisation, still affect how the model generalises.
 
-Hold on to the number 895. The entire case for embeddings rests on it.
+A five-character prefix is a crude look at the variety of Turkish word forms;
+it is not stem or morpheme analysis. The `kulla` group puts `kullanışlı` (an
+adjective), `kullanım` (a noun) and `kullanıcı` (a noun) side by side, and the
+same prefix also collects typos. So this table does not measure how many
+columns a real stem family is spread over. Finding that out takes
+morphological analysis and a separate look at the spelling variants; the
+analysis is classically done with finite-state transducers [@oflazer1994two].
+For Turkish morphological analysers and how to use them, see
+@sec-turkish-nlp-analysis and @sec-turkish-resources-tools.
+
+The 895-form prefix group is a sign of how far the number of word-level
+features can grow. Below we look separately at how this variety relates to
+coverage and to the classification score.
 
 ## Round 1 — the chapter-2 methods
 
