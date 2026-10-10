@@ -1816,16 +1816,15 @@ you need similarity search over millions of vectors": both are strong first
 candidates, not absolutes. Sparse lexical retrieval can be entirely standard
 over millions of documents, and dense models can be made explainable.
 
-## The failure they share
+## The limit the unigram bag and the average share: word order {#the-failure-they-share}
 
-It would be a poor summary to leave you with "counting won".
-
-Because here is a question the whole chapter has avoided. Both families were
-scored on the same test set, and the winner was 15 points ahead — so what does
-the *winner* still get wrong, and is it the same thing the loser gets wrong?
-
-It is. Both families fail in the same place, and that shared failure is the
-reason there is a Part II.
+Closing the chapter on "the count methods scored higher" would leave something
+out, because even the highest-scoring model still misses something. A unigram
+bag of words and a plain average of word vectors reduce some changes of order
+to the same document representation. Bigram TF-IDF can separate the short
+example below; but a fixed n-gram window stays limited on long-range
+relations. Let us separate which representation keeps which information about
+order; Part II starts from this limit.
 
 ```text
 ### two reviews, same words, opposite meaning
@@ -1836,13 +1835,15 @@ cosine, averaged fastText   1.0000
 cosine, tf-idf              1.0000
 ```
 
-Not approximately equal. **Identical** — exactly so in exact arithmetic, and
-up to floating-point rounding (far below the fourth decimal) in practice.
-TF-IDF sees the same four words with the same counts. Averaging sees the same
-four vectors summed in a different order, and addition is commutative. Neither representation contains the information that
-would distinguish a complaint about price from a complaint about quality,
-so no classifier built on top of them can ever recover it — not with more
-labels, not with a better classifier, not ever.
+The two reviews contain the same tokens the same number of times. Under the
+same tokenisation, the same vocabulary and the same weights, unigram TF-IDF
+and a plain average of word vectors both produce **the same vector** for the
+two reviews: addition does not depend on the order of its terms. That is why
+the cosine is not approximately but exactly 1 (in practice up to
+floating-point rounding, far below the fourth decimal). A classifier that
+takes only this vector as input cannot tell the two reviews apart — not with
+more labels, and not with a stronger classifier. A model that also sees the
+order, the bigrams or the original text can.
 
 Document-level sentiment can tolerate this loss better than aspect-level
 tasks; that most reviews are entirely positive or entirely negative is a
@@ -1850,31 +1851,40 @@ reasonable expectation, but this chapter did not measure it. For "which
 component is the customer complaining about", the same loss directly blocks
 the task.
 
-Label that 1.0000 precisely, because one family in this chapter escapes it.
-The two rows above are **unigram TF-IDF and averaged embeddings**. Word
-bigrams are a different matter: `kalite iyi`, `iyi fiyat`, `fiyat kötü` against
-`kalite kötü`, `kötü fiyat`, `fiyat iyi` share no bigram at all, so this
-chapter's *winning* model — word 1–2 grams — separates this pair cleanly when
-those features survive `min_df`. Widening the unit does buy local order.
+Label that 1.0000 precisely: the two rows above are **unigram TF-IDF and
+averaged embeddings**. Word bigrams are a different matter: `kalite iyi`,
+`iyi fiyat`, `fiyat kötü` against `kalite kötü`, `kötü fiyat`, `fiyat iyi`
+share no bigram at all. If those bigrams are in the training vocabulary, the
+unigram + bigram TF-IDF representations come apart. In this experiment four of
+the six bigrams are in the vocabulary (`fiyat kötü` and `kötü fiyat` did not
+pass the `min_df=2` threshold), and the cosine of the two reviews drops from
+1.0000 to 0.3247. Separate representations do not mean the classifier gives a
+different, or a correct, label: this model calls both reviews negative
+(probabilities of being positive 0.26 and 0.15). And if the threshold removes
+all the bigrams of a pair, the order information is lost for that pair too.
 
-What it does not buy is order in general. A bag of bigrams is still a bag: it
-sees a fixed window and nothing beyond it. In *the pump the engineer replaced
-last week failed*, five words separate `pump` from `failed`; only a 7-gram
-spans that link, and a 7-gram is so specific that it will almost never occur
-twice. Whatever window you fix, some dependency is longer, and the vocabulary
-cost of chasing it grows exponentially with the window size. To handle that the representation has to be a
-function of the *sequence*: something that reads `kalite`, then `iyi`, and produces a
-different state than if it had read `kalite`, then `kötü`. That takes us to
-sequence-aware encoders. Language models are one important way of learning
-such encoders from large amounts of unlabelled text, and @sec-language-models
-starts there — but a sequence-aware encoder does not have to be a language
-model. The mechanism that makes that state depend on every other word at once
-is attention, and it is @sec-transformers.
+A bag of bigrams keeps local order; it does not directly encode dependencies
+further apart. In *the pump the engineer replaced last week failed*, five
+words separate `pump` from `failed`. Covering that link with one contiguous
+n-gram takes a seven-token sequence, and patterns that long recur very rarely
+in small datasets. The number of possible n-gram types grows very fast with
+n; the vocabulary actually stored, though, is limited to the patterns seen
+and by the thresholds. For longer relations the representation has to be a
+function of the *sequence*: something that reads `kalite`, then `iyi`, and
+produces a different state than if it had read `kalite`, then `kötü`. That
+takes us to sequence-aware encoders. Language models are one important way of
+learning such encoders from large amounts of unlabelled text, and
+@sec-language-models starts there — but a sequence-aware encoder does not have
+to be a language model. The mechanism that makes that state depend on every
+other word at once is attention, the subject of the chapter after it
+(@sec-transformers).
 
-The bake-off has told us exactly what to demand of them: keep TF-IDF's
-sensitivity to the individual decisive word, keep embeddings' generalisation
-across word forms and their tiny label appetite, and add the one thing
-neither has — order.
+This experiment points at two useful properties to look for in the models
+that follow: the sensitivity of sparse representations to decisive local
+forms, and the ability of embeddings to build structure shared across word
+forms. Sequence-aware models aim to represent relations inside the document
+on top of those two. Which of these gains actually materialise still has to
+be measured on the target task.
 
 ## Intuition checks
 
