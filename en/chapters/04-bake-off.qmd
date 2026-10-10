@@ -1084,9 +1084,11 @@ classes. Telling the causes apart takes threshold and class-weight ablations.
 
 ## The out-of-vocabulary test
 
-Chapter 3 made a specific promise about Turkish, one that could be proved
-wrong: word2vec breaks
-on unseen word forms, fastText does not. Here is the measurement on the test
+We test chapter 3's subword claim (@sec-embeddings) in two stages: can
+fastText produce a vector for a form that is not in the learned word
+vocabulary, and is the vector it produces useful on this classification task?
+In word2vec, looking up an out-of-vocabulary form directly raises an error; the
+document average simply skips such tokens. Here is the measurement on the test
 set.
 
 ```text
@@ -1098,26 +1100,40 @@ outside the vocabulary           15,098     46.4% of forms
 test reviews with no usable token     7
 ```
 
-Chapter 3 measured 7.33% of tokens unseen on Turkish Wikipedia; reviews give
-7.27%. The two are close, but they are not the same measurement:
-@sec-embeddings built its vocabulary from every type in its 90% training
-portion, while this word2vec drops every hapax (`min_count=2`), and
-encyclopedia prose is not user-generated review text. Treat the agreement as a
-coincidence worth noticing rather than a confirmed prediction.
+The first rate is computed over tokens, the second over distinct forms. The
+seven reviews in the last line have no token in the vocabulary; in the
+word2vec average they get the zero vector. All seven are labelled positive,
+and the classifier calls the zero vector negative (intercept −0.83), so all
+seven are misclassified.
 
-The *type*-level numbers do not agree at all, and they are the ones that hurt.
-Chapter 3 saw 28.99% of types unseen; here **46.4% of the distinct word forms
-in the test set are not in the learned word2vec vocabulary**. Part of that gap
-is the definition, not the data: "never seen in training" and "not in the
-learned vocabulary" are different things, and the second also covers the
-words seen once and then cut by `min_count=2`. Either way, nearly half the
-distinct forms in *this* test set are, to word2vec, a `KeyError`; the rate
-will of course vary from batch to batch and domain to domain.
+Chapter 3's 7.33% token rate was about forms *never seen* in training. The
+7.27% here is the rate of test tokens *not in the vocabulary* of a word2vec
+trained with `min_count=2`; the two definitions differ. Counted with the same
+definition, the table splits like this: 5.10% of test tokens (11,681 tokens)
+never occur in training; 33.5% of distinct test forms (10,921 forms) were
+never seen, and another 4,177 forms were seen exactly once in training and
+cut by `min_count=2`. So the like-for-like counterparts of the 7.33% and
+28.99% in chapter 3's Wikipedia sample are 5.10% and 33.5% here. The corpus,
+the tokenisation and the sample size all differ, so the numbers can be read
+side by side but do not confirm each other.
 
-fastText's coverage of that same set is 100%, by construction — it sums
-character n-gram vectors, so any string of characters gets a vector. Here is
-what those vectors are like for word forms that are genuinely absent from
-training:
+**46.4% of the distinct word forms in the test set are not in the vocabulary
+word2vec learned.** Accessing those forms directly with `w2v.wv[word]` raises
+a `KeyError`; the document average skips them, so the consequence shows up
+not as an error but as lost information and the seven empty documents above.
+The rate varies from corpus to corpus and domain to domain.
+
+For every test form this experiment's tokeniser produces, gensim's fastText can
+build a vector: the vector of a form that is not in the vocabulary is
+assembled from the vectors in the buckets its character n-grams fall into.
+That takes vocabulary-lookup coverage to 100%; it does not guarantee the
+quality of the vector: an n-gram never seen in training falls either into a
+bucket that was never updated (still at its random initialisation) or into a
+hash bucket shared with other n-grams (`bucket=500_000`). We measured it: on
+average 84.5% of the 3-to-6-character n-grams of the 15,098 out-of-vocabulary
+test forms also occur in at least one vocabulary word; for 24.7% of the forms
+every n-gram is familiar, and for 4.8% fewer than half are. Here are the
+neighbours of the vectors for three forms that never occur in training:
 
 ```text
 ### nearest neighbours for unseen word forms
@@ -1134,14 +1150,14 @@ hızlıcana  (colloquial "nice and fast")
   fastText   hızlıca, hızlıda, hızlısı, hızlıydı, hızlı
 ```
 
-On coverage that is a clean win, exactly as advertised
-[@bojanowski2017enriching]: every unseen form lands next to its own stem
-family. But note that the first neighbour of `kargolanmamış` ("not yet
-shipped") is `kargolanmış` ("shipped"), which has lost the negative suffix —
-the first sign of the flaw shown below.
+On these three out-of-vocabulary queries fastText returns a vector and brings
+back neighbours related in spelling [@bojanowski2017enriching]. That the first
+neighbour of `kargolanmamış` ("not yet shipped") is `kargolanmış` ("shipped"),
+which carries no negative suffix, is an example of how similarity of form can
+overshadow the negation. It does not follow from three examples that every
+unseen form lands in a meaningful stem family.
 
-Now the finding that makes this chapter worth writing. Compare the two models
-on words that are *in* both vocabularies:
+Now compare the two models on words that are *in* both vocabularies:
 
 ```text
 ### nearest neighbours for a common word
@@ -1158,36 +1174,42 @@ kalitesiz  ("low quality")
              (…all forms of the same stem, including "kalitesi" = quality)
 ```
 
-**On these two words, word2vec's neighbours are semantic and fastText's are
-orthographic.** Two words are an illustration and not a measurement, and the
-honest version of this claim says so; the systematic version is a five-line
-job — sample a few hundred in-vocabulary words, and report what share of each
-model's top-5 neighbours share a long prefix with the query. This chapter did
-not run it. Asked
-what is like `kalitesiz` ("low quality"), word2vec answers with five other
-ways to say a product is bad. fastText answers with the word `kalitesi`
-("its quality") — which is not a synonym: it is a neutral noun form that has
-lost the negative polarity `-siz` carried, and it earns its place by sharing eight leading characters.
+**On these two queries word2vec's neighbours are related words from other
+stems, and fastText's are forms close in spelling.** Asked what is like
+`kalitesiz` ("low quality"), word2vec answers with five other ways to say a
+product is bad. fastText's list contains `kalitesi` ("its quality") — which is
+not a synonym: it is a noun form without the negation that `-siz` carries, and
+the first eight letters of `kalitesiz` are `kalitesi` itself.
 
-This is @sec-embeddings' stated weakness — *assumes spelling similarity
-implies meaning similarity* — becoming visible. The plausible explanation is
-that the subword budget which buys perfect coverage is spent on modelling
-morphology, and is taken from the budget that was modelling meaning. Read that
-as a hypothesis: a two-word example cannot establish it, and the systematic
-version is the prefix test described in the previous paragraph, which this
-chapter did not run.
+Two words are an illustration, not a measurement, so we measured the spelling
+side on a larger sample. From the 2,806 vocabulary words with at least six
+letters and at least 20 occurrences in training we drew 500 at random and
+looked at each model's top-5 neighbours. The share of neighbours that share
+the query's first five characters is 6.5% for word2vec and 60.7% for fastText
+(8.6% and 67.4% for the first four characters). So fastText returning
+neighbours close in spelling is a general tendency of this model. The
+measurement counts orthographic overlap only; it does not say how appropriate
+the neighbours are in meaning. That takes human judgement or a task-based
+measurement.
 
-If that hypothesis is right, it also explains why, having solved the
-out-of-vocabulary problem completely, fastText scores **61.36** where word2vec
-scores **61.39**. Coverage went to
-100%; macro-F1 was effectively unchanged in this run — a gap of 0.03 points,
-well inside the noise this chapter measures on itself.
+This is chapter 3's stated weakness (@sec-embeddings) — *assumes spelling
+similarity implies meaning similarity* — becoming visible. That the subword
+parameters are spent on modelling form, at the expense of information about
+meaning, is a plausible explanation; the measurements in this chapter do not
+prove it.
+
+In this run fastText's macro-F1 is **61.36** and word2vec's **61.39**: a
+difference of −0.03 points. Coverage went to 100%; macro-F1 did not change in
+any distinguishable way: the paired bootstrap interval from round 2 (−0.60 to
++0.77) contains zero, and the training seed alone moves each model by about
+0.5–0.8 points. The two models differ in more than coverage, so this result
+cannot be put down to out-of-vocabulary coverage alone.
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">What subwords buy, and what they cost</div>
 <svg viewBox="0 0 760 286" style="max-width:740px" role="img"
-     aria-label="word2vec covers 53.6 percent of test word forms with semantic neighbours; fastText covers 100 percent but its neighbours are inflections of the same stem, and downstream macro-F1 is unchanged at 61.4.">
+     aria-label="In this experiment word2vec offers a direct word vector for 53.6 percent of the distinct test forms; gensim fastText can build a vector for every test form the tokeniser produces. The reported macro-F1 scores of the two models are 61.39 and 61.36. This comparison does not, by itself, measure the semantic quality of the vectors.">
   <defs>
     <marker id="oov-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0.5 L7.5,4 L0,7.5 z" class="head"/>
@@ -1206,14 +1228,14 @@ well inside the noise this chapter measures on itself.
   <!-- fastText bar -->
   <text x="20" y="86" class="t-sm t-b">fastText</text>
   <rect x="112" y="72" width="628" height="20" rx="4" class="box-accent"/>
-  <text x="426" y="87" class="t-xs t-mid t-accent t-b">100% HAS A VECTOR — ANY STRING OF CHARACTERS DOES</text>
+  <text x="426" y="87" class="t-xs t-mid t-accent t-b">A VECTOR IS BUILT FOR 100% OF THE FORMS IN THIS TEST</text>
 
   <line x1="20" y1="112" x2="740" y2="112" class="ln-thin"/>
 
   <text x="20" y="134" class="t-xs t-muted">BUT ASK EACH MODEL WHAT IS SIMILAR TO <tspan class="t-mono t-b">kalitesiz</tspan> — "LOW QUALITY"</text>
 
   <rect x="20" y="146" width="350" height="94" rx="9" class="box-navy"/>
-  <text x="36" y="167" class="t-sm t-b t-navy">word2vec — semantic</text>
+  <text x="36" y="167" class="t-sm t-b t-navy">word2vec — here, neighbours from other stems</text>
   <g class="t-mono t-sm">
     <text x="36" y="189">dandik · kullanışsız · dayanıksız</text>
     <text x="36" y="207">uyduruk · kırılacak</text>
@@ -1221,12 +1243,12 @@ well inside the noise this chapter measures on itself.
   <text x="36" y="228" class="t-xs t-muted">FIVE OTHER WAYS TO SAY "BAD" — DIFFERENT STEMS</text>
 
   <rect x="390" y="146" width="350" height="94" rx="9" class="box-accent"/>
-  <text x="406" y="167" class="t-sm t-b t-accent">fastText — orthographic</text>
+  <text x="406" y="167" class="t-sm t-b t-accent">fastText — here, neighbours close in spelling</text>
   <g class="t-mono t-sm">
     <text x="406" y="189">kalitesizmiş · kalitesizliği</text>
     <text x="406" y="207">kalitel · <tspan class="t-rose t-b">kalitesi</tspan> · kalitesindeki</text>
   </g>
-  <text x="406" y="228" class="t-xs t-muted">SAME STEM — INCLUDING <tspan class="t-rose t-b">kalitesi</tspan>, "ITS QUALITY", POLARITY LOST</text>
+  <text x="406" y="228" class="t-xs t-muted"><tspan class="t-rose t-b">kalitesi</tspan> ("ITS QUALITY") IS IN THE LIST: NO NEGATIVE SUFFIX</text>
 
   <line x1="380" y1="256" x2="380" y2="240" class="ln-thin"/>
   <text x="380" y="272" class="t-sm t-mid t-b">Coverage 53.6% → 100%. Downstream macro-F1: 61.39 → 61.36.</text>
@@ -1234,35 +1256,43 @@ well inside the noise this chapter measures on itself.
 ```
 
 ::: {.fig-cap}
-The out-of-vocabulary problem is real, fastText solves it completely, and on
-this task solving it changes nothing. Coverage is a property of the
-representation; accuracy is a property of the representation *and the task*.
-An [intrinsic](#gloss-intrinsic-extrinsic-evaluation){#term-intrinsic-extrinsic-evaluation .term-ref} fix only pays if the thing it fixed was what the task was
-limited by — here, it was not.
+fastText could build a vector for every one of these test forms; in this run
+macro-F1 did not change in any distinguishable way. Producing a vector does
+not guarantee that the new form is represented with the right meaning. Measure
+[intrinsic](#gloss-intrinsic-extrinsic-evaluation){#term-intrinsic-extrinsic-evaluation .term-ref}
+properties, coverage and task performance separately; when the score does not
+move, look at representation quality, pooling and the classifier settings
+together.
 :::
 ::::
 
 ::: {#gloss-intrinsic-extrinsic-evaluation .column-margin .term-gloss}
-**intrinsic / extrinsic evaluation** — *intrinsic* scores the
-representation on its own terms, such as how many words it covers.
-*Extrinsic* scores it on the job you actually need doing. This chapter is
-a long argument that only the second one settles anything. [↩](#term-intrinsic-extrinsic-evaluation){.term-back}
+**intrinsic / extrinsic evaluation** — *intrinsic* measurements look at
+properties of the representation in its own space, such as similarity or
+analogy; vocabulary coverage is a separate measure of usability. *Extrinsic*
+(task-based) evaluation measures success on the target job, such as
+classification. The two answer different questions; the choice of model is
+decided by the target task and the conditions of use. [↩](#term-intrinsic-extrinsic-evaluation){.term-back}
 :::
 
-One more diagnostic, because it corrects a natural misreading. Being *in*
-the vocabulary is not the same as being *well estimated*:
+One more diagnostic: being in the vocabulary does not by itself show that a
+representation is reliable. Here are the two models' neighbours for
+`kalitesizmiş`, which occurs only twice in training:
 
 ```text
-### kalitesizmiş — in the word2vec vocabulary, seen a handful of times
+### kalitesizmiş — in the word2vec vocabulary, seen twice in training
   word2vec   ayakkabıların, kaymak, yapışır, temizlenmemiş, zorlamadım
              (of the shoes, cream, it sticks, uncleaned, I did not force)
   fastText   kalitesiz, kalitesizliği, kalitesinide, kalitesi
 ```
 
-word2vec has a vector for this word and the vector is noise. The 46.4%
-out-of-vocabulary rate is therefore an *understatement* of the problem: past
-the vocabulary boundary you get an error, which is at least honest, but just
-inside it you get confident nonsense.
+In this example word2vec's neighbours reflect neither the sentiment nor the
+form of the word; fastText brings back forms close in spelling. Past the
+vocabulary boundary a direct lookup raises a clear error; just inside it, a
+rarely seen form can return a poorly estimated vector without any error. So
+the 46.4% out-of-vocabulary rate may not show the whole of the representation
+problem. A general conclusion about the quality of rare forms takes a wider
+evaluation by frequency band.
 
 ## Why the dense methods lost
 

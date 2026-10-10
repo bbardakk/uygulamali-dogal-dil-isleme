@@ -1074,9 +1074,11 @@ ablasyonları gerekir.
 
 ## Sözlük dışı (out-of-vocabulary) sınavı
 
-3\. bölüm Türkçe hakkında yanlışlanabilir, somut bir söz vermişti: word2vec
-görülmemiş kelime biçimleri için vektör üretemez, fastText üretir. Test kümesi
-üzerindeki ölçüm şöyle.
+3\. bölümdeki alt kelime iddiasını (@sec-gommeler) iki aşamada sınayacağız:
+öğrenilmiş kelime sözlüğünde bulunmayan bir biçim için fastText bir vektör
+üretebiliyor mu, ve ürettiği vektör bu sınıflandırma görevinde işe yarıyor mu?
+word2vec'te sözlük dışı bir biçimi doğrudan sorgulamak hata verir; belge
+ortalaması ise böyle token'ları atlar. Test kümesi üzerindeki ölçüm şöyle.
 
 ```text
 ### coverage of the 10,000 test reviews
@@ -1087,28 +1089,39 @@ outside the vocabulary           15,098     46.4% of forms
 test reviews with no usable token     7
 ```
 
-3\. bölüm, Türkçe Wikipedia'da token'ların %7,33'ünün görülmemiş olduğunu
-ölçmüştü; yorumlarda bu oran %7,27. İkisi birbirine yakın ama aynı ölçüm değiller:
-@sec-gommeler sözlüğünü verinin %90'lık eğitim kısmındaki her kelime biçiminden (tür, type) kuruyordu,
-buradaki word2vec ise her hapax'ı düşürüyor (`min_count=2`) ve ansiklopedi
-nesri, kullanıcı üretimi yorum metni değil. Uyuşmayı doğrulanmış bir öngörü
-değil, fark edilmeye değer bir tesadüf olarak görün.
+İlk oran token'lar, ikincisi farklı biçimler üzerinden hesaplanıyor. Son
+satırdaki yedi yorumun sözlükte hiç token'ı yok; word2vec ortalamasında bu
+yorumlar sıfır vektörü alıyor. Yedisi de olumlu etiketli ve sınıflandırıcı
+sıfır vektörüne olumsuz diyor (sabit terim −0,83); yani yedisi de yanlış
+sınıflanıyor.
 
-*Kelime biçimi* (tür) düzeyindeki sayılar ise hiç uyuşmuyor ve can yakan asıl onlar. 3. bölüm
-kelime biçimlerinin %28,99'unu görülmemiş bulmuştu; burada **test kümesindeki farklı
-kelime biçimlerinin %46,4'ü word2vec'in öğrendiği sözlükte yok**. Bu farkın bir
-kısmı veriden değil tanımdan geliyor: "eğitimde hiç görülmemiş" ile "öğrenilmiş
-sözlükte yok" aynı şey değil; ikincisi, bir kez görülüp `min_count=2` eşiği
-yüzünden atılan kelimeleri de kapsıyor. Her iki durumda da *bu* test kümesinin
-farklı biçimlerinin neredeyse yarısı, word2vec açısından bir `KeyError`; oran
-elbette derlemden derleme ve alandan alana değişir.
+3\. bölümdeki %7,33'lük token oranı, eğitimde *hiç görülmemiş* biçimlerle
+ilgiliydi. Buradaki %7,27 ise `min_count=2` ile eğitilmiş word2vec'in
+*sözlüğünde bulunmayan* test token'larının oranı; iki tanım farklı. Aynı
+tanımla saydığımızda tablo şöyle ayrışıyor: test token'larının %5,10'u (11.681
+token) eğitimde hiç geçmiyor; farklı test biçimlerinin %33,5'i (10.921 biçim)
+hiç görülmemiş, 4.177 biçim de eğitimde yalnızca bir kez görülüp `min_count=2`
+eşiğiyle atılmış. Yani 3. bölümün Wikipedia örneklemindeki %7,33 ve %28,99'un
+buradaki benzer tanımlı karşılıkları %5,10 ve %33,5. Derlem, tokenleştirme ve
+örneklem büyüklüğü farklı olduğu için bu sayılar yan yana okunabilir, ama
+birbirini doğrulamaz.
 
-fastText'in aynı küme üzerindeki kapsaması ise tasarımı gereği %100 — karakter
-n-gram vektörlerini topladığı için herhangi bir karakter dizisi bir vektör
-alır. Ama %100 kapsama, %100 anlamlı vektör demek değil: eğitimde hiç
-görülmemiş bir n-gram, ya eğitilmemiş (rastgele başlatılmış) bir kovaya ya da
-başka n-gram'larla paylaşılan bir hash kovasına (`bucket=500_000`) düşer. Eğitimde gerçekten hiç geçmeyen kelime biçimleri için o vektörlerin
-nasıl olduğuna bakın:
+**Farklı test biçimlerinin %46,4'ü word2vec'in öğrendiği sözlükte yok.** Bu
+biçimlere doğrudan `w2v.wv[kelime]` ile erişmek `KeyError` verir; belge
+ortalaması onları atladığı için sonuç bir hata olarak değil, bilgi kaybı ve
+yukarıdaki yedi boş belge olarak görünür. Oran derlemden derleme ve alandan
+alana değişir.
+
+Bu deneydeki tokenizer'ın ürettiği bütün test biçimleri için gensim'in fastText'i
+bir vektör kurabiliyor: sözlükte olmayan bir biçimin vektörü, karakter
+n-gram'larının düştüğü kovalardaki (bucket) vektörlerden oluşturulur. Bu,
+sözlük sorgusu kapsamasını %100'e çıkarır; vektörün niteliğini ise garanti
+etmez: eğitimde hiç görülmemiş bir n-gram, ya hiç güncellenmemiş (rastgele
+başlatılmış) bir kovaya ya da başka n-gram'larla paylaşılan bir hash kovasına
+(`bucket=500_000`) düşer. Ölçtük: sözlük dışı 15.098 test biçiminin 3–6
+karakterlik n-gram'larının ortalama %84,5'i sözlükteki en az bir kelimede de
+geçiyor; biçimlerin %24,7'sinde n-gram'ların hepsi, %4,8'inde yarısından azı
+tanıdık. Eğitimde hiç geçmeyen üç biçim için vektörlerin komşularına bakalım:
 
 ```text
 ### nearest neighbours for unseen word forms
@@ -1125,13 +1138,14 @@ hızlıcana  (günlük konuşma dili)
   fastText   hızlıca, hızlıda, hızlısı, hızlıydı, hızlı
 ```
 
-Kapsama açısından bu, vaat edildiği gibi net bir galibiyet
-[@bojanowski2017enriching]: görülmemiş her biçim kendi kök ailesinin yanına
-yerleşiyor. Ama dikkat: `kargolanmamış`'ın ilk komşusu, olumsuzluk ekini
-yitirmiş `kargolanmış`. Aşağıda göreceğimiz kusurun ilk işareti bu.
+Bu üç sözlük dışı sorguda fastText bir vektör döndürüyor ve yazılışça ilişkili
+komşular getiriyor [@bojanowski2017enriching]. `kargolanmamış`'ın ilk
+komşusunun olumsuzluk eki taşımayan `kargolanmış` olması, biçim benzerliğinin
+olumsuzluk ayrımını gölgeleyebildiğini gösteren bir örnek. Bütün görülmemiş
+biçimlerin anlamlı bir kök ailesine yerleştiği sonucu bu üç örnekten çıkmaz.
 
-Şimdi bölümün asıl bulgusuna gelelim. İki modeli, her iki
-sözlükte de *bulunan* kelimeler üzerinde karşılaştırın:
+Şimdi iki modeli, her iki sözlükte de *bulunan* kelimeler üzerinde
+karşılaştıralım:
 
 ```text
 ### nearest neighbours for a common word
@@ -1148,36 +1162,40 @@ kalitesiz
              (…hepsi aynı kökün biçimleri, "kalitesi" dâhil)
 ```
 
-**Bu iki kelimede word2vec'in komşuları anlamsal, fastText'inkiler yazımsal.** İki kelime bir ölçüm değil, bir örnektir.
-Sistematik hâli beş satırlık bir iş: sözlükte
-bulunan birkaç yüz kelimeden örnek alın ve her modelin ilk 5 komşusunun ne
-kadarının sorgu kelimesiyle uzun bir ön eki paylaştığını bildirin; bu bölüm
-bunu çalıştırmadı. `kalitesiz`
-neye benzer diye sorulduğunda word2vec, bir ürünün kötü olduğunu söylemenin
-beş ayrı yoluyla cevap veriyor. fastText ise `kalitesi` kelimesiyle cevap
-veriyor — ki bu bir eşanlamlı değil: `-siz` ekinin taşıdığı olumsuz kutbu
-yitirmiş, nötr bir isim biçimi. Üstelik vurucu nokta tam burada: `kalitesiz`'in
-ilk sekiz harfi zaten `kalitesi`'nin kendisi; listeye girmesini sağlayan da
-bu ortak ön ek.
+**Bu iki sorguda word2vec'in komşuları başka köklerden ilişkili kelimeler,
+fastText'in komşuları ise yazılışça yakın biçimler.** `kalitesiz` neye benzer
+diye sorulduğunda word2vec, bir ürünün kötü olduğunu söylemenin beş ayrı
+yoluyla cevap veriyor. fastText'in listesinde ise `kalitesi` var — bu bir
+eşanlamlı değil: `-siz` ekinin taşıdığı olumsuzluğu taşımayan bir isim biçimi;
+`kalitesiz`'in ilk sekiz harfi zaten `kalitesi`'nin kendisi.
 
-@sec-gommeler'ün açıkça söylediği zayıflık —
-*benzer yazılışın benzer anlam demek olduğunu varsayar* — burada gözle görülür
-hâle geliyor. Akla yatkın açıklama şu: kusursuz kapsamayı sağlayan alt kelime
-bütçesi biçimbilimi modellemeye harcanıyor ve bu bütçe, anlamı modelleyen
-bütçeden kesiliyor. Bunu bir hipotez olarak okuyun — iki kelimelik bir örnek
-onu doğrulamaya yetmez; sistematik sınaması bir önceki paragrafta tarif edilen
-ön ek testidir.
+İki kelime bir örnektir, ölçüm değil; bu yüzden yazılış tarafını daha geniş bir
+örneklemde ölçtük. Sözlükte bulunan, en az altı harfli ve eğitimde en az 20 kez
+geçen 2.806 kelimeden rastgele 500'ünü alıp her modelin ilk 5 komşusuna baktık.
+Sorgu kelimesiyle ilk beş karakteri ortak olan komşuların oranı word2vec'te
+%6,5, fastText'te %60,7 (ilk dört karakter için %8,6 ve %67,4). Yani
+fastText'in yazılışça yakın komşular getirmesi bu modelde genel bir eğilim. Bu
+ölçüm yalnızca yazımsal örtüşmeyi sayar; komşuların anlamca ne kadar uygun
+olduğunu söylemez. Onun için insan değerlendirmesi ya da görev temelli bir
+ölçüm gerekir.
 
-Bu hipotez doğruysa, OOV problemini tamamen çözen fastText'in neden
-**61,36**, word2vec'in ise **61,39** aldığını da açıklar. Kapsama %100'e çıktı;
-macro-F1 ise bu koşuda fiilen değişmedi — 0,03 puanlık bir fark, bu bölümün
-kendi üzerinde ölçtüğü gürültünün epey içinde.
+3\. bölümün açıkça söylediği zayıflık (@sec-gommeler) — *benzer yazılışın benzer
+anlam demek olduğunu varsayar* — burada gözle görülür hâle geliyor. Alt kelime
+parametrelerinin biçimi modellemeye harcandığı ve bunun anlam bilgisinden
+götürdüğü akla yatkın bir açıklama; ama bu bölümün ölçümleri onu kanıtlamıyor.
+
+Bu koşuda fastText'in macro-F1'i **61,36**, word2vec'inki **61,39**: fark −0,03
+puan. Kapsama %100'e çıktı; macro-F1 ise ayırt edilebilir biçimde değişmedi:
+2. raunttaki eşleştirilmiş bootstrap aralığı (−0,60 ile +0,77) sıfırı içeriyor
+ve tek başına eğitim tohumu her iki modeli yaklaşık 0,5–0,8 puan oynatıyor. İki
+model kapsama dışında da farklı olduğu için bu sonucu yalnızca OOV kapsamasına
+bağlayamayız.
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">Alt kelimeler ne satın alıyor, karşılığında ne ödetiyor</div>
 <svg viewBox="0 0 760 286" style="max-width:740px" role="img"
-     aria-label="word2vec test kümesindeki kelime biçimlerinin yüzde 53,6'sını anlamsal komşularla kapsıyor; fastText yüzde 100'ünü kapsıyor ama komşuları aynı kökün çekimleri ve sonuçtaki macro-F1 61,4'te değişmeden kalıyor.">
+     aria-label="Bu deneyde word2vec, farklı test biçimlerinin yüzde 53,6'sı için doğrudan bir kelime vektörü sunuyor; gensim fastText, tokenizer'ın ürettiği bütün test biçimleri için bir vektör kurabiliyor. İki modelin bildirilen macro-F1 skorları sırasıyla 61,39 ve 61,36. Bu karşılaştırma vektörlerin anlamsal niteliğini tek başına ölçmüyor.">
   <defs>
     <marker id="oov-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0.5 L7.5,4 L0,7.5 z" class="head"/>
@@ -1196,14 +1214,14 @@ kendi üzerinde ölçtüğü gürültünün epey içinde.
   <!-- fastText bar -->
   <text x="20" y="86" class="t-sm t-b">fastText</text>
   <rect x="112" y="72" width="628" height="20" rx="4" class="box-accent"/>
-  <text x="426" y="87" class="t-xs t-mid t-accent t-b">%100'ÜNÜN VEKTÖRÜ VAR — HERHANGİ BİR KARAKTER DİZİSİNİN DE</text>
+  <text x="426" y="87" class="t-xs t-mid t-accent t-b">BU TESTTEKİ BİÇİMLERİN %100'Ü İÇİN VEKTÖR KURULUYOR</text>
 
   <line x1="20" y1="112" x2="740" y2="112" class="ln-thin"/>
 
   <text x="20" y="134" class="t-xs t-muted">AMA HER İKİ MODELE DE <tspan class="t-mono t-b">kalitesiz</tspan> KELİMESİNE NEYİN BENZEDİĞİNİ SORUN</text>
 
   <rect x="20" y="146" width="350" height="94" rx="9" class="box-navy"/>
-  <text x="36" y="167" class="t-sm t-b t-navy">word2vec — anlamsal</text>
+  <text x="36" y="167" class="t-sm t-b t-navy">word2vec — bu örnekte başka köklerden komşular</text>
   <g class="t-mono t-sm">
     <text x="36" y="189">dandik · kullanışsız · dayanıksız</text>
     <text x="36" y="207">uyduruk · kırılacak</text>
@@ -1211,12 +1229,12 @@ kendi üzerinde ölçtüğü gürültünün epey içinde.
   <text x="36" y="228" class="t-xs t-muted">"KÖTÜ" DEMENİN BEŞ AYRI YOLU — KÖKLERİ FARKLI</text>
 
   <rect x="390" y="146" width="350" height="94" rx="9" class="box-accent"/>
-  <text x="406" y="167" class="t-sm t-b t-accent">fastText — yazımsal</text>
+  <text x="406" y="167" class="t-sm t-b t-accent">fastText — bu örnekte yazılışça yakın komşular</text>
   <g class="t-mono t-sm">
     <text x="406" y="189">kalitesizmiş · kalitesizliği</text>
     <text x="406" y="207">kalitel · <tspan class="t-rose t-b">kalitesi</tspan> · kalitesindeki</text>
   </g>
-  <text x="406" y="228" class="t-xs t-muted">AYNI KÖK — <tspan class="t-rose t-b">kalitesi</tspan> DAHİL, KUTUP YİTTİ</text>
+  <text x="406" y="228" class="t-xs t-muted"><tspan class="t-rose t-b">kalitesi</tspan> DE LİSTEDE: OLUMSUZLUK EKİ YOK</text>
 
   <line x1="380" y1="256" x2="380" y2="240" class="ln-thin"/>
   <text x="380" y="272" class="t-sm t-mid t-b">Kapsama %53,6 → %100. Aşağı akıştaki macro-F1: 61,39 → 61,36.</text>
@@ -1224,34 +1242,41 @@ kendi üzerinde ölçtüğü gürültünün epey içinde.
 ```
 
 ::: {.fig-cap}
-Sözlük dışı kelime (OOV) problemi gerçek, fastText onu tamamen çözüyor ve bu görevde
-çözmesi hiçbir şeyi değiştirmiyor. Kapsama temsilin bir özelliğidir; doğruluk
-ise temsilin *ve görevin* özelliğidir. [İçsel (intrinsic)](#gloss-intrinsic-extrinsic-evaluation){#term-intrinsic-extrinsic-evaluation .term-ref}
-bir düzeltme, ancak düzelttiği şey görevi kısıtlayan şeyse işe yarar — burada
-değildi.
+Bu test biçimlerinin hepsi için fastText bir vektör kurabildi; bu koşuda
+macro-F1 ise ayırt edilebilir biçimde değişmedi. Vektör üretmek, yeni biçimin
+doğru anlamla temsil edildiğini garanti etmez.
+[İçsel (intrinsic)](#gloss-intrinsic-extrinsic-evaluation){#term-intrinsic-extrinsic-evaluation .term-ref}
+ölçümleri, kapsamayı ve görev başarısını ayrı ayrı ölçün; skor değişmediğinde
+temsil kalitesini, havuzlamayı ve sınıflandırıcı ayarlarını birlikte inceleyin.
 :::
 ::::
 
 ::: {#gloss-intrinsic-extrinsic-evaluation .column-margin .term-gloss}
 **intrinsic / extrinsic evaluation** (içsel / dışsal değerlendirme) —
-*intrinsic*, temsili kendi ölçütleriyle puanlar; kaç kelimeyi kapsadığı gibi.
-*Extrinsic* ise gerçekten yaptırmanız gereken iş üzerinde puanlar. Bu bölüm,
-yalnızca ikincisinin bir şeyi karara bağladığına dair uzun bir savdır. [↩](#term-intrinsic-extrinsic-evaluation){.term-back}
+*intrinsic* ölçümler, temsilin benzerlik ya da analoji gibi kendi uzayındaki
+özelliklerini inceler; sözlük kapsaması bunlardan ayrı bir kullanılabilirlik
+ölçüsüdür. *Extrinsic* (görev temelli) değerlendirme, sınıflandırma gibi hedef
+işteki başarıyı ölçer. İkisi farklı soruları yanıtlar; model seçimini hedef
+görev ve kullanım koşulları belirler. [↩](#term-intrinsic-extrinsic-evaluation){.term-back}
 :::
 
-Doğal bir yanlış okumayı düzelttiği için bir tanılama daha. Sözlüğün *içinde*
-olmak, *iyi kestirilmiş* olmakla aynı şey değildir:
+Bir tanılama daha: sözlükte bulunmak, temsilin güvenilir olduğunu tek başına
+göstermez. Eğitimde yalnızca iki kez geçen `kalitesizmiş` için iki modelin
+komşuları:
 
 ```text
-### kalitesizmiş — in the word2vec vocabulary, seen a handful of times
+### kalitesizmiş — in the word2vec vocabulary, seen twice in training
   word2vec   ayakkabıların, kaymak, yapışır, temizlenmemiş, zorlamadım
   fastText   kalitesiz, kalitesizliği, kalitesinide, kalitesi
 ```
 
-word2vec'in bu kelime için bir vektörü var ve o vektör gürültüden ibaret.
-Dolayısıyla %46,4'lük OOV oranı problemi *olduğundan küçük*
-gösteriyor: sözlük sınırının ötesinde bir hata alırsınız, ki bu en azından
-açık bir hatadır; ama sınırın hemen berisinde kendinden emin bir saçmalık alırsınız.
+Bu örnekte word2vec'in komşuları ne kelimenin duygusunu ne biçimini yansıtıyor;
+fastText yazılışça yakın biçimler getiriyor. Sözlük sınırının ötesinde doğrudan
+sorgu açık bir hata verir; sınırın hemen berisindeki az görülmüş bir biçim ise
+hata vermeden zayıf kestirilmiş bir vektör döndürebilir. Dolayısıyla %46,4'lük
+OOV oranı temsil sorununun tamamını göstermeyebilir. Nadir biçimlerin temsil
+kalitesi hakkında genel bir sonuç için, sıklık gruplarına göre daha geniş bir
+değerlendirme gerekir.
 
 ## Yoğun yöntemler neden kaybetti
 
