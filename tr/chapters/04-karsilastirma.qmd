@@ -340,9 +340,11 @@ word2vec ortalaması 61,39 → 62,89; fastText ortalaması 61,36 → 62,84; doc2
 55,13 → 61,99.
 :::
 
-## Hesaplayacağınız ilk sayının içindeki tuzak
+## İlk skorun sakladığı sınıf hatası {#hesaplayacağınız-ilk-sayının-içindeki-tuzak}
 
-Yöntemlere geçmeden önce kısa bir yan yola sapıyoruz. Bu yan yol, bölümdeki her tabloyu nasıl okuyacağınızı belirleyecek ve akla gelebilecek en tembel modelle başlıyor.
+Yöntemleri karşılaştırmadan önce, dengesiz bir test kümesinde doğruluğun hangi
+hataları görünmez kılabildiğini, hep çoğunluk sınıfını seçen en basit kuralla
+göstereceğiz.
 
 Her yoruma "olumlu" deyin. Metne hiç bakmayın.
 
@@ -351,13 +353,10 @@ Her yoruma "olumlu" deyin. Metne hiç bakmayın.
 accuracy   93.68%
 ```
 
-Paydaşın kulağına gidecek sayı budur ve çözülmüş bir problem gibi durur.
-Oysa bu, girdisi olmayan bir modeldir. Ömründe tek bir yorum okumamıştır,
-okumayacaktır da; %93,68 oranında haklıdır, çünkü test kümesinin %93,68'i
-olumludur.
-
-Başarısızlık doğrulukta görünmez, ama karışıklık matrisini (confusion matrix)
-yazdığınız anda gözünüze batar:
+Yalnızca "olumlu" tahmini veren bu kural, yorum metnini hiç kullanmadan %93,68
+doğruluk elde eder; çünkü test kümesinin %93,68'i olumludur. Bu skor, kuralın
+olumsuz yorumları bulup bulamadığını göstermez. Onu karışıklık matrisi
+(confusion matrix) gösterir:
 
 ```text
 ### majority baseline, in full
@@ -367,14 +366,16 @@ yazdığınız anda gözünüze batar:
 
 precision (neg)   undefined — it never predicts negative
 recall    (neg)   0.0%       — it finds none of the 632
-F1        (neg)   0.00
+F1        (neg)   0.00       — 2TP / (2TP + FP + FN) = 0 / 632
 F1        (pos)   96.74
 macro-F1          48.37
 ```
 
-**Macro-F1, sınıf başına F1 skorlarının ortalamasıdır**; büyüklüğüne
-bakmaksızın her sınıfa eşit ağırlık verir. İşe yaramaz modeli işe yaramaz
-gösteren şey bu tek tercihtir: 93,68 yerine 48,37.
+**Macro-F1, sınıf başına F1 skorlarının eşit ağırlıklı ortalamasıdır**;
+büyüklüğüne bakmaksızın her sınıfa aynı ağırlığı verir. Çoğunluk kuralı olumsuz
+sınıfta F1 = 0 aldığı için macro-F1'i 48,37'de kalır. %93,68'lik doğruluğun
+gizlediği eksiklik böylece görünür olur. Gerçek bir sistemde kullanılacak karar
+metriğini ise hata maliyetlerine göre ayrıca seçmek gerekir.
 
 ::: {.callout-note collapse="true"}
 ## Neden macro-F1 — gerçek aritmetiğiyle adım adım
@@ -389,14 +390,20 @@ $$
 \text{precision} = \frac{TP}{TP + FP}, \qquad
 \text{recall} = \frac{TP}{TP + FN}, \qquad
 F_1 = \frac{2 \cdot \text{precision} \cdot \text{recall}}{\text{precision} + \text{recall}}
+    = \frac{2\,TP}{2\,TP + FP + FN}
 $$
 
 $F_1$, precision (kesinlik) ile recall'un (duyarlılık) *harmonik*
-ortalamasıdır ve harmonik ortalama, pazarlığa gelmeyen ortalamadır. Precision
-1,00 ile recall 0,00'ın aritmetik ortalaması gayet saygın bir 0,50 çıkar;
-harmonik ortalaması 0,00'dır. Birini tamamen feda ederek diğerinden iyi skor
-alan bir modelin eli boş kalır — nadir bir sınıfın özetinden isteyeceğiniz
-davranış budur.
+ortalamasıdır. İkisinden biri sıfıra indiğinde $F_1$ de sıfır olur: precision
+1,00 ve recall 0,00 ise aritmetik ortalama 0,50, $F_1$ ise 0,00'dır. Bu
+özellik, bir sınıftaki kaçırmaların tek bir yüksek precision değeriyle
+gizlenmesini önler.
+
+Sıfır paydaya dikkat edin. Sınıf hiç tahmin edilmediyse ($TP + FP = 0$)
+precision tanımsızdır; $F_1$ ise sayımlarla yazılan ikinci biçimden yine
+hesaplanır. $F_1$ ancak $TP = FP = FN = 0$ olduğunda, yani sınıfın ne gerçek ne
+tahmin edilmiş örneği varken tanımsız kalır; scikit-learn o durumda ne
+döndüreceğini `zero_division` argümanından okur.
 
 Macro-F1 ardından bu skorların sınıflar üzerinden ortalamasını alır:
 
@@ -404,8 +411,8 @@ $$
 \text{macro-}F_1 = \frac{1}{K}\sum_{k=1}^{K} F_1^{(k)}
 $$
 
-Çoğunluk baseline'ı için, tanımsız precision'ı 0 sayma uzlaşımıyla
-(scikit-learn'de `zero_division` argümanı) $F_1^{(\text{neg})} = 0$ ve
+Çoğunluk baseline'ında olumsuz sınıf için $TP = 0$, $FP = 0$ ve $FN = 632$
+olduğundan $F_1^{(\text{neg})} = 0/632 = 0$ ve
 
 $$
 F_1^{(\text{pos})} = \frac{2 \cdot 0{,}9368 \cdot 1{,}0}{0{,}9368 + 1{,}0} = 0{,}9674,
@@ -416,27 +423,27 @@ dolayısıyla macro-F1 $= (0 + 0{,}9674)/2 = 0{,}4837$.
 **Kütüphaneniz hangi F1'i bildiriyor?** Tek başına "F1" belirsizdir;
 scikit-learn'de bunu `average` argümanı belirler. İki sınıf için varsayılan
 olan `average="binary"` yalnızca 1 numaralı sınıfın F1'ini verir — burada bu
-*çoğunluk* sınıfı olan olumlu sınıftır, yani hiçbir şey yapmayan model 96,74
-alır. `average="micro"` bölmeden önce bütün sayımları havuzda toplar ve tek
-etiketli sınıflandırmada bu, doğruluğun ta kendisidir (93,68).
-`average="weighted"` her sınıfın F1'ini o sınıfın büyüklüğüyle ağırlıklandırır;
-böylece çoğunluk yine baskın çıkar (90,62). Bu bölümde kullanılan 48,37'yi
-yalnızca `average="macro"` verir; bu yüzden argümanı her zaman açıkça yazın.
+*çoğunluk* sınıfı olan olumlu sınıftır, yani çoğunluk kuralı 96,74 alır.
+`average="micro"` bölmeden önce bütün sayımları havuzda toplar; bütün
+sınıfların dâhil edildiği tek etiketli sınıflandırmada bu, doğruluğa eşittir
+(93,68). `average="weighted"` her sınıfın F1'ini o sınıfın örnek sayısıyla
+ağırlıklandırır; bu sınıf dağılımında 90,62 verir. Sınıflara eşit ağırlık veren
+`average="macro"` ise 48,37'dir. Argümanı her zaman açıkça yazın.
 
-**Aklınızda kalacak benzetme.** Her 16 kişiden birinde görülen bir hastalık
-için yapılan bir tarama testi, herkese "sağlıklısın" diyerek %93,7
-"doğruluk" tutturabilir. Doğruluk her *kişiye* eşit ağırlık verir; macro-F1
-her *sınıfa*. Hangisini istediğiniz istatistikle değil, doğuracağı sonuçlarla
-ilgili bir sorudur. Bütün ticari değeri şikâyetleri yakalamak olan bir yorum
-triyajı (triage, yani önceliklendirme) sisteminde değeri taşıyan olumsuz
-sınıftır; dolayısıyla ağırlığın yarısı ona düşer.
+**Doğruluk örneklere, macro-F1 sınıflara eşit ağırlık verir.** Olumsuz
+yorumların yalnızca %6,32 olduğu bir test kümesinde herkese "olumlu" demek
+%93,68 doğruluk verir, ama hiçbir şikâyeti yakalamaz. Ürün yorumlarını
+önceliklendiren (triage) bir sistemde kaçırılan şikâyetin ve yanlış alarmın
+maliyetini ayrıca belirlemek gerekir. Macro-F1 burada iki sınıfa eşit ağırlık
+veren bir karşılaştırma metriğidir; olası tek ürün metriği değildir.
 
-Aşağıdaki her modelde `class_weight="balanced"` görmenizin sebebi de aynı
-akıl yürütmedir. Bu ayar eğitim kaybını sınıf frekansının tersiyle yeniden
-ağırlıklandırır; böylece bir olumsuz yorum, optimizer'a (optimizasyon algoritmasına) bir olumlu
-yorumun yaklaşık 14,8 katına mal olur. Onsuz modellerin çoğunluk sınıfına
-doğru çökme riski yüksektir — ama bu bölüm bunu ölçmedi; 2. alıştırma tam da
-bunu ölçmenizi istiyor.
+Aşağıdaki her modelde `class_weight="balanced"` kullanılıyor. Bu ayar sınıf
+ağırlıklarını eğitim kümesindeki sınıf sayılarının tersiyle belirler. Buradaki
+37.471 olumlu ve 2.529 olumsuz eğitim örneğinde bir olumsuz örneğin kayıptaki
+sınıf katsayısı, bir olumlu örneğinkinin yaklaşık 14,8 katıdır. Bu, tek tek
+örneklerin gradyan büyüklüklerinin de aynı oranı taşıdığı anlamına gelmez;
+gradyan özniteliklere ve tahmin edilen olasılığa da bağlıdır. Ağırlıksız
+kurulumun etkisini bu bölüm ölçmedi; 2. alıştırma bunu ölçmenizi istiyor.
 
 İkisini birbirine karıştırmayın: macro-F1'i **manşet metrik** olarak seçmek
 ile eğitim kaybını sınıf frekansına göre **ağırlıklandırmak** iki ayrı tasarım
@@ -446,14 +453,12 @@ Dengeli sınıf ağırlıkları güçlü bir varsayılan tercihtir, ama ağırl�
 ağırlıklı ve eşik ayarlanmış varyantları doğrulama kümesinde karşılaştırın.
 :::
 
-Macro-F1 de evrensel bir çözüm değil: gerçek bir triyaj sisteminde olumsuz
-sınıfın recall'u, belirli bir iş yükündeki precision ya da beklenen maliyet
-daha doğrudan bir karar metriği olabilir. Burada macro-F1'i seçmemizin sebebi,
-bu görevde değerin azınlık sınıfında olması.
-
-Buradan itibaren **manşet macro-F1'dir; doğruluk yalnızca ne kadar yanıltıcı
-olduğunu göstermek için bildirilecektir.** Bundan sonraki her tabloda iki
-sütunun nasıl ayrıştığına dikkat edin.
+Bu bölümde yöntemleri karşılaştırırken **başlıca özet skor olarak macro-F1'i
+kullanacağız; doğruluğu da bağlam sağlaması için raporlayacağız.** Tablolarda
+iki sütunun nasıl ayrıştığına dikkat edin. Macro-F1 evrensel bir çözüm değil:
+yorumları işleyen gerçek bir sistemde olumsuz sınıfın recall'u, belirli bir
+yanlış alarm bütçesindeki precision ya da beklenen iş maliyeti daha doğrudan
+karar metrikleri olabilir.
 
 ## Türkçeyi token'lara ayırmak ve oradaki tuzak
 

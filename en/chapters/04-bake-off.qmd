@@ -346,10 +346,11 @@ word2vec 61.39 → 62.89; averaged fastText 61.36 → 62.84; doc2vec
 55.13 → 61.99.
 :::
 
-## The trap in the first number you will compute
+## The class error the first score hides {#the-trap-in-the-first-number-you-will-compute}
 
-Before either method, a detour that decides how you will read every table in
-this chapter. It starts with the laziest possible model.
+Before comparing the methods, we use the simplest possible rule — always pick
+the majority class — to show which errors accuracy can hide on an imbalanced
+test set.
 
 Predict "positive" for every review. Never look at the text at all.
 
@@ -358,13 +359,10 @@ Predict "positive" for every review. Never look at the text at all.
 accuracy   93.68%
 ```
 
-That is the number a stakeholder will hear, and it sounds like a solved
-problem. It is a model with no inputs. It has never read a review and never
-will, and it is right 93.68% of the time because 93.68% of the test set is
-positive.
-
-The failure is invisible in accuracy and glaring the moment you write down
-the confusion matrix:
+A rule that only ever predicts "positive" reaches 93.68% accuracy without
+using the review text at all, because 93.68% of the test set is positive. That
+score does not say whether the rule can find the negative reviews. The
+confusion matrix does:
 
 ```text
 ### majority baseline, in full
@@ -374,14 +372,16 @@ the confusion matrix:
 
 precision (neg)   undefined — it never predicts negative
 recall    (neg)   0.0%       — it finds none of the 632
-F1        (neg)   0.00
+F1        (neg)   0.00       — 2TP / (2TP + FP + FN) = 0 / 632
 F1        (pos)   96.74
 macro-F1          48.37
 ```
 
-**Macro-F1 is the average of the per-class F1 scores**, giving each class
-equal weight regardless of size. That single choice is what makes the useless
-model look useless: 48.37 instead of 93.68.
+**Macro-F1 is the equally weighted average of the per-class F1 scores**: each
+class gets the same weight regardless of its size. The majority rule scores
+F1 = 0 on the negative class, so its macro-F1 stays at 48.37. That makes
+visible what the 93.68% accuracy hides. The decision metric for a real system
+still has to be chosen separately, from the costs of its errors.
 
 ::: {.callout-note collapse="true"}
 ## Why macro-F1, spelled out with the actual arithmetic
@@ -397,13 +397,19 @@ $$
 \text{precision} = \frac{TP}{TP + FP}, \qquad
 \text{recall} = \frac{TP}{TP + FN}, \qquad
 F_1 = \frac{2 \cdot \text{precision} \cdot \text{recall}}{\text{precision} + \text{recall}}
+    = \frac{2\,TP}{2\,TP + FP + FN}
 $$
 
-$F_1$ is the *harmonic* mean of precision and recall, and the harmonic mean is
-the one that refuses to be bribed. The arithmetic mean of precision 1.00 and
-recall 0.00 is a respectable 0.50; the harmonic mean is 0.00. A model that
-achieves a good score on one at the total expense of the other gets nothing,
-which is exactly the behaviour you want from a summary of a rare class.
+$F_1$ is the *harmonic* mean of precision and recall. When either of them
+drops to zero, so does $F_1$: with precision 1.00 and recall 0.00 the
+arithmetic mean is 0.50 and $F_1$ is 0.00. That property keeps the misses in
+one class from being hidden behind a single high precision.
+
+Mind the zero denominators. If a class is never predicted ($TP + FP = 0$) its
+precision is undefined; $F_1$ can still be computed from the second form,
+which is written in counts. $F_1$ is undefined only when $TP = FP = FN = 0$,
+that is, when the class has neither true nor predicted examples; in that case
+scikit-learn reads what to return from its `zero_division` argument.
 
 Macro-F1 then averages across classes:
 
@@ -411,7 +417,8 @@ $$
 \text{macro-}F_1 = \frac{1}{K}\sum_{k=1}^{K} F_1^{(k)}
 $$
 
-For the majority baseline: $F_1^{(\text{neg})} = 0$ and
+For the majority baseline the negative class has $TP = 0$, $FP = 0$ and
+$FN = 632$, so $F_1^{(\text{neg})} = 0/632 = 0$, and
 
 $$
 F_1^{(\text{pos})} = \frac{2 \cdot 0.9368 \cdot 1.0}{0.9368 + 1.0} = 0.9674,
@@ -422,27 +429,27 @@ so macro-F1 $= (0 + 0.9674)/2 = 0.4837$.
 **Which F1 your library reports.** "F1" alone is ambiguous, and in
 scikit-learn the `average` argument decides it. The default for two classes,
 `average="binary"`, reports the F1 of class 1 only — here the *majority*
-positive class, so the do-nothing model scores 96.74. `average="micro"` pools
-all the counts before dividing, and for single-label classification that is
-exactly accuracy again (93.68). `average="weighted"` weights each class's F1 by
-its size, which lets the majority dominate once more (90.62). Only
-`average="macro"` gives the 48.37 used in this chapter, so always write the
-argument out explicitly.
+positive class, so the majority rule scores 96.74. `average="micro"` pools all
+the counts before dividing; for single-label classification with every class
+included, that equals accuracy (93.68). `average="weighted"` weights each
+class's F1 by its number of examples, which gives 90.62 on this class
+distribution. `average="macro"`, which weights the classes equally, gives
+48.37. Always write the argument out explicitly.
 
-**The analogy that makes this stick.** A hospital screening test for a
-disease with 1-in-16 prevalence can achieve 93.7% "accuracy" by telling every
-patient they are healthy. Accuracy weights each *patient* equally; macro-F1
-weights each *class* equally. Which one you want is a question about
-consequences, not about statistics — and for a review triage system where
-the entire business value is catching the complaints, the negative class
-carries the value, so it gets half the weight.
+**Accuracy weights examples equally; macro-F1 weights classes equally.** On a
+test set where only 6.32% of the reviews are negative, calling everything
+"positive" gives 93.68% accuracy and catches no complaint at all. A system
+that triages product reviews has to set the cost of a missed complaint and of
+a false alarm separately. Macro-F1 is used here as a comparison metric that
+weights the two classes equally; it is not the only possible product metric.
 
-The same reasoning is why `class_weight="balanced"` appears in every model
-below. It reweights the training loss by inverse class frequency, so one
-negative review costs the optimiser about 14.8 times what one positive review
-costs. Without it the models are at serious risk of collapsing toward the
-majority class — but this chapter did not measure that; exercise 2 asks you
-to.
+Every model below uses `class_weight="balanced"`. It sets the class weights
+from the inverse of the class counts in the training set. With the 37,471
+positive and 2,529 negative training examples here, the class coefficient of a
+negative example in the loss is about 14.8 times that of a positive one. That
+does not mean the gradients of individual examples carry the same ratio; a
+gradient also depends on the features and on the predicted probability. This
+chapter did not measure the unweighted setup; exercise 2 asks you to.
 
 Do not conflate the two: choosing macro-F1 as the **headline metric** and
 **reweighting** the training loss by class frequency are separate design
@@ -452,14 +459,12 @@ class weights are a strong default, but compare unweighted, weighted and
 threshold-tuned variants on a validation set.
 :::
 
-Macro-F1 is not a universal answer either: in a real triage system, recall on
-the negative class, precision at a given workload, or expected cost can be a
-more direct decision metric. We choose macro-F1 here because on this task the
-value sits in the minority class.
-
-From here on, **macro-F1 is the headline and accuracy is reported only to
-show how misleading it is.** Watch the two columns diverge in every table
-that follows.
+In this chapter **macro-F1 is the main summary score for comparing the
+methods, and accuracy is reported alongside it for context.** Watch how the
+two columns diverge in the tables. Macro-F1 is not a universal answer: in a
+real system that processes reviews, recall on the negative class, precision
+at a given false-alarm budget, or expected business cost can be more direct
+decision metrics.
 
 ## Tokenising Turkish, and the trap inside that
 
