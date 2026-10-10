@@ -12,8 +12,8 @@ reported belong to runs on that one machine.
 **Learning objectives.** After this chapter you can:
 
 - build a pipeline from raw text to an evaluated prediction for a real,
-  imbalanced dataset, using the methods of the previous two chapters
-  (@sec-text-as-data, @sec-embeddings);
+  imbalanced dataset, using the methods of the previous two 
+  chapters (@sec-text-as-data, @sec-embeddings);
 - explain why accuracy alone is not enough on this imbalanced task, compute
   macro-F1 from its per-class arithmetic, and discuss when a different business
   goal calls for a different metric;
@@ -1985,92 +1985,101 @@ of labels over which the order changes, from the new experiment.
 
 ## Interview questions {#sec-bake-off-interview}
 
-Representation choice is the most common design question in an applied NLP
-screen, and the most common wrong answer is to name the newest method. Almost
-every answer below rests on something this chapter measured, so you can quote a
-number instead of a preference.
+These questions exercise which measurements and which limits you bring into
+your reasoning when choosing a representation. Build every answer from the
+task, the amount of data, the result of a comparison, and the conditions that
+could change that result. Almost every answer below rests on something this
+chapter measured.
 
 ::: {.column-margin}
-The pattern in all six: name the axis the question is really about — labels,
-morphology, structure, cost — then give the measurement, then say what would
-change your answer. An answer with no number is an opinion; an answer with no
-*condition* is a slogan.
+In your answer, first name the axis that decides the task: the number of
+labels, the variety of word forms, the need for order, or cost. Then give the
+relevant measurement if there is one, and say which new data or experiment
+would change the conclusion.
 :::
 
-1. **Embeddings or TF-IDF for text classification?** Ask how many labels they
-   have; that is the first axis, not the only one — the size of the unlabelled
-   corpus, the structure of the task (document-level or aspect-level),
-   document length and spelling/OOV noise all move the answer too. On this corpus the
-   curves cross at roughly **1,500 labels**: at 250 labels averaged fastText
-   scores 63.10 macro-F1 against word TF-IDF's 48.53 — essentially the
-   do-nothing baseline — and at 40,000 that same TF-IDF scores 71.95 against 61.36. Note
-   which model that is. Bigram TF-IDF, this chapter's actual winner, reaches
-   76.21 at 40,000 but is not on the learning curve at all; if it also sits
-   above word TF-IDF on the left of the curve, the crossover moves *left* —
-   that was not measured. The threshold you read off a curve depends on which
-   sparse model you put on it. The embeddings
-   were trained without labels, so their knowledge is paid for before the first
-   annotation; TF-IDF has to buy everything it knows out of the labelled set.
-   Finish with the shape, and with its limit: [this from-scratch averaged
-   embedding curve plateaus by 500 labels; the sparse one climbs until roughly 10,000 and then flattens]{.hl} —
-   72.55 at 10,000 against 71.95 at 40,000, a difference well inside this
-   experiment's noise. So the more labels you expect *up to about ten
-   thousand*, the more the answer tilts sparse; past that, neither curve is
-   buying you much and the next move is a different model family rather than
-   more annotation.
+1. **Embeddings or TF-IDF for text classification?** Build the answer in three
+   steps.
 
-2. **Why would averaging word vectors lose to counting words?** Because
-   averaging destroys the thing sentiment lives in. Measured directly: a review
-   and its negation sit at cosine **0.78 to 0.96** under averaged fastText and
-   **0.19 to 0.69** under TF-IDF. The mean of a handful of vectors is dominated
-   by the words the two sentences *share*, and in a negated pair that is nearly
-   all of them — the one word carrying the reversal is averaged into nothing.
-   The good version of this answer names the fix as well: weighted averaging
-   with the first principal component removed [@arora2017simple] is the
-   cheapest thing to try before reaching for an encoder.
+   *The first question.* Ask how many labelled examples there are, what
+   unlabelled corpus is available, and what kind of task it is
+   (document-level or aspect-level; document length; spelling/OOV noise).
+   Word TF-IDF also learns its vocabulary and IDF weights from the unlabelled
+   training text; an embedding model additionally learns co-occurrence and
+   subword parameters from it. Which of the two helps with the task label is
+   measured on the target data.
 
-3. **Turkish is morphologically rich. Which method does that argue for?**
-   fastText over word2vec, and the number to quote is not the token rate. On
-   this test set 7.27% of *tokens* were outside the word2vec vocabulary, which
-   sounds survivable — but **46.4% of the distinct word forms** were outside it, so nearly
-   half the distinct forms in that test set are a `KeyError` — and the rate
-   varies by batch and domain. fastText covers 100% by
-   construction because it sums character n-grams. Then deliver the twist,
-   because it is the part that shows you measured rather than assumed:
-   [fixing out-of-vocabulary coverage completely moved macro-F1 by 0.03
-   points]{.hl}, 61.39 to 61.36. Coverage was not the bottleneck here; the
-   chapter's other probes point at averaging instead.
+   *The number.* In this experiment, at 250 labels averaged fastText scored
+   63.10 macro-F1 against word TF-IDF's 48.53 — very close to the majority
+   rule; at 40,000 labels that *same* TF-IDF scored 71.95 against fastText's
+   61.36. Over ten label samples the order changes **between 1,250 and 1,750
+   labels**.
+
+   *The limit.* The range depends on which sparse model you put on the curve:
+   bigram TF-IDF, which scores 76.21 at 40,000 labels, stays below the unigram
+   model with few labels and passes fastText only between 2,000 and 2,500
+   labels. [This from-scratch averaged-embedding curve flattens after a few
+   hundred labels; word TF-IDF keeps rising until roughly 10,000
+   labels]{.hl} (72.55 at 10,000 and 71.95 at 40,000 in the single run).
+   Whether more labels, a change of settings or a different model will help
+   is something to determine on your own data, with a repeated learning curve
+   and a validation set.
+
+2. **Why can averaging word vectors fall behind counting words?** Shared
+   content can weaken the directional contribution of the one word that makes
+   the difference. Measured on five opposed review pairs: a review and its
+   negation sit at cosine **0.78 to 0.96** under averaged fastText and **0.19
+   to 0.69** under TF-IDF. A high cosine does not rule out a correct
+   classification: the classifier gave the negated version a probability
+   below 0.5 in all five pairs. Weighted averaging with the first principal
+   component removed [@arora2017simple] is a cheap option to try; it does not
+   bring word order back either, and its effect on negation has to be
+   measured separately.
+
+3. **Which candidates does the variety of Turkish word forms bring up?** In
+   this experiment 7.27% of test *tokens*, and **46.4% of the distinct test
+   forms**, were outside the word2vec vocabulary; the rate varies by corpus
+   and domain. A form-level OOV rate that high makes subword-based fastText
+   and character n-gram TF-IDF candidates: fastText could build a vector for
+   every form in this test. Then say what you measured: [taking coverage to
+   100% did not change macro-F1 in any distinguishable way]{.hl} (61.39
+   against 61.36). On your own text, measure coverage and the task score
+   separately.
 
 4. **How would you compare two representations beyond their headline
-   scores?** Stop looking at the aggregate and cross-tabulate the paired
-   predictions. Plain word TF-IDF and averaged fastText agree on 84.1% of the
-   test set; where they disagree TF-IDF is right 1,315 times and averaged
-   fastText 272 — nearly five to one, and those two counts are also what a
-   McNemar test needs. Then read the 272: the examples this chapter looked at
-   are missing diacritics and colloquial spellings, exactly what a subword
-   model should win (a systematic count of all 272 was not done). That
-   suggests the two are partly complementary, which is a different decision
-   from "one is better" — and the same procedure matters most when two models
-   score within a point of each other, where the aggregate cannot separate
-   them.
+   scores?** Cross-tabulate the paired predictions. Plain word TF-IDF and
+   averaged fastText agree on 84.1% of the test set; where they disagree,
+   TF-IDF alone is right 1,315 times and fastText 272 — and those two counts
+   are also what a McNemar test needs. Then read examples, but do not draw
+   conclusions about all 272 from six selected reviews: the share of
+   out-of-vocabulary tokens is the same in the two groups of disagreements
+   (9.5%); what differs is the class distribution. For two models with close
+   scores, add a paired bootstrap interval and a systematic labelling of the
+   errors.
 
-5. **What does the cheap method cost, and does that matter?** Have the numbers.
-   TF-IDF 1-2 gram: 0.9 s to build, 0.17 s to vectorise 10,000 documents,
-   15.4 MB. fastText: 31.6 s to train, 16.0 MB. Both are trivial, which is the
-   point — [at this scale the cost axis does not decide anything, so do not
-   pretend it does]{.hl}. Say that plainly. Cost becomes the deciding axis at
-   the scale of @sec-classification-crossover, where a prompted model costs 142×
-   more per document than a fine-tuned encoder, and knowing *when* an axis
-   starts mattering is the skill being tested.
+5. **When does a difference in cost matter?** Quote the numbers together with
+   their scope. On this machine, building the representation for bigram
+   TF-IDF took 0.9 s and its training matrix is 15.4 MB; for fastText,
+   training the word vectors took 31.6 s and the document matrix is 16.0 MB.
+   These are not total model memory or serving latency. [At this scale both
+   options look cheap; measure whether cost decides anything together with
+   how often you retrain and with your latency target]{.hl}. At another scale
+   the picture changes: in chapter 12's own 
+   measurement (@sec-classification-crossover) a prompted model costs 142× more per
+   document than a fine-tuned encoder. When you carry such a number over,
+   state its task, its hardware and the limits of the measurement too.
 
-6. **Everything here is beaten by a fine-tuned encoder. Why learn it?** Two
-   reasons, and the second is the real one. First, the crossover is real:
-   below roughly 500 labels the encoder in @sec-classification-finetune is
-   worse than both methods in this chapter. Second, this chapter is where the
-   *diagnostic* habits come from — the negation-cosine probe, the
-   disagreement cross-tabulation, the coverage-versus-score distinction. Those
-   transfer to every model you will ever ship. A candidate who can only run
-   `AutoModel.from_pretrained` cannot tell you why their model fails.
+6. **If we are going to try a larger encoder as well, why is this comparison
+   useful?** Two reasons. First, simple models give strong starting
+   references suited to the task: in chapter 12's own 
+   measurement (@sec-classification-finetune) the fine-tuned encoder falls behind the
+   methods of this chapter below roughly 500 labels, and the order changes
+   between 500 and 1,000 labels. Compare that result with your own data,
+   label budget and tuning conditions; do not assume an advantage or a
+   threshold this chapter did not measure. Second, this chapter is where the
+   *diagnostic* habits come from: the negation-cosine probe, the disagreement
+   cross-tabulation, the distinction between coverage and score, and the cost
+   check. They apply to more complex models unchanged.
 
 ## Where to go deeper
 
