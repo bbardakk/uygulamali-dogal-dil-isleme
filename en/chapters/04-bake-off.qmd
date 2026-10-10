@@ -1767,18 +1767,20 @@ chapter is arguing against.
 
 ## Choosing, on purpose
 
-Seven methods, one dataset, and enough measurements to stop guessing. Here is
-the whole thing as a decision rather than a leaderboard.
+The seven representations differ in their measured scores, memory and
+coverage. The table below summarises them together with the conditions of
+this experiment; the choice of method should follow the task and the data
+budget.
 
 | | [Strengths]{.pro} | [Weaknesses]{.con} | Choose it when |
 |---|---|---|---|
-| **Bag of words** | Fastest to build and reason about. Beat TF-IDF here at a fixed `C = 1.0`. Coefficients readable word by word. | No length normalisation; long documents dominate. Applies no global informativeness weighting at the representation stage; it leaves that to the downstream classifier. | You want a baseline in five minutes that is genuinely hard to beat, and your documents are short. |
-| **TF-IDF (words)** | The standard strong baseline. Down-weights ubiquitous words. Trivially interpretable and auditable. | [Lost]{.con} to raw counts on this short-review corpus under a shared, untuned `C` — and edged ahead of them (by 1.2 points, inside this chapter's noise) once both got an equal tuning budget, so measure both on short text. One column per word form: up to 895 forms for one Turkish verb family. Zero generalisation to unseen forms. | A general-purpose first sparse baseline — just remember to tune `C` on a validation set. |
-| **TF-IDF (word bigrams)** | Best score in this chapter, 76.21. Captures multi-word negation that unigrams miss. Still a linear model you can read. | 3.4× the columns. Still blind to unseen vocabulary. | You have labels and the task turns on short phrases — sentiment, intent, triage. A strong first sparse baseline to build for short-text classification. |
-| **TF-IDF (char n-grams)** | Robust to spelling: a misspelt word still shares most of its n-grams with the correct one. (The vectoriser does learn a finite n-gram vocabulary and discards unseen n-grams — the point is that a new *word* rarely produces only new n-grams.) Strongest sparse method on the learning curve's low-label end (bigrams were not tested there). Less dependent on a word tokeniser — but lowercasing, Unicode normalisation and broken characters are still language-specific decisions. | 144.8 MB and 301 non-zeros per document. Lower macro-F1 than plain counting at full data. Coefficients are not human-readable. | Spelling is unreliable, the language is agglutinative, or you have no trustworthy tokeniser. |
-| **Averaged word2vec** | 100 dimensions for 61.4 macro-F1 — 302× fewer dimensions than word tf-idf. Trained without labels. On this dataset, [ahead of both sparse methods tested here]{.pro} below roughly 1,500 labels — the threshold itself does not transfer. Semantic neighbours you can inspect. | `KeyError` on 46.4% of the distinct word forms in the test set. Confident nonsense on rare in-vocabulary words. Averaging dilutes negation. Word order gone. | Labels are scarce, or you need compact vectors for similarity search over millions of documents. |
-| **Averaged fastText** | Every string gets a vector — coverage is 100% by construction. Handles the missing diacritics and typos in real user text. Best of the methods on the learning curve at 250 labels. | Neighbours are [orthographic, not semantic]{.con}: `kalitesiz` → `kalitesi`. 2× word2vec's training time. Bought perfect coverage for no macro-F1 gain here (−0.03). | The text is user-generated and misspelled, the language is agglutinative, and you cannot control the input vocabulary. |
-| **doc2vec** | One vector per document with no averaging heuristic. Learns document-level structure averaging cannot. | [Worst]{.con} score here, 55.13. Inference needs gradient steps: 16× slower per document, forever. Extra hyperparameters. | It may be worth trying where documents are long and clean — that is a hypothesis this chapter did not measure — and only once you have measured that it beats averaging on *your* data. |
+| **Bag of words** | One of the fastest representations to build in this experiment; word features map onto coefficients. At a fixed `C = 1.0` it scored above word TF-IDF (73.51 against 71.95). | Does not normalise for document length by itself; applies no informativeness weighting at the representation stage. Rare forms are separate features. Coefficients alone do not show causes. | One of the first baselines for short-document classification; choose its settings on a validation set. |
+| **TF-IDF (words)** | Learns document frequencies from the training text; word features can be inspected. With `C` tuned on validation it scored 74.71 macro-F1 and moved ahead of raw counts (gap 1.20; paired bootstrap interval 0.42–1.99). | [Fell behind]{.con} raw counts under a shared, untuned `C`; measure both on short text. An unseen word form has no column; the model relies on the familiar words in the same document. Turkish inflections spread over separate columns. | A general-purpose first sparse baseline; choose the vectoriser and `C` inside the train/validation boundary. |
+| **TF-IDF (word unigrams + bigrams)** | Highest macro-F1 in this chapter: 76.21. Keeps local two-word sequences as separate features. Still a linear model whose coefficients can be inspected. | 101,659 columns (3.4× the unigram model). With few labels it stayed below unigram TF-IDF (51.7 against 56.6 on average at 1,000 labels). Which sequences contribute how much to the score needs separate analysis; bigrams unseen in training are not represented. | You have a few thousand labels and a short-text task where local patterns may matter — sentiment, intent, triage: a strong sparse candidate to try. |
+| **TF-IDF (char n-grams)** | Can use partial spelling overlap: a misspelt word still shares most of its n-grams with the correct one. On the single-subsample learning curve it was 3.2 points ahead of word TF-IDF at 1,000 labels. Less dependent on a word tokeniser — but lowercasing, Unicode normalisation and broken characters are still language-specific decisions. | 144.8 MB training matrix and 301 non-zeros per document on average. Lower macro-F1 than word TF-IDF at full data (70.39). Unseen n-grams are discarded. N-gram coefficients can be inspected, but they are harder to interpret than word coefficients. | Spelling is variable, and the memory and score you measure are acceptable. |
+| **Averaged word2vec** | 61.39 macro-F1 from a 100-dimensional document vector — 302× fewer coordinates than word TF-IDF. Trained on unlabelled text. In this setup, [ahead of word TF-IDF]{.pro} in all ten label samples up to 1,000 labels; the order changes between 1,250 and 1,750 labels, and that range does not transfer. | 46.4% of the distinct test forms are not in the vocabulary; the average skips them. The vector of a rarely seen in-vocabulary form may be poorly estimated. Averaging loses word order and some local distinctions. A dense matrix need not be smaller than a sparse one (16.0 MB against 9.7 MB). | Labels are scarce, or you need dense-vector search; as a candidate to test on the target data. |
+| **Averaged fastText** | Built a vector for every test form this experiment's tokeniser produced. Highest score at 250 labels on the single-subsample curve (63.10). | Similar spelling can also bring forms of opposite sentiment together: `kalitesiz` → `kalitesi`; 61% of top-5 neighbours start with the same five letters as the query (7% for word2vec). Its macro-F1 could [not be distinguished]{.con} from word2vec's (61.36 against 61.39). Training took about twice as long as word2vec; the memory of the subword table was not measured. | Spelling and form variety are high; with task performance and memory measured. |
+| **doc2vec (PV-DBOW)** | Learns a separate vector for each training document; there is no averaging step. | [Lowest]{.con} score in this run, 55.13. Inferring a vector for a new document needs extra optimisation (1.73 s for 10,000 reviews; 16× averaging). This variant was not shown to represent word order. Extra hyperparameters. | A separate experiment shows that learning the document vector directly beats averaging on *your* data. |
 
 : What to reach for, and why {tbl-colwidths="[13,30,30,27]"}
 
@@ -1786,31 +1788,33 @@ The decision procedure, compressed to something you can apply before writing
 any code. Note what it is: a list of questions, not a list of thresholds.
 
 ```text
-### how to choose, in order
-1. Write down the task and the decision metric.
-2. Measure two budgets: how many labels you have, how much unlabelled text.
-3. Build at least three cheap baselines:
+### choosing a representation, in order
+1. Write down the task, the costs of a false alarm and of a miss, and the
+   main metric.
+2. Fix the data version, the train/validation/test splits and the unlabelled
+   text you have access to.
+3. Keep preprocessing, the vocabulary and IDF away from the test labels;
+   document which text is used where.
+4. Build the cheap baselines:
      word counts / tf-idf
      word n-grams
      character n-grams   (especially if the spelling is noisy)
-4. If you have a strong unlabelled corpus, add a pretrained or
-   domain-trained embedding baseline.
-5. Audit the vocabulary: OOV rate, spelling, morphology.
-6. Read the error pairs. Do the errors come from order/negation,
-   or from spelling/OOV?
-7. For each candidate, write down four numbers together:
+5. If you have enough unlabelled text, or suitable pretrained vectors, add an
+   embedding candidate.
+6. Choose each candidate's settings with the same validation budget; look at
+   the OOV rate and at error examples (order/negation, or spelling/OOV?).
+7. Make the decision on the validation set:
      score + interval   ·   latency   ·   memory   ·   explainability need
-8. Make the decision on a validation set.
-9. Open the test set once.
+8. Use the locked test set once, for the chosen solution.
 ```
 
-The numbers this chapter observed — the crossover around 1,500 labels, the
-counts-versus-tf-idf ordering on short documents — are useful as *expectations*
-at step 4, not as rules at step 1. The same goes for "sparse if you need an
-explanation" and "dense if you need similarity search over millions of
-vectors": both are strong first candidates, not absolutes. Sparse lexical
-retrieval can be entirely standard over millions of documents, and dense
-models can be made explainable.
+The numbers this chapter observed — the change of order between 1,250 and
+1,750 labels, the counts-versus-tf-idf ordering on short documents, the
+timings — are useful as *starting expectations* at step 5, not as rules at
+step 1. The same goes for "sparse if you need an explanation" and "dense if
+you need similarity search over millions of vectors": both are strong first
+candidates, not absolutes. Sparse lexical retrieval can be entirely standard
+over millions of documents, and dense models can be made explainable.
 
 ## The failure they share
 
