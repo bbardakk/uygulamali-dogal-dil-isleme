@@ -1893,91 +1893,94 @@ Answer before expanding.
 ::: {.callout-note collapse="true"}
 ## 1. Your client has 400 labelled support tickets in Turkish and 2 million unlabelled ones. Which representation?
 
-Averaged fastText, and the second sentence of the question is why.
+Not one model name, but a comparison plan.
 
-At 400 labels you are on the left of the crossover chart, where TF-IDF is
-still near the do-nothing baseline — at 500 labels it scored 49.28 against
-fastText's 61.16. Two million unlabelled tickets is a large free corpus for
-self-supervised training. Do not read that as "a count model cannot use
-unlabelled data" — this chapter's own TF-IDF learned its vocabulary and IDF
-weights from all 40,000 documents without looking at a label. The difference
-is *what can be learned*: TF-IDF is limited to vocabulary and document
-frequency, while an embedding model can extract co-occurrence structure and
-subword geometry from the same text — far richer unsupervised information.
+First settle the label of a ticket, the business metric and the test design.
+Two million unlabelled tickets are a resource for both families: you can
+train word2vec or fastText on that text, or adapt pretrained vectors to the
+domain; word and character TF-IDF can learn their vocabulary and IDF weights
+from the same text. The difference is *what can be learned*: TF-IDF is
+limited to vocabulary and document frequency, while an embedding model also
+extracts co-occurrence structure from the same text. Nor is that text "free":
+training time and data access are costs.
 
-Choose fastText over word2vec because the tickets are Turkish and
-user-written: 46.4% of the test set's distinct word forms were outside the
-trained vocabulary here; support tickets may well be noisier still, but audit
-that on your own data rather than assuming it.
+In this chapter's product-review experiment the averaged embeddings were about
+11 points ahead of word TF-IDF at 500 labels (mean over ten label samples:
+62.0 against 50.7), so expecting an embedding candidate to be strong at 400
+labels is reasonable. But it is an expectation: support tickets are another
+domain and the label is another label. Compare word n-gram, character n-gram
+and embedding candidates with the same validation budget. Try fastText in
+particular, because the tickets are Turkish text written by users: here 46.4%
+of the distinct test forms were outside the word2vec vocabulary; measure the
+rate on your own data.
 
-Then say the second half out loud: *label 2,000 more tickets and re-run this
-comparison*. This chapter's bake-off suggests the sparse side can take the
-advantage within a few thousand labels — but that threshold belongs to this
-dataset; plot your own learning curve.
+Then say the second half out loud: decide on further labelling from your own
+learning curve. Do not treat the change of order at 1,250–1,750 labels in the
+product-review experiment as a threshold for this domain.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. A colleague reports 93% accuracy and wants to ship. What do you ask for?
 
-The confusion matrix, and then the macro-F1.
+First the accuracy of the majority rule on the same test set, and the
+confusion matrix.
 
-93% is below the 93.68% you get by predicting the majority class for every
-input, so on this dataset that model may be worse than a constant. The two
-follow-up questions: how many of the 632 negatives did it find, and what
-happens downstream to the ones it missed?
+93% is below the 93.68% you get on this test set by giving every input the
+majority class. That does not show the model is useless: a model with lower
+accuracy may be finding most of the negatives (this chapter's bigram TF-IDF
+finds 76.3% of them at 92.57% accuracy). So ask for the recall and precision
+of the negative class, and for the workload its false alarms create at the
+chosen decision threshold. A decision to ship also needs the cost of a missed
+complaint and of a false alarm, and the class distribution of the target
+traffic.
 
-The general form of the question is *what is the accuracy of the trivial
-baseline* — and you should ask it before you look at any reported score, not
-after.
+The general form of the question is *what does the trivial baseline score?* —
+and you should ask it before you look at any reported score.
 :::
 
 ::: {.callout-note collapse="true"}
-## 3. fastText fixed the out-of-vocabulary problem completely. Why did the score not move?
+## 3. fastText raised form coverage to 100%. Why did the score not go up? {#fasttext-fixed-the-out-of-vocabulary-problem-completely.-why-did-the-score-not-move}
 
-Because coverage was apparently not what limited the score.
+In this run word2vec scored 61.39 macro-F1 and fastText 61.36; the difference
+cannot be distinguished (paired bootstrap interval −0.60 to +0.77; the
+training seed alone moves either model by 0.5–0.8 points). Coverage went from
+53.6% of the distinct test forms to 100%. Read the comparison for what it is:
+two models trained by different methods, so it does not isolate coverage, and
+the causal effect of coverage cannot be separated out of the score difference.
 
-Coverage went from 53.6% of word forms to 100%, and macro-F1 went from 61.39 to
-61.36. Read the comparison for what it is: two models trained by different
-methods, so it does not isolate coverage — fastText's subword vectors differ
-from word2vec's in more ways than one. What it does show is that buying perfect
-coverage did not pay here, and the chapter's other measurements point at
-averaging as the reason: averaged fastText places a sentence and its negation
-at cosine 0.78–0.96. (Only fastText went through that probe; the averaging
-argument applies to word2vec equally, but its cosines were not measured.)
+There are candidate explanations. fastText's neighbours shift towards forms
+close in spelling (61% of top-5 neighbours start with the same five letters
+as the query; 7% for word2vec), and `kalitesiz` ("low quality") retrieves
+`kalitesi` ("its quality"), which carries no negative suffix. In averaged
+vectors the cosine between a sentence and its negation is high for both
+models: 0.78–0.96 for fastText, 0.72–0.96 for word2vec. These are candidates;
+confirming them takes an ablation that removes and restores the
+out-of-vocabulary tokens within one model, an equal tuning budget and a paired
+error analysis.
 
-There is also a cost hiding in the fix. fastText spends its capacity on
-character n-grams, so its nearest neighbours become morphological rather than
-semantic — `kalitesiz` ("low quality") retrieves `kalitesi` ("its quality"),
-a neutral form that has lost the negative polarity.
-One possible explanation: it gained coverage and lost some meaning, and the two roughly cancelled. We did not measure that; separating the two effects takes its own experiment.
-
-The transferable lesson: an intrinsic improvement only shows up extrinsically
-if the thing it improved was the bottleneck. Measure which one you have
-before you fix either.
+The transferable lesson: an improvement in one property of a representation
+shows up in the task score only if that property was what limited the task.
+Measure what limits you before you set out to fix something.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Would 300-dimensional vectors, or pretrained ones, have changed the verdict?
 
-They would move the numbers and not the shape. That first clause is an
-expectation, not a measurement — neither variant was run here, and the
-reasoning below is why you would expect it, not evidence that it holds.
+We do not know; these conditions were not measured.
 
-Larger vectors and pretrained Turkish embeddings
-[@grave2018learning] would
-be expected to lift the dense curve — probably a few points, and more at the
-left edge where extra pretraining data matters most. What they cannot do is fix
-averaging — but separate the two results, because only one of them is a
-property of the mean. The exactly-1.0000 word-order figure is: averaging is
-invariant to permutation, so no vectors change it. The 0.78–0.96 negation
-cosines are not; those sentences differ in *which* word appears, and better
-vectors could put `beğendim` and `beğenmedim` further apart. Pretraining might
-move those numbers and might move the crossover with them. This chapter did not
-measure by how much, and neither claim above should be read as settled.
+Larger vectors, or pretrained Turkish ones [@grave2018learning], may change
+the neighbourhoods, the cosines of the negation pairs and the task score;
+neither the direction nor the size can be read off this chapter. The one
+thing that does not change is the mathematical one: the plain average of two
+sentences that contain the same words the same number of times is the same
+whatever fixed word vectors are used, which is why the 1.0000 of the
+word-order example stays. The 0.78–0.96 negation cosines are different: those
+sentences differ in *which* word appears, and other vectors could put
+`beğendim` and `beğenmedim` further apart.
 
-The way to settle it is exercise 13: rerun this chapter's script with
-300-dimensional pretrained vectors and report whether the crossover moves past your actual label budget.
-That is the only version of the question that affects a decision.
+The way to settle it is exercise 13: rerun this chapter's experiment with
+300-dimensional pretrained vectors, and determine the ordering, and the range
+of labels over which the order changes, from the new experiment.
 :::
 
 ## Interview questions {#sec-bake-off-interview}
