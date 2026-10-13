@@ -2,24 +2,22 @@
 
 ::: {.callout-note appearance="simple" icon="false"}
 **Chapter status: drafted.** Every number and every code output on this page
-was produced by running the code shown, with `scikit-learn` 1.9,
-`tiktoken` 0.13, `sentencepiece` 0.2.2 and `tokenizers` 0.22; the full
+was produced by running the code shown, with `scikit-learn` 1.9; the full
 environment is in @sec-setup. The `LogisticRegression` experiments here use
 the default `lbfgs` solver. It draws no random numbers, so the
 `random_state=0` in the code does not affect the result. Different library
 versions or computing environments can still produce small numerical
-differences. The chapter's interactive tools let you explore the steps of
-tokenization, the Zipf distribution and relations in the vector space.
+differences. The chapter's interactive tools let you explore the Zipf
+distribution and relations in the vector space.
 :::
 
 **Learning objectives.** After this chapter you can:
 
 - turn raw text into model-ready units and defend each preprocessing choice;
-- explain how byte-pair encoding (BPE) works, and use a given set of starting units and merge rules to work out how a new word is split into tokens;
 - describe the distribution of word frequencies with Zipf's law and the growth of the number of distinct words with Heaps' law, and discuss what these patterns mean for building a vocabulary and representing rare words;
 - derive a TF-IDF vector by hand and get the same numbers as `scikit-learn`;
 - explain with examples what a bag-of-words representation keeps and what it loses, and justify in an interview which tasks it suits;
-- explain how differences between languages, such as the agglutinative structure of Turkish, can affect tokenization, vocabulary coverage and token counts.
+- explain how language-specific properties, such as Turkish lowercasing and agglutinative structure, affect normalization decisions and vocabulary coverage.
 
 ## The problem, in one sentence
 
@@ -48,9 +46,8 @@ inherit a large part of them from the tokenizer that ships with it. This
 chapter examines the options and the libraries' assumptions, to show how each
 decision affects the representation.
 
-**What we will look at.** First how text is cut into tokens, and the advantages
-and limits of different choices of unit. Turkish examples show how those
-choices affect the number of tokens. Then the distribution of word
+**What we will look at.** First how text is cut into tokens, and what
+normalization decisions merge and what they delete. Then the distribution of word
 frequencies, with Zipf's law, and the growth of the number of distinct words as
 a corpus grows, with Heaps' law. Then we turn four short sentences into
 document vectors in six steps and compute the similarity between them, showing
@@ -126,8 +123,8 @@ deciding where tokens begin and end.
 
 Even with a fixed word-level vocabulary, new text can contain words that are
 not in it. We first look at how normalization brings different forms of a word
-together, and then at how subwords are used to represent new words
-(@sec-text-as-data-bpe).
+together, and then briefly at the limit of the word level and how today's
+models get past it (@sec-text-as-data-word-limit).
 
 ### The normalization ladder {#sec-text-as-data-normalization}
 
@@ -179,8 +176,8 @@ input away from the form the model expects.
 the standard that gives the characters of many writing systems shared numbers,
 called code points: `A` is 65, `ç` is 231, `İ` is 304, `😀` is 128512. A sign
 that looks like one letter on screen is sometimes made of more than one code
-point. How code points relate to bytes comes a little later
-(@sec-text-as-data-bytes).
+point. How code points relate to bytes is covered together with subword
+tokenization (@sec-text-as-data-bytes).
 :::
 
 Start with the first row of the table, lowercasing: it needs care with the
@@ -268,1399 +265,27 @@ And if a word that matters for the task, such as `not`, is removed, the
 information needed to tell meanings apart can be lost.
 :::
 
-### Subwords: the compromise that won {#sec-text-as-data-bpe}
-
-::: {#gloss-byte-pair-encoding-bpe .column-margin .term-gloss}
-**byte-pair encoding (BPE)** — a way of learning the token list from the
-text itself: start from single characters (or bytes), and keep gluing together
-whichever pair occurs most often. [↩](#term-byte-pair-encoding-bpe){.term-back}
-:::
-
-With word-level tokenization, a fixed vocabulary may not cover every word form
-met in new text. Character-level tokenization usually represents the same text
-with longer sequences, and the model has to learn word pieces and words from
-those small units. [Byte-pair encoding]{.hl}
-([BPE](#gloss-byte-pair-encoding-bpe){#term-byte-pair-encoding-bpe .term-ref}) offers an option between the two by *learning* its units from data
-[@sennrich2016neural].
-
-See the three options on one word. Suppose `unbreakable` never appeared in the
-tokenizer's training text. In the comparison we assume that the word-level
-tokenizer has a fixed vocabulary and writes `<UNK>` (unknown) for words it does
-not know. The character-level tokenizer's alphabet contains every character of
-the word.
-
-| Unit | How `unbreakable` looks | Result |
-|:--|:--|:--|
-| Word | `<UNK>` | The whole word is not in the vocabulary, so its spelling is not kept; the unknown-word marker takes its place. |
-| Character | `u` `n` `b` `r` `e` `a` `k` `a` `b` `l` `e` | The spelling of the word is kept, in eleven units. The model learns the patterns inside the word from the order of those units. |
-| Subword | `un` `break` `able` | The word is represented with three units. These pieces occur in other words too: `undo`, `breaking`, `readable`. |
-
-: One word at three unit sizes {tbl-colwidths="[16,34,50]"}
-
-The split in the last row is not made up: OpenAI's `cl100k_base` tokenizer cuts
-this word exactly there. Which leaves a question: who chose `un`, `break` and
-`able`? Nobody did. They were found by counting.
-
-In this example BPE training starts by splitting the words into characters. To
-each word we append `</w>`, a symbol that marks the end of a word. We count
-adjacent pairs of symbols, weighting each word by its frequency in the corpus,
-and merge the most frequent pair into a new symbol. Then we update the counts
-and repeat. The code below makes ten merges. Which of several equally frequent
-pairs is chosen first depends on the implementation; this code takes the first
-one it met.
-
-```python
-from collections import Counter
-
-corpus = {"low": 5, "lower": 2, "newest": 6, "widest": 3}
-words = {tuple(w) + ("</w>",): n for w, n in corpus.items()}
-
-def pair_counts(words):
-    pairs = Counter()
-    for symbols, freq in words.items():
-        for a, b in zip(symbols, symbols[1:]):
-            pairs[(a, b)] += freq
-    return pairs
-
-def merge(words, pair):
-    a, b = pair
-    out = {}
-    for symbols, freq in words.items():
-        new, i = [], 0
-        while i < len(symbols):
-            if i < len(symbols) - 1 and symbols[i] == a and symbols[i + 1] == b:
-                new.append(a + b)
-                i += 2
-            else:
-                new.append(symbols[i])
-                i += 1
-        out[tuple(new)] = freq
-    return out
-
-merges = []
-for step in range(1, 11):
-    best, count = pair_counts(words).most_common(1)[0]
-    merges.append(best)
-    words = merge(words, best)
-    print(f"merge {step:>2}: {best[0]!r} + {best[1]!r} -> "
-          f"{best[0] + best[1]!r}  (seen {count} times)")
-```
-
-```text
-merge  1: 'e' + 's' -> 'es'  (seen 9 times)
-merge  2: 'es' + 't' -> 'est'  (seen 9 times)
-merge  3: 'est' + '</w>' -> 'est</w>'  (seen 9 times)
-merge  4: 'l' + 'o' -> 'lo'  (seen 7 times)
-merge  5: 'lo' + 'w' -> 'low'  (seen 7 times)
-merge  6: 'n' + 'e' -> 'ne'  (seen 6 times)
-merge  7: 'ne' + 'w' -> 'new'  (seen 6 times)
-merge  8: 'new' + 'est</w>' -> 'newest</w>'  (seen 6 times)
-merge  9: 'low' + '</w>' -> 'low</w>'  (seen 5 times)
-merge 10: 'w' + 'i' -> 'wi'  (seen 3 times)
-```
-
-The first two merges build `est`, which in these words coincides with the
-English superlative suffix. The third merges it with the end-of-word marker:
-`est</w>`. Later steps build `low` and `new` as well. [The algorithm does not
-recognise these pieces as stems or suffixes; at each step it picks the most
-frequent adjacent pair of symbols.]{.hl} In this small corpus it helps that
-some pieces coincide with morphemes, but BPE does not guarantee that they will.
-
-BPE can also split words that are not in the tokenizer's training corpus into
-learned pieces. To tokenize a new word in this example, we apply the merge
-rules in the order they were learned:
-
-```python
-def apply_merges(word, merges):
-    symbols = tuple(word) + ("</w>",)
-    for pair in merges:
-        symbols = tuple(merge({symbols: 1}, pair).keys())[0]
-    return symbols
-
-for w in ["lowest", "newer", "slow", "widest"]:
-    print(f"{w:<8} -> {' '.join(apply_merges(w, merges))}")
-```
-
-```text
-lowest   -> low est</w>
-newer    -> new e r </w>
-slow     -> s low</w>
-widest   -> wi d est</w>
-```
-
-`lowest` is not in the tokenizer's training corpus, and yet it is represented
-with two units from the vocabulary: `low` and `est</w>`. This is the main
-reason subwords became common: **in this BPE setup, as long as the characters
-of the starting alphabet remain available, a word never seen before can still
-be built from those characters and their learned merges.** Some pieces, like
-the `s` in `slow`, can stay single characters. Using smaller pieces can raise
-the number of tokens; how that affects a language model's performance has to
-be evaluated separately.
-
-Notice the condition: every *character* of the new word has to be in the
-alphabet the merges were learned over. Ours came from four English words. What
-happens when a letter outside it arrives, a `ç` for instance?
-@sec-text-as-data-bytes takes that up after the figure.
-
-:::: {.anlp-fig}
-```{=html}
-<div class="fig-title">What byte-pair encoding learns, and how it uses it</div>
-<svg viewBox="0 0 760 330" role="img" aria-label="Byte-pair encoding, training above and inference below. A four-word corpus feeds three merge steps that build es, then est, then est-end-of-word, each seen nine times, followed by seven more merges. Below, the unseen word lowest is split by replaying those merges into the two known units low and est.">
-  <defs>
-    <marker id="bpe-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" class="head"/>
-    </marker>
-    <marker id="bpe-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" class="head-accent"/>
-    </marker>
-  </defs>
-
-  <text x="8" y="18" class="t-xs t-muted t-b">TRAINING · COUNT PAIRS, MERGE THE WINNER, REPEAT</text>
-
-  <!-- corpus column -->
-  <rect x="8" y="30" width="118" height="120" rx="9" class="box"/>
-  <text x="18" y="50" class="t-xs t-muted t-b">CORPUS</text>
-  <text x="18" y="70"  class="t-sm t-mono">low     ×5</text>
-  <text x="18" y="90"  class="t-sm t-mono">lower   ×2</text>
-  <text x="18" y="110" class="t-sm t-mono">newest  ×6</text>
-  <text x="18" y="130" class="t-sm t-mono">widest  ×3</text>
-
-  <path d="M126,90 H156" class="ln" marker-end="url(#bpe-a)"/>
-
-  <!-- merge steps -->
-  <rect x="160" y="30" width="132" height="120" rx="9" class="box-accent"/>
-  <text x="170" y="50" class="t-xs t-accent t-b">MERGE 1</text>
-  <text x="226" y="82" class="t-sm t-mono t-mid">e + s</text>
-  <text x="226" y="104" class="t-sm t-mono t-mid t-accent">es</text>
-  <text x="226" y="130" class="t-xs t-muted t-mid">seen 9 times</text>
-
-  <path d="M292,90 H322" class="ln" marker-end="url(#bpe-a)"/>
-
-  <rect x="326" y="30" width="132" height="120" rx="9" class="box-accent"/>
-  <text x="336" y="50" class="t-xs t-accent t-b">MERGE 2</text>
-  <text x="392" y="82" class="t-sm t-mono t-mid">es + t</text>
-  <text x="392" y="104" class="t-sm t-mono t-mid t-accent">est</text>
-  <text x="392" y="130" class="t-xs t-muted t-mid">seen 9 times</text>
-
-  <path d="M458,90 H488" class="ln" marker-end="url(#bpe-a)"/>
-
-  <rect x="492" y="30" width="132" height="120" rx="9" class="box-accent"/>
-  <text x="502" y="50" class="t-xs t-accent t-b">MERGE 3</text>
-  <text x="558" y="82" class="t-sm t-mono t-mid">est + &lt;/w&gt;</text>
-  <text x="558" y="104" class="t-sm t-mono t-mid t-accent">est&lt;/w&gt;</text>
-  <text x="558" y="130" class="t-xs t-muted t-mid">seen 9 times</text>
-
-  <path d="M624,90 H654" class="ln ln-dash" marker-end="url(#bpe-a)"/>
-  <text x="660" y="86" class="t-sm t-muted">7 more</text>
-  <text x="660" y="102" class="t-sm t-muted">merges</text>
-
-  <text x="8" y="184" class="t-xs t-muted t-b">THE SUFFIX WAS NEVER SUPPLIED — IT WAS COUNTED</text>
-
-  <!-- inference -->
-  <text x="8" y="222" class="t-xs t-muted t-b">INFERENCE · REPLAY THE MERGES IN ORDER</text>
-
-  <rect x="8" y="234" width="150" height="40" rx="9" class="box-warm"/>
-  <text x="83" y="259" class="t-sm t-mono t-mid">lowest</text>
-  <text x="83" y="290" class="t-xs t-warm t-mid t-b">NEVER SEEN</text>
-
-  <path d="M158,254 H196" class="ln" marker-end="url(#bpe-b)"/>
-
-  <rect x="200" y="234" width="90" height="40" rx="9" class="chip"/>
-  <text x="245" y="259" class="t-sm t-mono t-mid">low</text>
-  <rect x="298" y="234" width="110" height="40" rx="9" class="chip"/>
-  <text x="353" y="259" class="t-sm t-mono t-mid">est&lt;/w&gt;</text>
-
-  <text x="424" y="250" class="t-sm t-muted">Two units the merges already built.</text>
-  <text x="424" y="267" class="t-sm t-muted">No out-of-vocabulary token — worst case,</text>
-  <text x="424" y="284" class="t-sm t-muted">characters, if the alphabet covers them.</text>
-</svg>
-```
-
-::: {.fig-cap}
-In training (top), the frequencies of symbol pairs are counted and an ordered
-list of merges is built. In this small corpus the first three merges build
-`est</w>`, which includes the end-of-word marker. That unit coincides with the
-superlative suffix of the example words, but the choice rests on the frequency
-of pairs, not on grammatical analysis. In inference (bottom), the learned list
-is applied to a new word. `lowest`, which is not in the training corpus, is
-split into the vocabulary units `low` and `est</w>` [@sennrich2016neural].
-:::
-::::
-
-::: {.anlp-widget}
-```{=html}
-<div class="widget-title">Byte-pair encoding — type a word and watch the merges apply</div>
-```
-
-```{ojs}
-//| echo: false
-viewof bpeWord = Inputs.text({
-  label: "Word",
-  value: "lowest",
-  placeholder: "try: lowest, newer, slow, widest, snow",
-  width: 260
-})
-```
-
-```{ojs}
-//| echo: false
-// Verbatim output of the merge loop at the top of this section — if the toy
-// corpus changes, regenerate both together.
-bpeMerges = [
-  ["e", "s"], ["es", "t"], ["est", "</w>"], ["l", "o"], ["lo", "w"],
-  ["n", "e"], ["ne", "w"], ["new", "est</w>"], ["low", "</w>"], ["w", "i"]
-]
-```
-
-```{ojs}
-//| echo: false
-bpeTrace = {
-  const raw = bpeWord || "";
-  const alphabet = new Set("deilnorstw");
-  const invalid = [...new Set([...raw].filter(c => !alphabet.has(c)))];
-
-  const trace = [];
-  trace.invalid = invalid;
-  if (!raw.length || invalid.length) return trace;
-
-  let symbols = [...raw, "</w>"];
-  trace.push({ step: 0, rule: "start (characters)", symbols: [...symbols] });
-  bpeMerges.forEach(([a, b], k) => {
-    const out = [];
-    let i = 0, used = false;
-    while (i < symbols.length) {
-      if (i < symbols.length - 1 && symbols[i] === a && symbols[i + 1] === b) {
-        out.push(a + b); i += 2; used = true;
-      } else { out.push(symbols[i]); i += 1; }
-    }
-    symbols = out;
-    if (used) trace.push({ step: k + 1, rule: `${a} + ${b}`, symbols: [...symbols] });
-  });
-  return trace;
-}
-```
-
-```{ojs}
-//| echo: false
-html`<div style="font-size:0.9rem;">
-  ${bpeTrace.invalid.length
-    ? html`<p style="color:var(--fig-warm);">
-        This input contains characters that are not in the training alphabet:
-        <code>${bpeTrace.invalid.map(c => JSON.stringify(c)).join(", ")}</code>.
-        The input was left as it is and no merges were applied. This example
-        supports only the lowercase letters that occur in its four-word corpus:
-        <code>d, e, i, l, n, o, r, s, t, w</code>.</p>`
-    : bpeTrace.length === 0
-      ? html`<p style="color:var(--fig-muted);">Type a word made of letters from the training alphabet.</p>`
-      : html`<div>
-        ${bpeTrace.map(t => html`<div style="display:flex; gap:0.8rem;
-             align-items:baseline; padding:0.22rem 0; border-bottom:1px solid var(--fig-border);">
-          <span style="min-width:8.5rem; color:var(--fig-muted); font-size:0.82rem;">
-            ${t.step === 0 ? t.rule : `merge ${t.step}: ${t.rule}`}
-          </span>
-          <span>${t.symbols.map(s => html`<code style="background:var(--fig-chip);
-            border:1px solid var(--fig-border); border-radius:0.35em; padding:0.05em 0.35em;
-            margin-right:0.2em;">${s}</code>`)}</span>
-        </div>`)}
-        <p style="margin-top:0.7rem; color:var(--fig-muted);">
-          Final: <b>${bpeTrace[bpeTrace.length - 1].symbols.length}</b> token(s).
-          10 merges were learned from this small corpus. Large BPE
-          vocabularies hold far more; GPT-2's tokenizer has 50,000 merges.
-        </p>
-      </div>`}
-</div>`
-```
-:::
-
-### Characters or bytes: what BPE starts from {#sec-text-as-data-bytes}
-
-The example above started from characters. Tokenizers that use byte-level BPE,
-such as GPT-2's and `cl100k_base`, start from bytes. To see the difference, we
-explain the terms character, code point, character encoding and byte through
-ASCII, Unicode and UTF-8.
-
-A **character** is an abstract unit that text is made of; letters, digits,
-punctuation marks and spaces are examples. `ç`, `a`, `y`, `7`, `?` and `😀`
-are visible ones. But a unit perceived as a single sign on screen can be
-represented in Unicode by one code point or by several.
-
-Computers store text as sequences of bits. A character encoding determines how
-the units of text are represented by those sequences. **ASCII** is a 7-bit
-character encoding whose first version was published in 1963. Its 128 code
-values cover the English letters, the digits, punctuation, the space and
-control characters. The code value of the letter `a` is 97. ASCII has no `ç`,
-`ş` or `ğ`, no Arabic or Chinese script, and no emoji.
-
-**Unicode** is the standard that aims to represent the characters of different
-writing systems in one shared system. The numerical positions in Unicode's code
-space are called **code points**; encoded characters are assigned to them. A
-code point is usually written as `U+` followed by the number in hexadecimal:
-the code point of `ç` is 231, that is U+00E7. The 128 ASCII characters keep
-their numbers in Unicode, so `a` is still 97.
-
-A **byte** is the basic unit a computer stores data in. It is eight bits and
-holds a number from 0 to 255, so it can take only 256 different values.
-Unicode's numbers go far beyond 255, so a code point does not always fit in
-one byte. An *encoding* decides which bytes store a code point. **UTF-8**,
-which is widely used on the web, represents every encodable Unicode code point
-with one to four bytes. Code points in the ASCII range are encoded as a single
-byte, and larger values as two, three or four bytes, using bit patterns that
-UTF-8 defines.
-
-Here are all three side by side on the Turkish word `çay` (tea):
-
-| | `ç` | `a` | `y` |
-|:--|:--|:--|:--|
-| Unicode code point | 231 (U+00E7) | 97 (U+0061) | 121 (U+0079) |
-| In the ASCII table? | no | yes | yes |
-| UTF-8 bytes | 195, 167 | 97 | 121 |
-
-: `çay`: three code points, and four bytes in UTF-8, when `ç` is written as U+00E7 {tbl-colwidths="[34,24,21,21]"}
-
-In this spelling `çay` is three letters and three code points, and takes four
-bytes when encoded in UTF-8. In Python `len("çay")` is 3 and
-`len("çay".encode("utf-8"))` is 4. Text that looks the same can also be written
-with a different sequence of code points: write `c` followed by a separate
-cedilla mark instead of `ç`, and the same word is four code points and five
-bytes. These numbers depend on the Unicode spelling and on the encoding.
-
-Why does a tokenizer care? Because the symbols BPE starts merging from are
-either characters or bytes, and there are very different *numbers* of each:
-
-- **A character alphabet can be large.** Unicode's code space is finite, but it
-  holds a great many characters, and new versions define new ones. A
-  tokenizer's starting alphabet can be chosen from the training data;
-  characters can be added to it, or its coverage limited. A character that is
-  not in that alphabet needs an extra mechanism, such as an unknown token or a
-  fallback to bytes.
-- **A byte alphabet can be complete with 256 values.** If the starting alphabet
-  contains every byte value, every byte of UTF-8 encoded text can be
-  represented. The bytes of a new character then need no new starting symbol.
-
-The rest of this section works through the two options and what each costs.
-
-First a short note on history. The loop above — count adjacent pairs, merge the
-most frequent, repeat — *is* BPE. The name is older than its use in NLP: it comes from a 1994 data-compression
-algorithm that kept replacing the most frequent pair of adjacent **bytes** in a
-file with a single byte value the file did not use [@gage1994new]. Sennrich and
-colleagues kept the loop and changed its purpose: the merges build a vocabulary
-instead of shrinking a file, and the merge list is kept so it can be replayed
-on new text [@sennrich2016neural].
-
-That leaves one decision the loop does not make for you: **what the starting
-symbols are**. Do not confuse it with the choice of algorithm; the two are
-separate decisions. BPE is not the only way to learn a subword vocabulary. You
-will meet two relatives of it later: **WordPiece**, which BERT uses, and
-**Unigram**, which T5 uses. All three are used to build subword vocabularies,
-but they differ in how the vocabulary is learned and in how new text is split
-into pieces. Our main example here is BPE. WordPiece and Unigram come up in a
-"Deep dive" box in this chapter (@sec-text-as-data-granularities), and the
-methods are compared in more detail where we look at BERT's tokenizer
-(@sec-tokenizer-algorithms). What you need for now:
-the algorithm decides *how* units are learned. Characters or bytes decide *what
-they are built from*, and that question is the same for all three algorithms.
-
-**Starting from characters.** This is what the example above did. The merge
-table can only combine symbols it has seen, and the alphabet this one saw came
-from four English words. `apply_merges("çay", merges)` returns
-`('ç', 'a', 'y', '</w>')`. But `ç`, `a` and `y` are not in the starting
-alphabet built from this small corpus. The function only applies merge rules
-and does not check for symbols outside the vocabulary, so it leaves them in the
-output. A usable tokenizer has to handle this case separately: it can add the
-characters to its starting alphabet, use an unknown token (`<UNK>`), or fall
-back to bytes. That a character is rare does not mean it must become an
-unknown token.
-
-**Starting from bytes.** The other option is to start from the UTF-8 bytes of
-the characters instead of the characters themselves. UTF-8 represents every
-encodable Unicode code point with one to four bytes. ASCII letters take one
-byte. In the spellings below, each of the Turkish letters `ç`, `ş`, `ğ`, `ı`,
-`ö`, `ü` and `İ` is two bytes; `世` is three and `😀` is four. Emoji and other
-combined spellings made of more than one code point can be longer than four
-bytes in total:
-
-```python
-for ch in ["a", "ç", "ş", "İ", "世", "😀"]:
-    b = ch.encode("utf-8")
-    print(f"{ch}  U+{ord(ch):04X}  {len(b)} byte(s): {' '.join(f'{x:02X}' for x in b)}")
-```
-
-```text
-a  U+0061  1 byte(s): 61
-ç  U+00E7  2 byte(s): C3 A7
-ş  U+015F  2 byte(s): C5 9F
-İ  U+0130  2 byte(s): C4 B0
-世  U+4E16  3 byte(s): E4 B8 96
-😀  U+1F600  4 byte(s): F0 9F 98 80
-```
-
-A byte has only 256 possible values, so an alphabet of 256 bytes is closed:
-every string in every language is a sequence of them. Byte-level BPE runs
-exactly the same merge loop over byte sequences instead of characters
-[@radford2019language]. At each step the loop merges the most frequent
-adjacent pair of symbols. Some characters and word pieces can end up
-represented as single tokens that way. The two bytes of `ç`, for example, can
-become one token; whether that happens, and at which step, depends on the
-frequencies in the training data and on the number of merges made.
-But [the merges are not bound to Unicode character boundaries]{.hl}: the
-algorithm does not know where a character ends, only which byte pair is
-frequent. So a token can stand for a whole character, for several characters,
-or for only part of one UTF-8 character. The next output shows all three.
-
-Here is a byte-level tokenizer, OpenAI's `cl100k_base`, showing the bytes behind
-each token. `enc.encode` returns the token ids as a list of integers. Text is
-passed to the model through those ids. `decode_single_token_bytes` shows the
-sequence of bytes each id stands for:
-
-```python
-import tiktoken
-
-enc = tiktoken.get_encoding("cl100k_base")
-for text in ["çay", "şişe", "ŞİŞE", "😀"]:
-    pieces = [enc.decode_single_token_bytes(t) for t in enc.encode(text)]
-    print(f"{text:<5} {len(pieces)} tokens  {pieces}")
-```
-
-```text
-çay   2 tokens  [b'\xc3\xa7', b'ay']
-şişe  3 tokens  [b'\xc5\x9fi', b'\xc5\x9f', b'e']
-ŞİŞE  6 tokens  [b'\xc5', b'\x9e', b'\xc4\xb0', b'\xc5', b'\x9e', b'E']
-😀     2 tokens  [b'\xf0\x9f\x98', b'\x80']
-```
-
-In this output the two bytes of `ç` sit in a single token. `ŞİŞE` produces six
-tokens and `şişe` three. The two bytes of capital `Ş` are split over separate
-tokens, while `İ` and `E` stay whole. From this output alone we cannot tell how
-often `Ş` occurred in the training data. `b'\xc5'` is not a valid UTF-8
-sequence on its own; it has to be joined with the next byte before the
-character can be read. `😀` is split into two tokens as well: the first holds
-three bytes and the second the last one. None of these examples needs an
-unknown token; but the same number of visible characters can produce different
-numbers of tokens.
-
-In the table below, "character" means a Unicode code point. The byte-level
-column assumes that the starting alphabet contains all 256 byte values.
-
-| | BPE starting from characters | BPE starting from bytes |
-|:--|:--|:--|
-| Starting alphabet | Selected code points; they can be taken from the training data or added separately. | The 256 byte values. |
-| A character that is not in the starting alphabet | [Needs an extra mechanism, such as an unknown token or the byte fallback below.]{.con} | [Represented by its UTF-8 bytes.]{.pro} |
-| What does one token stand for? | [One or more whole code points.]{.pro} | [A sequence of bytes; sometimes only part of the UTF-8 form of a code point.]{.con} |
-| Cost of a code point that is not merged into a larger piece | [One token, if it is in the alphabet.]{.pro} | [One to four tokens, depending on its UTF-8 form and on the learned merges.]{.con} |
-| Coverage | Limited to the chosen alphabet and to the fallback mechanism, if there is one. | Covers every byte of UTF-8 encoded text. |
-
-: Characters or bytes as the starting alphabet {tbl-colwidths="[26,37,37]"}
-
-A third design combines the two: **byte fallback**, which means spelling an
-unknown character out in bytes. The vocabulary is still built from characters
-and their merges, but one token for each of the 256 byte values is added to it.
-The tokenizer handles the characters it knows as usual. When it meets one it
-does not know, it writes that character's UTF-8 bytes one by one with those
-byte tokens instead of writing `<UNK>`. The SentencePiece library offers this
-as an option (`byte_fallback=True`).
-
-A small experiment shows it. Below, SentencePiece is trained twice on eight
-Turkish words that contain no `ç`: once with the option off and once with it
-on. Both models are then given the word `çay`:
-
-```python
-import sentencepiece as spm
-
-words = ["ev", "evde", "evden", "evler", "yol", "yolda", "yoldan", "yollar"]
-with open("mini.txt", "w", encoding="utf-8") as f:
-    f.write("\n".join(words * 5) + "\n")            # no 'ç' anywhere in this text
-
-for fallback in [False, True]:
-    spm.SentencePieceTrainer.train(
-        input="mini.txt", model_prefix="mini", model_type="bpe",
-        vocab_size=20 + (256 if fallback else 0), byte_fallback=fallback,
-        character_coverage=1.0, hard_vocab_limit=False, minloglevel=2,
-        bos_id=-1, eos_id=-1, pad_id=-1)
-    sp = spm.SentencePieceProcessor(model_file="mini.model")
-    ids = sp.encode("çay")
-    print(f"byte_fallback={fallback!s:<5}  vocabulary {sp.get_piece_size():>3}  "
-          f"{sp.encode('çay', out_type=str)}  ->  {sp.decode(ids)!r}")
-```
-
-```text
-byte_fallback=False  vocabulary  20  ['▁', 'ç', 'a', 'y']  ->  ' ⁇ ay'
-byte_fallback=True   vocabulary 276  ['▁', '<0xC3>', '<0xA7>', 'a', 'y']  ->  'çay'
-```
-
-In the first line `ç` is not in the vocabulary and is encoded with the unknown
-token's id. The list of pieces still shows `ç`, because that list prints the
-unknown piece as it is spelled in the text. It does not mean the vocabulary has
-an entry for `ç`. When the ids are turned back into text, a `⁇` mark takes the
-letter's place.
-
-In the second line the vocabulary has grown from 20 to 276 with the 256 added
-byte tokens. `ç` is represented as `<0xC3>` and `<0xA7>`. Those are the two
-bytes from the table above: hexadecimal C3 is 195 and A7 is 167. Turned back
-into text from the ids, `çay` comes out intact. The leading `▁` is the mark
-SentencePiece uses to make a space visible. Here it stands for the space that
-the default setting adds in front of the text; the next section comes back to
-this notation.
-
-**Which one is used today.** Many GPT-type models use byte-level BPE or a
-variant of it. Other model families also use WordPiece and Unigram.
-SentencePiece is a library that can train a tokenizer with either BPE or
-Unigram. GPT-2 introduced byte-level BPE with a
-50,257-token vocabulary [@radford2019language]. OpenAI's `cl100k_base` and
-`o200k_base`, measured in the next section, are byte-level. Llama 3 moved to a
-128K-token vocabulary that combines 100K tokens from OpenAI's `tiktoken` with 28K
-added for non-English languages [@grattafiori2024llama3]. BERT and its close
-relatives such as DistilBERT and ELECTRA still ship WordPiece over characters
-[@devlin2019bert] (RoBERTa, although built on BERT, switched to GPT-2's
-byte-level BPE), and a later
-table (@sec-tokenizer-algorithms) shows which algorithm ships where. The
-practical rule does not depend on any of this: use the tokenizer the model was
-trained with, and count tokens with it.
-
-Coverage and token count have to be kept apart here. If the starting alphabet
-contains all 256 byte values, no unknown token is needed to represent the bytes
-of a Turkish word encoded in UTF-8. That does not mean the normalization that
-runs before tokenization preserves the original text: letters it changed or
-spaces it deleted cannot be brought back by byte coverage.
-
-How many tokens a text produces depends on the training data, the learned
-merges, and the size and content of the vocabulary. No separate vocabulary
-quota needs to have been set for each language. The next section measures this
-difference in token counts on Turkish examples.
-
-**This section in short.** The coverage of BPE that starts from characters
-depends on the chosen starting alphabet and on extra mechanisms such as byte
-fallback, if there are any. BPE that starts from all 256 byte values can
-represent the bytes of any UTF-8 encoded text. In return, some code points can
-be split over more than one token. In both approaches the number of tokens
-depends on the learned vocabulary and on the content of the text.
-
-### Who pays for Turkish {#sec-text-as-data-turkish}
-
-A tokenizer can produce different numbers of tokens for the same content in
-different languages. The difference depends on the language mix and the content
-of the training corpus, on the vocabulary size, on the tokenization algorithm
-and on the preprocessing rules. Let us look at the difference between Turkish
-and English on a concrete example. Here is Article 1 of the Universal
-Declaration of Human Rights, in the official English and Turkish texts, run
-through OpenAI's tokenizers:
-
-```python
-import tiktoken
-
-en = ("All human beings are born free and equal in dignity and rights. "
-      "They are endowed with reason and conscience and should act towards "
-      "one another in a spirit of brotherhood.")
-tr = ("Bütün insanlar hür, haysiyet ve haklar bakımından eşit doğarlar. "
-      "Akıl ve vicdana sahiptirler ve birbirlerine karşı kardeşlik "
-      "zihniyeti ile hareket etmelidirler.")
-
-for name in ["cl100k_base", "o200k_base"]:
-    enc = tiktoken.get_encoding(name)
-    a, b = len(enc.encode(en)), len(enc.encode(tr))
-    print(f"{name}:")
-    print(f"  english : {len(en):>4} code points -> {a:>3} tokens  "
-          f"({len(en) / a:4.2f} code points/token)")
-    print(f"  turkish : {len(tr):>4} code points -> {b:>3} tokens  "
-          f"({len(tr) / b:4.2f} code points/token)")
-    print(f"  Turkish/English token count ratio: {b / a:4.2f}")
-```
-
-```text
-cl100k_base:
-  english :  170 code points ->  33 tokens  (5.15 code points/token)
-  turkish :  160 code points ->  60 tokens  (2.67 code points/token)
-  Turkish/English token count ratio: 1.82
-o200k_base:
-  english :  170 code points ->  33 tokens  (5.15 code points/token)
-  turkish :  160 code points ->  46 tokens  (3.48 code points/token)
-  Turkish/English token count ratio: 1.39
-```
-
-In these two-sentence texts of the same article, the Turkish token count is
-[about 1.82 times]{.hl} the English one with `cl100k_base`, and 1.39 times with
-`o200k_base`. In this example the second encoding narrows the difference.
-
-In a comparison where the same input price per token applies, more tokens mean
-a higher input cost. A fixed token limit can also correspond to different
-amounts of content in texts like these. The total cost, though, depends on the
-model chosen, on the lengths of input and output, and on the pricing terms.
-
-Similar differences between languages have been shown in broader studies
-[@petrov2023language]. The two texts here do not give a universal ratio for
-Turkish. Nor is it enough to explain the difference by some Turkish letters
-taking two bytes in UTF-8; the learned vocabulary and the tokenization rules
-act together.
-
-Where does the difference come from? Turkish encodes far more grammatical
-information inside a single word, with suffixes, than English does
-[@oflazer1994two], so one stem produces many surface forms. English expresses
-the same grammatical information with separate words in some constructions. If
-those words are frequent in the training corpus, they can be represented with
-short token sequences. In Turkish, how the many inflected forms are split
-depends on which shared sequences the tokenizer has learned.
-
-Below you can see how the output of `cl100k_base` changes as suffixes are added
-to the stem `ev` ("house"). We encoded each word separately, with a single
-space in front of it:
-
-```text
-ev             1 tokens  [' ev']
-evler          2 tokens  [' ev', 'ler']
-evlerimiz      4 tokens  [' ev', 'ler', 'im', 'iz']
-evlerimizden   5 tokens  [' ev', 'ler', 'im', 'iz', 'den']
-```
-
-:::: {.anlp-fig}
-```{=html}
-<div class="fig-title">Morphemes and BPE pieces in one Turkish word</div>
-<svg viewBox="0 0 760 300" role="img" aria-label="Four Turkish word forms of increasing length, each shown as the tokens byte-pair encoding splits it into, with the token count rising from one to five. Grammatical labels below: ev is the stem, ler the plural suffix, im and iz together the first person plural possessive suffix imiz, den the ablative suffix.">
-  <text x="8"   y="20" class="t-xs t-muted t-b">WORD</text>
-  <text x="178" y="20" class="t-xs t-muted t-b">WHAT THE TOKENIZER SEES</text>
-  <text x="666" y="20" class="t-xs t-muted t-b">TOKENS</text>
-
-  <text x="8" y="52" class="t-sm t-mono">ev</text>
-  <rect x="178" y="38" width="86" height="22" rx="4" class="box-accent"/>
-  <text x="221" y="53" class="t-xs t-mono t-mid">&#9251;ev</text>
-  <text x="678" y="52" class="t-sm t-mono t-b">1</text>
-
-  <text x="8" y="90" class="t-sm t-mono">evler</text>
-  <rect x="178" y="76" width="86" height="22" rx="4" class="box-accent"/>
-  <rect x="270" y="76" width="86" height="22" rx="4" class="box"/>
-  <text x="221" y="91" class="t-xs t-mono t-mid">&#9251;ev</text>
-  <text x="313" y="91" class="t-xs t-mono t-mid">ler</text>
-  <text x="678" y="90" class="t-sm t-mono t-b">2</text>
-
-  <text x="8" y="128" class="t-sm t-mono">evlerimiz</text>
-  <rect x="178" y="114" width="86" height="22" rx="4" class="box-accent"/>
-  <rect x="270" y="114" width="86" height="22" rx="4" class="box"/>
-  <rect x="362" y="114" width="86" height="22" rx="4" class="box"/>
-  <rect x="454" y="114" width="86" height="22" rx="4" class="box"/>
-  <text x="221" y="129" class="t-xs t-mono t-mid">&#9251;ev</text>
-  <text x="313" y="129" class="t-xs t-mono t-mid">ler</text>
-  <text x="405" y="129" class="t-xs t-mono t-mid">im</text>
-  <text x="497" y="129" class="t-xs t-mono t-mid">iz</text>
-  <text x="678" y="128" class="t-sm t-mono t-b">4</text>
-
-  <text x="8" y="166" class="t-sm t-mono t-b">evlerimizden</text>
-  <rect x="178" y="152" width="86" height="22" rx="4" class="box-accent"/>
-  <rect x="270" y="152" width="86" height="22" rx="4" class="box"/>
-  <rect x="362" y="152" width="86" height="22" rx="4" class="box"/>
-  <rect x="454" y="152" width="86" height="22" rx="4" class="box"/>
-  <rect x="546" y="152" width="86" height="22" rx="4" class="box"/>
-  <text x="221" y="167" class="t-xs t-mono t-mid">&#9251;ev</text>
-  <text x="313" y="167" class="t-xs t-mono t-mid">ler</text>
-  <text x="405" y="167" class="t-xs t-mono t-mid">im</text>
-  <text x="497" y="167" class="t-xs t-mono t-mid">iz</text>
-  <text x="589" y="167" class="t-xs t-mono t-mid">den</text>
-  <text x="678" y="166" class="t-sm t-mono t-b t-accent">5</text>
-
-  <path d="M364,180 v6 H538 v-6" class="ln-thin"/>
-  <text x="221" y="200" class="t-xs t-accent t-mid">stem: house</text>
-  <text x="313" y="200" class="t-xs t-accent t-mid">plural</text>
-  <text x="451" y="200" class="t-xs t-accent t-mid">possessive: -imiz, our</text>
-  <text x="589" y="200" class="t-xs t-accent t-mid">ablative: from</text>
-
-  <path d="M8,216 H752" class="ln-thin"/>
-  <text x="8" y="238" class="t-sm">Some BPE boundaries coincide with morpheme boundaries; the suffix -imiz is split over two tokens.</text>
-  <text x="8" y="262" class="t-sm t-muted">In this example <tspan class="t-mono">evlerimizden</tspan> is five tokens and its English equivalent <tspan class="t-mono">from our houses</tspan> three.</text>
-  <text x="8" y="286" class="t-sm t-b">Token count and morphological fit are separate criteria.</text>
-</svg>
-```
-
-::: {.fig-cap}
-The accent-coloured box shows the stem `ev`. The other boxes hold suffixes or
-parts of suffixes: *-imiz* is split over two tokens, `im` and `iz`. BPE learns
-these units from the merge statistics of its training data, not from rules of
-grammar. The Turkish form in the last row is shown as five tokens and its
-English equivalent as three. If the same price per token applies, the
-difference carries over to the cost of processing those pieces of text. `␣` is
-the sign used here to make a real space visible.
-:::
-::::
-
-This comparison shows that using fewer words does not mean producing fewer
-tokens. How far token boundaries coincide with morphemes is a separate question.
-
-Three of the four internal boundaries in `ev|ler|im|iz|den` coincide with the
-morpheme analysis `ev|ler|imiz|den`. The extra boundary falls inside the first
-person plural possessive suffix *-imiz* ("our"). So this example shows that BPE
-pieces can partly coincide with morphemes without representing them one for
-one. From the output alone we cannot tell how frequent `im` and `iz` were in the
-training data.
-
-`o200k_base` does not split *-imiz* in the same word and cuts it into four
-tokens: `ev|ler|imiz|den`. The difference shows that one word can be
-represented differently by different tokenizers; on its own it is not a
-comparison of how well they do on Turkish words in general.
-
-@bostrom2020byte found, in English and Japanese experiments run at equal
-vocabulary size, that the boundaries of Unigram LM, a relative of BPE
-(@sec-tokenizer-algorithms), coincided with morphological references better
-than BPE's did. For Turkish the result would have to be tested separately.
-
-One detail in that output is easy to miss: the first token is not `'ev'` but
-`' ev'`, with a space in front. To see why, look at how a tokenizer handles a
-whole sentence.
-
-**Pre-tokens first, then tokens.** GPT-2's BPE tokenizer and BERT's WordPiece
-tokenizer cut the text into smaller pieces before any subword operation. This
-stage is called **pre-tokenization**. GPT-2 separates runs of letters, digits,
-punctuation and spaces with a regular expression. BERT's basic tokenization
-takes account of whitespace, punctuation and boundaries specific to some
-writing systems. BPE or WordPiece then works on those pieces. The resulting
-tokens cannot cross the boundaries that pre-tokenization set; but those
-boundaries are not word boundaries in every language.
-
-**How are spaces represented?** To put the pieces back together you need to
-know how the boundaries between them were kept. Seeing only the sequences
-`ev`, `ler`, `geld`, `ik` is not enough to place the spaces: is it
-`evler geldik`, or `ev ler geld ik`? Tokenizers handle this information in
-different ways: some keep the spaces inside tokens, some show a space with a
-visible sign, and some mark the pieces that continue a word. These methods do
-not all recover the original text equally well. Here are the same two words,
-`evlerimizden geldik` ("we came from our houses"), in three tokenizer families:
-
-| Family (tokenizer that was run) | Tokens | How the boundary information is shown |
-|:--|:--|:--|
-| GPT (`cl100k_base`) | `ev` `ler` `im` `iz` `den` `␣geld` `ik` | In this example the space sits in the same token as `geld`; `␣` is used to make the real space visible. |
-| SentencePiece (XLM-R) | `▁ev` `lerimiz` `den` `▁geldi` `k` | `▁` is the visible form of a space; it can also stand for the leading space the tokenizer adds at the start of the text. |
-| WordPiece (multilingual BERT) | `ev` `##leri` `##mi` `##zde` `##n` `geldi` `##k` | `##` says that the piece continues the same pre-token; it does not record how many spaces there were. |
-
-: Three ways of showing boundary information, on the same two words {tbl-colwidths="[24,36,40]"}
-
-These notations carry different information about how the pieces are to be
-joined. The `' ev'` in the `cl100k_base` output is a token that starts with a
-real space. WordPiece's `##` marks a continuation piece; it does not show the
-number or the kind of the original spaces. In the figure we used the sign `␣`
-to make the real space visible: `␣ev`.
-
-SentencePiece [@kudo2018sentencepiece] does not need the training text to be
-split into words beforehand; it can work from raw text. It represents spaces
-with `▁`. The pieces it can form are still limited by its settings: the
-default `split_by_whitespace=True`, for example, limits merging the words on
-either side of a space into one piece. Not needing prior word segmentation
-makes it easier to use on text that is not separated by spaces, such as
-Japanese and Chinese.
-
-::: {.callout-note appearance="simple"}
-**Following tokenization in four stages.** In the Hugging Face `tokenizers`
-library the process can be examined as normalization, pre-tokenization, subword
-encoding and post-processing. A tokenizer does not have to use all of these
-stages. Below we follow one Turkish sentence ("We drank tea, then we left our
-houses.") through multilingual BERT's tokenizer, step by step (with
-`tokenizers` 0.22):
-
-```python
-from tokenizers import Tokenizer
-
-tok = Tokenizer.from_pretrained("google-bert/bert-base-multilingual-uncased")
-text = "Çay içtik, sonra evlerimizden çıktık."
-
-norm = tok.normalizer.normalize_str(text)
-print("1 normalize    :", norm)
-print("2 pre-tokenize :", [w for w, _ in tok.pre_tokenizer.pre_tokenize_str(norm)])
-print("3 subwords     :", tok.encode(text, add_special_tokens=False).tokens)
-print("4 special      :", tok.encode(text).tokens)
-print("  ids          :", tok.encode(text).ids)
-```
-
-```text
-1 normalize    : cay ictik, sonra evlerimizden cıktık.
-2 pre-tokenize : ['cay', 'ictik', ',', 'sonra', 'evlerimizden', 'cıktık', '.']
-3 subwords     : ['cay', 'ic', '##tik', ',', 'sonra', 'ev', '##leri', '##mi', '##zde', '##n', 'cıktı', '##k', '.']
-4 special      : ['[CLS]', 'cay', 'ic', '##tik', ',', 'sonra', 'ev', '##leri', '##mi', '##zde', '##n', 'cıktı', '##k', '.', '[SEP]']
-  ids          : [101, 21373, 11797, 13537, 117, 12624, 18110, 12737, 10555, 55567, 10115, 59161, 10167, 119, 102]
-```
-
-The first four lines show the processing stages, and the last line the token
-ids that result:
-
-1. **Normalization.** This BERT tokenizer lowercases the text and, after
-   Unicode decomposition, removes combining marks. So `Çay` → `cay` and
-   `içtik` → `ictik`. Information deleted at this stage does not come back; the
-   model can no longer tell `çay` (tea) from `cay`. `ı` is kept, because it
-   does not decompose into an `i` and a mark.
-2. **Pre-tokenization.** The text is cut into pre-tokens at whitespace and
-   punctuation. The comma and the full stop are pieces of their own.
-3. **Subword encoding.** WordPiece represents those pre-tokens with units from
-   its vocabulary. In the example `evlerimizden` is five pieces; `sonra` is
-   whole.
-4. **Post-processing.** `[CLS]` is added at the start of this single-text BERT
-   input and `[SEP]` at the end.
-
-The integers on the last line are the token ids. A model can use auxiliary
-inputs beside them, such as an attention mask.
-
-`bert-base-multilingual-cased` keeps the distinction between upper and lower
-case, but its normalization stage is not empty: text cleaning (dropping control
-characters, for instance) and adding spaces around Chinese characters are
-active. The `cl100k_base` and `o200k_base` encodings used here have no
-lowercasing or accent-stripping stage of the kind BERT has. SentencePiece can
-work without external word segmentation; it has normalization and
-piece-forming settings of its own.
-
-That last stage shows up in the output immediately, so here are the names of
-the special tokens:
-
-| token | function |
-|:--|:--|
-| `[UNK]` | Takes the place of a piece that the encoding scheme in use cannot represent. A tokenizer with full byte coverage does not need it to represent the bytes of valid text. |
-| `[PAD]` | Fills the sequences processed together (in one batch) up to a target length. Padded positions are excluded with the appropriate attention mask. |
-| `[CLS]` | The special token at the start of a BERT input. The contextual representation at this position can be used in tasks such as sequence classification. |
-| `[SEP]` | In BERT, marks the end of a text and the boundary between two texts, a question and a passage for instance. |
-| BOS / EOS | The beginning-of-sequence and end-of-sequence markers a model uses. In generation EOS can serve as the stop signal. |
-
-The names and the jobs of special tokens differ by model. Markers such as
-`<s>`, `</s>` and `<|endoftext|>` are not interchangeable; follow the token
-ids and the placement rules the model expects. When you start counting your
-own tokens, remember that these take their share of the context window too.
-:::
-
-One last practical detail for anyone working with text like Turkish. A letter
-with a mark, such as `ö`, can be stored in two different ways: as a single code
-point, or as the letter `o` followed by a separate "two dots" mark. The two can
-look the same, but they are different sequences of code points. Depending on
-the tokenizer's normalization rules they can produce the same token sequence or
-different ones. When you use a pretrained model, follow the processing its
-tokenizer expects. If you decide to use the standard form called NFC in your
-own data pipeline, apply it consistently in training and in use:
-
-```python
-import unicodedata
-
-text = unicodedata.normalize("NFC", text)
-```
-
-In comparisons of token counts, which Unicode normalization was applied to the
-inputs should be stated as part of the measurement conditions.
-
-::: {.callout-tip collapse="true"}
-## Intuition check: why not just use characters and skip all this?
-
-Working with a limited character set can give a small vocabulary; but the
-characters met in real text are not only those of the language's alphabet. At
-the byte level, every value can be covered with 256 units. With a fixed
-character or byte vocabulary, cutting text into those units needs no learned
-merge rules of the kind BPE has. The language model still has to be trained.
-Since character-level and byte-level models exist too [@xue2022byt5], let us
-look at what subwords gain.
-
-We count three different units in the Turkish text of Article 1 above: the
-Unicode code points Python separates, `cl100k_base` tokens, and the pieces of
-text between spaces. In the last group punctuation stays attached to the word.
-The text form of the tokens is used only to make the output easier to read;
-decoding a single byte token on its own does not always give a valid piece of
-Unicode.
-
-```python
-import tiktoken
-
-enc = tiktoken.get_encoding("cl100k_base")
-units = {
-    "code points": list(tr),
-    "subword tokens": [enc.decode([t]) for t in enc.encode(tr)],
-    "words": tr.split(),
-}
-for name, seq in units.items():
-    n = len(seq)
-    print(f"{name:<15} {n:>3} units  {n * n:>6,} pairs  first six: {seq[:6]}")
-```
-
-```text
-code points     160 units  25,600 pairs  first six: ['B', 'ü', 't', 'ü', 'n', ' ']
-subword tokens   60 units   3,600 pairs  first six: ['B', 'üt', 'ün', ' insan', 'lar', ' h']
-words            21 units     441 pairs  first six: ['Bütün', 'insanlar', 'hür,', 'haysiyet', 've', 'haklar']
-```
-
-**The first reason is sequence length.** In full self-attention, each attention
-head handles position relations of size $n \times n$ (@sec-transformers). The
-`pairs` column of the output is that theoretical number of position pairs. In
-this example 160 code points correspond to 25,600 position pairs and 60 subword
-tokens to 3,600. The sequence gets about 2.7 times shorter while that number
-falls about 7.1 times.
-
-At a fixed model width, the computation of full attention grows quadratically
-with sequence length and the per-position operations of the layer linearly
-[@vaswani2017attention]. In this simplified model, lengthening the sequence
-five times raises the sum of the two components by between five and
-twenty-five times. That ratio is not a direct estimate of running time or of
-price; in architectures that use local or sparse attention the growth is
-different, too.
-
-**The second is the size of the unit.** Read the first six units of each row.
-Code points such as `ü` and `t` contribute to the spelling of a word; but a
-larger pattern such as `insan` ("human") is not presented as a single input
-unit. A character-level model has to learn such patterns from sequences of
-characters. In the subword row, ` insan` and `lar` are separate units as they
-stand. How that affects learning and task performance has to be evaluated on
-the model and the data.
-
-**Splitting on spaces gives a shorter sequence still, and brings other
-problems.** In this example splitting on spaces produces 21 units. But
-`tr.split()` does not separate punctuation, so `hür,` stays a different piece
-from `hür`. A more careful word tokenizer can fix that. What remains is that
-inflected forms are kept as separate entries in a fixed vocabulary; new forms
-that are not in the vocabulary need a solution of their own. The next example
-shows this.
-
-In subword tokenization there is a trade-off between vocabulary size and
-sequence length. Taking larger pieces into the vocabulary can shorten the
-sequences; in return more vocabulary entries are needed. The designer sets the
-target vocabulary size and the starting units; under those conditions BPE
-learns which pieces to form from the pair frequencies in the training data.
-The approach resembles a compression problem, and it fits that BPE first
-appeared as a data-compression algorithm in 1994 [@gage1994new]. The goal here,
-though, is not to make a file smaller but to choose the units the model will
-use.
-:::
-
-### Characters, subwords, whole words: one example {#sec-text-as-data-granularities}
-
-The table below compares the three choices on paper. First, watch all three on
-one small example, so that every row of the table is something you have seen
-happen.
-
-The corpus is made of the bare forms of twelve stems and of the forms built
-with four endings (`-ler`, `-de`, `-den`, `-lerde`): 60 different word forms in
-all. The endings are spelled with vowel harmony (`-ler`/`-lar`, `-de`/`-da`).
-Counting the frequency the code gives each form, the corpus stands for 216 word
-occurrences in total.
-
-The two test words, `evlerden` ("from the houses") and `okullardan` ("from the
-schools"), are not in the corpus; but the characters that make them up and the
-endings involved occur in other forms. The word and character methods list the
-units in the corpus, while BPE learns merge rules from the frequencies. All
-three are then applied to the same two test words. The BPE line reuses
-`pair_counts`, `merge` and `apply_merges` from @sec-text-as-data-bpe:
-
-```python
-stems = {"ev": "e", "el": "e", "göl": "e", "köy": "e", "gün": "e", "yüz": "e",
-         "okul": "a", "yol": "a", "kol": "a", "yıl": "a", "kız": "a", "masa": "a"}
-corpus = {}
-for stem, v in stems.items():          # v: the vowel the suffixes take
-    for suffix, n in [("", 4), (f"l{v}r", 2), (f"d{v}", 4),
-                      (f"d{v}n", 4), (f"l{v}rd{v}", 4)]:
-        corpus[stem + suffix] = n      # ev, evler, evde, evden, evlerde, ...
-test = ["evlerden", "okullardan"]      # neither word is in the corpus
-
-chars = sorted({c for word in corpus for c in word})
-words = {tuple(w) + ("</w>",): n for w, n in corpus.items()}
-merges = []
-while len(chars) + 1 + len(merges) < 60:   # stop at a 60-symbol vocabulary
-    best, _ = pair_counts(words).most_common(1)[0]
-    merges.append(best)
-    words = merge(words, best)
-
-tokenizers = {
-    "whole words": (len(corpus), lambda w: [w if w in corpus else "<UNK>"]),
-    "characters": (len(chars), lambda w: list(w)),
-    "subwords (BPE)": (len(chars) + 1 + len(merges),
-                       lambda w: list(apply_merges(w, merges))),
-}
-for name, (size, split) in tokenizers.items():
-    pieces = [p for w in test for p in split(w)]
-    print(f"{name:<15} vocabulary {size:>2}   {len(pieces):>2} units: {' '.join(pieces)}")
-```
-
-```text
-whole words     vocabulary 60    2 units: <UNK> <UNK>
-characters      vocabulary 18   18 units: e v l e r d e n o k u l l a r d a n
-subwords (BPE)  vocabulary 60    6 units: ev ler den</w> okul lar dan</w>
-```
-
-Now read that output against the rows of the table below:
-
-- **Vocabulary size.** The word-level method has 60 different word forms. That
-  number, as printed, does not include the `<UNK>` marker it also uses. The
-  character method lists 18 different characters. The 60 shown for BPE covers
-  the 18 characters, the `</w>` symbol and the units added by 41 merges. So the
-  numbers should not be read as a comparison that counts special and structural
-  symbols by one and the same rule. Real Turkish data holds many inflected
-  forms beyond these four endings.
-- **Out-of-vocabulary words.** The word-level method represents both test words
-  with the same `<UNK>` marker. Their spellings, and the fact that they differ
-  from each other, are lost. The character and BPE methods can represent these
-  two inputs with existing units, because every character they need is in the
-  starting alphabets. The functions used in this small example do not check
-  separately for characters outside the alphabet.
-- **Sequence length.** The two test words, processed separately, produce 18
-  character units, 6 BPE units or 2 `<UNK>` units in the output shown. The
-  last option is the shortest, but it does not keep the spelling of the words.
-  The character count also has no separator between the words, while the BPE
-  output uses an end-of-word marker. So the numbers should not be taken as a
-  direct comparison of three full-text encodings that keep the same
-  information.
-- **What the units correspond to grammatically.** `e`, `v` and `l` are
-  characters that make up the spelling of the word; in this example they do not
-  stand for a stem or a suffix on their own. In the BPE output `ev`, `ler` and
-  `den` coincide with the stem, the plural suffix and the ablative suffix
-  respectively. `</w>` is a structural marker for the end of a word.
-- **Morphologically rich languages.** The BPE units learned on this small
-  corpus coincide with stem and suffix boundaries in the two test words. The
-  algorithm does not label these pieces as stems or suffixes; on other words,
-  or with another training corpus, the same match may not occur.
-- **Tokenizer training.** Only the BPE line ran a learning loop. The other two
-  listed the units they saw in the corpus.
-
-Before the table, the summary worth remembering:
-
-- **Word level:** Usually produces short sequences; word forms outside the
-  fixed vocabulary need an extra mechanism.
-- **Character level:** Uses a vocabulary that depends on the chosen alphabet,
-  and usually produces longer sequences.
-- **Byte level:** Can cover every byte value with 256 units; one Unicode code
-  point can need more than one unit.
-- **Subword level:** Strikes a balance between vocabulary size and sequence
-  length with learned pieces.
-
-This comparison shows one important dimension of the design. Decisions about
-normalization, keeping boundaries, language coverage and fit with the model
-affect the result too.
-
-| Criterion | Character or byte | Subword | Whole word |
-|---|---|---|---|
-| Vocabulary size | For characters, depends on the chosen alphabet; a full byte alphabet is 256 values. | Depends on the target set in training and on the implementation. | Depends on the number of word forms chosen; the vocabulary in use is finite. |
-| Out-of-vocabulary input | A character alphabet can fall short. A full byte alphabet can represent every sequence of bytes. | Alphabet coverage, the rules for the unknown token and byte fallback, if present, decide. | Words that are not in the fixed vocabulary need an extra method. |
-| Sequence length | Usually longer; the ratio depends on the text and on the tokenizer compared with. | Usually between the character and word levels. | Known words can be represented with a single unit. |
-| What the units correspond to grammatically | Represents the spelling with small units. | Pieces sometimes coincide with morphemes; that is not guaranteed. | Keeps the word form; does not fix the word's meaning independently of context. |
-| Rich morphology | Can represent the many word forms, as long as the alphabet covers them. | Can reuse shared pieces across different inflected forms. | The many inflected forms can make vocabulary coverage hard. |
-| Tokenizer training | A fixed alphabet needs no merges to be learned. | Pieces or piece probabilities are usually learned from a corpus. | A word vocabulary is chosen or extracted from a corpus; no subword merging is learned. |
-
-: A comparison of unit sizes in tokenization {tbl-colwidths="[18,28,27,27]"}
-
-Subwords can produce shorter sequences than the character level while reusing
-shared pieces across different words. That balance is why many language models
-prefer them. Character-level, byte-level and word-level approaches can be used
-too [@xue2022byt5]; the right choice depends on the task, the data, the model
-architecture and the compute budget.
-
-:::: {.callout-note collapse="true"}
-## Deep dive: three ways to learn the same kind of unit — BPE, WordPiece, Unigram LM
-
-*You can skip this box on a first reading; the rest of the chapter does not
-depend on it.*
-
-This box compares three methods used in subword tokenization: BPE, WordPiece,
-which BERT uses, and Unigram LM, which T5 uses. What the methods are and which
-model ships which is told where we look at BERT's tokenizer
-(@sec-tokenizer-algorithms). This box runs the experiment behind that account,
-for readers who want it: all three side by side on the corpus above. Their core
-ideas fit on one line each:
-
-| Method | Core idea |
-|---|---|
-| BPE | merge the most frequent adjacent pair |
-| WordPiece | score how much a merge helps, relative to its parts |
-| Unigram LM | start from a large set of pieces and prune it probabilistically |
-
-: The three methods in one sentence each {tbl-colwidths="[24,76]"}
-
-**These methods differ both in how the vocabulary is built and in which pieces
-new text is split into.** `SentencePiece` [@kudo2018sentencepiece] is not a
-fourth algorithm but a *toolkit* that can run BPE or Unigram LM.
-
-**One corpus, three methods.** Let us compare the same two test words, aiming
-at 60 vocabulary entries in each implementation. The starting representations
-are not the same, though: BPE uses an end-of-word marker, WordPiece keeps
-word-initial and continuation pieces apart, and the small Unigram
-implementation uses neither. The experiment shows how the methods behave; it is
-not a comparison of performance that controls for every difference between
-them. The code is a small teaching version of WordPiece and of Unigram LM.
-
-::: {.callout-note collapse="true"}
-## Deep dive: minimal WordPiece and Unigram LM
-
-The score below,
-
-$$
-\mathrm{score}(a,b)=\frac{\mathrm{freq}(ab)}{\mathrm{freq}(a)\,\mathrm{freq}(b)}
-$$
-
-is a teaching approximation used to explain WordPiece training. It should not
-be taken as an exact reproduction of BERT's original WordPiece trainer. The
-results in this box belong to this scoring rule and to the implementation
-given.
-
-`train_unigram` is likewise a small teaching implementation inspired by the
-Unigram approach. Instead of taking every possible split of each word into
-account, it uses only the highest-scoring one. When it computes the cost of
-removing a piece it holds the other piece scores fixed; after pruning it builds
-new counts from the chosen splits. The starting count of 0.001 given to every
-piece left in the vocabulary prevents zero probabilities. So the `loss` below
-is not the same objective as the marginal likelihood of the full Unigram model
-[@kudo2018subword].
-
-```python
-import math
-
-def train_wordpiece(corpus, size):
-    words = {tuple([w[0]] + ["##" + c for c in w[1:]]): n for w, n in corpus.items()}
-    vocab = {s for symbols in words for s in symbols}
-    first = None
-    while len(vocab) < size:
-        pairs, single = Counter(), Counter()
-        for symbols, n in words.items():
-            for s in symbols:
-                single[s] += n
-            for a, b in zip(symbols, symbols[1:]):
-                pairs[(a, b)] += n
-        score = {p: c / (single[p[0]] * single[p[1]]) for p, c in pairs.items()}
-        best = max(score, key=lambda p: (score[p], p))
-        first = first or (pairs, score)
-        glued = best[0] + best[1].removeprefix("##")
-        new = {}
-        for symbols, n in words.items():
-            out, i = [], 0
-            while i < len(symbols):
-                if symbols[i:i + 2] == best:
-                    out.append(glued)
-                    i += 2
-                else:
-                    out.append(symbols[i])
-                    i += 1
-            new[tuple(out)] = n
-        words, vocab = new, vocab | {glued}
-    return vocab, first
-
-def wordpiece_split(word, vocab):          # greedy: longest known piece first
-    pieces, start = [], 0
-    while start < len(word):
-        for end in range(len(word), start, -1):
-            piece = word[start:end] if start == 0 else "##" + word[start:end]
-            if piece in vocab:
-                break
-        else:
-            return ["[UNK]"]
-        pieces.append(piece)
-        start = end
-    return pieces
-
-def best_split(word, logp):                # Viterbi: the most probable split
-    best = [(0.0, [])] + [(-math.inf, None)] * len(word)
-    for end in range(1, len(word) + 1):
-        for start in range(end):
-            piece = word[start:end]
-            if piece in logp and best[start][1] is not None:
-                score = best[start][0] + logp[piece]
-                if score > best[end][0]:
-                    best[end] = (score, best[start][1] + [piece])
-    return best[-1]
-
-def train_unigram(corpus, size):
-    counts = Counter()                     # start big: every substring
-    for w, n in corpus.items():
-        for i in range(len(w)):
-            for j in range(i + 1, len(w) + 1):
-                counts[w[i:j]] += n
-    start_size = len(counts)
-    logprobs = lambda c: {p: math.log(k / sum(c.values())) for p, k in c.items()}
-    loss = lambda lp: -sum(n * best_split(w, lp)[0] for w, n in corpus.items())
-    while len(counts) > size:
-        lp = logprobs(counts)
-        base = loss(lp)
-        cost = {p: loss({q: v for q, v in lp.items() if q != p}) - base
-                for p in counts if len(p) > 1}     # single letters always stay
-        k = max(1, min(len(counts) - size, len(cost) // 5))
-        for p in sorted(cost, key=lambda p: (cost[p], p))[:k]:
-            del counts[p]                  # prune the pieces that cost least
-        lp = logprobs(counts)              # re-estimate from the best splits
-        counts = Counter({p: 0.001 for p in counts})
-        for w, n in corpus.items():
-            for piece in best_split(w, lp)[1]:
-                counts[piece] += n
-    return logprobs(counts), start_size
-```
-:::
-
-```python
-wp_vocab, (pairs, score) = train_wordpiece(corpus, 60)
-uni_logp, start_size = train_unigram(corpus, 60)
-
-print("first step, WordPiece initial pairs:")
-print("  highest raw pair counts:  ",
-      [(a + b.removeprefix("##"), c) for (a, b), c in pairs.most_common(3)])
-print("  highest score (WordPiece):",
-      [(a + b.removeprefix("##"), round(s, 3))
-       for (a, b), s in sorted(score.items(), key=lambda x: -x[1])[:3]])
-print(f"  Unigram LM starts from {start_size} substrings and prunes to {len(uni_logp)}")
-print()
-for w in test:
-    print(f"{w:<11} BPE       : {' | '.join(apply_merges(w, merges))}")
-    print(f"{'':<11} WordPiece : {' | '.join(wordpiece_split(w, wp_vocab))}")
-    print(f"{'':<11} Unigram LM: {' | '.join(best_split(w, uni_logp)[1])}")
-```
-
-```text
-first step, WordPiece initial pairs:
-  highest raw pair counts:   [('##de', 72), ('##da', 72), ('##rd', 48)]
-  highest score (WordPiece): [('ok', 0.056), ('##ku', 0.056), ('ev', 0.028)]
-  Unigram LM starts from 322 substrings and prunes to 60
-
-evlerden    BPE       : ev | ler | den</w>
-            WordPiece : ev | ##l | ##e | ##r | ##d | ##e | ##n
-            Unigram LM: evlerde | n
-okullardan  BPE       : okul | lar | dan</w>
-            WordPiece : okullar | ##d | ##a | ##n
-            Unigram LM: okullarda | n
-```
-
-The first two lines of output rank the pairs in WordPiece's starting
-representation by two criteria: raw frequency and the ratio score. That shows
-how the criteria differ. BPE's example has a different starting alphabet and an
-end-of-word marker, so the first line should not be read as its merge log.
-
-**BPE** merges the most frequent adjacent pair of symbols at each step. In this
-corpus the repeated stem and suffix sequences lead to pieces that can be reused
-across words. In the result shown both test words are cut at stem and suffix
-boundaries: `ev|ler|den` and `okul|lar|dan`. That match is what was observed
-for this corpus and this vocabulary budget; it is not guaranteed for every new
-word.
-
-**WordPiece.** This teaching implementation divides the frequency of a pair by
-the product of the separate frequencies of its two parts,
-$\frac{c(ab)}{c(a)\,c(b)}$. At the start the pairs `o` + `##k` and
-`##k` + `##u` get the same high score (0.056). The code picks `o` + `##k` by
-the ordering of symbol pairs when scores are equal. In this small corpus those
-pieces occur together in `okul` and its inflected forms. The `##` marks a
-piece that continues a word.
-
-With the given vocabulary budget, the result contains long word-initial pieces
-such as `okullar`; the rest of `okullardan` is split into single letters in the
-output shown. That behaviour cannot be generalised to every WordPiece
-tokenizer. To process a new word, WordPiece does not replay a merge list; it
-moves along by taking the longest vocabulary piece that starts at the current
-position.
-
-**Unigram LM.** The small Unigram implementation collects every contiguous
-substring of the words as a candidate; the printed output starts with 322
-candidates. It then prunes the pieces that contribute least by its own
-approximate loss, down to 60. Real Unigram implementations can use different
-methods for building candidates, estimating probabilities and pruning.
-
-The scores learned here put the split `evlerde|n` first for `evlerden`. That is
-the result of the small corpus and the approximate training procedure; it does
-not mean the best morphological analysis, or the best solution among all
-possible vocabularies. Unigram also scores the alternative splits of the same
-word. Here is every split of `evlerden` that this vocabulary allows:
-
-```python
-def every_split(word, logp, prefix=()):
-    if not word:
-        yield sum(logp[p] for p in prefix), list(prefix)
-    for end in range(1, len(word) + 1):
-        if word[:end] in logp:
-            yield from every_split(word[end:], logp, prefix + (word[:end],))
-
-splits = sorted(every_split("evlerden", uni_logp), reverse=True)
-print(f"{len(splits)} ways to split 'evlerden' with this vocabulary:")
-for logp, pieces in splits:
-    print(f"  score = {math.exp(logp):.1e}   {' | '.join(pieces)}")
-```
-
-```text
-4 ways to split 'evlerden' with this vocabulary:
-  score = 2.1e-03   evlerde | n
-  score = 1.2e-14   evler | d | e | n
-  score = 1.3e-22   ev | l | e | r | d | e | n
-  score = 1.1e-31   e | v | l | e | r | d | e | n
-```
-
-The value printed here is the product of the probabilities of the pieces in a
-split. These values are enough to rank the splits of one word. To turn the
-alternatives into a probability distribution, each value is divided by the sum
-of the values computed for all valid splits of the word.
-
-Using fewer pieces does not by itself guarantee a higher score; the
-probabilities of the pieces compared change too. That the two-piece solution
-is about 28 orders of magnitude ahead in this output is a result of the piece
-probabilities this training produced.
-
-Being able to score alternative splits is what makes it possible to sample
-among them probabilistically. The code above only lists the alternatives; it
-does not sample a split yet.
-
-::: {.callout-note collapse="true"}
-## Deep dive: checking the minimal Unigram LM against SentencePiece
-
-The small version above is not the library. The code below trains a Unigram
-tokenizer with `sentencepiece` 0.2.2 on the same word forms and frequencies.
-The target vocabulary size is 60; with `hard_vocab_limit=False`, though, the
-actual vocabulary can be smaller. That budget includes the unknown token: one
-of the 60 entries of the model trained in this run is `<unk>`. SentencePiece's
-representation of spaces and its other defaults differ from the small
-implementation too, so the comparison is not made under identical conditions.
-
-```python
-import sentencepiece as spm
-
-lines = [w for w, n in corpus.items() for _ in range(n)]
-with open("corpus.txt", "w", encoding="utf-8") as f:
-    f.write("\n".join(lines) + "\n")
-
-spm.SentencePieceTrainer.train(
-    input="corpus.txt", model_prefix="uni", model_type="unigram", vocab_size=60,
-    character_coverage=1.0, hard_vocab_limit=False, minloglevel=2,
-    bos_id=-1, eos_id=-1, pad_id=-1)
-uni = spm.SentencePieceProcessor(model_file="uni.model")
-for w in test:
-    print(f"{w:<11} {' | '.join(uni.encode(w, out_type=str))}")
-```
-
-```text
-evlerden    ▁evlerde | n
-okullardan  ▁okul | l | a | r | d | a | n
-```
-
-The split shown for `evlerden` is again `evlerde|n`. The leading `▁` stands for
-the space SentencePiece adds at the start by default. For `okullardan`,
-`▁okul|l|a|r|d|a|n` was chosen. On its own this output does not show that the
-piece `okullarda` is missing from the vocabulary; it shows only that the chosen
-split does not use it. In Unigram a piece can be in the vocabulary and still
-not be chosen, because another split scores higher. Looking at the vocabulary
-itself, in this run it contains `▁okul` and `▁evlerde`, and does not contain
-`▁okullarda`.
-
-SentencePiece's Unigram training uses a different probability estimation and
-pruning process from the small implementation. Normalization, the starting
-candidates and the training settings can affect the result as well; other
-versions or settings can give different splits.
-:::
-
-This artificial corpus of sixty different word forms was chosen to make the
-effect of the training rules visible. The WordPiece and Unigram implementations
-here contain teaching simplifications; their results should not be read as a
-general ranking of real tokenizers. The study cited at the end of this box
-compares BPE with Unigram LM on larger corpora; nothing about WordPiece can be
-concluded from that experiment.
-
-Two distinctions matter in this example. First, the teaching WordPiece score
-uses not only the frequency of the pair but also the frequencies of its
-components. With the pair count held the same, more frequent components lower
-the score. That rule does not, however, guarantee in general that stems are
-learned before suffixes.
-
-Second, Unigram can evaluate splits with probabilistic scores. In use, the
-highest-scoring split can be taken, or one can be sampled from the
-alternatives. The aim of subword regularization is to reduce a model's
-dependence on a single split by letting it see the same text split in different
-ways [@kudo2018subword]. Sampling can happen whenever inputs are processed
-again during training; it is not limited to one choice per epoch. Its benefit
-has to be measured by experiment. Different splits can be produced in a similar
-way with BPE-Dropout [@provilkov2020bpe].
-
-SentencePiece [@kudo2018sentencepiece] is a library for training and applying
-methods such as BPE and Unigram on raw text. `▁` is the visible form of a
-space; depending on the settings, the original spaces can be normalized, or a
-space added at the start of the text.
-
-@bostrom2020byte compared Unigram LM with BPE at equal vocabulary size in
-English and Japanese experiments. The boundaries of Unigram LM coincided
-better with the morphological references used. Models pretrained with that
-tokenization also did as well as or better than their BPE counterparts on the
-downstream tasks evaluated. The findings show Unigram's advantage under those
-experimental conditions; they do not establish a fixed ranking for all
-languages and models.
-::::
+### The limit of the word level {#sec-text-as-data-word-limit}
+
+For the rest of this chapter a token is a normalized word form, obtained with
+the rules above. That unit is enough for bag-of-words and TF-IDF: we build the
+vocabulary from the training text and count how often each word occurs in each
+document.
+
+The choice has a limit, and it is worth knowing from the start. Once the
+vocabulary is fixed, new text can contain word forms that are not in it; a
+word-level representation has no column for those forms and leaves them out of
+the counts. In an agglutinative language such as Turkish, where one stem has
+many inflected forms, that happens more often. The next section measures how
+the vocabulary keeps growing as the data grows, with Heaps' law
+(@sec-text-as-data-heaps).
+
+Today's language models get past this limit with units smaller than a word:
+the vocabulary holds pieces of words learned from data (subwords), not whole
+words, and a new word is written with those pieces. Byte-pair encoding (BPE),
+WordPiece and their relatives are covered together with the pretrained models
+that use them (@sec-subword). That is also where we measure why the same text
+is cut into more tokens in Turkish. For now we continue with words.
 
 ## Zipf and Heaps: the long tail of words {#sec-text-as-data-zipf}
 
@@ -3338,7 +1963,7 @@ token occurrences. `min_df=5` does not only drop terms seen once in total
 documents. Such a term may be repeated many times within one document, which is
 why we report the share of columns removed and the share of token occurrences
 removed separately. Whether the trade is worth it is an empirical question
-rather than a rule, and Exercise 4 asks you to measure it.
+rather than a rule, and Exercise 3 asks you to measure it.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -3701,46 +2326,7 @@ architecture you will build in @sec-retrieval. A good answer justifies the
 starting method by the requirements and proposes measuring the gain of the more
 complex approach by comparison.
 
-**Q: Your Turkish (or Arabic, or Finnish) product costs far more per request
-than the English one. Explain and fix.**
-
-First compare how many tokens the same content produces under the tokenizer in
-use. Differences between languages can be related to the distribution of the
-training data, the vocabulary, the writing system and the tokenization rules
-[@petrov2023language]. In the cost of a request, also look separately at input
-and output lengths, model prices and any caching conditions. On the short
-parallel text in this chapter the Turkish/English token ratio was 1.82 for
-`cl100k_base` and 1.39 for `o200k_base`. Those figures illustrate a
-tokenizer-dependent difference; to estimate the cost ratio of your product,
-measure over a large number of representative requests. Fixes, in increasing
-order of effort: pick a model whose tokenizer produces fewer tokens in this
-language; measure cost in tokens per *task* rather than per request; given
-enough scale and training budget, consider training a domain- and
-language-specific tokenizer together with a compatible model, or adapting the
-existing model to it [@kudo2018sentencepiece]. The tokenizer of a pretrained
-model cannot be swapped like an independent part without making the model
-compatible.
-
-### Testing depth on tokenization
-
-**Q: Explain BPE. What happens to a word the tokenizer has never seen?**
-
-Describe the merge loop, then answer the real question: nothing special happens.
-The word decomposes into known subwords, in the worst case single characters. If
-the base alphabet covers the input, or the tokenizer can write an unknown
-character as its bytes (byte fallback), there is no need for `<UNK>` because of
-an unrepresentable character. That coverage does not mean no information is
-removed during preprocessing, though; losslessness has to be assessed for the
-tokenization pipeline as a whole. For unknown characters the base alphabet and
-byte-fallback support are decisive; the algorithm's segmentation rules and the
-limits of the implementation matter too. The classic BERT WordPiece tokenizer
-can emit `[UNK]` for a character outside its vocabulary. Even with known
-characters, the word-length limit can give the same result: the mBERT tokenizer
-splits a word of 100 letters `a` into 50 pieces and turns one of 101 letters
-into a single `[UNK]`. Byte-level or byte-fallback designs write the unknown
-character as its bytes. Use the worked example from this chapter: the word
-`lowest`, absent from the BPE tokenizer's training example, is split into
-`low + est` by the learned merges.
+### Testing your preprocessing decisions {#testing-depth-on-tokenization}
 
 **Q: Stemming versus lemmatization — and would you use either today?**
 
@@ -3760,19 +2346,17 @@ first:
 
 | Your goal | Starting sources |
 |---|---|
-| **I have thirty minutes** | the 3Blue1Brown video, the Tokenizer Playground, the `scikit-learn` text-features page |
-| **I want to really learn BPE** | Karpathy's tokenizer video and `minbpe`, Hugging Face LLM Course chapter 6 |
+| **I have thirty minutes** | the 3Blue1Brown video, the `scikit-learn` text-features page |
 | **I want the TF-IDF and IR side** | Manning et al.'s IR book (the idf and BM25 pages), the `scikit-learn` docs |
-| **I want the academic reference** | Jurafsky & Martin, the original papers (Zipf, Heaps, Sennrich, Kudo) |
+| **I want the academic reference** | Jurafsky & Martin, the original papers (Zipf, Heaps) |
 
 : Reading paths by goal {tbl-colwidths="[40,60]"}
 
+Sources on BPE, WordPiece and tokenizer tools are at the end of the chapter
+that covers subword tokenization (@sec-pretraining).
+
 **Watch.**
 
-- **[Let's build the GPT Tokenizer](https://www.youtube.com/watch?v=zduSFxRajkE)**,
-  Andrej Karpathy. Two hours implementing BPE from scratch, including the
-  Unicode handling that this chapter measures on Turkish. The first stop on the
-  "really learn BPE" row above.
 - **[Large Language Models explained briefly](https://www.youtube.com/watch?v=LPZh9BOjkQs)**,
   3Blue1Brown. Seven minutes; a short, visual introduction to how text is turned
   into a numerical representation.
@@ -3805,23 +2389,6 @@ first:
   in data frames rather than matrices, this chapter on TF-IDF may click
   faster than any of the above. Free online.
 
-**Tokenization, hands on.**
-
-- **[Hugging Face LLM Course, Chapter 6](https://huggingface.co/learn/llm-course/chapter6/1)**.
-  Builds BPE, WordPiece and Unigram tokenizers and explains which models use
-  which. [The BPE lesson](https://huggingface.co/learn/llm-course/chapter6/5)
-  is the direct sequel to our toy implementation.
-- **[minbpe](https://github.com/karpathy/minbpe)** and the accompanying
-  [two-hour video](https://www.youtube.com/watch?v=zduSFxRajkE), Andrej
-  Karpathy [@karpathy2024minbpe]. A few hundred lines of clean Python that
-  build a GPT-grade tokenizer from scratch. Watch the video, then read the code
-  line by line; the two were designed together.
-- **[The Tokenizer Playground](https://huggingface.co/spaces/Xenova/the-tokenizer-playground)**.
-  Paste text, switch tokenizers, watch the splits. Try your own name, your
-  company's part numbers, and a paragraph of Turkish.
-- **[tiktoken](https://github.com/openai/tiktoken)**. The library used for
-  the cost measurements in this chapter.
-
 **Reference documentation and courses.**
 
 - **[scikit-learn: text feature extraction](https://scikit-learn.org/stable/modules/feature_extraction.html#text-feature-extraction)**
@@ -3848,43 +2415,35 @@ The label on each exercise marks its level: **Basic** consolidates a concept,
 **Applied** makes you measure something on your own data, and **Advanced**
 goes past this chapter.
 
-1. **Tokenizer economics.** *(Applied)* Take a paragraph of your own technical writing
-   in Turkish and its English translation. Using the Tokenizer Playground or
-   `tiktoken`, count tokens under two different tokenizers. First compute the
-   ratio of token counts for the same content in the two languages. Then
-   estimate the annual cost at 100,000 requests per month, using the unit prices
-   of the model you choose and stating their date. Report input and output
-   tokens, the shared prompt and any cached input separately, and state
-   explicitly the assumption that one paragraph represents all requests.
-2. **Break the vectorizer.** *(Applied)* Fit a `CountVectorizer` on ten documents from
+1. **Break the vectorizer.** *(Applied)* Fit a `CountVectorizer` on ten documents from
    your own domain and print `get_feature_names_out()`. Find at least two
    tokens that are wrong — a destroyed identifier, a merged pair, a lost
    unit. If the problem comes from token boundaries, fix it with `token_pattern`;
    where needed, also adjust lowercasing, preprocessing or a custom tokenizer.
    Report which example each change fixes and which new errors it could
    introduce.
-3. **Derive it by hand.** *(Basic)* For the four-document corpus in this chapter,
+2. **Derive it by hand.** *(Basic)* For the four-document corpus in this chapter,
    compute the TF-IDF vector for d3 with pen and paper, then verify against
    `TfidfVectorizer`. If they disagree, first compare the TF definition, the IDF
    formula, the L2 normalization and the token output. Check the column order,
    the corpus used and the rounding precision as well, and state where the
    difference comes from.
-4. **Replicate and extend.** *(Applied)* Reproduce the classification table above, then
+3. **Replicate and extend.** *(Applied)* Reproduce the classification table above, then
    add one row: TF-IDF with `min_df=5`. Does accuracy fall? By how much did
    the feature count fall? Compare the two configurations on a validation portion
    split off from the training data, by accuracy, feature count, memory and
    processing time. Justify your choice to a colleague with those criteria, and
    use the final test set only after the choice is made.
-5. **Find the negation failure.** *(Applied)* Construct two documents from your own
+4. **Find the negation failure.** *(Applied)* Construct two documents from your own
    field with opposite operational meaning and cosine similarity above 0.9
    under TF-IDF. Then write a design-review sentence explaining why it is
    not appropriate to conclude, from a high TF-IDF cosine alone, that the two
    documents express the same operational decision. Add that a classifier can
    use distinguishing terms such as *not* when they are kept.
-6. **Zipf on your own data.** *(Basic)* Plot rank against frequency on a log-log scale
+5. **Zipf on your own data.** *(Basic)* Plot rank against frequency on a log-log scale
    for a corpus you own. Does the line look straight? What are the top five
    tokens, and is any of them an artifact like `'ax`?
-7. **The interview exercise.** *(Advanced)* Work through the five-document TF-IDF ranking
+6. **The interview exercise.** *(Advanced)* Work through the five-document TF-IDF ranking
    problem in
    [§8.2.1 of Chip Huyen's book](https://huyenchip.com/ml-interviews-book/contents/8.2.1-natural-language-processing.html)
    with pen and paper, including its follow-up: if one document mentions the
@@ -3898,57 +2457,36 @@ goes past this chapter.
    in the normalization denominator. With the other variables fixed, BM25 brings
    the term-frequency contribution towards a finite limit; `sublinear_tf` slows
    its growth logarithmically but sets no finite ceiling.
-8. **Measure the Turkish token cost over many examples.** *(Applied)* The
-   measurement above used one short pair of texts, and the 1.82 and 1.39 ratios
-   there are not general. Collect 50 to 100 sentence pairs from a parallel text
-   you have — articles of the Universal Declaration of Human Rights, a piece of
-   software's interface strings in two languages, your own bilingual reports.
-   For each tokenizer make two separate measurements: the Turkish/English ratio
-   of token counts for each aligned pair, and the number of tokens per 1,000
-   Unicode code points in each language. The first shows the token difference
-   for the same content, the second the token density relative to the length of
-   the writing. Report the median and the interquartile range; for an estimate
-   of total cost, also use the total token counts over all examples and the
-   expected distribution of requests. Where in that distribution did the
-   single-pair measurement fall?
-
 ::: {.callout-note collapse="true"}
 ## Expected observations
 
 Not solutions — but knowing what you are meant to see makes it easier to check
 yourself.
 
-1. The Turkish paragraph can produce more tokens under some tokenizers. Measure
-   the direction and size of the difference, and report the result together with
-   the text pair and tokenizer version you chose.
-2. The default `token_pattern` drops single-character tokens and punctuation,
+1. The default `token_pattern` drops single-character tokens and punctuation,
    which is what splits identifiers (`P-101`, version numbers, code
    fragments).
-3. With the same definitions and enough precision, the hand computation should
+2. With the same definitions and enough precision, the hand computation should
    match the library within numerical tolerance. If there is a difference, check
    the TF and IDF definitions, the normalization, the tokens, the column order
    and the rounding.
-4. `min_df=5` drops the terms that occur in fewer than five documents. Measure
+3. `min_df=5` drops the terms that occur in fewer than five documents. Measure
    how much the feature count and the accuracy change, and report the share of
    token occurrences the dropped terms carried. Do not assume in advance that
    the loss in accuracy will be small.
-5. Adding a separate negation word can change a single column of the raw counts;
+4. Adding a separate negation word can change a single column of the raw counts;
    L2 normalization then changes the other active values too. Negation expressed
    inside a word form can produce different term columns. Show on your own
    example that a high cosine can hide an opposite meaning.
-6. Part of the log-log plot may show an approximately linear trend, with
+5. Part of the log-log plot may show an approximately linear trend, with
    deviations at the head and in the tail. Inspect the top five tokens and
    explain any artefacts that come from the corpus. Do not take visual
    resemblance alone as evidence of a power law.
-7. After increasing the number of repetitions of the term, recompute the score
+6. After increasing the number of repetitions of the term, recompute the score
    and the ranking. In a cosine both the dot product and the document norm
    change, so more repetitions do not always give a higher score or rank.
    Explain the result together with the TF-IDF variant and query vector you
    chose.
-8. Report the token density of each language and the token ratios of the aligned
-   pairs separately. The direction and spread of the difference depend on the
-   examples and on the tokenizer. A single example is one observation inside the
-   distribution, not a summary of it.
 :::
 
 ## What to remember
@@ -3960,11 +2498,10 @@ core of this chapter.
 2. **Normalization rules can merge some distinctions of spelling or encoding.
    Which distinctions to keep depends on the task and on the input the model in
    use expects.**
-3. **On the same text a word-level representation usually gives shorter
-   sequences, but it can meet new word forms. A character representation depends
-   on the alphabet chosen; a full byte alphabet can cover any text in a valid
-   encoding. Subwords strike a balance between vocabulary size and sequence
-   length.**
+3. **A fixed word-level vocabulary cannot cover every word form in new text; a
+   form that is not in it stays out of the counts. Today's language models get
+   past that limit with units smaller than a word, learned from data
+   (@sec-subword).**
 4. **Zipf describes the approximate empirical relation between word frequencies
    and their ranks, Heaps the one between the amount of text processed and the
    number of distinct terms observed. How well they fit depends on the corpus,
