@@ -1170,100 +1170,25 @@ In this grid 5,000 clean labels scored 71.69; the 40,000 scored 76.21 at 0% nois
 
 ## Interview questions {#sec-data-annotation-interview}
 
-Data quality questions separate candidates faster than modelling questions,
-because almost everyone has trained a classifier and almost nobody has audited a
-label set. Every answer below is measured in this chapter.
+The questions below test whether you can read this chapter's numbers within their scope and set apart the claims that have not been measured yet. Some of the answers were observed in this chapter's experiments; others need verification on other data.
 
 ::: {.column-margin}
-A tell worth knowing: candidates who have actually shipped a labelled dataset
-answer these in terms of *direction* and *which split* — noise into which class,
-errors in train or in test. Candidates who have only read about it answer in
-terms of a single rate. [The rate is almost never the question.]{.hl}
+When you answer these, give the *direction* and *which split* rather than a single rate: from which class to which the noise goes, how many rows it affects, and whether the errors are in training or in test.
 :::
 
-1. **Your annotators agree 93% of the time. Is the dataset good?** You cannot
-   tell, and the reason is chance agreement. Here, 93.42% raw agreement gave
-   Cohen's kappa of **0.27**, because with a 93.7/6.3 class split the agreement
-   expected under an independence null is already **90.99%** — two annotators
-   who both guess the majority label agree almost all the time while conveying
-   nothing. The same pair on a balanced subsample agreed on only **60.28%**.
-   Say the condition out loud when you quote these numbers: the second
-   "annotator" here is a lexicon rule, not a second human, so this is a
-   worked demonstration of the arithmetic and not a human agreement study.
-   Ask for the confusion table and both annotators' marginals, then compute
-   kappa yourself.
-   Bonus: say that kappa has its own pathology on skewed data, so report raw
-   agreement, kappa *and* the marginals rather than picking whichever flatters.
+1. **Two sources of labels agree on 93% of items. Is the dataset good?** You cannot tell from that number alone. In this chapter 93.42% raw agreement gave a Cohen's kappa of **0.27**, because at a 93.7/6.3 class split the agreement $p_e$ expected under independence is already **90.99%**. The same two sources agreed on only **60.28%** of a balanced subsample. State the condition when you quote the numbers: the second "annotator" here is a lexicon rule, not a human, so this is a demonstration of the arithmetic, not a study of human agreement. Ask for the confusion table and the marginals of both sources and compute kappa yourself; report raw agreement, kappa, class-specific agreement and the marginals together.
 
-2. **How much will 10% label noise cost you?** The right first move is to
-   refuse the question as posed and ask which direction. Measured on this
-   corpus: mislabelling 10% of the minority class as majority moved macro-F1 by
-   **+0.21** — nothing. Mislabelling 10% of the majority class as minority cost
-   **12.58 points**. [The same *class-conditional* rate, and one direction is
-   free while the other is catastrophic]{.hl}, entirely because of the
-   imbalance — note that the two are not the same overall corruption: at a
-   93.7/6.3 split, a tenth of the minority is 0.63% of the corpus and a tenth
-   of the majority is 9.37%. You can corrupt
-   **40%** of the negative class into positive and lose nothing measurable.
+2. **What is the effect of flipping 10% of the source class?** Ask first from which class to which, and how many rows in all. Here negative to positive was about 253 rows and **+0.21** macro-F1; positive to negative was about 3,747 rows and **−12.58** points. [The same *class-conditional* rate, fifteen times as many rows]{.hl}. The gap arises from the direction, the number of rows changed, the model and the metric together: with the same number of labels flipped the direction still mattered (76.95 against 71.11 at 1,000 labels). The condition that flipped 40% of the negatives stayed close to the baseline; that is a result of this experiment only.
 
-3. **Where do you spend a limited labelling budget — train or test?** Test,
-   disproportionately, and this is the answer most candidates get backwards.
-   Training tolerates noise, especially in the majority class. Test tolerates
-   none: with 2% test-label noise a perfect classifier scores 98%, and you
-   cannot measure past your labels' quality. The number that makes it concrete:
-   **2% noise in the test labels drags @sec-bake-off's winner below the score
-   its rival earned on clean labels** — same model, same predictions, byte for
-   byte, with only the ruler moved. State the condition with it: those are two
-   differently labelled test sets, so it is a comparison across conditions and
-   not a rank reversal on a shared one.
+3. **Does the annotation budget go to training or to test?** Give each a share according to the costs of the task, and audit the label quality of the final test set independently. Under the assumption that each label is flipped independently with probability 2%, the expected accuracy of a model that is perfect against the truth is 98%; that is not a hard ceiling on the score. In this chapter **2% artificial test noise took the same model's macro-F1 from 76.21 down to 73.13** — below the 73.51 another model scored on the original labels. State the condition as well: that is a comparison across two versions of the labels; when the two models were scored against the same noisy labels, the order did not change.
 
-4. **A new model beats production by 1.2 macro-F1. Ship it?** Not on that
-   number alone — but get the reason right. On this corpus 1% test-label
-   noise shifted *one model's* score by 1.53 points; on a shared test set that
-   systematic shift applies to both models and does not by itself erase the
-   gap (the expected accuracy gap shrinks by the factor $(1-2\eta)$, i.e. by only ~2%).
-   What makes the gap fragile is label errors on the rows where the two models
-   *disagree*: on this test set one or two dozen are enough to erase 1.2
-   points. Read the disagreement rows, fix their label errors, and test the gap
-   with a paired bootstrap (McNemar for accuracy). @sec-bake-off's 15-point
-   gaps survive this easily — [the question is never "is the gap big" but "is
-   the gap bigger than the label errors on the rows where the models
-   disagree"]{.hl}. The 1.53-point shift is a warning against comparing
-   numbers measured on different test sets.
+4. **A new model beats the production one by 1.2 macro-F1 points. Ship it?** Not on a single number. On one version of the labels, examine the rows on which the two models disagree, independently and blind if you can, and compute a paired uncertainty interval (a bootstrap for macro-F1, McNemar for accuracy). That 1% artificial noise shifted one model's score by 1.53 points does not mean the gap between models shifts by that much on a common test. [The question is not "is the gap big" but "does the gap rest on label errors in the rows where the two models disagree"]{.hl}: in this chapter a 1.2-point gap was erased by 18 label changes placed in the worst possible way, while randomly scattered noise never changed the order of a 2.69-point gap.
 
-5. **How would you find bad labels in 40,000 rows you cannot read?** Out-of-fold
-   prediction, a simplified, single-threshold form of confident learning
-   [@northcutt2021confident] (the full method uses per-class thresholds).
-   Fit on four folds, predict the fifth; where a model that never saw a row is
-   confident in the other class, flag it. Then say the three things the
-   measurement taught: only **92 of 40,000** rows flag above 0.90 confidence, so
-   it finds far fewer errors than exist; a negative-labelled row is **thirteen
-   times** more likely to be flagged, which tells you where to start reading (a
-   difference in flag rates, not error rates); and dropping the flagged rows made every metric slightly *worse*
-   (76.21 → 75.72, within seed noise — but no gain), which fits an audit — of a separate flagged sample — that
-   found about half were texts a binary label can be neither right nor wrong
-   about. [A flag is a
-   reading list, not a verdict.]{.hl}
+5. **How do you find the candidates for review among 40,000 rows?** With out-of-fold prediction: in each fold fit every transformation (the vectoriser included) on the training part only, and use the score the model gives to the opposite class as an order of review. This is a single-threshold rule inspired by confident learning [@northcutt2021confident]; the full method uses per-class thresholds. Then say what the measurement taught: the 0.90 threshold flagged **92** candidates in training (123 with the vectoriser fitted inside the fold), and 92 is not a count of real errors; the flag rate of a negative-labelled row is **thirteen times** higher, which is not a difference in error rates; dropping the flagged rows lowered the score more than dropping random rows did (75.72 against a mean of 76.15). In a separate audit of the test set, 20 of the 40 selected candidates were schema problems according to a single reader; do not carry the proportions of one set over to the other. [A flag is a reading list, not a decision.]{.hl}
 
-6. **How do you check for leakage?** Name the six kinds and the one-line test
-   for each: exact duplicates (`drop_duplicates` *before* the split — this
-   corpus had 1,657), near-duplicates (normalise case and punctuation, then
-   compare), group leakage (split on user or document, not row), temporal
-   leakage (test must be from the future), preprocessing leakage (`fit` on train
-   only, never on the concatenation), and benchmark contamination
-   [@kapoor2023leakage]. Then quantify the stakes: a **10% leak buys about one
-   macro-F1 point** — indistinguishable from a real improvement — and a 100%
-   leak buys nearly ten. Close with the discipline that catches it: audit the
-   numbers you *like*, because leakage only ever makes you look better.
+6. **How do you check for leakage?** Audit exact and near duplicates, the split by group and by time, the preprocessing inside every fold, and possible benchmark contamination [@kapoor2023leakage] separately. In this corpus, de-duplicating on the text removed 1,657 extra rows (1,055 duplicate groups; 77 of them carry both labels). In the controlled experiment that copied test rows, the 10% condition brought **+0.93** macro-F1; that is of a size you could not tell from a genuine improvement, but it is not the return of every 10% leak. When you find a leak, measure performance again on a split that represents the target use.
 
-7. **Your annotators disagree constantly. Do you retrain them?** Read the
-   disagreements first, because on this corpus **half of the confident
-   disagreements were texts a binary label cannot express** — mixed reviews,
-   truncated text, reviews about delivery rather than product. That is a schema
-   failure, and no amount of annotator training fixes it. Adding a *mixed* or
-   *not-applicable* class does. The general form: when agreement is low, the
-   question is whether your annotators are unreliable or your label set is
-   under-specified, and only reading tells you which.
+7. **The human annotators disagree. What do you do?** First read the shared examples and separate the reasons for disagreement: a gap in the guideline, the guideline being applied differently, ambiguity in the text itself, or a limit of the target definition. This chapter did not measure the disagreement of two humans; on the 40 test reviews the model disputed most strongly, a single reader recorded 20 schema problems — mixed reviews, truncated texts, reviews about delivery instead of the product. Adding a class such as *mixed* or *not applicable* can be an option; but it requires a new target definition, a new guideline, a new class distribution and a re-evaluation. When agreement is low the question is whether the annotators are inconsistent or the label set is under-specified; only reading can separate the two.
 
 ## Where to go deeper
 
