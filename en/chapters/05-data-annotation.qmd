@@ -667,9 +667,9 @@ The concrete return of this audit is not the retrained model; it is that schema 
 
 ## What label noise costs, and in which direction
 
-Suppose your annotation process has an error rate. How much does it cost? The honest answer is: it depends entirely on which direction the errors go, and the dependence is not subtle.
+Suppose your annotation process has an error rate. How much does it cost? The effect of a label error depends jointly on its direction, on the sizes of the classes and on how many rows change. In the table below the same percentage does not mean the same number of wrong labels in the two directions: the percentages are shares of the source class.
 
-I corrupted the training labels at controlled rates under three regimes, retrained from scratch, and evaluated against the clean test set. Three seeds each; standard deviation never exceeded 0.50 macro-F1.
+I corrupted the training labels at controlled rates under three regimes, retrained from scratch, and evaluated against the original test labels (no artificial noise added). Three seeds each; standard deviation never exceeded 0.50 macro-F1.
 
 ```text
 ### macro-F1, clean test set, model retrained at each rate
@@ -681,7 +681,7 @@ neg -> pos  76.21  76.14  76.29  76.27  76.42  76.85  77.12  76.47
 pos -> neg  76.21  74.17  72.87  68.63  63.63  56.69  52.01  47.99
 ```
 
-The middle row does not move. You can mislabel **forty percent of the negative class as positive** and lose nothing — at 30% it even reads 0.91 above baseline. The rise from 1% to 30% is nearly monotone and about twice the seed standard deviation, so it may not be pure noise; one plausible mechanism is `class_weight="balanced"` up-weighting the shrinking negative class and shifting the decision threshold. We did not measure it: read it as a small, consistent rise, not a recipe for gains. The bottom row loses 28 points over the same range.
+The middle row barely moves: with this model and this class ratio, the macro-F1 of the condition in which **40% of the negative labels are flipped to positive** stays close to the baseline; at 30% it is 0.91 above it. We looked at where the rise comes from: in the 30% condition the model calls fewer reviews negative (about 845 instead of 1,075); precision on the negative class rises from 44.8% to about 50%, and recall falls from 76.3% to 67%. So as negative training labels get scarcer the decision boundary shifts, and on this test split macro-F1 rises a little. That is not a recommendation to corrupt labels. Mind what the percentages mean, too: 40% of the negative class is about 1,000 rows, 40% of the positive class about 15,000. The bottom row loses 28 points over the same range.
 
 :::: {.anlp-fig}
 
@@ -735,7 +735,7 @@ The middle row does not move. You can mislabel **forty percent of the negative c
 ```
 
 ::: {.fig-cap}
-Three noise regimes on the same 40,000 training rows, evaluated on the same clean test set, three seeds each. The direction of the error matters more than its rate — an asymmetry that follows entirely from the 93.7/6.3 [class imbalance](#gloss-class-imbalance){#term-class-imbalance .term-ref}.
+Three noise regimes on the same 40,000 training rows, evaluated on the same test split; each condition repeated with three seeds. The percentages are shares of the source class, and the two one-directional curves flip different numbers of rows. The 93.7/6.3 [class imbalance](#gloss-class-imbalance){#term-class-imbalance .term-ref} is an important factor in this asymmetry, not its only explanation.
 :::
 
 ::::
@@ -746,23 +746,35 @@ Three noise regimes on the same 40,000 training rows, evaluated on the same clea
 time looks accurate while finding nothing. [↩](#term-class-imbalance){.term-back}
 :::
 
-The arithmetic behind the asymmetry is worth doing once, because it generalises to every imbalanced problem you will meet.
+First the counts on this dataset. The same source-class percentage changes very different numbers of labels when the classes are imbalanced; the effect on the score has to be measured separately on other tasks.
 
 **neg → pos at 10%:** 253 of 2,529 negatives are relabelled positive. The positive class grows to 37,724, of which 253 are wrong — **0.67% contamination**. The negative class shrinks to 2,276 but every remaining member is correct. A smaller, pure minority class is still learnable.
 
-**pos → neg at 10%:** 3,747 of 37,471 positives are relabelled negative. The negative class is now 2,529 correct plus 3,747 wrong — **59.7% garbage**. The model is fitting a class whose majority membership is noise. The true negatives still form a coherent cluster, so the model still learns something (63.63, against 48.37 for the majority baseline), but the signal is diluted in the noise, at a cost of 12.58 points.
+**pos → neg at 10%:** 3,747 of 37,471 positives are relabelled negative. The negative class is now 2,529 correct plus 3,747 wrong — **59.7% mislabelled**. The model is fitting a class whose majority membership is noise. The true negatives still form a coherent cluster, so the model still learns something (63.63, against 48.37 for the majority baseline), but the signal is diluted in the noise, at a cost of 12.58 points.
 
 The same asymmetry appears at rates far too small to notice in a spreadsheet. At **1% pos → neg**, only 375 rows flip — one percent of the *positive class*, which is 0.94% of all training rows, a rate most teams would call excellent. But those 375 rows are **12.9% of everything now labelled negative** (375 of 2,904, the 2,529 real negatives plus the 375 arrivals), and they cost 2.04 macro-F1 points — more than the entire gap between bag of words and tf-idf unigrams in @sec-bake-off, which was 1.56.
 
-Two rules follow, and they are the practically useful output of this section:
+Because the percentages mean different numbers of rows in the two directions, we also ran the comparison with the *same number* of labels:
 
-- **Measure your annotation error rate per class, and say which class the errors come *from*.** An overall 1% is meaningless, and the direction is the whole finding: errors that *turn minority rows into majority ones* barely registered here, while errors that *turn majority rows into minority ones* cost 12.58 points at the same 10% class-conditional rate. Name the source class and the target class every time, because "1% in the majority class" reads both ways and only one of them is the cheap one.
-- **On a task this imbalanced, an unsure annotator applying the minority label is the expensive mistake.** That is the opposite of most people's instinct, which is to be generous with the interesting label. Two conditions on it, though: it follows from *this* imbalance and this cost structure, and it is not a licence to guess — the `SKIP` value and an adjudication pass are the better answer when the item is genuinely undecidable, which is what the guideline earlier in this chapter is for. Where a missed minority case is the expensive error — screening, safety, fraud — the arithmetic runs the other way and you should redo it.
+```text
+### the same NUMBER of flipped training labels in each direction (3 seeds, mean macro-F1)
+    250 labels  neg->pos 76.35 (sd 0.17)   pos->neg 74.98 (sd 0.25)   | share of source class: neg 9.9%  pos 0.67%
+    500 labels  neg->pos 76.80 (sd 0.20)   pos->neg 73.64 (sd 0.20)   | share of source class: neg 19.8%  pos 1.33%
+   1000 labels  neg->pos 76.95 (sd 0.68)   pos->neg 71.11 (sd 0.27)   | share of source class: neg 39.5%  pos 2.67%
+   2000 labels  neg->pos 68.60 (sd 1.02)   pos->neg 67.91 (sd 0.15)   | share of source class: neg 79.1%  pos 5.34%
+```
+
+With the same number of labels flipped, the direction still matters: flipping 1,000 positive labels to negative loses 5.1 points, while flipping 1,000 negative labels to positive does not lower the score. But the asymmetry has a limit: with 79% of the negative class (2,000 labels) flipped, that direction loses 7.6 points too.
+
+Two practical suggestions follow from this experiment, each to be tested separately on your own data:
+
+- **Measure your annotation error rate per class, and say which class the errors come *from*.** An overall 1% is not informative by itself: errors that *turn minority rows into majority ones* barely registered here, while errors that *turn majority rows into minority ones* cost 12.58 points at the same 10% class-conditional rate. Name the source class and the target class every time, and give the number of rows along with the percentage.
+- **Do not close uncertainty with a guess.** In this experiment the examples wrongly moved from the majority to the minority were the expensive ones; but it does not follow that an annotator should systematically avoid the minority decision — that raises the number of missed minority cases. Send an uncertain item to `SKIP` and to adjudication; that is what the guideline earlier in this chapter is for. Measure the cost of errors, the class ratio and the target metric separately on your own task: where a missed minority case is the expensive error — screening, safety, fraud — the calculation comes out differently.
 
 ::: {.column-margin}
-This asymmetry is a property of the imbalance, not of sentiment. What carries over to any task where one class is 5–10% of the data — spam, fraud, medical screening, content moderation — is the *direction*: manufacturing minority labels costs more than erasing them. The size is a property of your classifier, your metric and your error mechanism, and has to be measured rather than read off this table. Theory for learning under class-conditional noise is surveyed in @frenay2014classification.
+This experiment shows that **rates conditional on the source class** can mislead when the classes are imbalanced. Which direction does more harm in spam, fraud, medical screening or content moderation does not follow from this table: a comparison at a fixed number of errors, the class weights, the metric and the operational cost all have to be reassessed. Theory for learning under class-conditional noise is surveyed in @frenay2014classification.
 
-One caveat about how this noise was made, because it bounds every number above. These flips are **text-independent**: chosen at a fixed rate, regardless of the text. Real annotation error is not. A tired annotator does not get random items wrong; they get the *hard* ones wrong, so the errors concentrate exactly where the decision boundary already is. The audit earlier in this chapter shows it directly — the flagged rows are mixed, truncated and lukewarm reviews, not a random 0.23% of the corpus. Instance-dependent noise at the same nominal rate is measurably more damaging, because it moves the boundary rather than just blurring it [@wei2022learning]. The taxonomy is in @frenay2014classification, which separates noise independent of everything, noise depending only on the class, and noise depending on the instance; this experiment's symmetric regime (same rate for every class) is the first, its two one-directional regimes are the second, and none of it is the third. So read these curves as the **mild case** rather than a bound: there is good reason to expect your real error rate to cost more than this, and no arithmetic here that says it cannot cost less.
+**In this experiment the label corruptions were chosen independently of the text**: at a fixed rate, without looking at the text. Real errors can depend on properties of the text — they can concentrate on hard items, for example — and the effect of the same nominal rate then differs [@wei2022learning]. The hard reviews the model flagged in the previous section do not show the distribution of verified label errors; they only suggest that such concentration is possible. @frenay2014classification separates noise independent of everything, noise depending only on the class, and noise depending on the instance. This experiment's symmetric regime is an example of the first and its two one-directional regimes of the second; the cost of the third was not tested here. So do not read the curves above as a bound.
 :::
 
 ## Your test set is a ceiling, not a ruler

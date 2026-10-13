@@ -808,9 +808,9 @@ Bu denetimin somut getirisi yeniden eğitilmiş model değil, **seçilmiş 40 it
 
 ## Etiket gürültüsünün bedeli ne ve hangi yönde
 
-Diyelim ki etiketleme sürecinizin bir hata oranı var. Bedeli ne? Cevap şu: bedel tamamen hataların hangi yöne gittiğine bağlı ve bu bağımlılık son derece belirgin.
+Diyelim ki etiketleme sürecinizin bir hata oranı var. Bedeli ne? Etiket hatasının etkisi hatanın yönüne, sınıfların büyüklüğüne ve değişen satır sayısına birlikte bağlı. Aşağıdaki tabloda aynı yüzde, iki yönde eşit sayıda yanlış etiket anlamına gelmiyor: yüzdeler kaynak sınıfın payı.
 
-Eğitim etiketlerini üç rejim altında kontrollü oranlarda bozdum, modeli sıfırdan yeniden eğittim ve temiz test kümesiyle değerlendirdim. Her biri için üç seed; standart sapma hiçbir zaman 0,50 macro-F1'i aşmadı.
+Eğitim etiketlerini üç rejim altında kontrollü oranlarda bozdum, modeli sıfırdan yeniden eğittim ve özgün (yapay gürültü eklenmemiş) test etiketleriyle değerlendirdim. Her biri için üç seed; standart sapma hiçbir zaman 0,50 macro-F1'i aşmadı.
 
 ```text
 ### macro-F1, clean test set, model retrained at each rate
@@ -822,7 +822,7 @@ neg -> pos  76.21  76.14  76.29  76.27  76.42  76.85  77.12  76.47
 pos -> neg  76.21  74.17  72.87  68.63  63.63  56.69  52.01  47.99
 ```
 
-Ortadaki satır kıpırdamıyor. **Olumsuz sınıfın yüzde kırkını olumlu diye yanlış etiketleyip** hiçbir şey kaybetmeyebilirsiniz — %30'da skor, temiz etiketlerle alınan 76,21'in 0,91 puan üzerine bile çıkıyor. Artış %1'den %30'a neredeyse tekdüze ve seed sapmasının iki katı kadar, dolayısıyla salt gürültü olmayabilir; olası bir mekanizma, küçülen olumsuz sınıfa `class_weight="balanced"`ın daha çok ağırlık verip karar eşiğini kaydırması. Bunu ölçmedik; küçük ama tutarlı bir artış olarak okuyun, bir kazanç reçetesi olarak değil. Alttaki satır aynı aralıkta 28 puan kaybediyor.
+Ortadaki satır neredeyse kıpırdamıyor: bu model ve bu sınıf oranında, **olumsuz etiketlerin %40'ını olumluya çevirdiğimiz** koşulun macro-F1'i baseline'a yakın kalıyor; %30'da 0,91 puan üstünde. Artışın nereden geldiğine baktık: %30 koşulunda model daha az yoruma olumsuz diyor (1.075 yerine yaklaşık 845); olumsuz sınıfta precision %44,8'den yaklaşık %50'ye çıkıyor, recall %76,3'ten %67'ye iniyor. Yani olumsuz eğitim etiketleri azaldıkça karar sınırı kayıyor ve bu test bölmesinde macro-F1 biraz yükseliyor. Bu bir etiket bozma önerisi değil. Yüzdelerin anlamına da dikkat edin: olumsuz sınıfın %40'ı yaklaşık 1.000 satır, olumlu sınıfın %40'ı yaklaşık 15.000 satır. Alttaki satır aynı aralıkta 28 puan kaybediyor.
 
 :::: {.anlp-fig}
 
@@ -876,7 +876,7 @@ Ortadaki satır kıpırdamıyor. **Olumsuz sınıfın yüzde kırkını olumlu d
 ```
 
 ::: {.fig-cap}
-Aynı 40.000 eğitim satırı üzerinde üç gürültü rejimi, aynı temiz test kümesiyle değerlendirilmiş, her biri üç seed'le. Hatanın yönü, oranından daha önemli — tamamen 93,7/6,3'lük [class imbalance](#gloss-class-imbalance){#term-class-imbalance .term-ref}'tan doğan bir asimetri.
+Aynı 40.000 eğitim satırı üzerinde üç gürültü rejimi, aynı test bölmesinde değerlendirilmiş; her koşul üç seed'le yinelenmiş. Yüzdeler kaynak sınıfın payıdır ve tek yönlü iki eğri farklı sayıda satırı çevirir. 93,7/6,3'lük [class imbalance](#gloss-class-imbalance){#term-class-imbalance .term-ref} bu asimetrinin önemli bir etkeni, tek açıklaması değil.
 :::
 
 ::::
@@ -887,45 +887,51 @@ yaygın. Burada yorumların %93,7'si olumlu; dolayısıyla her seferinde
 "olumlu" diyen bir model hiçbir şey bulmadığı hâlde isabetli görünür. [↩](#term-class-imbalance){.term-back}
 :::
 
-Asimetrinin arkasındaki aritmetiği bir kez yapalım, çünkü karşılaşacağınız her dengesiz probleme genelleniyor.
+Önce bu veri kümesindeki sayımları yapalım. Aynı kaynak sınıf yüzdesi, sınıflar dengesizken çok farklı sayıda etiketi değiştirir; başka görevlerde skora etkisinin ayrıca ölçülmesi gerekir.
 
 **%10'da olumsuz → olumlu:** 2.529 olumsuzun 253'ü olumlu diye yeniden etiketleniyor. Olumlu sınıf 37.724'e çıkıyor ve bunların 253'ü yanlış — **%0,67 bulaşma**. Olumsuz sınıf 2.276'ya iniyor ama geride kalan her üye doğru. Daha küçük ama saf bir azınlık sınıfı hâlâ öğrenilebilir.
 
-**%10'da olumlu → olumsuz:** 37.471 olumlunun 3.747'si olumsuz diye yeniden etiketleniyor. Olumsuz sınıf artık 2.529 doğru artı 3.747 yanlış — **%59,7 çöp**. Model, üyelerinin çoğunluğu gürültü olan bir sınıfa uyum sağlamaya çalışıyor. Gerçek olumsuzlar hâlâ tutarlı bir küme oluşturduğu için model yine bir şey öğreniyor (63,63; çoğunluk baseline'ı 48,37), ama öğrenilecek sinyal gürültünün içinde sulanıyor ve bunun bedeli 12,58 puan.
+**%10'da olumlu → olumsuz:** 37.471 olumlunun 3.747'si olumsuz diye yeniden etiketleniyor. Olumsuz sınıf artık 2.529 doğru artı 3.747 yanlış — **%59,7'si yanlış etiketli**. Model, üyelerinin çoğunluğu gürültü olan bir sınıfa uyum sağlamaya çalışıyor. Gerçek olumsuzlar hâlâ tutarlı bir küme oluşturduğu için model yine bir şey öğreniyor (63,63; çoğunluk baseline'ı 48,37), ama öğrenilecek sinyal gürültünün içinde sulanıyor ve bunun bedeli 12,58 puan.
 
 Aynı asimetri, bir hesap tablosunda fark edilemeyecek kadar küçük oranlarda da ortaya çıkıyor. **%1 olumlu → olumsuz** durumunda yalnızca 375 satır çevriliyor — *olumlu sınıfın* yüzde biri, yani bütün eğitim satırlarının %0,94'ü; çoğu ekibin "mükemmel" diyeceği bir oran. Ama o 375 satır, **artık olumsuz etiketli olan her şeyin %12,9'u** (2.904'ün 375'i: 2.529 gerçek olumsuz artı 375 yeni gelen) ve 2,04 macro-F1 puanına mal oluyor — @sec-karsilastirma'te bag of words ile TF-IDF unigram'ları arasındaki farkın tamamından, yani 1,56'dan fazla.
 
-Buradan iki kural çıkıyor ve bu bölümün pratikte işe yarayan çıktısı da bunlar:
+Yüzdeler iki yönde farklı sayıda satır demek olduğu için karşılaştırmayı bir de *aynı sayıda* etiketle yaptık:
 
-- **Etiketleme hata oranınızı sınıf başına ölçün ve hataların hangi sınıftan *geldiğini* söyleyin.** Genel %1 anlamsızdır; bulgunun tamamı yöndedir: *azınlık satırlarını çoğunluğa çeviren* hatalar burada neredeyse hiç iz bırakmadı, *çoğunluk satırlarını azınlığa çeviren* hatalar ise aynı %10'luk sınıfa bağlı oranda 12,58 puana mal oldu. Her seferinde kaynak sınıfı da hedef sınıfı da adlandırın, çünkü "çoğunluk sınıfında %1" iki türlü okunuyor ve ucuz olanı yalnızca biri.
-- **Bu kadar dengesiz bir görevde, emin olmayan bir etiketleyicinin azınlık etiketini seçmesi pahalı olan hatadır.** Bu, çoğu kişinin içgüdüsünün tersi; insanlar ilginç olan etiketi cömertçe dağıtmak ister. Ama bu kuralın iki koşulu var. Birincisi, sonuç *bu* dengesizlikten ve bu maliyet yapısından çıkıyor. İkincisi, kural tahmine dayanarak etiket vermeye izin vermiyor: öğe gerçekten karara bağlanamıyorsa daha iyi cevap `ATLA` seçeneği ve bir uzlaştırma turudur; bölümün başlarındaki kılavuz da tam bunun için var. Kaçırılan bir azınlık vakasının pahalı hata olduğu yerlerde — tarama, güvenlik, dolandırıcılık — aritmetik ters yönde işler ve onu yeniden yapmanız gerekir.
+```text
+### the same NUMBER of flipped training labels in each direction (3 seeds, mean macro-F1)
+    250 labels  neg->pos 76.35 (sd 0.17)   pos->neg 74.98 (sd 0.25)   | share of source class: neg 9.9%  pos 0.67%
+    500 labels  neg->pos 76.80 (sd 0.20)   pos->neg 73.64 (sd 0.20)   | share of source class: neg 19.8%  pos 1.33%
+   1000 labels  neg->pos 76.95 (sd 0.68)   pos->neg 71.11 (sd 0.27)   | share of source class: neg 39.5%  pos 2.67%
+   2000 labels  neg->pos 68.60 (sd 1.02)   pos->neg 67.91 (sd 0.15)   | share of source class: neg 79.1%  pos 5.34%
+```
+
+Aynı sayıda etiket çevrildiğinde de yön fark ediyor: 1.000 olumlu etiketi olumsuza çevirmek 5,1 puan kaybettirirken, 1.000 olumsuz etiketi olumluya çevirmek skoru düşürmüyor. Ama asimetrinin sınırı var: olumsuz sınıfın %79'u (2.000 etiket) çevrildiğinde o yön de 7,6 puan kaybediyor.
+
+Bu deneyden, kendi verinizde ayrıca sınanmak üzere iki uygulama önerisi çıkıyor:
+
+- **Etiketleme hata oranınızı sınıf başına ölçün ve hataların hangi sınıftan *geldiğini* söyleyin.** Genel bir %1 tek başına bilgi vermez: *azınlık satırlarını çoğunluğa çeviren* hatalar burada neredeyse hiç iz bırakmadı, *çoğunluk satırlarını azınlığa çeviren* hatalar ise aynı %10'luk sınıfa bağlı oranda 12,58 puana mal oldu. Her seferinde kaynak sınıfı da hedef sınıfı da adlandırın ve yüzdeyle birlikte satır sayısını verin.
+- **Belirsizliği tahminle kapatmayın.** Bu deneyde çoğunluktan azınlığa yanlış geçirilen örnekler pahalıydı; ama bundan etiketleyicinin azınlık kararından sistematik olarak kaçınması gerektiği sonucu çıkmaz — bu, kaçırılan azınlık vakalarını artırır. Belirsiz öğeyi `ATLA` seçeneğine ve uzlaştırmaya yönlendirin; bölümün başlarındaki kılavuz bunun için var. Hata maliyetini, sınıf oranını ve hedef metriği kendi görevinizde ayrıca ölçün: kaçırılan bir azınlık vakasının pahalı olduğu yerlerde — tarama, güvenlik, dolandırıcılık — hesap farklı çıkar.
 
 ::: {.column-margin}
-Bu asimetri duygu analizinin değil, dengesizliğin bir özelliği. Bir sınıfın
-verinin %5–10'unu oluşturduğu her göreve — spam, dolandırıcılık, tıbbi tarama,
-içerik denetimi — taşınan şey *yön*: azınlık etiketi imal etmek, azınlık
-etiketini silmekten pahalıdır. Büyüklük ise sınıflandırıcınızın, metriğinizin ve
-hata mekanizmanızın bir özelliğidir; bu tablodan okunmaz, ölçülmesi gerekir.
-Sınıfa bağlı gürültü altında
-öğrenmenin kuramını @frenay2014classification derliyor.
+Bu deney, sınıflar dengesizken **kaynak sınıfa bağlı oranların** yanıltıcı
+olabildiğini gösteriyor. Spam, dolandırıcılık, tıbbi tarama ya da içerik
+denetiminde hangi yönün daha zararlı olduğu bu tablodan çıkmaz: sabit sayıda
+hatayla yapılan karşılaştırma, sınıf ağırlıkları, metrik ve operasyonel bedel
+yeniden değerlendirilmelidir. Sınıfa bağlı gürültü altında öğrenmenin kuramını
+@frenay2014classification derliyor.
 :::
 
 ::: {.callout-warning appearance="simple"}
-**Bu eğrileri hafif durum olarak okuyun.** Bu gürültünün nasıl üretildiğine dair
-bir çekince, yukarıdaki her sayıyı sınırlıyor. Bu çevirmeler **metinden bağımsız**: sabit bir oranla
-seçiliyor. Gerçek etiketleme hatası böyle değil. Yorgun bir etiketleyici rastgele
-öğeleri değil, *zor* öğeleri yanlış işaretler; dolayısıyla hatalar tam da karar
-sınırının zaten bulunduğu yerde kümelenir. Bu bölümde daha önce yaptığımız
-denetim bunu doğrudan gösteriyor: işaretlenen örnekler karışık duygular içeren, yarım kalmış ya da belirgin bir yargı bildirmeyen yorumlar;
-derlemin rastgele bir %0,23'ü değil. Aynı nominal oranda örneğe bağlı gürültü
-ölçülebilir biçimde daha zararlıdır, çünkü sınırı bulanıklaştırmakla kalmaz,
-kaydırır [@wei2022learning]. @frenay2014classification gürültüyü üçe ayırıyor:
-her şeyden bağımsız gürültü, yalnızca sınıfa bağlı gürültü ve örneğe bağlı
-gürültü. Bu deneyin simetrik rejimi (her sınıfı aynı oranla çevirdiği için)
-birincisine, tek yönlü iki rejimi ikincisine giriyor; hiçbiri üçüncüsüne değil. Dolayısıyla yukarıdaki eğrileri bir sınır değil, **hafif durum**
-olarak okuyun: gerçek hata oranınızın bundan pahalıya mal olmasını beklemek
-için iyi sebep var, ama buradaki hiçbir aritmetik daha ucuza mal olamayacağını
-söylemiyor.
+**Bu deneyde etiket bozmaları metinden bağımsız seçildi**: sabit bir oranla,
+metne bakılmadan. Gerçek hatalar metnin özelliklerine bağlı olabilir — örneğin
+zor öğelerde kümelenebilir — ve aynı nominal oranın etkisi o durumda
+farklılaşır [@wei2022learning]. Önceki kısımda modelin işaretlediği zor yorumlar
+doğrulanmış etiket hatalarının dağılımını göstermiyor; yalnızca böyle bir
+kümelenmenin mümkün olduğunu düşündürüyor. @frenay2014classification gürültüyü
+üçe ayırıyor: her şeyden bağımsız gürültü, yalnızca sınıfa bağlı gürültü ve
+örneğe bağlı gürültü. Bu deneyin simetrik rejimi birincisine, tek yönlü iki
+rejimi ikincisine örnek; üçüncüsünün maliyeti burada sınanmadı. Yukarıdaki
+eğrileri bu yüzden bir sınır olarak okumayın.
 :::
 
 ## Test kümeniz bir cetvel değil, bir tavan
