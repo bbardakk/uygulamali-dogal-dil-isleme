@@ -408,7 +408,7 @@ This is why kappa comes out low on skewed tasks and why reporting raw agreement 
 
 Cohen's kappa is defined for exactly two annotators. When you have three or more — the normal case once a crowd platform is involved — use Fleiss' kappa [@fleiss1971measuring], which is the generalisation of *Scott's pi* rather than of Cohen's: it computes $p_e$ from a **single marginal pooled across all annotators**, not from each annotator's own rates, and it does not require the same annotators to have labelled every item (it does assume every item received the same number of judgements). Krippendorff's alpha [@krippendorff2018content] takes the idea further, writing agreement as $\alpha = 1 - D_o/D_e$ — observed disagreement over expected disagreement — with a distance function you choose, so one coefficient covers nominal, ordinal and interval labels and tolerates missing judgements. The interpretation, and the skew problem, are unchanged for all three.
 
-That difference between "each annotator's own rates" and "one pooled rate" is not bookkeeping; it is the second of kappa's two known pathologies, and this corpus shows it. See below.
+That difference between "each annotator's own rates" and "one pooled rate" is not bookkeeping; it is the second of the two known situations that affect how kappa is read, and this corpus illustrates it. See below.
 :::
 
 ### The same reference and lexicon rule, a different sample {#the-same-annotators-a-different-number}
@@ -566,19 +566,21 @@ Sending every item to a third person is expensive at scale. So most projects com
 
 ## Auditing labels at scale {#sec-audit}
 
-You cannot read 40,000 rows. You can make the model tell you which ones to read.
+Reading all 40,000 rows by hand is expensive for most projects. What you can do is set up a procedure that chooses which rows to read first.
 
-The technique is out-of-fold prediction, a simplified form of confident learning [@northcutt2021confident]. The full method does not use a single global threshold: it thresholds each class at the average probability the model assigns to that class over the examples labelled with it, and builds a count matrix (the *confident joint*) from those thresholds. The single 0.90 threshold below is the shortcut that per-class thresholds exist to correct when classes are this imbalanced. Fit on four folds, predict the fifth, repeat. Every training row now has a prediction from a model that never saw it. Where the model is confident in the *other* class, the label is a candidate for being wrong.
+Here we use out-of-fold prediction to produce a **review priority**. It is a simple threshold rule inspired by confident learning [@northcutt2021confident], which uses the model's own confidence to find candidate label errors; it is not the method itself. The full method does not use a single global threshold: it thresholds each class at the average probability the model assigns to that class over the examples labelled with it, and builds a count matrix (the *confident joint*) from those thresholds. The single 0.90 threshold below is a shortcut, and per-class thresholds exist to correct exactly this when classes are so imbalanced. Fit on four folds, predict the fifth, repeat. Every training row now has a prediction from a model that never saw that row's label. Rows where the model gives a high score to the *other* class are not automatic verdicts of error; they are candidates to be read by hand.
 
 ```python
 from sklearn.model_selection import StratifiedKFold
 
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+# Xtr here comes from a vectoriser fitted on all 40,000 rows, before the folds.
+# For a fully out-of-fold prediction, fit the vectoriser inside each training fold too.
 oof = np.zeros(len(y))
 for train_idx, val_idx in skf.split(Xtr, y):
     oof[val_idx] = clf().fit(Xtr[train_idx], y[train_idx]).predict_proba(Xtr[val_idx])[:, 1]
 
-# confidence that the stored label is wrong
+# the score the model gives to the opposite class; not the probability that the label is wrong
 wrong_conf = np.where(y == 1, 1 - oof, oof)
 ```
 
@@ -586,20 +588,22 @@ On the 40,000 training rows:
 
 | threshold | rows flagged | share | gold positive | gold negative |
 |---:|---:|---:|---:|---:|
-| > 0.50 | 3,026 | 7.57% | — | — |
+| > 0.50 | 3,026 | 7.57% | 2,232 | 794 |
 | > 0.90 | 92 | 0.23% | 49 | 43 |
-| > 0.95 | 34 | 0.09% | 20 | 14 |
-| > 0.99 | 2 | 0.005% | — | — |
+| > 0.95 | 34 | 0.09% | 18 | 16 |
+| > 0.99 | 2 | 0.005% | 2 | 0 |
 
-: Rows the model is confident are mislabelled {tbl-colwidths="[18,18,14,25,25]"}
+: Rows whose opposite-class score exceeds the threshold, to be read by hand {tbl-colwidths="[18,18,14,25,25]"}
+
+We measured what the comment in the code implies. With the vectoriser also fitted on the training part of each fold only, the number of rows above the 0.90 threshold rises from 92 to 123, and at 0.95 from 34 to 47; 89 of the first 92 candidates are in the new list too. The numbers below, and the repair experiment, belong to the first list of 92. In your own audit, fit the vectoriser inside the fold; a `Pipeline` does that by itself.
 
 Three things are worth noticing.
 
-**The flags are class-balanced, the corpus is not.** At the 0.90 threshold, 43 of 92 flags are on gold-negative rows — 47% — in a corpus that is 6.3% negative. Per row, 1.70% of negative labels are flagged against 0.13% of positive ones — a negative label is *thirteen times* more likely to be flagged. That is where to start reading — but it is a difference in flag rates, not error rates: the model may simply be less certain, or worse calibrated, on the minority class, and in the hand audit below half the flags are not label errors at all.
+**The flags are class-balanced, the corpus is not.** At the 0.90 threshold, 43 of 92 flags are on gold-negative rows — 47% — in a corpus that is 6.3% negative. Per row, 1.70% of negative labels are flagged against 0.13% of positive ones — the flag rate of a negative label is *thirteen times* higher. That is where to start reading. But it is a difference in flag rates, not error rates: the model may simply be less certain, or worse calibrated, on the minority class.
 
-**Almost nothing is flagged at high confidence.** 92 rows out of 40,000. If the roughly 1% error rate estimated from the random 100-row audit is right, you would expect 400. The technique finds errors the model can detect, which is a strict subset of errors that exist — it is blind to errors on texts it also finds hard.
+**The high threshold flags very few rows.** 92 of the 40,000 training rows exceed the 0.90 threshold. The random 100 test rows showed zero outright errors; if the prior-dependent scenario of about 1% from there were right you would expect around 400 errors, but that value is not a measured error rate and cannot be used here as a count of real errors. The rule also leaves out the errors the model cannot detect: it is blind to errors on texts the model itself finds hard. Rows that are not flagged cannot be declared clean.
 
-**A flag is a request to read, not a verdict.** So I read them. I took the equivalent 40 highest-confidence flags on the *test* set — where a wrong label costs you a wrong leaderboard rather than a slightly worse model — and classified each by hand into: `error` (gold is wrong), `schema` (a single binary label cannot represent the text), or `model` (the label is defensible and the classifier is wrong).
+**A flag is a request to read, not a verdict.** The 92 candidates above are in the training set. In a separate audit I read, as a single person, the 40 reviews of the *test* set on which the model disputed the stored label with the highest score (in the test set a wrong label costs you a wrong leaderboard rather than a slightly lower-scoring model). The two selections have different sampling frames; the proportions of one cannot be carried over to the other. I classified each review by hand into one of three categories: `error` (the gold label clearly contradicts the text), `schema` (a single binary label cannot represent the text), or `model` (the label is defensible and the classifier is wrong).
 
 ```text
 ### 40 highest-confidence gold/model disagreements, test set, read by hand
@@ -613,16 +617,16 @@ data-side problems                                   31 / 40
 schema breakdown:  mixed 12 · truncated 4 · lukewarm 3 · no verdict 1
 ```
 
-**Thirty-one of forty are problems with the data, not the model** — but read that as a direction, not a rate. With $n = 40$ and a single unblinded reader (me, who had written the hypothesis), the 95% Wilson interval (a confidence interval for a proportion that stays sensible at small $n$) on the schema share runs from about 35% to 65%, and on the error share from 16% to 43%. Those two intervals overlap. The claim this measurement supports is "schema failure is a first-order category, comparable in size to outright error" — not "exactly half". A second reader on the same forty items, with kappa reported, would cost an hour and would settle it; I did not do that, and you should before you quote the number.
+**Of the 40 selected candidates, 31 show a problem on the data side according to the single reader**: 20 were classified as schema and 11 as a clear label contradiction. These proportions describe only the test examples the model selected with its highest scores; they are not an estimate of a rate for the corpus or for the 92 training candidates. With $n = 40$ the 95% Wilson interval (a confidence interval for a proportion that stays sensible at small $n$) on the schema share runs from about 35% to 65%, and on the error share from 16% to 43%, and the two intervals overlap; but these intervals describe counting uncertainty only and do not correct for purposive selection. The reading was done by a single unblinded reader (me, who had written the hypothesis). The same forty items should be read by a second, blinded reader and the agreement reported; that step tests the subjective classification, and does not by itself solve the problem of generalising. I did not do that, and you should before you quote the number.
 
 Four of the forty show what the categories mean:
 
-- **Row 6874** (gold = negative, model p(positive) = 0.984). Clear praise, no reservations, labelled negative. A genuine error — someone pressed the wrong key.
-- **Row 8356** (gold = positive, p = 0.059). *"yastıklar ince yeterli değil"* — "the pillows are thin, not enough." Labelled positive. Another genuine error.
-- **Row 8006** (gold = positive, p = 0.034). The review praises the *returns process* at length and never says anything good about the product. The label is defensible under a "was this a good experience" reading; the model nonetheless said negative, so praise vocabulary cannot be what misled it (praise would push towards positive); the likelier culprit is strongly negative words such as *iade* ("return"), one of the strongest negative features in @sec-bake-off's coefficient table (−5.85). Counted as a model error — but under guideline v1 above, returns are not the product (case 1) and there is no verdict on the product, so the row would be `SKIP` (case 4) and could just as well be filed under schema. The boundary between categories is this thin, which is one more reason to read the counts as a direction rather than a rate.
-- **Row 2544** (gold = positive). *"paketleme başarısız. ampüller fena değil"* — "packaging failed. the bulbs are not bad." Two verdicts, opposite directions, different aspects. Neither label is wrong. The schema is.
+- **Row 6874** (gold = negative, model p(positive) = 0.984). Clear praise, no visible reservation; it plainly contradicts the negative label. At which stage the error arose is not known.
+- **Row 8356** (gold = positive, p = 0.059). *"yastıklar ince yeterli değil"* — "the pillows are thin, not enough." Labelled positive; another clear contradiction.
+- **Row 8006** (gold = positive, p = 0.034). *"hiç bir sebeb göstermeden iade kurallarına uyarak beğenmedim dedim, iade ettim.ücret iadem anında yapıldı.kargo ücreti de dahi."* — "without giving any reason, following the return rules, I said I did not like it and returned it. my refund was made at once. the shipping fee too." The review praises the returns process; it gives no positive verdict on the product, and it reports "I did not like it" as the stated reason for the return. On this example the largest negative contributions to the model's decision score come from the features `iade` ("return", −1.78), `beğenmedim` ("I did not like it", −1.30) and `iade ettim` ("I returned it", −0.65); about half of the negative contributions come from features containing `iade`. Under a "was this a good experience" target the positive label is defensible, which is why we counted this row as a model error. Under the product-targeted guideline v1, the returns process is not the product (case 1): if "I did not like it" counts as a product verdict the label would be 0, and if it does not the row is `SKIP` (case 4). The category depends on the definition of the target, which is one more reason to read the counts as a direction rather than a rate.
+- **Row 2544** (gold = positive). *"paketleme başarısız. ampüller fena değil"* — "packaging failed. the bulbs are not bad." Two verdicts of opposite polarity about two different aspects. Which label fits cannot be decided before the target and the rule for mixed reviews are set.
 
-Five of the nine model errors turn on negation: *fena değil* ("not bad"), *özelliklerinin altında bir ürün değil* ("not a product below its specifications"), and one triple negation. A bag-of-n-grams model has no mechanism for scope of negation. Its word bigrams give it a two-word window — *fena değil* is itself a feature, useful only if that exact pair was frequent enough in training — but anything longer, like the second example, is just *değil* as a feature with a weight. That limitation is the subject of @sec-transformers.
+Five of the nine selected model errors involve negation: *fena değil* ("not bad"), *özelliklerinin altında bir ürün değil* ("not a product below its specifications"), and one triple negation. A model that uses word unigrams and bigrams can learn frequent patterns such as *fena değil* as a separate feature; but it does not structurally represent the *scope* of a long or nested negation. That is what happened in this model: on row 2544 the contribution of the bigram `fena değil` to the decision score is only −0.06, while the unigrams `değil` (−1.77) and `fena` (−0.55) dominate. These examples show the limit of this feature setup, not that every n-gram model will get every negation wrong. Models that represent word order and scope are the subject of later chapters (@sec-transformers).
 
 ### What cleaning actually bought
 

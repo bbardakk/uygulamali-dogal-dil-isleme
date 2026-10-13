@@ -435,8 +435,8 @@ etiketleri kapsıyor; eksik yargıları da tolere ediyor. Yorumu da, çarpıklı
 için değişmez.
 
 "Her etiketleyicinin kendi oranı" ile "tek havuzlanmış oran" arasındaki bu fark
-sıradan bir hesap ayrıntısı değil; kappa'nın bilinen iki zaafından ikincisi ve
-bu derlem onu gösteriyor. Aşağıya bakın.
+sıradan bir hesap ayrıntısı değil; kappa'nın yorumunu etkileyen bilinen iki
+durumdan ikincisi ve bu derlem onu örnekliyor. Aşağıya bakın.
 :::
 
 ### Aynı referans ve sözlük kuralı, farklı örneklem {#aynı-etiketleyiciler-farklı-bir-sayı}
@@ -682,19 +682,21 @@ bir bilgiyi taşıyabilir [@uma2021learning; @plank2022problem].
 
 ## Etiketleri ölçekte denetlemek {#sec-etiket-denetimi}
 
-40.000 satır okuyamazsınız. Ama hangilerini okuyacağınızı modele söyletebilirsiniz.
+40.000 satırın tamamını elle okumak çoğu proje için pahalıdır. Hangi satırların önce okunacağını seçen bir yordam ise kurabilirsiniz.
 
-Teknik, out-of-fold kestirim (eğitimde dışarıda bırakılan parça için tahmin). Bu, modelin kendi güveninden yararlanarak hatalı etiketleri bulan confident learning yaklaşımının [@northcutt2021confident] basitleştirilmiş bir biçimi. Asıl yöntem tek bir küresel eşik kullanmaz: her sınıf için, o sınıfla etiketli örneklerde modelin o sınıfa verdiği ortalama olasılığı eşik alır ve bu eşiklerle etiket–tahmin sayımlarından bir matris (*confident joint*) kurar. Aşağıda kullandığımız tek eşik (0,90) bir kısayol; sınıflar bu kadar dengesizken sınıfa özgü eşikler tam da bunu düzeltmek için var. Veriyi beş parçaya ayırın; modeli dördünde eğitip kalan parça için tahmin üretin ve bunu her parça bir kez dışarıda kalacak şekilde tekrarlayın. Artık her eğitim satırının, onu hiç görmemiş bir modelden gelen bir kestirimi var. Modelin *diğer* sınıftan emin olduğu yerlerde etiket, yanlış olma adayıdır.
+Burada out-of-fold kestirimi (eğitimde dışarıda bırakılan parça için tahmin) bir **inceleme önceliği** üretmek için kullanıyoruz. Bu, modelin kendi güveninden yararlanarak hatalı etiket adaylarını bulan confident learning yaklaşımından [@northcutt2021confident] esinlenen basit bir eşik kuralı; yöntemin kendisi değil. Asıl yöntem tek bir küresel eşik kullanmaz: her sınıf için, o sınıfla etiketli örneklerde modelin o sınıfa verdiği ortalama olasılığı eşik alır ve bu eşiklerle etiket–tahmin sayımlarından bir matris (*confident joint*) kurar. Aşağıda kullandığımız tek eşik (0,90) bir kısayol; sınıflar bu kadar dengesizken sınıfa özgü eşikler tam da bunu düzeltmek için var. Veriyi beş parçaya ayırın; modeli dördünde eğitip kalan parça için tahmin üretin ve bunu her parça bir kez dışarıda kalacak şekilde tekrarlayın. Artık her eğitim satırının, o satırın etiketini hiç görmemiş bir modelden gelen bir kestirimi var. Modelin *diğer* sınıfa yüksek puan verdiği satırlar otomatik bir hata hükmü değil, elle incelenecek adaylardır.
 
 ```python
 from sklearn.model_selection import StratifiedKFold
 
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+# Xtr burada katlardan önce, 40.000 satırın tamamında uydurulmuş vektörleştiriciden
+# geliyor. Tam kat dışı kestirim için vektörleştiriciyi de her eğitim katında uydurun.
 oof = np.zeros(len(y))
 for train_idx, val_idx in skf.split(Xtr, y):
     oof[val_idx] = clf().fit(Xtr[train_idx], y[train_idx]).predict_proba(Xtr[val_idx])[:, 1]
 
-# saklanan etiketin yanlış olduğuna dair güven
+# modelin karşı sınıfa verdiği puan; etiketin yanlış olma olasılığı değildir
 wrong_conf = np.where(y == 1, 1 - oof, oof)
 ```
 
@@ -702,20 +704,22 @@ wrong_conf = np.where(y == 1, 1 - oof, oof)
 
 | eşik | işaretlenen satır | pay | referans etiket olumlu | referans etiket olumsuz |
 |---:|---:|---:|---:|---:|
-| > 0,50 | 3.026 | %7,57 | — | — |
+| > 0,50 | 3.026 | %7,57 | 2.232 | 794 |
 | > 0,90 | 92 | %0,23 | 49 | 43 |
-| > 0,95 | 34 | %0,09 | 20 | 14 |
-| > 0,99 | 2 | %0,005 | — | — |
+| > 0,95 | 34 | %0,09 | 18 | 16 |
+| > 0,99 | 2 | %0,005 | 2 | 0 |
 
-: Modelin yanlış etiketlendiğinden emin olduğu satırlar {tbl-colwidths="[18,18,14,25,25]"}
+: Karşı sınıf puanı eşiği aşan, elle incelenecek satırlar {tbl-colwidths="[18,18,14,25,25]"}
+
+Koddaki yorumun karşılığını ölçtük. Vektörleştiriciyi de her katta yalnızca eğitim kısmında uydurduğumuzda 0,90 eşiğini aşan satır sayısı 92'den 123'e, 0,95 eşiğinde 34'ten 47'ye çıkıyor; ilk listedeki 92 adayın 89'u yeni listede de var. Aşağıdaki sayılar ve onarım deneyi 92 satırlık ilk listeye ait. Kendi denetiminizde vektörleştiriciyi katın içinde uydurun; bir `Pipeline` bunu kendiliğinden yapar.
 
 Üç şey dikkat çekiyor.
 
-**İşaretler sınıflar arasında dengeli, derlem değil.** 0,90 eşiğinde 92 işaretin 43'ü referans etiketi olumsuz olan satırlarda — %47 — ve bu, yalnızca %6,3'ü olumsuz olan bir derlemde. Satır başına bakıldığında olumsuz etiketlerin %1,70'i, olumlu etiketlerin ise %0,13'ü işaretleniyor — bir olumsuz etiketin işaretlenme olasılığı *on üç kat* daha yüksek. Okumaya nereden başlamanız gerektiği de tam orası. Ama bunu bir hata oranı farkı diye okumayın: on üç kat, *işaretlenme* oranlarının farkı; model azınlık sınıfında daha belirsiz ya da daha kötü kalibre olduğu için de bu satırları daha sık işaretliyor olabilir — aşağıdaki elle denetimde işaretlerin yarısı etiket hatası bile değil.
+**İşaretler sınıflar arasında dengeli, derlem değil.** 0,90 eşiğinde 92 işaretin 43'ü referans etiketi olumsuz olan satırlarda — %47 — ve bu, yalnızca %6,3'ü olumsuz olan bir derlemde. Satır başına bakıldığında olumsuz etiketlerin %1,70'i, olumlu etiketlerin ise %0,13'ü işaretleniyor — bir olumsuz etiketin işaretlenme oranı *on üç kat* yüksek. Okumaya nereden başlamanız gerektiği de orası. Ama bunu bir hata oranı farkı diye okumayın: on üç kat, *işaretlenme* oranlarının farkı; model azınlık sınıfında daha belirsiz ya da daha kötü kalibre olduğu için de bu satırları daha sık işaretliyor olabilir.
 
-**Yüksek güvenle işaretlenen neredeyse hiçbir şey yok.** 40.000 satırdan 92'si. Rastgele 100 satırlık denetimden çıkardığımız yaklaşık %1'lik hata oranı doğruysa 400 beklerdiniz. Teknik, modelin *tespit edebildiği* hataları buluyor; bu da var olan hataların yalnızca bir alt kümesi — modelin kendisinin de zor bulduğu metinlerdeki hatalara kör.
+**Yüksek eşik çok az satır işaretliyor.** 40.000 eğitim satırının 92'si 0,90 eşiğini aşıyor. Rastgele 100 test satırında sıfır açık hata görülmüştü; oradaki önsele bağlı yaklaşık %1'lik senaryo doğru olsaydı 400 dolayında hata beklenirdi, ama o değer ölçülmüş bir hata oranı değil ve burada gerçek hata sayısı gibi kullanılamaz. Kural ayrıca modelin yakalayamadığı hataları dışarıda bırakır: modelin kendisinin de zor bulduğu metinlerdeki hatalara kör. İşaretlenmeyen satırlar temiz ilan edilemez.
 
-**İşaret bir hüküm değil, okuma çağrısıdır.** Ben de okudum. *Test* kümesinde modelin mevcut etikete en yüksek güvenle itiraz ettiği 40 örneği aldım. Test kümesinde yanlış bir etiketin bedeli biraz daha kötü bir model değil, yanlış bir sıralama tablosudur. Her birini elle şu üç kategoriye ayırdım: `hata` (referans etiket yanlış), `şema` (tek bir ikili etiket metni temsil edemiyor), `model` (etiket savunulabilir, sınıflandırıcı yanılıyor).
+**İşaret bir hüküm değil, okuma çağrısıdır.** Yukarıdaki 92 aday eğitim kümesinde. Ayrı bir denetimde, *test* kümesinde modelin saklanan etikete en yüksek puanla itiraz ettiği 40 yorumu tek kişi olarak okudum (test kümesinde yanlış bir etiketin bedeli biraz daha düşük skorlu bir model değil, yanlış bir sıralama tablosudur). Bu iki seçimin örnekleme çerçevesi farklı; birinin oranları ötekine taşınamaz. Her yorumu elle şu üç kategoriden birine ayırdım: `hata` (referans etiket metinle açıkça çelişiyor), `şema` (tek bir ikili etiket metni temsil edemiyor), `model` (etiket savunulabilir, sınıflandırıcı yanılıyor).
 
 ```text
 ### 40 highest-confidence gold/model disagreements, test set, read by hand
@@ -729,25 +733,26 @@ veri tarafındaki problemler                          31 / 40
 şema dökümü:  karışık 12 · kesilmiş 4 · ılık (ne övgü ne yergi) 3 · hüküm yok 1
 ```
 
-**Kırkın otuz biri modelin değil verinin problemi** — ama bunu bir oran değil,
-bir yön olarak okuyun. $n = 40$ ve kör okuma yapmayan tek bir okuyucuyla
-(hipotezi yazmış olan ben), şema payının %95 Wilson aralığı (küçük $n$'de de makul davranan, bir oran için
-güven aralığı) kabaca %35 ile %65
-arasında, hata payınınki %16 ile %43 arasında uzanıyor. Bu iki aralık örtüşüyor.
-Bu ölçümün desteklediği iddia "şema arızası birinci mertebeden bir kategoridir ve
-düpedüz hatayla karşılaştırılabilir büyüklüktedir" — "tam olarak yarısı" değil.
-Aynı kırk öğeyi ikinci bir okuyucuya da okutup kappa'yı bildirmek bir saat
-sürerdi ve meseleyi kapatırdı. Ben bunu yapmadım; siz sayıyı alıntılamadan önce
-yapın.
+**Seçilmiş 40 adayın 31'i, tek okuyucuya göre, veri tarafında bir sorun
+gösteriyor**: 20'si şema, 11'i açık etiket çelişkisi olarak sınıflandı. Bu
+oranlar yalnızca modelin en yüksek puanla seçtiği test örneklerini anlatır;
+derlem için ya da eğitimdeki 92 aday için bir oran kestirimi değildir. $n = 40$
+ile şema payının %95 Wilson aralığı (küçük $n$'de de makul davranan, bir oran
+için güven aralığı) kabaca %35 ile %65, hata payınınki %16 ile %43 arasında ve
+iki aralık örtüşüyor; ama bu aralıklar yalnızca sayım belirsizliğini anlatır,
+amaçlı seçilimi düzeltmez. Okumayı kör olmayan tek bir okuyucu yaptı (hipotezi
+yazmış olan ben). Aynı kırk öğeyi kör çalışan ikinci bir okuyucuya okutup uyumu
+bildirmek gerekir; bu adım öznel sınıflamayı sınar, genelleme sorununu tek
+başına çözmez. Ben bunu yapmadım; siz sayıyı alıntılamadan önce yapın.
 
 Kategorilerin ne demek olduğunu kırktan dördü gösteriyor:
 
-- **6874. satır** (referans = olumsuz, model p(olumlu) = 0,984). Açık övgü, hiç çekince yok, olumsuz etiketlenmiş. Gerçek bir hata — biri yanlış tuşa basmış.
-- **8356. satır** (referans = olumlu, p = 0,059). *"yastıklar ince yeterli değil"*. Olumlu etiketlenmiş. Bir gerçek hata daha.
-- **8006. satır** (referans = olumlu, p = 0,034). Yorum uzun uzun *iade sürecini* övüyor ve ürün hakkında hiç iyi bir şey söylemiyor. "Bu iyi bir deneyim miydi" okumasıyla etiket savunulabilir; model ise olumsuz dedi. Onu yanıltan övgü dağarcığı olamaz, çünkü o modeli olumluya iterdi; büyük olasılıkla *iade* gibi güçlü olumsuz kelimeler yanılttı: `iade`, @sec-karsilastirma'ün katsayı tablosunda en güçlü olumsuz özniteliklerden biri (−5,85). Bunu model hatası olarak saydık; ama yukarıdaki kılavuz v1 altında iade ürün sayılmadığı (1. vaka) ve ürün hakkında hüküm olmadığı için bu satır `ATLA` (4. vaka) olurdu, yani şema kategorisine de pekâlâ yazılabilirdi. Kategoriler arasındaki sınır bu kadar ince; tablodaki sayıları bu yüzden de bir oran değil, bir yön olarak okuyun.
-- **2544. satır** (referans = olumlu). *"paketleme başarısız. ampüller fena değil"*. İki hüküm, zıt kutuplar, farklı yönler hakkında. Etiketlerin hiçbiri yanlış değil. Yanlış olan şema.
+- **6874. satır** (referans = olumsuz, model p(olumlu) = 0,984). Açık övgü içeriyor, çekince görünmüyor; olumsuz etiketle açıkça çelişiyor. Hatanın hangi aşamada oluştuğu bilinmiyor.
+- **8356. satır** (referans = olumlu, p = 0,059). *"yastıklar ince yeterli değil"*. Olumlu etiketlenmiş; açık bir çelişki daha.
+- **8006. satır** (referans = olumlu, p = 0,034). *"hiç bir sebeb göstermeden iade kurallarına uyarak beğenmedim dedim, iade ettim.ücret iadem anında yapıldı.kargo ücreti de dahi."* Yorum iade sürecini övüyor; ürün hakkında olumlu bir hüküm vermiyor ve iade gerekçesi olarak "beğenmedim" dediğini aktarıyor. Modelin karar skoruna bu örnekte en büyük olumsuz katkılar `iade` (−1,78), `beğenmedim` (−1,30) ve `iade ettim` (−0,65) özniteliklerinden geliyor; olumsuz katkıların yaklaşık yarısı `iade` içeren özniteliklerden. "Bu iyi bir deneyim miydi" hedefinde olumlu etiket savunulabilir; bu yüzden bu satırı model hatası olarak saydık. Ürün hedefli kılavuz v1 altında ise iade süreci ürün sayılmaz (1. vaka): "beğenmedim" bir ürün hükmü sayılırsa etiket 0 olurdu, sayılmazsa satır `ATLA` (4. vaka). Kategori hedef tanımına bağlı; tablodaki sayıları bu yüzden de bir oran değil, bir yön olarak okuyun.
+- **2544. satır** (referans = olumlu). *"paketleme başarısız. ampüller fena değil"*. İki ayrı yön hakkında zıt kutuplu iki hüküm. Hangi etiketin uygun olduğu, hedef ve karışık yorum kuralı belirlenmeden karara bağlanamaz.
 
-Dokuz model hatasının beşi olumsuzlamaya dayanıyor: *fena değil*, *özelliklerinin altında bir ürün değil* ve bir tane de üçlü olumsuzlama. Bir n-gram sayım modelinin (bag of n-grams) olumsuzlamanın *kapsamı* için hiçbir mekanizması yoktur. Kelime bigram'ları ona iki kelimelik bir pencere verir — *fena değil* kendi başına bir özniteliktir, ama ancak bu bigram eğitimde yeterince sık geçtiyse işe yarar — fakat ikinci örnek gibi daha uzun her şeyde elinde kalan, bir ağırlığı olan *değil* özniteliğidir. Bu sınırlılık @sec-transformerlar'nin konusu.
+Dokuz seçilmiş model hatasının beşinde olumsuzlama var: *fena değil*, *özelliklerinin altında bir ürün değil* ve bir tane de üçlü olumsuzlama. Kelime unigram ve bigram kullanan bir model *fena değil* gibi sık kalıpları ayrı bir öznitelik olarak öğrenebilir; ama uzun ya da iç içe geçmiş bir olumsuzlamanın *kapsamını* yapısal olarak temsil etmez. Bu modelde de öyle olmuş: 2544. satırda `fena değil` bigram'ının karar skoruna katkısı yalnızca −0,06 iken, `değil` (−1,77) ve `fena` (−0,55) unigram'ları ağır basıyor. Bu örnekler bu öznitelik düzeninin sınırını gösterir; bütün n-gram modellerinin her olumsuzlamada yanılacağını değil. Kelime sırasını ve kapsamı temsil eden modeller ilerideki bölümlerin konusu (@sec-transformerlar).
 
 ### Temizlik gerçekte ne kazandırdı
 
