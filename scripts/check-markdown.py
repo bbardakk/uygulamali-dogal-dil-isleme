@@ -30,6 +30,13 @@ A plain mid-paragraph line at column zero is safe — pandoc does not
 interrupt a paragraph there — so it is not reported. Fix a hit by
 reflowing the line so the marker is not first, not by rewording.
 
+One more silent failure lives here because it has the same shape: a code
+fence whose opening and closing lines are indented differently. A block
+inside a list item that opens at column zero and "closes" four spaces in
+is never closed for pandoc, and everything up to the next fence in the
+file, headings included, renders as code. That happened in chapter 5: a
+section heading and three paragraphs disappeared into a listing.
+
     python3 scripts/check-markdown.py
 """
 
@@ -63,9 +70,12 @@ def offenders(text):
         if fence is None:
             if marker:
                 fence = marker.group(1)[0] * len(marker.group(1))
+                opened, indent = i + 1, len(line) - len(line.lstrip())
                 continue
         else:
             if marker and marker.group(1).startswith(fence):
+                if len(line) - len(line.lstrip()) != indent:
+                    yield opened, f"opens a code fence that line {i + 1} closes at another indent"
                 fence = None
             continue
 
@@ -97,10 +107,10 @@ def main():
         print(f"check-markdown: {len(problems)} problem(s)\n", file=sys.stderr)
         for p in problems:
             print(f"  {p}", file=sys.stderr)
-        print("\n  reflow the line so the marker is not first.", file=sys.stderr)
+        print("\n  reflow the line so the marker is not first; indent both fences alike.", file=sys.stderr)
         return 1
 
-    print("check-markdown: no line starts with an accidental list marker")
+    print("check-markdown: no accidental list marker, every code fence closes at its own indent")
     return 0
 
 
