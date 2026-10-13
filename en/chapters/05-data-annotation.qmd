@@ -825,24 +825,23 @@ These comparisons have three consequences for evaluation design:
 
 ## Leakage: the errors that make you look good {#sec-leakage}
 
-Everything so far has been about labels being *wrong*. This section is about a
-failure with the opposite signature: the labels are right, the model is
-honest, and the score is still a lie.
+Everything so far has been about labels being *wrong*. This section is about an evaluation risk separate from wrong labels: if information that should not be seen during training, or the test examples themselves, reach the model, the reported score may not represent the intended conditions of use.
 
 ::: {#gloss-label-leakage .column-margin .term-gloss}
-**label leakage** — when something in your input quietly carries the
-answer, or when the same text sits in both training and test. The score
-looks excellent right up to the day you deploy. [↩](#term-label-leakage){.term-back}
+**label leakage** — target information the model will not have at the time
+of use getting into the input, directly or indirectly. The same text sitting
+in both training and test is contamination between the splits, which falls
+under the wider term **data leakage**. [↩](#term-label-leakage){.term-back}
 :::
 
-Label noise makes your score worse than the truth. [Label leakage](#gloss-label-leakage){#term-label-leakage .term-ref} makes it better, which is why it survives so much longer.
+Label noise and leakage ([label leakage](#gloss-label-leakage){#term-label-leakage .term-ref}) can both stop the reported score from representing performance on the target. Noise does not always lower the score, and leakage does not raise it under every condition; in both cases the direction has to be measured with a controlled comparison.
 
-The raw corpus has 235,165 rows, of which **1,657 are exact duplicate texts** (0.70%). @sec-bake-off de-duplicated before splitting. Suppose it had not:
+The raw corpus has 235,165 rows. Exact de-duplication on the text removes 1,657 **extra rows** from them (0.70%). That is not the number of duplicate groups: 1,055 distinct texts occur more than once (2,712 rows in all), and 77 of those groups carry both labels. Chapter 4 did this de-duplication before splitting (@sec-bake-off). Suppose it had not:
 
 ```text
 ### split-before-dedup, the ordinary careless mistake
 
-exact duplicate texts in the raw corpus        1,657   (0.70%)
+rows removed by exact de-duplication           1,657   (0.70%)
 test rows also present in train                   45   (0.45% of test)
 near-duplicates after normalisation               34   (0.34% of test)
 
@@ -853,9 +852,9 @@ same model, same run:
   macro-F1 on the clean rows                    74.08
 ```
 
-A 2.68-point macro-F1 gap on rows the model had memorised. With n = 45 that gap is noisy, and 0.45% contamination is far too little to move the headline number. This corpus's leak is real but small. (The 74.08 here does not match the 76.21 baseline used elsewhere in the chapter because this run deliberately does *not* deduplicate before splitting — the number to compare it against is its own 76.76.)
+In this run the 45 test rows that are also in training have a macro-F1 of 76.76, and the other 9,955 rows 74.08. The two subsets differ in their texts and in their class mix — 42 of the 45 rows are positive, and their median length is 2 tokens (19 for the rest) — so the 2.68-point gap cannot be read as the causal gain of memorisation; and at n = 45 macro-F1 is volatile. In 5 of the 45 rows the copy in training carries the other label. Nor can the 74.08 here be compared directly with the 76.21 baseline used elsewhere in the chapter: this run deliberately did *not* de-duplicate before splitting, so it is a different split. The presence of contamination is shown by matching rows; its effect on the score, by a shared evaluation design. A 0.45% contamination is far too little to move the headline number.
 
-Real corpora are frequently worse, and the effect scales in a way that is worth seeing directly. Copying a controlled fraction of the test set into training — precisely what a careless split does, just at a larger dose:
+To see how the effect changes with the dose, copy a controlled fraction of the test rows into the training data; the vectoriser is refitted on that enlarged training set as well. This is an artificial contamination: it need not produce the same distribution, or the same effect on the score, as natural splitting mistakes.
 
 | test rows copied into train | accuracy | macro-F1 | F1 (negative) |
 |---:|---:|---:|---:|
@@ -870,11 +869,11 @@ Real corpora are frequently worse, and the effect scales in a way that is worth 
 
 : What leakage is worth, at controlled doses {tbl-colwidths="[34,22,22,22]"}
 
-Read the curve as a diagnostic. **A 10% leak buys about one macro-F1 point** — well within the range of a genuine modelling improvement, and completely undetectable from the score alone. A 100% leak buys nearly ten points (9.68) — more than twice the 4.3 points that moving from unigram to bigram tf-idf bought in @sec-bake-off.
+In this controlled copying experiment the 10% condition takes macro-F1 from 76.21 to 77.14, and the 100% condition to 85.89 (9.68 points — more than twice the 4.3 points that moving from unigram to bigram TF-IDF bought in chapter 4). The effect is specific to this model, this dataset and this copying setup; it is not a fixed gain per 10%, nor an estimate of the effect of a natural leak. Which rows are copied moves the result too: re-running the 10% dose with three different draws, macro-F1 ranged from 76.81 to 77.13.
 
-That is the danger. Leakage does not produce unbelievable numbers. It produces *believable* ones, slightly better than they should be, which is exactly the shape of a result you want to believe.
+Controlled copying can produce an increase in score that looks plausible: the 10% dose gives a difference of the size you would expect from a genuine modelling improvement, and it cannot be told apart by looking at the score alone. So verify an unexpectedly good result with checks on the split, on duplicates and on preprocessing.
 
-The near-duplicate check is more informative than the exact one. On the properly de-duplicated split of @sec-bake-off, normalising away case, punctuation and whitespace finds 34 test rows whose normalised form appears in training. Their macro-F1 is **67.62** against **76.23** on the rest — *lower*, not higher, because after de-duplication the surviving near-duplicates are mostly short generic fragments (*"güzel ürün"*, *"teşekkürler"*) that are genuinely ambiguous. Not every duplicate is a leak; some are just hard. The same caveat applies here: at n = 34 this gap is at least as noisy as the 45-row one — macro-F1 on thirty-four rows is close to meaningless. The direction is informative; the magnitude is not.
+Now the near-duplicates. On the de-duplicated split of chapter 4, normalising away case, punctuation and whitespace finds 34 test rows whose normalised form also appears in training. Their macro-F1 is **67.62** against **76.23** on the rest. On such a small, selected subset the reason for the gap cannot be determined without examining the texts one by one; macro-F1 on thirty-four rows is close to meaningless. In our recount (32 rows, depending on the details of the normalisation) 31 of these rows are positive and their median length is 3 tokens (*"güzel ürün"*, *"tavsiye ederim"*, *"teşekkürler hb"*); so the F1 of the negative class is decided by a single row. Duplicates have a side benefit as well: every duplicate group in which the same text carries different labels is a candidate for review. The possible reasons are a clear error, a different target, missing context or schema ambiguity; the count does not by itself give a label-noise rate (exercise 9).
 
 ### The leaks worth checking for
 

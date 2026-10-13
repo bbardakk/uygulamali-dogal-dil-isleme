@@ -1015,24 +1015,26 @@ Bu bölümün test kümesinde tek bir satırın etiketinin değişmesi, tek bir 
 
 ## Sızıntı: sizi iyi gösteren hatalar {#sec-sizinti}
 
-Buraya kadar her şey etiketlerin *yanlış* olmasıyla ilgiliydi. Bu kısım ise
-belirtisi tam tersi olan bir arızayı ele alıyor: etiketler doğru, model dürüst,
-ama skor yine de yalan söylüyor.
+Buraya kadar her şey etiketlerin *yanlış* olmasıyla ilgiliydi. Bu kısım,
+etiket yanlışlığından ayrı bir değerlendirme riskini ele alıyor: eğitim
+sırasında görülmemesi gereken bir bilgi ya da test örnekleri modele ulaşırsa,
+raporlanan skor hedeflenen kullanım koşulunu temsil etmeyebilir.
 
 ::: {#gloss-label-leakage .column-margin .term-gloss}
-**label leakage** (etiket sızıntısı) — girdinizdeki bir şeyin cevabı sessizce
-taşıması ya da aynı metnin hem eğitimde hem testte bulunması. Skor, modeli
-yayına aldığınız güne kadar mükemmel görünür. [↩](#term-label-leakage){.term-back}
+**label leakage** (etiket sızıntısı) — modelin kullanım anında erişemeyeceği
+hedef bilgisinin, doğrudan ya da dolaylı biçimde girdiye karışması. Aynı metnin
+hem eğitimde hem testte bulunması ise daha geniş olan **veri sızıntısı** (data
+leakage) kapsamında, bölmeler arası bir bulaşmadır. [↩](#term-label-leakage){.term-back}
 :::
 
-Etiket gürültüsü skorunuzu gerçeğin altına indirir. Etiket sızıntısı ([label leakage](#gloss-label-leakage){#term-label-leakage .term-ref}) ise üstüne çıkarır; bu yüzden de çok daha uzun süre ayakta kalır.
+Etiket gürültüsü de sızıntı da ([label leakage](#gloss-label-leakage){#term-label-leakage .term-ref}) raporlanan skorun hedefteki performansı temsil etmesini bozabilir. Gürültü skoru her zaman düşürmez, sızıntı da her koşulda yükseltmez; iki durumda da yönü kontrollü bir karşılaştırmayla ölçmek gerekir.
 
-Ham derlemde 235.165 satır var ve bunların **1.657'si birebir yinelenen metin** (%0,70). @sec-karsilastirma bölmeden önce yinelenenleri temizlemişti. Temizlememiş olsaydı:
+Ham derlemde 235.165 satır var. Metne göre birebir tekilleştirme bunlardan 1.657 **fazla satırı** çıkarıyor (%0,70). Bu sayı yinelenme gruplarının sayısı değil: birden fazla kez geçen 1.055 farklı metin var (toplam 2.712 satır) ve bu grupların 77'si iki etiketi birden taşıyor. 4. bölüm bu tekilleştirmeyi bölmeden önce yapmıştı (@sec-karsilastirma). Yapmamış olsaydı:
 
 ```text
 ### split-before-dedup, the ordinary careless mistake
 
-exact duplicate texts in the raw corpus        1,657   (0.70%)
+rows removed by exact de-duplication           1,657   (0.70%)
 test rows also present in train                   45   (0.45% of test)
 near-duplicates after normalisation               34   (0.34% of test)
 
@@ -1043,12 +1045,9 @@ same model, same run:
   macro-F1 on the clean rows                    74.08
 ```
 
-Modelin ezberlemiş olduğu satırlarda 2,68 puanlık bir macro-F1 farkı.
-(Buradaki 74,08, bölümün başka yerlerinde kullanılan 76,21 baseline'ıyla
-örtüşmüyor, çünkü bu koşuda bilerek bölmeden önce tekilleştirme *yapılmadı*.
-Karşılaştırılacak sayı, aynı koşudaki 76,76.) n = 45 ile bu fark gürültülü ve %0,45'lik bir bulaşma manşet sayıyı oynatmak için çok küçük. Bu derlemin sızıntısı gerçek ama küçük.
+Bu koşuda eğitimde de bulunan 45 test satırının macro-F1'i 76,76, kalan 9.955 satırınki 74,08. İki altkümenin metinleri ve sınıf bileşimi farklı — 45 satırın 42'si olumlu ve ortanca uzunlukları 2 token (kalanlarda 19) — bu yüzden 2,68 puanlık fark ezberlemenin nedensel kazancı olarak okunamaz; n = 45 ile macro-F1 de oynaktır. 45 satırın 5'inde eğitimdeki kopya öbür etiketi taşıyor. Buradaki 74,08, bölümün başka yerlerinde kullanılan 76,21 baseline'ıyla da doğrudan karşılaştırılamaz: bu koşu bilerek bölmeden önce tekilleştirme *yapmadı*, yani başka bir bölme. Bulaşmanın varlığı satır eşleşmesiyle, skora etkisi ise ortak bir değerlendirme tasarımıyla gösterilir. %0,45'lik bir bulaşma manşet sayıyı oynatmak için çok küçük.
 
-Gerçek derlemler çoğu zaman daha kötüdür; etkinin nasıl ölçeklendiğini doğrudan görelim. Test kümesinin kontrollü bir kesrini eğitime kopyalayalım — dikkatsiz bir bölmenin yaptığı da bu, sadece daha büyük dozda:
+Etkinin dozla nasıl değiştiğini görmek için test satırlarının kontrollü bir kesrini eğitim verisine kopyalayalım; vektörleştirici de bu genişlemiş eğitim kümesinde yeniden uyduruluyor. Bu yapay bir bulaşmadır: doğal bölme hatalarıyla aynı dağılımı ya da aynı skor etkisini üretmek zorunda değildir.
 
 | eğitime kopyalanan test satırı | doğruluk | macro-F1 | F1 (olumsuz) |
 |---:|---:|---:|---:|
@@ -1063,13 +1062,11 @@ Gerçek derlemler çoğu zaman daha kötüdür; etkinin nasıl ölçeklendiğini
 
 : Sızıntının değeri, kontrollü dozlarda {tbl-colwidths="[34,22,22,22]"}
 
-Eğriyi bir teşhis aracı olarak okuyun. **%10'luk bir sızıntı yaklaşık bir macro-F1 puanı kazandırıyor** — gerçek bir modelleme iyileştirmesinden beklenecek aralığın tam içinde bir kazanç ve yalnızca skora bakarak tespit edilmesi imkânsız. %100'lük bir sızıntı neredeyse on puan (9,68) kazandırıyor; bu, @sec-karsilastirma'te TF-IDF unigram'dan bigram'a geçişin getirdiği 4,3 puanın iki katından fazla.
+Bu kontrollü kopyalama deneyinde %10 koşulu macro-F1'i 76,21'den 77,14'e, %100 koşulu 85,89'a çıkarıyor (9,68 puan; 4. bölümde TF-IDF unigram'dan bigram'a geçişin getirdiği 4,3 puanın iki katından fazla). Etki bu modele, bu veri kümesine ve bu kopyalama düzenine özgü; %10 başına sabit bir kazanç ya da doğal bir sızıntının etkisinin kestirimi değil. Hangi satırların kopyalandığı da sonucu oynatıyor: %10 dozunu üç farklı çekimle yeniden koşturduğumuzda macro-F1 76,81 ile 77,13 arasında değişti.
 
-Tehlike de bu. Sızıntı inanılmaz sayılar üretmez. *İnandırıcı* sayılar üretir: olması gerekenden azıcık daha iyi sayılar. Bu da inanmak isteyeceğiniz bir sonucun görünümüdür.
+Kontrollü kopyalama, makul görünen bir skor artışı üretebiliyor: %10'luk doz, gerçek bir modelleme iyileştirmesinden beklenecek büyüklükte bir fark veriyor ve yalnızca skora bakarak ayırt edilemiyor. Bu yüzden beklenmedik ölçüde iyi bir sonucu bölme, yineleme ve ön işleme denetimleriyle doğrulayın.
 
-Yakın yineleme kontrolü, birebir olandan daha bilgilendirici. @sec-karsilastirma'teki gibi düzgünce tekilleştirilmiş bölmede büyük-küçük harf, noktalama ve boşluk normalleştirildiğinde, normalleştirilmiş hâli eğitimde geçen 34 test satırı bulunuyor. Bunların macro-F1'i **67,62**, geri kalanınki ise **76,23** — yani daha yüksek değil, *daha düşük*; çünkü yinelenenler temizlendikten sonra geriye kalan yakın yinelemeler çoğunlukla gerçekten belirsiz olan kısa ve genel parçalar (*"güzel ürün"*, *"teşekkürler"*). Her yineleme bir sızıntı değildir; bazıları sadece zordur. Aynı çekince burada
-da geçerli: n = 34 ile bu fark en az 45 satırlık ölçüm kadar gürültülü — otuz dört
-satırda macro-F1 neredeyse anlamsızdır. Yönü bilgilendirici, büyüklüğü değil. Yinelemelerin bir yan faydası da var: aynı metnin farklı etiketler taşıdığı her yineleme grubu, ya bir etiket hatası ya da bir şema vakasıdır; yani bedava ve doğrudan bir etiket gürültüsü ölçümü (9. alıştırma).
+Yakın yinelemelere de bakalım. 4. bölümdeki gibi tekilleştirilmiş bölmede büyük-küçük harf, noktalama ve boşluk normalleştirildiğinde, normalleştirilmiş hâli eğitimde de geçen 34 test satırı bulunuyor. Bunların macro-F1'i **67,62**, geri kalanınki **76,23**. Bu küçük ve seçilmiş altkümede farkın nedeni, metinler tek tek incelenmeden belirlenemez; otuz dört satırda macro-F1 neredeyse anlamsızdır. Yeniden sayımımızda (normalleştirmenin ayrıntısına göre 32 satır) bu satırların 31'i olumlu ve ortanca uzunlukları 3 token (*"güzel ürün"*, *"tavsiye ederim"*, *"teşekkürler hb"*); yani olumsuz sınıfın F1'ini tek bir satır belirliyor. Yinelemelerin bir yan faydası da var: aynı metnin farklı etiketler taşıdığı her yineleme grubu bir inceleme adayıdır. Olası nedenler açık bir hata, farklı bir hedef, eksik bağlam ya da şema belirsizliğidir; sayı tek başına bir etiket gürültüsü oranı vermez (9. alıştırma).
 
 ### Kontrol etmeye değer sızıntılar
 
