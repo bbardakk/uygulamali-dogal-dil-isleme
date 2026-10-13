@@ -218,20 +218,22 @@ Ninety-eight of the hundred were positive, against a corpus rate of 93.7%. That 
 
 ## The schema can do as much damage as the annotators
 
-If the schema is where the damage is, it should be visible at scale — not just in a hundred rows one person happened to read.
+To look into whether the limits of the schema show up on a larger body of data, we can set up a screening rule. The contrastive-connective test below does not diagnose a schema problem; it selects reviews to re-read.
 
-So how would you look for it in 10,000? You need something that marks the reviews a binary label cannot describe, and you need it computable without reading anything. Turkish gives us one almost for free: the contrastive connectives *ama*, *fakat*, *ancak*, *lakin* — all roughly "but".
+To search 10,000 reviews for candidate contrasts, mark the words *ama*, *fakat*, *ancak* and *lakin* — all roughly "but". Whether a matching review really contains two opposed evaluations cannot be known without checking by hand.
 
 A caveat the rest of this section rests on: this is a screen, not a parser, and
 its precision is unmeasured. *Ancak* also means "only" or "barely" — *ancak 3
 günde geldi* is a statement about delivery time, not a contrast — and the rule
-misses *gerçi*, *ne var ki* and *buna rağmen* entirely. So 20.03% is neither an
-upper nor a lower bound — it has errors in both directions, and the true
-contrastive share could sit either side of it. What it is: the share matching
-this screening rule, whose precision and recall nobody has measured. Reading
-fifty random matches would measure the precision — though not the recall — in ten minutes. The rule earns its place because the finding is the
-*difference between the two groups*, which survives a fair amount of slop in
-either. A review containing one of them is likely to be making two claims at once.
+misses *gerçi*, *ne var ki* and *buna rağmen* entirely. So the 20.03% found
+below is neither an upper nor a lower bound; it is only the match rate of the
+rule. Reading randomly selected matches would measure the rule's precision;
+for the contrasts it misses, the non-matching reviews have to be examined too.
+We checked the part that can be checked mechanically: the ambiguous *ancak*
+occurs in 351 reviews, 287 of which match through *ancak* alone, and with
+*ancak* taken out of the rule the gap between the two groups of the table
+below stays in place (macro-F1 71.29 against 77.80). Attributing the score gap
+between the two groups to the schema takes a more detailed annotation.
 
 ```python
 import re
@@ -240,9 +242,9 @@ CONTRAST = re.compile(r"\b(ama|fakat|ancak|lakin)\b")
 has_but = np.array([bool(CONTRAST.search(tr_lower(t))) for t in test.text])
 ```
 
-**2,003 of the 10,000 test reviews (20.03%) contain one.** They behave differently from the rest in every way that matters:
+**In 2,003 of the 10,000 test reviews (20.03%) at least one of the four connectives matched.** The class distribution and the model scores of this group are compared with the non-matching group below:
 
-| | "but" reviews | the rest |
+| | contrast rule matches | no match |
 |:---|---:|---:|
 | share of test set | 20.03% | 79.97% |
 | gold negative rate | 11.48% | 5.03% |
@@ -250,19 +252,15 @@ has_but = np.array([bool(CONTRAST.search(tr_lower(t))) for t in test.text])
 | model macro-F1 | 72.11 | 77.72 |
 | model F1 (negative) | 53.84 | 58.27 |
 
-: The same model, the same test set, split on one function word {tbl-colwidths="[40,30,30]"}
+: The same model, the same test set, split by the four-connective screening rule {tbl-colwidths="[40,30,30]"}
 
-A fifth of the corpus is twice as likely to be negative, and the model is clearly worse on it: 5.6 points lower macro-F1 and 4.4 points lower negative-class F1. (The ten-point accuracy gap overstates this: the two groups have different base rates, so part of any accuracy difference comes from the class mix alone — which is why @sec-bake-off refused to report accuracy on its own.) Two explanations are available and this measurement does not separate them: the label schema is being asked to compress two verdicts into one bit, and the model may simply be worse at these sentences. @sec-bake-off's evidence bears on the first only indirectly — the one robust result there was the large gap between families, which is much weaker than showing that no representation helps on these sentences. What would separate them is an aspect-level annotation of the same rows, scoring product and delivery independently; if the model recovers both aspects correctly and only the single bit is wrong, the schema is the problem. That experiment has not been run here, so read the schema reading as the more likely of two rather than the established one.
+This fifth of the test set has more than twice the negative rate (11.48% against 5.03%), and the model scores clearly lower on it: 5.6 points lower macro-F1 and 4.4 points lower negative-class F1 (the bootstrap interval of the macro-F1 gap over the test rows runs from 2.5 to 8.8 points). The ten-point accuracy gap overstates this: the two groups have different base rates, so part of any accuracy difference comes from the class mix alone. This measurement does not separate the possible explanations. The label schema may be being asked to compress two verdicts into one bit; the model may be making more mistakes on these sentences; and the two groups differ in other respects too — the matching reviews are clearly longer (median 30 tokens against 16). Because no aspect-level re-annotation was done (product, delivery, price and so on labelled separately), we cannot choose between the schema explanation and the model explanation. A sample in which the product, delivery and price verdicts are labelled separately is what it takes to test which error comes from which source: if the model recovers both aspects correctly and only the single bit is wrong, the problem is in the schema.
 
 Which fix applies follows from which explanation holds, so the aspect-level annotation above is what decides it. If the disagreement comes from the target definition, the fix is a richer schema (aspect-level labels: product / delivery / price / packaging, each with its own polarity) or an explicit rule in the guideline telling every annotator which clause wins. If it comes from the model reading these sentences badly, a better representation is exactly what helps — and nothing here rules that out.
 
-A related problem has a name: **annotation artifacts**. When a guideline pushes annotators toward a habit, models learn the habit instead of the task. The difference: the "but" problem is a limit on what the schema can express — two verdicts squeezed into one bit, and the score goes *down*. Annotation artifacts are spurious cues left by annotator habits, which models exploit to push the score *up*. What they share is that the label reflects the labelling process, not only the text.
+A related problem has a name: **annotation artifacts** — the labelling process creating a cue between text and label that lies outside the target task. When a guideline pushes annotators toward a habit, models can learn the habit instead of the task, and the score is usually pushed *up*. @gururangan2018annotation showed that a well-known inference benchmark could be partly solved by reading the hypothesis sentence alone and ignoring the premise entirely: the annotators who wrote those sentences had tells, and the model found them. The connective match here is something else: it defines a candidate group for schema problems and model errors; by itself it is not evidence of an artifact or of a schema flaw in this data. What the two situations share is that a label can reflect the labelling process as well as the text.
 
-How far does that go? Further than it sounds. @gururangan2018annotation found that a well-known inference benchmark could be partly solved by reading the hypothesis sentence alone and ignoring the premise entirely — the annotators who wrote those sentences had tells, and the model found them.
-
-@geva2019annotator pushed further still, and showed that models can identify *which annotator* wrote an item, with scores dropping when the test set comes from annotators not seen in training.
-
-The practical consequence is uncomfortable. If the same small group labels your train and test splits, your evaluation is partly measuring how well you have memorised that group.
+@geva2019annotator showed, in a data setup where the annotators wrote the examples themselves, that models can identify *which annotator* wrote an item, and that scores drop when the test set comes from annotators not seen in training. A setup in which ready-made product reviews are only handed out for labelling is different. This corpus has no author or annotator identifiers, so the size of any such effect cannot be measured here.
 
 ### What a usable guideline looks like
 
