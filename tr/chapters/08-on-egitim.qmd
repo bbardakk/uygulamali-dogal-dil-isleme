@@ -3,7 +3,10 @@
 ::: {.callout-note appearance="simple" icon="false"}
 **Bölüm durumu: çevrildi.** Kaynak metin:
 [İngilizce 8. bölüm](../../en/chapters/08-pretraining-landscape.html). Bu
-sayfadaki tokenizer bütçesi ve ölçekleme hesapları etkileşimlidir.
+sayfadaki tokenizer bütçesi ve ölçekleme hesapları etkileşimlidir. Alt kelime
+tokenleştirmesi kısmındaki her sayı ve her kod çıktısı, gösterilen kodun
+`tiktoken` 0.13, `sentencepiece` 0.2.2 ve `tokenizers` 0.22 ile
+çalıştırılmasıyla üretildi; o kısımdaki BPE aracı da etkileşimlidir.
 :::
 
 
@@ -22,6 +25,9 @@ sayfadaki tokenizer bütçesi ve ölçekleme hesapları etkileşimlidir.
   ve bu kestirimin nerede geçerliliğini yitirdiğini belirtmek;
 - model FLOP kullanımını (MFU) bir donanım broşürü ile bir veri merkezi
   arasındaki fark olarak okumak ve bu farkı doğru sebebe bağlamak;
+- byte-pair encoding'in (BPE) çalışma ilkesini açıklamak ve verilen başlangıç
+  birimleri ile birleştirme kurallarını kullanarak yeni bir kelimenin nasıl
+  token'lara ayrılacağını belirlemek;
 - bir tokenizer'ın bir dile neye mal olduğunu ölçmek ve bu bedeli bağlam
   penceresi, gecikme ve para cinsinden fiyatlandırmak;
 - bir model sürümünü gerçekte neyi açık olarak paylaştığına göre
@@ -560,11 +566,7 @@ veriyi sona saklayın.
 Er ya da geç her ciddi ön eğitim projesinin istediği dildeki verisi tükenir.
 Bu Türkçe için şimdiden geçerli; İngilizce için de ham token sayılarının
 düşündürdüğünden daha erken geçerli olacak. Akla ilk gelen hamle, elinizdekinin
-üzerinden daha fazla [epoch](#gloss-epoch){#term-epoch .term-ref} geçmektir.
-
-::: {#gloss-epoch .column-margin .term-gloss}
-**epoch** (devir) — eğitim verisi üzerinden bir tam geçiş. En yetkin modellerin (frontier) ön eğitim koşuları genelde bir epoch'un epeyce altında kalır; buradaki soru, üstüne çıkmak zorunda kaldığınızda ne olduğudur. [↩](#term-epoch){.term-back}
-:::
+üzerinden daha fazla epoch (eğitim verisi üzerinden bir tam geçiş) geçmektir.
 
 Ölçülmüş cevap, alandaki yaygın kanının beklediğinden daha cömert
 [@muennighoff2023scaling]. [Tekrarlanan veri üzerinde dört epoch'a kadar eğitim
@@ -604,14 +606,1464 @@ döndüğünde dağılımın nadir kuyrukları adım adım silinir ve model gide
 daralan bir dünyayı öğrenir. Buna *model çöküşü* (model collapse) deniyor
 [@shumailov2024curse].
 
+## Alt kelime tokenleştirmesi: model metni nasıl görür {#sec-alt-kelime}
+
+@sec-metin-veri metni kelimelere bölüp saymıştı; kelime torbası ve TF-IDF için
+bu yetiyordu. Ön eğitimli bir dil modeli ise metni kelimeler olarak değil,
+kendi tokenizer'ının ürettiği birimler olarak görür ve bu birimler çoğu zaman
+kelimeden küçüktür. @sec-transformerlar boyunca "token" dediğimiz şey buydu;
+orada token'ın nereden geldiğini sormamıştık.
+
+Bu kısım o soruyu cevaplıyor. Önce BPE'yi küçük bir derlemde adım adım
+kuracağız. Sonra başlangıç alfabesinin karakter mi bayt mı olduğunun neyi
+değiştirdiğine ve aynı tokenizer'ın Türkçe bir metni İngilizce karşılığından
+neden daha fazla token'a böldüğüne bakacağız. BERT'in kullandığı WordPiece ile
+T5'in kullandığı Unigram LM aynı fikrin iki akrabası; onları kısmın sonundaki
+"Derinleşme" kutularında çalıştırıyor, modellerle birlikte ise
+@sec-tokenizer-algoritmalari içinde karşılaştırıyoruz. Bir sonraki kısım
+(@sec-tokenizer-butcesi) aynı kararı ön eğitim ölçeğinde bir bütçe kalemi
+olarak fiyatlandırıyor.
+
+### Alt kelimeler: kazanan uzlaşma {#sec-metin-veri-bpe}
+
+::: {#gloss-byte-pair-encoding .column-margin .term-gloss}
+**byte-pair encoding (BPE)** — token listesini metnin kendisinden öğrenmenin
+bir yolu: tek karakterlerden (ya da baytlardan) başlayın ve en sık yan yana gelen çiftleri
+birleştirmeye devam edin. [↩](#term-byte-pair-encoding){.term-back}
+:::
+
+Kelime düzeyinde tokenleştirmede, sabit bir **sözlük** (vocabulary:
+tokenizer'ın çıktı olarak üretebildiği token kimliklerinin sonlu kümesi) yeni
+metinlerde karşılaşılan bütün kelime biçimlerini kapsamayabilir. Karakter düzeyinde tokenleştirme ise aynı metni genellikle daha
+uzun dizilerle temsil eder; modelin kelime parçalarını ve kelimeleri bu küçük
+birimlerden öğrenmesi gerekir. [Byte-pair encoding]{.hl}
+([**BPE**](#gloss-byte-pair-encoding){#term-byte-pair-encoding .term-ref}),
+birimlerini veriden *öğrenerek* bu iki yaklaşım arasında bir seçenek sunar
+[@sennrich2016neural]. Böyle bir sözlükte bir kelimenin bütün hâlinin bulunması
+gerekmez; tokenizer onu sözlükteki daha küçük parçalarla yazabilir.
+
+Üç seçeneği tek bir kelimede görelim. `evlerden` kelimesinin, tokenizer'ın
+eğitim metninde hiç geçmediğini düşünün. Karşılaştırmada kelime düzeyindeki
+tokenizer'ın sözlüğünün sabit olduğunu ve bilinmeyen kelimeleri `<UNK>`
+(unknown) ile gösterdiğini varsayıyoruz. Karakter düzeyindeki tokenizer'ın
+alfabesi ise kelimedeki bütün karakterleri içeriyor.
+
+| Birim | `evlerden` nasıl görünür | Sonuç |
+|:--|:--|:--|
+| Kelime | `<UNK>` | Kelimenin tamamı sözlükte bulunmadığı için yazımı korunmaz; yerine bilinmeyen kelime işareti gelir. |
+| Karakter | `e` `v` `l` `e` `r` `d` `e` `n` | Kelimenin yazımı sekiz birimle korunur. Model, kelime içindeki örüntüleri bu birimlerin dizilişinden öğrenir. |
+| Alt kelime | `ev` `ler` `den` | Kelime üç birimle temsil edilir. Bu parçalar başka kelimelerde de bulunur: `evde`, `gözler`, `sizden`. |
+
+: Aynı kelime, üç birim boyutu {tbl-colwidths="[16,34,50]"}
+
+Son satırdaki bölünme uydurma değil: OpenAI'ın `cl100k_base` tokenizer'ı bu
+kelimeyi tam olarak böyle bölüyor. Geriye şu soru kalıyor: `ev`, `ler` ve
+`den` parçalarını kim seçti? Kimse seçmedi; veriden sayılarak bulundular.
+
+Bu örnekte BPE eğitimine, kelimeleri karakterlerine ayırarak başlıyoruz. Her
+kelimenin sonuna, kelime sonunu gösteren `</w>` sembolünü ekliyoruz. Yan yana
+gelen sembol çiftlerini, kelimelerin derlemdeki sıklıklarını dikkate alarak
+sayıyor ve en sık çifti yeni bir sembolde birleştiriyoruz. Ardından sayımları
+yenileyip işlemi tekrarlıyoruz. Aşağıdaki kod on birleştirme yapıyor. Eşit
+sıklıktaki çiftlerden hangisinin önce seçileceği kullanılan uygulamaya
+bağlıdır; buradaki kod ilk karşılaştığı çifti seçer.
+
+```python
+from collections import Counter
+
+corpus = {"low": 5, "lower": 2, "newest": 6, "widest": 3}
+words = {tuple(w) + ("</w>",): n for w, n in corpus.items()}
+
+def pair_counts(words):
+    pairs = Counter()
+    for symbols, freq in words.items():
+        for a, b in zip(symbols, symbols[1:]):
+            pairs[(a, b)] += freq
+    return pairs
+
+def merge(words, pair):
+    a, b = pair
+    out = {}
+    for symbols, freq in words.items():
+        new, i = [], 0
+        while i < len(symbols):
+            if i < len(symbols) - 1 and symbols[i] == a and symbols[i + 1] == b:
+                new.append(a + b)
+                i += 2
+            else:
+                new.append(symbols[i])
+                i += 1
+        out[tuple(new)] = freq
+    return out
+
+merges = []
+for step in range(1, 11):
+    best, count = pair_counts(words).most_common(1)[0]
+    merges.append(best)
+    words = merge(words, best)
+    print(f"merge {step:>2}: {best[0]!r} + {best[1]!r} -> "
+          f"{best[0] + best[1]!r}  (seen {count} times)")
+```
+
+```text
+merge  1: 'e' + 's' -> 'es'  (seen 9 times)
+merge  2: 'es' + 't' -> 'est'  (seen 9 times)
+merge  3: 'est' + '</w>' -> 'est</w>'  (seen 9 times)
+merge  4: 'l' + 'o' -> 'lo'  (seen 7 times)
+merge  5: 'lo' + 'w' -> 'low'  (seen 7 times)
+merge  6: 'n' + 'e' -> 'ne'  (seen 6 times)
+merge  7: 'ne' + 'w' -> 'new'  (seen 6 times)
+merge  8: 'new' + 'est</w>' -> 'newest</w>'  (seen 6 times)
+merge  9: 'low' + '</w>' -> 'low</w>'  (seen 5 times)
+merge 10: 'w' + 'i' -> 'wi'  (seen 3 times)
+```
+
+İlk iki birleştirme, bu kelimelerde İngilizcenin en üstünlük ekiyle örtüşen
+`est` dizisini oluşturuyor. Üçüncü birleştirme, bu diziyi kelime sonu
+işaretiyle birleştiriyor: `est</w>`. Sonraki adımlarda `low` ve `new` dizileri
+de oluşuyor. [Algoritma bu parçaları gövde veya ek olarak tanımıyor; her adımda
+en sık komşu sembol çiftini seçiyor.]{.hl} Bu küçük derlemde bazı parçaların
+biçimbirimlerle (morpheme: anlam taşıyan en küçük birim) örtüşmesi yararlı,
+ancak BPE böyle bir örtüşmeyi garanti etmez.
+
+BPE, tokenizer'ın eğitim derleminde bulunmayan kelimeleri de öğrenilmiş
+parçalara ayırabilir. Bu örnekte yeni bir kelimeyi token'lara ayırmak için
+birleştirme kurallarını öğrenildikleri sırayla uyguluyoruz:
+
+```python
+def apply_merges(word, merges):
+    symbols = tuple(word) + ("</w>",)
+    for pair in merges:
+        symbols = tuple(merge({symbols: 1}, pair).keys())[0]
+    return symbols
+
+for w in ["lowest", "newer", "slow", "widest"]:
+    print(f"{w:<8} -> {' '.join(apply_merges(w, merges))}")
+```
+
+```text
+lowest   -> low est</w>
+newer    -> new e r </w>
+slow     -> s low</w>
+widest   -> wi d est</w>
+```
+
+`lowest`, tokenizer'ın eğitim derleminde bulunmadığı hâlde sözlükteki iki
+birimle temsil edildi: `low` ve `est</w>`. Alt kelimelerin yaygınlaşmasının
+başlıca nedeni budur: **bu BPE düzeninde başlangıç alfabesindeki karakterler
+kullanılabilir kaldığı sürece, hiç görülmemiş bir kelime de bu karakterlerden
+ve öğrenilmiş birleşimlerinden oluşturulabilir.** `slow` örneğindeki `s` gibi
+bazı parçalar tek karakter olarak kalabilir. Daha küçük parçalar kullanılması
+token sayısını artırabilir; bunun bir dil modelinin başarısını nasıl
+etkileyeceği ise ayrıca değerlendirilmelidir.
+
+Buradaki koşula dikkat edin: yeni kelimenin her *karakteri*, birleştirmelerin
+öğrenildiği alfabede bulunmalı. Bizim alfabemiz yalnızca dört İngilizce
+kelimenin harflerinden oluşuyor. `ç` gibi, o alfabede olmayan bir harf gelirse
+ne olur? Şeklin ardından @sec-metin-veri-baytlar bunu ele alıyor.
+
+:::: {.anlp-fig}
+```{=html}
+<div class="fig-title">Byte-pair encoding ne öğreniyor ve onu nasıl kullanıyor</div>
+<svg viewBox="0 0 760 330" role="img" aria-label="Byte-pair encoding; üstte eğitim, altta çıkarım. Dört kelimelik bir derlem, önce es, sonra est, sonra est-kelime-sonu birimlerini kuran üç birleştirme adımını besliyor; her biri dokuz kez görülmüş, ardından yedi birleştirme daha geliyor. Altta, görülmemiş lowest kelimesi aynı birleştirmeler tekrar oynatılarak bilinen iki birime, low ve est, bölünüyor.">
+  <defs>
+    <marker id="bpe-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="head"/>
+    </marker>
+    <marker id="bpe-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="head-accent"/>
+    </marker>
+  </defs>
+
+  <text x="8" y="18" class="t-xs t-muted t-b">EĞİTİM · ÇİFTLERİ SAY, KAZANANI BİRLEŞTİR, TEKRARLA</text>
+
+  <!-- corpus column -->
+  <rect x="8" y="30" width="118" height="120" rx="9" class="box"/>
+  <text x="18" y="50" class="t-xs t-muted t-b">DERLEM</text>
+  <text x="18" y="70"  class="t-sm t-mono">low     ×5</text>
+  <text x="18" y="90"  class="t-sm t-mono">lower   ×2</text>
+  <text x="18" y="110" class="t-sm t-mono">newest  ×6</text>
+  <text x="18" y="130" class="t-sm t-mono">widest  ×3</text>
+
+  <path d="M126,90 H156" class="ln" marker-end="url(#bpe-a)"/>
+
+  <!-- merge steps -->
+  <rect x="160" y="30" width="132" height="120" rx="9" class="box-accent"/>
+  <text x="170" y="50" class="t-xs t-accent t-b">BİRLEŞTİRME 1</text>
+  <text x="226" y="82" class="t-sm t-mono t-mid">e + s</text>
+  <text x="226" y="104" class="t-sm t-mono t-mid t-accent">es</text>
+  <text x="226" y="130" class="t-xs t-muted t-mid">9 kez görüldü</text>
+
+  <path d="M292,90 H322" class="ln" marker-end="url(#bpe-a)"/>
+
+  <rect x="326" y="30" width="132" height="120" rx="9" class="box-accent"/>
+  <text x="336" y="50" class="t-xs t-accent t-b">BİRLEŞTİRME 2</text>
+  <text x="392" y="82" class="t-sm t-mono t-mid">es + t</text>
+  <text x="392" y="104" class="t-sm t-mono t-mid t-accent">est</text>
+  <text x="392" y="130" class="t-xs t-muted t-mid">9 kez görüldü</text>
+
+  <path d="M458,90 H488" class="ln" marker-end="url(#bpe-a)"/>
+
+  <rect x="492" y="30" width="132" height="120" rx="9" class="box-accent"/>
+  <text x="502" y="50" class="t-xs t-accent t-b">BİRLEŞTİRME 3</text>
+  <text x="558" y="82" class="t-sm t-mono t-mid">est + &lt;/w&gt;</text>
+  <text x="558" y="104" class="t-sm t-mono t-mid t-accent">est&lt;/w&gt;</text>
+  <text x="558" y="130" class="t-xs t-muted t-mid">9 kez görüldü</text>
+
+  <path d="M624,90 H654" class="ln ln-dash" marker-end="url(#bpe-a)"/>
+  <text x="660" y="86" class="t-sm t-muted">7 birleş-</text>
+  <text x="660" y="102" class="t-sm t-muted">tirme daha</text>
+
+  <text x="8" y="184" class="t-xs t-muted t-b">EK HİÇBİR YERDEN VERİLMEDİ — SAYILARAK BULUNDU</text>
+
+  <!-- inference -->
+  <text x="8" y="222" class="t-xs t-muted t-b">ÇIKARIM · BİRLEŞTİRMELERİ SIRAYLA TEKRAR OYNAT</text>
+
+  <rect x="8" y="234" width="150" height="40" rx="9" class="box-warm"/>
+  <text x="83" y="259" class="t-sm t-mono t-mid">lowest</text>
+  <text x="83" y="290" class="t-xs t-warm t-mid t-b">HİÇ GÖRÜLMEDİ</text>
+
+  <path d="M158,254 H196" class="ln" marker-end="url(#bpe-b)"/>
+
+  <rect x="200" y="234" width="90" height="40" rx="9" class="chip"/>
+  <text x="245" y="259" class="t-sm t-mono t-mid">low</text>
+  <rect x="298" y="234" width="110" height="40" rx="9" class="chip"/>
+  <text x="353" y="259" class="t-sm t-mono t-mid">est&lt;/w&gt;</text>
+
+  <text x="424" y="250" class="t-sm t-muted">Birleştirmelerin zaten kurduğu iki birim.</text>
+  <text x="424" y="267" class="t-sm t-muted">Sözlük dışı token yok — en kötü durumda</text>
+  <text x="424" y="284" class="t-sm t-muted">tek tek karakterlere bölünür (alfabe kapsıyorsa).</text>
+</svg>
+```
+
+::: {.fig-cap}
+Eğitimde (üstte), sembol çiftlerinin sıklıkları sayılarak sıralı bir birleştirme
+listesi oluşturulur. Bu küçük derlemde ilk üç birleştirme, kelime sonu
+işaretini de içeren `est</w>` birimini oluşturuyor. Bu birim, örnekteki
+kelimelerin en üstünlük ekiyle örtüşüyor; ancak seçim dilbilgisel çözümlemeye
+değil, çiftlerin sıklığına dayanıyor. Çıkarımda (altta), öğrenilmiş liste yeni
+kelimeye uygulanıyor. Eğitim derleminde bulunmayan `lowest`, sözlükteki `low`
+ve `est</w>` birimlerine ayrılıyor [@sennrich2016neural].
+:::
+::::
+
+::: {.anlp-widget}
+```{=html}
+<div class="widget-title">Byte-pair encoding — bir kelime yazın, birleştirmelerin uygulanmasını izleyin</div>
+```
+
+```{ojs}
+//| echo: false
+viewof bpeWord = Inputs.text({
+  label: "Kelime",
+  value: "lowest",
+  placeholder: "deneyin: lowest, newer, slow, widest, snow",
+  width: 260
+})
+```
+
+```{ojs}
+//| echo: false
+// Bu kısmın başındaki birleştirme döngüsünün birebir çıktısı — küçük derlem
+// değişirse ikisini birlikte yeniden üretin.
+bpeMerges = [
+  ["e", "s"], ["es", "t"], ["est", "</w>"], ["l", "o"], ["lo", "w"],
+  ["n", "e"], ["ne", "w"], ["new", "est</w>"], ["low", "</w>"], ["w", "i"]
+]
+```
+
+```{ojs}
+//| echo: false
+bpeTrace = {
+  const raw = bpeWord || "";
+  const alphabet = new Set("deilnorstw");
+  const invalid = [...new Set([...raw].filter(c => !alphabet.has(c)))];
+
+  const trace = [];
+  trace.invalid = invalid;
+  if (!raw.length || invalid.length) return trace;
+
+  let symbols = [...raw, "</w>"];
+  trace.push({ step: 0, rule: "başlangıç (karakterler)", symbols: [...symbols] });
+  bpeMerges.forEach(([a, b], k) => {
+    const out = [];
+    let i = 0, used = false;
+    while (i < symbols.length) {
+      if (i < symbols.length - 1 && symbols[i] === a && symbols[i + 1] === b) {
+        out.push(a + b); i += 2; used = true;
+      } else { out.push(symbols[i]); i += 1; }
+    }
+    symbols = out;
+    if (used) trace.push({ step: k + 1, rule: `${a} + ${b}`, symbols: [...symbols] });
+  });
+  return trace;
+}
+```
+
+```{ojs}
+//| echo: false
+html`<div style="font-size:0.9rem;">
+  ${bpeTrace.invalid.length
+    ? html`<p style="color:var(--fig-warm);">
+        Bu girdide eğitim alfabesinde bulunmayan karakterler var:
+        <code>${bpeTrace.invalid.map(c => JSON.stringify(c)).join(", ")}</code>.
+        Girdi değiştirilmedi ve birleştirmeler uygulanmadı. Bu örnek yalnızca
+        dört kelimelik derlemde geçen şu küçük harfleri destekliyor:
+        <code>d, e, i, l, n, o, r, s, t, w</code>.</p>`
+    : bpeTrace.length === 0
+      ? html`<p style="color:var(--fig-muted);">Eğitim alfabesindeki harflerle bir kelime yazın.</p>`
+      : html`<div>
+        ${bpeTrace.map(t => html`<div style="display:flex; gap:0.8rem;
+             align-items:baseline; padding:0.22rem 0; border-bottom:1px solid var(--fig-border);">
+          <span style="min-width:9.5rem; color:var(--fig-muted); font-size:0.82rem;">
+            ${t.step === 0 ? t.rule : `birleştirme ${t.step}: ${t.rule}`}
+          </span>
+          <span>${t.symbols.map(s => html`<code style="background:var(--fig-chip);
+            border:1px solid var(--fig-border); border-radius:0.35em; padding:0.05em 0.35em;
+            margin-right:0.2em;">${s}</code>`)}</span>
+        </div>`)}
+        <p style="margin-top:0.7rem; color:var(--fig-muted);">
+          Sonuç: <b>${bpeTrace[bpeTrace.length - 1].symbols.length}</b> token.
+          Bu küçük derlemden 10 birleştirme öğrenildi. Büyük BPE sözlüklerinde
+          bu sayı çok daha yüksektir; GPT-2 tokenizer'ında 50.000 birleştirme vardır.
+        </p>
+      </div>`}
+</div>`
+```
+:::
+
+### Karakter mi bayt mı: BPE neyle başlar {#sec-metin-veri-baytlar}
+
+Yukarıdaki örnek karakterlerle başladı. GPT-2'nin tokenizer'ı ve `cl100k_base`
+gibi bayt düzeyinde BPE kullanan tokenizer'lar ise baytlardan başlar. Aradaki
+farkı anlamak için karakter, kod noktası, karakter kodlaması ve bayt
+kavramlarını ASCII, Unicode ve UTF-8 üzerinden açıklayalım.
+
+**Karakter**, metni oluşturan soyut bir birimdir; harfler, rakamlar, noktalama
+işaretleri ve boşluklar buna örnektir. `ç`, `a`, `y`, `7`, `?` ve `😀` görünür
+örneklerdir. Ancak ekranda tek bir işaret olarak algıladığımız birim,
+Unicode'da bir veya birden fazla kod noktasıyla temsil edilebilir.
+
+Bilgisayarlar metni bit dizileri olarak saklar. Karakter kodlamaları, metindeki
+birimlerin bu dizilerle nasıl temsil edileceğini belirler. **ASCII**, ilk
+sürümü 1963'te yayımlanan 7 bitlik bir karakter kodlamasıdır. 128 kod değeri;
+İngilizce harfleri, rakamları, noktalama işaretlerini, boşluğu ve kontrol
+karakterlerini kapsar. `a` harfinin kod değeri 97'dir. ASCII'de `ç`, `ş` ya da
+`ğ` yoktur; Arap ve Çin yazısı da, emoji de yoktur.
+
+**Unicode**, farklı yazı sistemlerindeki karakterleri ortak bir sistemde temsil
+etmeyi amaçlayan standarttır. Unicode kod alanındaki sayısal konumlara **kod
+noktası** (code point) denir; kodlanmış karakterlere bu konumlar atanır. Kod
+noktası çoğu zaman `U+` ve ardından onaltılık (hexadecimal) bir sayı olarak
+yazılır: `ç` harfinin kod noktası 231'dir, yani U+00E7. ASCII'deki 128 karakter
+Unicode'da aynı numaralarını korur; `a` yine 97'dir.
+
+**Bayt** (byte), bilgisayarın veriyi sakladığı temel birimdir. Sekiz bitten
+oluşur ve 0 ile 255 arasında bir sayı tutar; yani yalnızca 256 farklı değer
+alabilir. Unicode'un numaraları 255'i çok aştığı için her kod noktası tek bayta
+sığmaz. Bir kod noktasının hangi baytlarla saklanacağına bir *kodlama*
+(encoding) karar verir. Web'de yaygın olarak kullanılan **UTF-8**, kodlanabilir
+her Unicode kod noktasını bir ile dört bayt arasında temsil eder. ASCII
+aralığındaki kod noktaları tek baytla, daha büyük değerler ise UTF-8'in
+belirlediği bit kalıpları kullanılarak iki, üç veya dört baytla kodlanır.
+
+Bu kavramları `çay` kelimesi üzerinde yan yana görelim:
+
+| | `ç` | `a` | `y` |
+|:--|:--|:--|:--|
+| Unicode kod noktası | 231 (U+00E7) | 97 (U+0061) | 121 (U+0079) |
+| ASCII tablosunda var mı | hayır | evet | evet |
+| UTF-8 baytları | 195, 167 | 97 | 121 |
+
+: `çay`: `ç` harfi U+00E7 ile yazıldığında üç kod noktası ve UTF-8'de dört bayt {tbl-colwidths="[34,24,21,21]"}
+
+Buradaki gösterimde `çay` üç harften ve üç kod noktasından oluşur; UTF-8 ile
+kodlandığında dört bayt tutar. Python'da `len("çay")` 3,
+`len("çay".encode("utf-8"))` ise 4 verir. Aynı görünen metin farklı kod noktası
+dizileriyle de yazılabilir: `ç` yerine `c` ve ardından ayrı bir "çengel" işareti
+yazılırsa aynı kelime dört kod noktası ve beş bayt olur. Bu sayılar, kullanılan
+Unicode gösterimine ve kodlamaya bağlıdır.
+
+Bu ayrım tokenizer için neden önemli? Çünkü BPE'nin birleştirmeye başlayacağı
+semboller ya karakterler olur ya da baytlar; ikisinin *sayısı* ise çok farklı:
+
+- **Karakter alfabesi büyük olabilir.** Unicode'un kod alanı sonludur, ancak
+  çok sayıda karakter içerir ve yeni sürümlerde yeni karakterler tanımlanır.
+  Tokenizer'ın başlangıç alfabesi eğitim verisinden seçilebilir; buna ayrıca
+  karakterler eklenebilir veya kapsamı sınırlanabilir. Bu alfabede bulunmayan
+  bir karakter için bilinmeyen token ya da baytlara dönme gibi ek bir mekanizma
+  gerekir.
+- **Bayt alfabesi 256 değerle tamamlanabilir.** Başlangıç alfabesi bütün bayt
+  değerlerini içeriyorsa, UTF-8 ile kodlanmış metnin her baytı temsil
+  edilebilir. Böylece yeni bir karakterin baytları için ayrıca yeni bir
+  başlangıç sembolü gerekmez.
+
+Bu alt bölümün geri kalanı bu iki seçeneği ve bedellerini açıyor.
+
+Önce kısa bir tarih notu. Yukarıdaki döngü — yan yana çiftleri say, en sık
+olanı birleştir, tekrarla — BPE'nin *kendisidir*. Adı, NLP'deki kullanımından eskidir: 1994'te
+yayımlanmış bir veri sıkıştırma algoritmasından gelir. O algoritma, bir dosyada yan yana en sık geçen
+iki **baytı**, dosyada hiç kullanılmayan tek bir bayt değeriyle değiştirmeyi
+tekrarlıyordu [@gage1994new]. Sennrich ve arkadaşları döngüyü korudu, amacını
+değiştirdi: birleştirmeler bir dosyayı küçültmek yerine bir sözlük kuruyor ve
+birleştirme listesi, yeni metne tekrar uygulanabilsin diye saklanıyor
+[@sennrich2016neural].
+
+Geriye döngünün sizin yerinize vermediği bir karar kalıyor: **başlangıç
+sembolleri ne olacak?** Bunu algoritma seçimiyle karıştırmayın; ikisi ayrı
+kararlardır. BPE, alt kelime sözlüğü öğrenmenin tek yolu değil. İleride iki
+akrabasıyla da karşılaşacaksınız: BERT'in kullandığı **WordPiece** ve T5'in
+kullandığı **Unigram**. Üç yöntem de alt kelime sözlükleri oluşturmak için
+kullanılır; ancak sözlüğü öğrenme ve yeni metni parçalara ayırma işlemleri
+farklıdır. Buradaki ana örneğimiz BPE'dir. WordPiece ve Unigram'a bu bölümdeki
+bir "Derinleşme" kutusunda değiniyor (@sec-metin-veri-birimler), yöntemleri
+BERT'in tokenizer'ını incelerken daha ayrıntılı karşılaştırıyoruz
+(@sec-tokenizer-algoritmalari). Şimdilik bilmeniz
+gereken şu: algoritma, birimlerin *nasıl* öğrenileceğine karar verir. Karakter
+ya da bayt seçimi ise birimlerin *neyden* kurulacağına karar verir ve üç
+algoritma için de ortak bir sorudur.
+
+**Karakterlerden başlamak.** Yukarıdaki örnek bunu yaptı. Birleştirme tablosu
+yalnızca gördüğü sembolleri birleştirebilir; bu tablonun gördüğü alfabe de dört
+İngilizce kelimeden geliyordu. `apply_merges("çay", merges)` çağrısı
+`('ç', 'a', 'y', '</w>')` döndürür. Ancak `ç`, `a` ve `y` bu küçük derlemden
+oluşturulan başlangıç alfabesinde yoktur. İşlev yalnızca birleştirme
+kurallarını uyguladığı, sözlükte bulunmayan sembolleri denetlemediği için
+bunları çıktıda bırakır. Kullanılabilir bir tokenizer'ın bu durumu ayrıca ele
+alması gerekir: karakterleri başlangıç alfabesine ekleyebilir, bilinmeyen token
+(`<UNK>`) kullanabilir veya baytlara dönebilir. Bir karakterin nadir olması,
+mutlaka bilinmeyen token'a dönüşeceği anlamına gelmez.
+
+**Baytlardan başlamak.** Diğer seçenek, karakterlerin kendisi yerine onların
+UTF-8 baytlarından başlamaktır. UTF-8, kodlanabilir her Unicode kod noktasını
+bir ile dört bayt arasında temsil eder. ASCII harfleri bir bayt tutar.
+Aşağıdaki gösterimlerde Türkçedeki `ç`, `ş`, `ğ`, `ı`, `ö`, `ü` ve `İ`
+harflerinin her biri iki bayttır. `世` üç, `😀` ise dört bayttır. Birden fazla
+kod noktasından oluşan emoji ve diğer birleşik gösterimler toplamda dört
+bayttan uzun olabilir:
+
+```python
+for ch in ["a", "ç", "ş", "İ", "世", "😀"]:
+    b = ch.encode("utf-8")
+    print(f"{ch}  U+{ord(ch):04X}  {len(b)} byte(s): {' '.join(f'{x:02X}' for x in b)}")
+```
+
+```text
+a  U+0061  1 byte(s): 61
+ç  U+00E7  2 byte(s): C3 A7
+ş  U+015F  2 byte(s): C5 9F
+İ  U+0130  2 byte(s): C4 B0
+世  U+4E16  3 byte(s): E4 B8 96
+😀  U+1F600  4 byte(s): F0 9F 98 80
+```
+
+Bir baytın yalnızca 256 olası değeri vardır; dolayısıyla 256 baytlık bir alfabe
+kapalıdır: her dildeki her metin bunların bir dizisidir. Bayt düzeyinde BPE,
+aynı birleştirme döngüsünü karakterler yerine bayt dizileri üzerinde çalıştırır
+[@radford2019language]. Döngü, her adımda en sık komşu sembol çiftini
+birleştirir. Böylece bazı karakterler ve kelime parçaları tek token olarak
+temsil edilebilir. Örneğin `ç` harfinin iki baytı da tek token hâline gelebilir;
+bunun gerçekleşip gerçekleşmeyeceği ve birleştirme sırası, eğitim verisindeki
+sıklıklara ve yapılan birleştirmelerin sayısına bağlıdır. Ama [birleştirmeler Unicode karakter sınırlarına bağlı
+değildir]{.hl}: algoritma karakterin nerede bittiğini bilmez, yalnızca hangi
+bayt çiftinin sık olduğunu bilir. Bu yüzden bir token tam bir karakteri de,
+birkaç karakteri de, bir UTF-8 karakterinin yalnızca bir parçasını da temsil
+edebilir. Bir sonraki çıktıda bunun üçünü de göreceksiniz.
+
+Aşağıda bayt düzeyinde bir tokenizer, OpenAI'ın `cl100k_base` kodlaması, her
+token'ın arkasındaki baytları gösteriyor. `enc.encode`, token kimliklerini
+(id) tamsayılardan oluşan bir liste olarak döndürür. Metin, modele bu kimlikler
+üzerinden aktarılır. `decode_single_token_bytes` ise her kimliğin temsil ettiği
+bayt dizisini gösterir:
+
+```python
+import tiktoken
+
+enc = tiktoken.get_encoding("cl100k_base")
+for text in ["çay", "şişe", "ŞİŞE", "😀"]:
+    pieces = [enc.decode_single_token_bytes(t) for t in enc.encode(text)]
+    print(f"{text:<5} {len(pieces)} tokens  {pieces}")
+```
+
+```text
+çay   2 tokens  [b'\xc3\xa7', b'ay']
+şişe  3 tokens  [b'\xc5\x9fi', b'\xc5\x9f', b'e']
+ŞİŞE  6 tokens  [b'\xc5', b'\x9e', b'\xc4\xb0', b'\xc5', b'\x9e', b'E']
+😀     2 tokens  [b'\xf0\x9f\x98', b'\x80']
+```
+
+Bu çıktıda `ç` harfinin iki baytı tek token'da yer alıyor. `ŞİŞE` altı, `şişe`
+ise üç token üretiyor. Büyük `Ş` harfinin iki baytı ayrı token'lara bölünürken
+`İ` ve `E` bütün olarak kalıyor. Yalnızca bu çıktıya bakarak `Ş` harfinin eğitim
+verisinde ne kadar sık geçtiğini belirleyemeyiz. `b'\xc5'` tek başına geçerli
+bir UTF-8 dizisi değildir; karakterin okunabilmesi için sonraki baytla
+birleştirilmesi gerekir. `😀` de iki token'a ayrılıyor: ilk token üç baytı,
+ikincisi son baytı taşıyor. Bu örneklerin hiçbirinde bilinmeyen token
+gerekmiyor; ancak aynı sayıda görünen karakter farklı sayıda token
+üretebiliyor.
+
+Aşağıdaki tabloda "karakter" ile Unicode kod noktasını kastediyoruz. Bayt
+düzeyindeki sütunda başlangıç alfabesinin 256 bayt değerinin tamamını
+içerdiğini varsayıyoruz.
+
+| | Karakterlerden başlayan BPE | Baytlardan başlayan BPE |
+|:--|:--|:--|
+| Başlangıç alfabesi | Seçilmiş kod noktaları; eğitim verisinden alınabilir veya ayrıca eklenebilir. | 256 bayt değeri. |
+| Başlangıç alfabesinde bulunmayan bir karakter | [Bilinmeyen token veya aşağıdaki byte fallback gibi ek bir mekanizma gerekir.]{.con} | [UTF-8 baytlarıyla temsil edilir.]{.pro} |
+| Bir token neyi temsil eder? | [Bir veya birden fazla tam kod noktası.]{.pro} | [Bir bayt dizisi; bazen bir kod noktasının UTF-8 gösteriminin yalnızca bir bölümü.]{.con} |
+| Daha büyük bir parçayla birleşmeyen bir kod noktasının maliyeti | [Alfabedeyse bir token.]{.pro} | [UTF-8 gösterimine ve öğrenilmiş birleşimlere göre bir ile dört token.]{.con} |
+| Kapsama | Seçilen alfabe ve varsa geri dönüş mekanizmasıyla sınırlıdır. | UTF-8 ile kodlanmış metnin bütün baytlarını kapsar. |
+
+: Başlangıç alfabesi olarak karakter ya da bayt {tbl-colwidths="[26,37,37]"}
+
+İki seçeneği birleştiren üçüncü bir tasarım da var: **byte fallback**, yani
+bilinmeyen bir karakteri baytlarıyla yazmak. Sözlük yine karakterlerden ve
+onların birleşimlerinden kurulur; ama içine 256 bayt değerinin her biri için
+birer token da eklenir. Tokenizer tanıdığı karakterleri her zamanki gibi
+işler. Tanımadığı bir karakterle karşılaşınca `<UNK>` yazmak yerine o
+karakterin UTF-8 baytlarını tek tek, bu bayt token'larıyla yazar. SentencePiece
+kütüphanesi bunu bir seçenek olarak sunar (`byte_fallback=True`).
+
+Küçük bir deneyle görelim. Aşağıda SentencePiece'i, içinde `ç` harfi hiç
+geçmeyen sekiz Türkçe kelimeyle iki kez eğitiyoruz: bir kez bu seçenek kapalı,
+bir kez açık. Sonra ikisine de `çay` kelimesini veriyoruz:
+
+```python
+import sentencepiece as spm
+
+words = ["ev", "evde", "evden", "evler", "yol", "yolda", "yoldan", "yollar"]
+with open("mini.txt", "w", encoding="utf-8") as f:
+    f.write("\n".join(words * 5) + "\n")            # bu metinde hiç 'ç' yok
+
+for fallback in [False, True]:
+    spm.SentencePieceTrainer.train(
+        input="mini.txt", model_prefix="mini", model_type="bpe",
+        vocab_size=20 + (256 if fallback else 0), byte_fallback=fallback,
+        character_coverage=1.0, hard_vocab_limit=False, minloglevel=2,
+        bos_id=-1, eos_id=-1, pad_id=-1)
+    sp = spm.SentencePieceProcessor(model_file="mini.model")
+    ids = sp.encode("çay")
+    print(f"byte_fallback={fallback!s:<5}  vocabulary {sp.get_piece_size():>3}  "
+          f"{sp.encode('çay', out_type=str)}  ->  {sp.decode(ids)!r}")
+```
+
+```text
+byte_fallback=False  vocabulary  20  ['▁', 'ç', 'a', 'y']  ->  ' ⁇ ay'
+byte_fallback=True   vocabulary 276  ['▁', '<0xC3>', '<0xA7>', 'a', 'y']  ->  'çay'
+```
+
+İlk satırda `ç` sözlükte bulunmuyor ve bilinmeyen token kimliğiyle kodlanıyor.
+Parça listesinde yine de `ç` görülüyor; çünkü bu liste bilinmeyen parçanın
+metindeki yazımını gösterir. Bu, `ç` için ayrı bir sözlük girdisi bulunduğu
+anlamına gelmez. Kimliklerden metne dönüldüğünde bu harfin yerini `⁇` işareti
+alıyor.
+
+İkinci satırda sözlük, eklenen 256 bayt token'ıyla 20'den 276'ya çıkıyor. `ç`,
+`<0xC3>` ve `<0xA7>` olarak temsil ediliyor. Bunlar yukarıdaki tabloda
+gördüğünüz iki bayt: onaltılık C3 = 195, A7 = 167. Kimliklerden metne
+dönüldüğünde `çay` eksiksiz elde ediliyor. Baştaki `▁`, SentencePiece'in
+boşluğu görünür kılmak için kullandığı işarettir. Bu örnekte, varsayılan ayarın
+metnin başına eklediği boşluğu temsil ediyor; bir sonraki alt bölümde bu
+gösterime döneceğiz.
+
+**Bugün hangisi kullanılıyor.** GPT tipi birçok model bayt düzeyinde BPE'yi
+veya onun bir varyantını kullanır. Başka model ailelerinde WordPiece ve Unigram
+da kullanılır. SentencePiece ise hem BPE hem de Unigram ile tokenizer
+eğitebilen bir kütüphanedir. GPT-2, bayt düzeyinde BPE'yi 50.257
+token'lık bir sözlükle tanıttı [@radford2019language]. OpenAI'ın bir sonraki
+alt bölümde ölçülen `cl100k_base` ve `o200k_base` kodlamaları bayt düzeyindedir.
+Llama 3, 128 bin token'lık bir sözlüğe geçti: OpenAI'ın `tiktoken`'ından
+alınan 100 bin token'a İngilizce dışındaki diller için 28 bin token eklendi
+[@grattafiori2024llama3]. BERT ile DistilBERT ve ELECTRA gibi yakın akrabaları
+hâlâ karakterler üzerinde WordPiece kullanıyor [@devlin2019bert] (RoBERTa ise BERT
+üzerine kurulu olsa da GPT-2'nin bayt düzeyindeki BPE'sine geçti); hangi algoritmanın
+hangi modelde kullanıldığını ilerideki bir tablo (@sec-tokenizer-algoritmalari) gösteriyor.
+Pratik kural bunların hiçbirine bağlı değil: modelin eğitildiği tokenizer'ı
+kullanın ve token'ları onunla sayın.
+
+Burada kapsama ile token sayısını ayırmak gerekiyor. Başlangıç alfabesi bütün
+256 bayt değerini içeriyorsa, UTF-8 ile kodlanan bir Türkçe kelimenin
+baytlarını temsil etmek için bilinmeyen token gerekmez. Ancak bu özellik,
+tokenleştirme öncesindeki normalleştirmenin özgün metni koruduğu anlamına
+gelmez; değiştirilen harfler veya silinen boşluklar bayt kapsamı sayesinde geri
+getirilemez.
+
+Bir metnin kaç token üreteceği ise eğitim verisine, öğrenilen birleştirmelere,
+sözlüğün büyüklüğüne ve içeriğine bağlıdır. Diller için ayrıca bir sözlük
+kotası belirlenmiş olması gerekmez. Bir sonraki alt bölüm, token sayısındaki bu
+farkı Türkçe örneklerle ölçüyor.
+
+**Bu alt bölümün özeti.** Karakterlerden başlayan BPE'nin kapsamı, seçilen
+başlangıç alfabesine ve varsa byte fallback gibi ek mekanizmalara bağlıdır.
+Bütün 256 bayt değerinden başlayan BPE ise UTF-8 ile kodlanmış metnin baytlarını
+temsil edebilir. Bunun karşılığında bazı kod noktaları birden fazla token'a
+bölünebilir. Her iki yaklaşımda da oluşan token sayısı, öğrenilen sözlüğe ve
+metnin içeriğine bağlıdır.
+
+### Türkçe için faturayı kim ödüyor {#sec-metin-veri-turkce}
+
+Bir tokenizer, aynı içeriğin farklı dillerdeki karşılıkları için farklı sayıda
+token üretebilir. Bu fark; eğitim derleminin dil dağılımına ve içeriğine, sözlük
+büyüklüğüne, tokenleştirme algoritmasına ve ön işleme kurallarına bağlıdır.
+Türkçe ve İngilizce arasındaki farkı somut bir örnekle inceleyelim. Aşağıda
+İnsan Hakları Evrensel Bildirgesi'nin 1. maddesi, resmî İngilizce ve Türkçe
+metinleriyle OpenAI'ın tokenizer'larından geçiriliyor:
+
+```python
+import tiktoken
+
+en = ("All human beings are born free and equal in dignity and rights. "
+      "They are endowed with reason and conscience and should act towards "
+      "one another in a spirit of brotherhood.")
+tr = ("Bütün insanlar hür, haysiyet ve haklar bakımından eşit doğarlar. "
+      "Akıl ve vicdana sahiptirler ve birbirlerine karşı kardeşlik "
+      "zihniyeti ile hareket etmelidirler.")
+
+for name in ["cl100k_base", "o200k_base"]:
+    enc = tiktoken.get_encoding(name)
+    a, b = len(enc.encode(en)), len(enc.encode(tr))
+    print(f"{name}:")
+    print(f"  english : {len(en):>4} code points -> {a:>3} tokens  "
+          f"({len(en) / a:4.2f} code points/token)")
+    print(f"  turkish : {len(tr):>4} code points -> {b:>3} tokens  "
+          f"({len(tr) / b:4.2f} code points/token)")
+    print(f"  Turkish/English token count ratio: {b / a:4.2f}")
+```
+
+```text
+cl100k_base:
+  english :  170 code points ->  33 tokens  (5.15 code points/token)
+  turkish :  160 code points ->  60 tokens  (2.67 code points/token)
+  Turkish/English token count ratio: 1.82
+o200k_base:
+  english :  170 code points ->  33 tokens  (5.15 code points/token)
+  turkish :  160 code points ->  46 tokens  (3.48 code points/token)
+  Turkish/English token count ratio: 1.39
+```
+
+::: {.column-margin}
+Kod çıktılarında ondalık ayırıcı nokta, binlik ayırıcı virgüldür; düzyazıda
+Türkçe biçim kullanıyoruz.
+:::
+
+Bildirgenin aynı maddesini aktaran bu iki cümlelik metinlerde, Türkçe token
+sayısı İngilizcenin `cl100k_base` ile [yaklaşık 1,82 katı]{.hl}, `o200k_base`
+ile 1,39 katıdır. Bu örnekte ikinci kodlama farkı azaltıyor.
+
+Token başına aynı girdi ücretinin uygulandığı bir karşılaştırmada, daha fazla
+token daha yüksek girdi maliyeti demektir. Sabit bir token sınırı da bu tür
+metinlerde farklı miktarda içeriğe karşılık gelebilir. Ancak toplam maliyet;
+seçilen modele, girdi ve çıktı uzunluklarına ve ücretlendirme koşullarına
+bağlıdır.
+
+Diller arasında benzer farklılıklar daha geniş çalışmalarda da gösterilmiştir
+[@petrov2023language]. Buradaki iki metin ise Türkçe için evrensel bir oran
+vermez. Farkı yalnızca bazı Türkçe harflerin UTF-8'de iki bayt tutmasıyla
+açıklamak da yeterli değildir; öğrenilmiş sözlük ve tokenleştirme kuralları
+birlikte etkilidir.
+
+Bu fark nereden geliyor? Türkçe, İngilizceye kıyasla dilbilgisel bilgiyi tek
+bir kelimenin içinde eklerle kodlamaya çok daha fazla başvurur
+[@oflazer1994two]; bu yüzden aynı kökün çok sayıda yüzey biçimi oluşur.
+İngilizce, aynı dilbilgisel bilgiyi bazı yapılarda ayrı kelimelerle ifade
+eder. Bu kelimeler eğitim derleminde sık geçiyorsa kısa token dizileriyle
+temsil edilebilir. Türkçede ise çok sayıdaki çekimli biçimin nasıl
+parçalanacağı, tokenizer'ın hangi ortak dizileri öğrendiğine bağlıdır.
+
+Aşağıda `ev` köküne ekler eklendikçe `cl100k_base` çıktısının nasıl değiştiğini
+görüyorsunuz. Her kelimeyi, önünde tek bir boşluk bulunacak biçimde ayrı ayrı
+kodladık:
+
+```text
+ev             1 tokens  [' ev']
+evler          2 tokens  [' ev', 'ler']
+evlerimiz      4 tokens  [' ev', 'ler', 'im', 'iz']
+evlerimizden   5 tokens  [' ev', 'ler', 'im', 'iz', 'den']
+```
+
+:::: {.anlp-fig}
+```{=html}
+<div class="fig-title">Bir T&#252;rk&#231;e kelimede bi&#231;imbirimler ve BPE par&#231;aları</div>
+<svg viewBox="0 0 760 300" role="img" aria-label="Uzunluğu artan dört Türkçe kelime biçimi; her biri byte-pair encoding'in böldüğü token'lar olarak gösteriliyor ve token sayısı birden beşe çıkıyor. Altta dilbilgisel etiketler: ev kök, ler çoğul eki, im ve iz birlikte birinci çoğul kişi iyelik eki imiz, den ayrılma hâli eki.">
+  <text x="8"   y="20" class="t-xs t-muted t-b">KELİME</text>
+  <text x="178" y="20" class="t-xs t-muted t-b">TOKENIZER'IN G&#214;RD&#220;Ğ&#220;</text>
+  <text x="666" y="20" class="t-xs t-muted t-b">TOKEN</text>
+
+  <text x="8" y="52" class="t-sm t-mono">ev</text>
+  <rect x="178" y="38" width="86" height="22" rx="4" class="box-accent"/>
+  <text x="221" y="53" class="t-xs t-mono t-mid">&#9251;ev</text>
+  <text x="678" y="52" class="t-sm t-mono t-b">1</text>
+
+  <text x="8" y="90" class="t-sm t-mono">evler</text>
+  <rect x="178" y="76" width="86" height="22" rx="4" class="box-accent"/>
+  <rect x="270" y="76" width="86" height="22" rx="4" class="box"/>
+  <text x="221" y="91" class="t-xs t-mono t-mid">&#9251;ev</text>
+  <text x="313" y="91" class="t-xs t-mono t-mid">ler</text>
+  <text x="678" y="90" class="t-sm t-mono t-b">2</text>
+
+  <text x="8" y="128" class="t-sm t-mono">evlerimiz</text>
+  <rect x="178" y="114" width="86" height="22" rx="4" class="box-accent"/>
+  <rect x="270" y="114" width="86" height="22" rx="4" class="box"/>
+  <rect x="362" y="114" width="86" height="22" rx="4" class="box"/>
+  <rect x="454" y="114" width="86" height="22" rx="4" class="box"/>
+  <text x="221" y="129" class="t-xs t-mono t-mid">&#9251;ev</text>
+  <text x="313" y="129" class="t-xs t-mono t-mid">ler</text>
+  <text x="405" y="129" class="t-xs t-mono t-mid">im</text>
+  <text x="497" y="129" class="t-xs t-mono t-mid">iz</text>
+  <text x="678" y="128" class="t-sm t-mono t-b">4</text>
+
+  <text x="8" y="166" class="t-sm t-mono t-b">evlerimizden</text>
+  <rect x="178" y="152" width="86" height="22" rx="4" class="box-accent"/>
+  <rect x="270" y="152" width="86" height="22" rx="4" class="box"/>
+  <rect x="362" y="152" width="86" height="22" rx="4" class="box"/>
+  <rect x="454" y="152" width="86" height="22" rx="4" class="box"/>
+  <rect x="546" y="152" width="86" height="22" rx="4" class="box"/>
+  <text x="221" y="167" class="t-xs t-mono t-mid">&#9251;ev</text>
+  <text x="313" y="167" class="t-xs t-mono t-mid">ler</text>
+  <text x="405" y="167" class="t-xs t-mono t-mid">im</text>
+  <text x="497" y="167" class="t-xs t-mono t-mid">iz</text>
+  <text x="589" y="167" class="t-xs t-mono t-mid">den</text>
+  <text x="678" y="166" class="t-sm t-mono t-b t-accent">5</text>
+
+  <path d="M364,180 v6 H538 v-6" class="ln-thin"/>
+  <text x="221" y="200" class="t-xs t-accent t-mid">k&#246;k</text>
+  <text x="313" y="200" class="t-xs t-accent t-mid">&#231;oğul eki</text>
+  <text x="451" y="200" class="t-xs t-accent t-mid">iyelik eki: -imiz</text>
+  <text x="589" y="200" class="t-xs t-accent t-mid">ayrılma h&#226;li eki</text>
+
+  <path d="M8,216 H752" class="ln-thin"/>
+  <text x="8" y="238" class="t-sm">BPE sınırlarının bir b&#246;l&#252;m&#252; bi&#231;imbirim sınırlarıyla &#246;rt&#252;ş&#252;yor; -imiz eki ise iki token'a ayrılıyor.</text>
+  <text x="8" y="262" class="t-sm t-muted">Bu &#246;rnekte <tspan class="t-mono">evlerimizden</tspan> beş, İngilizce karşılığı <tspan class="t-mono">from our houses</tspan> &#252;&#231; token.</text>
+  <text x="8" y="286" class="t-sm t-b">Token sayısı ile bi&#231;imbilimsel uygunluk ayrı &#246;l&#231;&#252;tlerdir.</text>
+</svg>
+```
+
+::: {.fig-cap}
+Vurgu renkli kutu `ev` kökünü gösteriyor. Diğer kutular ekleri veya eklerin
+parçalarını içeriyor: *-imiz*, `im` ve `iz` olarak iki token'a ayrılmış. BPE bu
+birimleri dilbilgisi kurallarından değil, eğitim verisindeki birleştirme
+istatistiklerinden öğrenir. Son satırdaki Türkçe biçim beş token, İngilizce
+karşılığı üç token olarak gösteriliyor. Aynı token başı ücret uygulanırsa bu
+fark, ilgili metin parçalarının işlenme ücretine de yansır. `␣`, gerçek bir
+boşluğu görünür kılmak için kullanılan simgedir.
+:::
+::::
+
+Bu karşılaştırma, daha az kelime kullanmanın daha az token üretmek anlamına
+gelmediğini gösteriyor. Token sınırlarının biçimbirimlerle ne ölçüde örtüştüğü
+ise ayrı bir değerlendirme konusu.
+
+`ev|ler|im|iz|den` bölünmesindeki dört iç sınırın üçü, `ev|ler|imiz|den`
+biçimbirim çözümlemesiyle örtüşüyor. Fazladan sınır, birinci çoğul kişi iyelik
+eki *-imiz*in içinde bulunuyor. Dolayısıyla bu örnek, BPE parçalarının
+biçimbirimlerle kısmen örtüşebildiğini, ancak onları birebir temsil etmediğini
+gösteriyor. Yalnızca çıktıdan hareketle `im` ve `iz` parçalarının eğitim
+verisindeki sıklığını belirleyemeyiz.
+
+`o200k_base` ise aynı kelimede *-imiz* ekini bölmüyor ve kelimeyi dört token'a
+ayırıyor: `ev|ler|imiz|den`. Bu fark, aynı kelimenin farklı tokenizer'larda
+farklı biçimde temsil edilebildiğini gösterir; tek başına bütün Türkçe
+kelimeler için bir başarı karşılaştırması değildir.
+
+@bostrom2020byte, eşit sözlük büyüklüğüyle yürüttükleri İngilizce ve Japonca
+deneylerinde, BPE'nin bir akrabası olan Unigram LM'in
+(@sec-tokenizer-algoritmalari) sınırlarının morfolojik referanslarla BPE'den
+daha iyi örtüştüğünü bulmuştur. Bu sonuç Türkçe için ayrıca sınanmalıdır.
+
+Yukarıdaki çıktıda gözden kaçabilecek bir ayrıntı var: ilk token `'ev'` değil
+`' ev'`, yani başında bir boşluk taşıyor. Nedenini anlamak için tokenizer'ın
+bir cümleyi nasıl ele aldığına bakmak gerekiyor.
+
+**Önce ön parçalara, sonra token'lara.** GPT-2'nin BPE tokenizer'ı ve BERT'in
+WordPiece tokenizer'ı, alt kelime işlemlerinden önce metni daha küçük parçalara
+ayırır. Bu aşamaya **ön tokenleştirme** (pre-tokenization) denir. GPT-2; harf,
+sayı, noktalama ve boşluk dizilerini bir düzenli ifadeyle (regex) ayırır.
+BERT'in temel tokenleştirme işlemleri ise boşlukları, noktalama işaretlerini
+ve bazı yazı sistemlerine özgü sınırları dikkate alır. Ardından BPE veya
+WordPiece bu parçaları işler. Oluşan token'lar ön tokenleştirmenin koyduğu
+sınırları aşamaz; ancak bu sınırlar her dilde kelime sınırı anlamına gelmez.
+
+**Boşluklar nasıl temsil edilir?** Parçaları yeniden birleştirirken
+aralarındaki sınırların nasıl tutulduğunu bilmek gerekir. Yalnızca `ev`, `ler`,
+`geld`, `ik` dizilerini görmek, boşlukların yerini belirlemeye yetmez:
+`evler geldik` mi, `ev ler geld ik` mi? Tokenizer'lar bu bilgiyi farklı
+biçimlerde ele alır: bazıları boşlukları token'ların içinde korur, bazıları
+boşluğu görünür bir simgeyle gösterir, bazıları ise kelime içindeki devam
+parçalarını işaretler. Bu yöntemlerin özgün metni geri oluşturma özellikleri
+aynı değildir. Aynı iki kelime, `evlerimizden geldik`, üç tokenizer ailesinde
+şöyle görünüyor:
+
+| Aile (çalıştırılan tokenizer) | Token'lar | Sınır bilgisinin gösterimi |
+|:--|:--|:--|
+| GPT (`cl100k_base`) | `ev` `ler` `im` `iz` `den` `␣geld` `ik` | Bu örnekte boşluk, `geld` dizisiyle aynı token'da bulunur; `␣`, gerçek boşluğu görünür kılmak için kullanılmıştır. |
+| SentencePiece (XLM-R) | `▁ev` `lerimiz` `den` `▁geldi` `k` | `▁`, boşluğun görünür gösterimidir; metnin başında tokenizer'ın eklediği başlangıç boşluğunu da temsil edebilir. |
+| WordPiece (çok dilli BERT) | `ev` `##leri` `##mi` `##zde` `##n` `geldi` `##k` | `##`, parçanın aynı ön tokenleştirme biriminin devamı olduğunu gösterir; özgün boşluk sayısını saklamaz. |
+
+: Aynı iki kelimede sınır bilgisinin üç gösterimi {tbl-colwidths="[24,36,40]"}
+
+Bu gösterimler, parçaların nasıl birleştirileceğine ilişkin farklı bilgiler
+taşır. `cl100k_base` çıktısındaki `' ev'`, gerçek bir boşlukla başlayan
+token'dır. WordPiece'in `##` işareti ise devam parçasını belirtir; özgün
+boşlukların sayısını veya türünü göstermez. Şekilde gerçek boşluğu görünür
+kılmak için `␣` simgesini kullandık: `␣ev`.
+
+SentencePiece [@kudo2018sentencepiece], eğitim metninin önceden kelimelere
+ayrılmasını gerektirmez; ham metinden çalışabilir. Boşlukları `▁` ile temsil
+eder. Bununla birlikte, oluşturabileceği parçalar ayarlarla sınırlandırılır;
+örneğin varsayılan `split_by_whitespace=True` ayarı, boşluğun iki yanındaki
+kelimeleri tek parçada birleştirmeyi sınırlar. Önceden kelime bölümleme
+gerektirmemesi, Japonca ve Çince gibi boşlukla ayrılmayan metinlerde
+kullanımını kolaylaştırır.
+
+::: {.callout-note appearance="simple"}
+**Tokenleştirme sürecini dört aşamada izlemek.** Hugging Face `tokenizers`
+kütüphanesinde süreci normalleştirme, ön tokenleştirme, alt kelime kodlaması
+ve son işleme olarak inceleyebiliriz. Her tokenizer bu aşamaların hepsini
+kullanmak zorunda değildir. Aşağıda Türkçe bir cümleyi çok dilli BERT'in
+tokenizer'ında adım adım izliyoruz (`tokenizers` 0.22 ile):
+
+```python
+from tokenizers import Tokenizer
+
+tok = Tokenizer.from_pretrained("google-bert/bert-base-multilingual-uncased")
+text = "Çay içtik, sonra evlerimizden çıktık."
+
+norm = tok.normalizer.normalize_str(text)
+print("1 normalize    :", norm)
+print("2 pre-tokenize :", [w for w, _ in tok.pre_tokenizer.pre_tokenize_str(norm)])
+print("3 subwords     :", tok.encode(text, add_special_tokens=False).tokens)
+print("4 special      :", tok.encode(text).tokens)
+print("  ids          :", tok.encode(text).ids)
+```
+
+```text
+1 normalize    : cay ictik, sonra evlerimizden cıktık.
+2 pre-tokenize : ['cay', 'ictik', ',', 'sonra', 'evlerimizden', 'cıktık', '.']
+3 subwords     : ['cay', 'ic', '##tik', ',', 'sonra', 'ev', '##leri', '##mi', '##zde', '##n', 'cıktı', '##k', '.']
+4 special      : ['[CLS]', 'cay', 'ic', '##tik', ',', 'sonra', 'ev', '##leri', '##mi', '##zde', '##n', 'cıktı', '##k', '.', '[SEP]']
+  ids          : [101, 21373, 11797, 13537, 117, 12624, 18110, 12737, 10555, 55567, 10115, 59161, 10167, 119, 102]
+```
+
+İlk dört satır işlem aşamalarını, son satır ise oluşan token kimliklerini
+gösteriyor:
+
+1. **Normalleştirme** — Bu BERT tokenizer'ı metni küçük harfe dönüştürür ve
+   Unicode ayrıştırmasının ardından birleştirici işaretleri temizler. Böylece
+   `Çay` → `cay`, `içtik` → `ictik` olur. Bu aşamada silinen bilgi geri
+   gelmez; model artık `çay` ile `cay` arasındaki farkı göremez. `ı` ise bir
+   `i` ile bir işarete ayrışmadığı için korunur.
+2. **Ön tokenleştirme** — Metin, boşluk ve noktalama sınırlarından ön parçalara
+   ayrılır. Virgül ve nokta da ayrı parçalardır.
+3. **Alt kelime kodlaması** — WordPiece bu ön parçaları sözlüğündeki birimlerle
+   temsil eder. Örnekte `evlerimizden` beş parçadır; `sonra` bütündür.
+4. **Son işleme** — Bu tek metinlik BERT girdisinin başına `[CLS]`, sonuna
+   `[SEP]` eklenir.
+
+Son satırdaki tamsayılar token kimlikleridir. Model, bunların yanında dikkat
+maskesi (attention mask) gibi yardımcı girdiler de kullanabilir.
+
+`bert-base-multilingual-cased`, büyük/küçük harf ayrımını korur; ancak
+normalleştirme aşaması bütünüyle boş değildir. Metin temizleme (örneğin
+denetim karakterlerini atma) ve Çince karakterlerin çevresine boşluk ekleme
+işlemleri etkindir. Burada kullanılan `cl100k_base` ve `o200k_base`
+kodlamalarında BERT'teki gibi küçük harfe dönüştürme ve aksan temizleme
+aşamaları bulunmaz. SentencePiece ise dışarıdan kelime bölümleme gerektirmeden
+çalışabilir; kendi normalleştirme ve parça oluşturma ayarları vardır.
+
+Son aşama çıktıda hemen göze çarpıyor, o yüzden özel token'ların adlarını
+şimdiden verelim:
+
+| token | işlevi |
+|:--|:--|
+| `[UNK]` | Kullanılan kodlama düzeninin temsil edemediği parçanın yerine geçer. Tam bayt kapsamına sahip bir tokenizer, geçerli metnin baytlarını temsil etmek için bu işarete ihtiyaç duymaz. |
+| `[PAD]` | Birlikte işlenen (aynı batch'teki) dizileri hedef uzunluğa tamamlar. Dolgu konumları uygun dikkat maskesiyle dışlanır. |
+| `[CLS]` | BERT girdisinin başındaki özel token'dır. Bu konumun bağlamsal temsili, dizi sınıflandırma gibi görevlerde kullanılabilir. |
+| `[SEP]` | BERT'te metin sonunu ve iki metin (ör. soru ve pasaj) arasındaki sınırı işaretler. |
+| BOS / EOS | Modelin kullandığı dizi başı ve dizi sonu işaretleridir. Üretim sırasında EOS, bitiş işareti olarak kullanılabilir. |
+
+Özel token'ların adları ve görevleri modele göre değişir. `<s>`, `</s>` ve
+`<|endoftext|>` gibi işaretler birbirinin yerine kullanılamaz; modelin
+beklediği token kimlikleri ve yerleşim kuralları izlenmelidir. Kendi
+token'larınızı saymaya başladığınızda bunların da bağlam penceresinden pay
+aldığını unutmayın.
+:::
+
+Türkçe metinle çalışırken akılda tutulacak son bir pratik ayrıntı var. `ö`
+gibi işaretli bir harf bilgisayarda iki farklı biçimde saklanabilir: tek bir
+kod noktası olarak ya da `o` harfi ile ayrı bir "iki nokta" işareti olarak. Bu
+iki gösterim aynı görünebilir, ancak farklı kod noktası dizileridir.
+Tokenizer'ın normalleştirme kurallarına bağlı olarak aynı veya farklı token
+dizileri üretebilirler. Önceden eğitilmiş bir model kullanırken onun
+tokenizer'ının beklediği işlem düzenini izleyin. Kendi veri işleme düzeninizde
+NFC adı verilen standart biçimi kullanmaya karar verirseniz, bunu eğitim ve
+kullanım sırasında tutarlı biçimde uygulayın:
+
+```python
+import unicodedata
+
+text = unicodedata.normalize("NFC", text)
+```
+
+Token sayısı karşılaştırmalarında, girdilere hangi Unicode normalleştirmesinin
+uygulandığı ölçüm koşullarının parçası olarak belirtilmelidir.
+
+::: {.callout-important appearance="simple"}
+**Türkçe metinle çalışırken üç pratik sonuç.**
+
+Birincisi: maliyeti tamamlanan iş başına ölçün. Türkçe ve İngilizce örneklerde
+girdi ve çıktı token sayılarını, kullanılan modelin ücretleriyle birlikte
+karşılaştırın. Tek bir metinden sabit bir maliyet oranı çıkarmayın.
+
+İkincisi: bağlam sınırını kullandığınız modelin tokenizer'ıyla denetleyin. Aynı
+token bütçesine sığan içerik miktarı dile ve belgeye göre değişebilir. Parça
+(chunk) boyutlarını (@sec-rag) belirlerken prompt'a, özel token'lara ve
+üretilecek yanıta da yer ayırın.
+
+Üçüncüsü: kendi modelinizi eğitiyor veya mevcut bir modeli yeni bir sözlüğe
+uyarlıyorsanız `sentencepiece` [@kudo2018sentencepiece] ile Türkçeye uygun bir
+tokenizer eğitebilirsiniz. Ancak yeni tokenizer, hazır modelin mevcut token
+kimlikleri ve öğrenilmiş temsilleriyle kendiliğinden uyumlu olmaz. Önce mevcut
+model–tokenizer seçeneklerini kendi Türkçe verinizde ölçün; özel tokenizer'ın
+sağlayacağı kazancı model uyarlama maliyetiyle birlikte değerlendirin.
+:::
+
+::: {.callout-tip collapse="true"}
+## Sezgi kontrolü: neden bütün bunları bırakıp doğrudan karakter kullanmıyoruz?
+
+Sınırlı bir karakter kümesiyle çalışmak küçük bir sözlük sağlayabilir; ancak
+gerçek metinlerde karşılaşılacak karakterler yalnızca dilin alfabesinden
+oluşmaz. Bayt düzeyinde ise bütün değerler 256 birimle kapsanabilir. Sabit bir
+karakter veya bayt sözlüğü kullanıldığında, metni bu birimlere ayırmak için
+BPE'deki gibi birleştirme kuralları öğrenmek gerekmez. Dil modelinin eğitimi
+ise yine gerekir. Karakter ve bayt düzeyinde modeller de bulunduğuna göre
+[@xue2022byt5], alt kelimelerin hangi avantajları sağladığına bakalım.
+
+Bildirgenin yukarıdaki Türkçe metninde üç farklı birimi sayıyoruz: Python'ın
+ayırdığı Unicode kod noktaları, `cl100k_base` token'ları ve boşluklardan
+ayrılan metin parçaları. Son grupta noktalama işaretleri kelimeye bitişik
+kalır. Token'ların metin gösterimini yalnızca çıktıyı okumayı kolaylaştırmak
+için kullanıyoruz; tek bir bayt token'ını ayrı çözmek her zaman geçerli bir
+Unicode parçası vermez.
+
+```python
+import tiktoken
+
+enc = tiktoken.get_encoding("cl100k_base")
+units = {
+    "code points": list(tr),
+    "subword tokens": [enc.decode([t]) for t in enc.encode(tr)],
+    "words": tr.split(),
+}
+for name, seq in units.items():
+    n = len(seq)
+    print(f"{name:<15} {n:>3} units  {n * n:>6,} pairs  first six: {seq[:6]}")
+```
+
+```text
+code points     160 units  25,600 pairs  first six: ['B', 'ü', 't', 'ü', 'n', ' ']
+subword tokens   60 units   3,600 pairs  first six: ['B', 'üt', 'ün', ' insan', 'lar', ' h']
+words            21 units     441 pairs  first six: ['Bütün', 'insanlar', 'hür,', 'haysiyet', 've', 'haklar']
+```
+
+**İlk sebep dizi uzunluğu.** Tam öz-dikkatte (full self-attention), her dikkat
+başı için $n \times n$ boyutunda konum ilişkileri ele alınır
+(@sec-transformerlar). Çıktıdaki `pairs` sütunu bu teorik konum çifti sayısını
+gösteriyor. Verilen örnekte 160 kod noktası 25.600, 60 alt kelime token'ı ise
+3.600 konum çiftine karşılık gelir. Dizi yaklaşık 2,7 kat kısalırken bu sayı
+yaklaşık 7,1 kat azalır.
+
+Sabit model genişliğinde tam dikkatin hesaplama yükü dizi uzunluğuyla karesel,
+katmandaki konum başına işlemler ise doğrusal büyür [@vaswani2017attention]. Bu
+basitleştirilmiş modelde diziyi beş kat uzatmak, bu iki bileşenin toplamını beş
+ile yirmi beş kat arasında artırır. Bu oran doğrudan çalışma süresi veya ücret
+tahmini değildir; yerel ya da seyrek dikkat kullanan mimarilerde büyüme
+ilişkisi de değişebilir.
+
+**İkinci sebep, birimin büyüklüğü.** Her satırın ilk altı birimini okuyun. `ü`
+ve `t` gibi kod noktaları kelimenin yazımına katkıda bulunur; ancak `insan`
+gibi daha büyük bir örüntü tek bir girdi birimi olarak sunulmaz. Karakter
+düzeyindeki modelin bu tür örüntüleri karakter dizilerinden öğrenmesi gerekir.
+Alt kelime satırında ise ` insan` ve `lar` doğrudan ayrı birimlerdir. Bunun
+öğrenmeyi ve görev başarısını nasıl etkilediği, model ve veri üzerinde
+değerlendirilmelidir.
+
+**Boşluktan bölünen parçalar daha da kısa bir dizi verir, ama başka sorunlar
+getirir.** Bu örnekte boşluktan bölme 21 birim üretiyor. Ancak `tr.split()`
+noktalama işaretlerini ayırmadığı için `hür,`, `hür`'den farklı bir parça olarak
+kalıyor. Bu sorun daha ayrıntılı bir kelime tokenizer'ıyla giderilebilir.
+Çekimli biçimlerin sabit sözlükte ayrı girdiler olarak tutulması ise sürer;
+sözlükte bulunmayan yeni biçimler için ayrıca bir çözüm gerekir. Bir sonraki
+örnek bunu gösteriyor.
+
+Alt kelime tokenleştirmesinde sözlük büyüklüğü ile dizi uzunluğu arasında bir
+denge (trade-off) vardır. Daha büyük parçaları sözlüğe almak dizileri
+kısaltabilir; buna karşılık daha fazla sözlük girdisi gerekir. Hedef sözlük
+büyüklüğünü ve başlangıç birimlerini tasarımcı belirler; BPE, bu koşullar
+altında hangi parçaların oluşturulacağını eğitim verisindeki çift
+sıklıklarından öğrenir. Bu yaklaşım bir sıkıştırma problemine benzer; BPE'nin
+1994'te bir veri sıkıştırma algoritması olarak ortaya çıkmış olması da
+[@gage1994new] bununla uyumludur. Ancak burada amaç doğrudan dosya boyutunu
+küçültmek değil, modelin kullanacağı birimleri seçmektir.
+:::
+
+### Karakter, alt kelime, bütün kelime: tek bir örnek {#sec-metin-veri-birimler}
+
+Aşağıdaki tablo üç seçeneği kâğıt üzerinde karşılaştırıyor. Önce üçünü de küçük
+bir örnekte izleyin; böylece tablonun her satırı, gözünüzle gördüğünüz bir şeye
+karşılık gelsin.
+
+Derlem, on iki kökün yalın hâllerinden ve dört ek dizisiyle (`-ler`, `-de`,
+`-den`, `-lerde`) oluşturulan biçimlerinden oluşuyor: toplam 60 farklı kelime
+biçimi. Ekler ünlü uyumuna göre yazılmıştır (`-ler`/`-lar`, `-de`/`-da`). Kodda
+her biçime verilen sıklıklar dikkate alındığında derlem toplam 216 kelime
+geçişini temsil eder.
+
+İki test kelimesi, `evlerden` ve `okullardan`, derlemde bulunmuyor; ancak
+bunları oluşturacak karakterler ve ilgili ek dizileri başka biçimlerde
+geçiyor. Kelime ve karakter yöntemleri derlemdeki birimleri listelerken BPE,
+sıklıklardan birleştirme kuralları öğreniyor. Ardından üç yöntem de aynı iki
+test kelimesine uygulanıyor. BPE
+satırı @sec-metin-veri-bpe'deki `pair_counts`, `merge` ve `apply_merges`
+fonksiyonlarını yeniden kullanıyor:
+
+```python
+stems = {"ev": "e", "el": "e", "göl": "e", "köy": "e", "gün": "e", "yüz": "e",
+         "okul": "a", "yol": "a", "kol": "a", "yıl": "a", "kız": "a", "masa": "a"}
+corpus = {}
+for stem, v in stems.items():          # v: eklerin alacağı ünlü
+    for suffix, n in [("", 4), (f"l{v}r", 2), (f"d{v}", 4),
+                      (f"d{v}n", 4), (f"l{v}rd{v}", 4)]:
+        corpus[stem + suffix] = n      # ev, evler, evde, evden, evlerde, ...
+test = ["evlerden", "okullardan"]      # iki kelime de derlemde yok
+
+chars = sorted({c for word in corpus for c in word})
+words = {tuple(w) + ("</w>",): n for w, n in corpus.items()}
+merges = []
+while len(chars) + 1 + len(merges) < 60:   # sözlük 60 sembole ulaşınca dur
+    best, _ = pair_counts(words).most_common(1)[0]
+    merges.append(best)
+    words = merge(words, best)
+
+tokenizers = {
+    "whole words": (len(corpus), lambda w: [w if w in corpus else "<UNK>"]),
+    "characters": (len(chars), lambda w: list(w)),
+    "subwords (BPE)": (len(chars) + 1 + len(merges),
+                       lambda w: list(apply_merges(w, merges))),
+}
+for name, (size, split) in tokenizers.items():
+    pieces = [p for w in test for p in split(w)]
+    print(f"{name:<15} vocabulary {size:>2}   {len(pieces):>2} units: {' '.join(pieces)}")
+```
+
+```text
+whole words     vocabulary 60    2 units: <UNK> <UNK>
+characters      vocabulary 18   18 units: e v l e r d e n o k u l l a r d a n
+subwords (BPE)  vocabulary 60    6 units: ev ler den</w> okul lar dan</w>
+```
+
+Şimdi bu çıktıyı aşağıdaki tablonun satırlarıyla karşılaştırın:
+
+- **Sözlük büyüklüğü.** Kelime düzeyindeki yöntemde 60 farklı kelime biçimi
+  bulunuyor. Çıktıdaki bu sayı, ayrıca kullanılan `<UNK>` işaretini kapsamıyor.
+  Karakter yöntemi 18 farklı karakteri listeliyor. BPE için gösterilen 60 ise
+  18 karakteri, `</w>` sembolünü ve 41 birleştirmeyle eklenen birimleri
+  kapsıyor. Bu nedenle sayılar, özel ve yapısal sembolleri bütünüyle aynı
+  kuralla sayan bir karşılaştırma olarak okunmamalı. Gerçek Türkçe veride dört
+  ek dizisinin ötesinde çok sayıda çekimli biçimle karşılaşılır.
+- **Sözlük dışı kelimeler.** Kelime düzeyindeki yöntem, iki test kelimesini de
+  aynı `<UNK>` işaretiyle temsil ediyor. Böylece kelimelerin yazımları ve
+  birbirlerinden farklı oldukları bilgisi kayboluyor. Karakter ve BPE yöntemleri
+  bu iki girdiyi mevcut birimlerle temsil edebiliyor; çünkü gereken bütün
+  karakterler başlangıç alfabelerinde bulunuyor. Bu küçük örnekte kullanılan
+  işlevler, alfabe dışındaki karakterleri ayrıca denetlemiyor.
+- **Dizi uzunluğu.** Ayrı ayrı işlenen iki test kelimesi, gösterilen çıktıda
+  toplam 18 karakter birimi, 6 BPE birimi veya 2 `<UNK>` birimi üretiyor. Son
+  seçenek en kısa olsa da kelimelerin yazımını korumuyor. Ayrıca karakter
+  sayımında kelimeler arası ayırıcı bulunmazken BPE çıktısında kelime sonu
+  işareti kullanılıyor. Bu nedenle sayıları, aynı bilgiyi koruyan üç tam metin
+  kodlamasının doğrudan karşılaştırması olarak değerlendirmemek gerekir.
+- **Birimlerin dilbilgisel karşılığı.** `e`, `v` ve `l` kelimenin yazımını
+  oluşturan karakterlerdir; bu örnekte tek başlarına bir kök veya ek temsil
+  etmezler. BPE çıktısındaki `ev`, `ler` ve `den` ise sırasıyla kök, çoğul eki
+  ve ayrılma hâli ekiyle örtüşüyor. `</w>` kelime sonunu gösteren yapısal
+  işarettir.
+- **Biçimbilimsel (morphological) açıdan zengin diller.** Bu küçük derlemde
+  öğrenilen BPE birimleri, iki test kelimesinde kök ve ek sınırlarıyla
+  örtüşüyor. Algoritma bu parçaları kök veya ek olarak etiketlemiyor; başka
+  kelimelerde ya da başka bir eğitim derleminde aynı örtüşme sağlanmayabilir.
+- **Tokenizer eğitimi.** Yalnızca BPE satırı bir öğrenme döngüsü çalıştırdı.
+  Diğer ikisi derlemde gördükleri birimleri listeledi.
+
+Tabloya geçmeden önce akılda tutulacak özet şu:
+
+- **Kelime düzeyi:** Genellikle kısa diziler üretir; sabit sözlüğün dışındaki
+  kelime biçimleri için ek bir mekanizma gerekir.
+- **Karakter düzeyi:** Seçilen alfabeye bağlı bir sözlük kullanır ve genellikle
+  daha uzun diziler üretir.
+- **Bayt düzeyi:** Bütün bayt değerlerini 256 birimle kapsayabilir; bir Unicode
+  kod noktası birden fazla birim gerektirebilir.
+- **Alt kelime düzeyi:** Öğrenilmiş parçalarla sözlük büyüklüğü ve dizi
+  uzunluğu arasında bir denge kurar.
+
+Bu karşılaştırma önemli bir tasarım boyutunu gösterir. Normalleştirme,
+sınırların korunması, dil kapsamı ve modelle uyum gibi kararlar da sonucu
+etkiler.
+
+| Ölçüt | Karakter veya bayt | Alt kelime | Bütün kelime |
+|---|---|---|---|
+| Sözlük büyüklüğü | Karakterde seçilen alfabeye bağlıdır; tam bayt alfabesi 256 değerdir. | Eğitimde belirlenen hedefe ve uygulamaya bağlıdır. | Seçilen kelime biçimlerinin sayısına bağlıdır; kullanılan sözlük sonludur. |
+| Sözlük dışı girdiler | Karakter alfabesi yetersiz kalabilir. Tam bayt alfabesi bütün bayt dizilerini temsil edebilir. | Alfabe kapsamı, bilinmeyen token kuralları ve varsa byte fallback belirleyicidir. | Sabit sözlükte bulunmayan kelimeler için ek bir yöntem gerekir. |
+| Dizi uzunluğu | Genellikle daha uzundur; oran metne ve karşılaştırılan tokenizer'a bağlıdır. | Genellikle karakter ve kelime düzeyleri arasında kalır. | Bilinen kelimeler tek birimle temsil edilebilir. |
+| Birimlerin dilbilgisel karşılığı | Yazımı küçük birimlerle temsil eder. | Parçalar bazen biçimbirimlerle örtüşür; bu garanti değildir. | Kelime biçimini korur; kelimenin anlamını bağlamdan bağımsız belirlemez. |
+| Zengin biçimbilim | Çok sayıdaki kelime biçimini, alfabe kapsadığı sürece temsil edebilir. | Ortak parçaları farklı çekimli biçimlerde yeniden kullanabilir. | Çok sayıda çekimli biçim, sözlük kapsamını zorlaştırabilir. |
+| Tokenizer eğitimi | Sabit alfabe için birleştirme öğrenmek gerekmez. | Parçalar veya parça olasılıkları genellikle derlemden öğrenilir. | Kelime sözlüğü seçilir ya da derlemden çıkarılır; alt kelime birleştirmesi öğrenilmez. |
+
+: Tokenleştirmede birim boyutlarının karşılaştırılması {tbl-colwidths="[18,28,27,27]"}
+
+Alt kelimeler, ortak parçaları farklı kelimelerde yeniden kullanırken karakter
+düzeyine göre daha kısa diziler üretebilir. Bu denge, birçok dil modelinde
+tercih edilmelerini sağlar. Karakter, bayt ve kelime düzeyindeki yaklaşımlar
+da kullanılabilir [@xue2022byt5]; uygun seçim görev, veri, model mimarisi ve
+hesaplama bütçesine bağlıdır.
+
+:::: {.callout-note collapse="true"}
+## Derinleşme: aynı tür birimi öğrenmenin üç yolu — BPE, WordPiece, Unigram LM
+
+*Bu kutuyu ilk okumada atlayabilirsiniz; bölümün geri kalanı ona dayanmıyor.*
+
+Bu kutuda alt kelime tokenleştirmesinde kullanılan üç yöntemi karşılaştırıyoruz:
+BPE, BERT'in kullandığı WordPiece ve T5'in kullandığı Unigram LM. Yöntemlerin
+ne olduğunu ve hangi modelde kullanıldığını, BERT'in tokenizer'ını
+incelediğimiz yerde anlatıyoruz (@sec-tokenizer-algoritmalari). Bu kutu, merak
+edenler için o anlatımın deneyini yapıyor: üç yöntemi yukarıdaki derlemde yan
+yana çalıştırıyor. Temel fikirleri tek satıra iniyor:
+
+| Yöntem | Temel fikir |
+|---|---|
+| BPE | en sık komşu çifti birleştir |
+| WordPiece | birleşmenin göreli faydasını puanla |
+| Unigram LM | büyük bir parça kümesinden başla, olasılıksal olarak buda |
+
+: Üç yöntemin tek cümlelik hâli {tbl-colwidths="[24,76]"}
+
+**Bu yöntemler hem sözlüğün nasıl oluşturulduğu hem de yeni metnin hangi
+parçalara ayrıldığı bakımından farklılaşır.** `SentencePiece`
+[@kudo2018sentencepiece] ise dördüncü bir algoritma değil, BPE ya da Unigram
+LM'i çalıştırabilen bir *kütüphanedir*.
+
+**Aynı derlem, üç yöntem.** Aynı iki test kelimesini, her uygulamada 60 sözlük
+girdisi hedefleyerek karşılaştıralım. Ancak başlangıç gösterimleri aynı değil:
+BPE kelime sonu işareti kullanıyor, WordPiece başlangıç ve devam parçalarını
+ayırıyor, küçük Unigram uygulaması ise bu işaretleri kullanmıyor. Bu deney
+yöntemlerin davranışlarını gösterir; aralarındaki bütün farkları denetleyen bir
+başarı karşılaştırması değildir. Kod, WordPiece ve Unigram LM'in küçük birer
+öğretici sürümü.
+
+::: {.callout-note collapse="true"}
+## Derinleşme: en küçük WordPiece ve Unigram LM
+
+Aşağıdaki
+
+$$
+\mathrm{score}(a,b)=\frac{\mathrm{freq}(ab)}{\mathrm{freq}(a)\,\mathrm{freq}(b)}
+$$
+
+puanı, WordPiece eğitimini açıklamak için kullanılan öğretici bir yaklaşımdır.
+BERT'in özgün WordPiece eğiticisinin birebir yeniden üretimi olarak
+görülmemelidir. Bu kutudaki sonuçlar, özellikle bu puanlama kuralına ve verilen
+uygulamaya aittir.
+
+`train_unigram` da Unigram yaklaşımından esinlenen küçük bir öğretici
+uygulamadır. Her kelimenin bütün olası bölünmelerini hesaba katmak yerine
+yalnızca en yüksek puanlı bölünmesini kullanır. Parça çıkarma maliyetini
+hesaplarken diğer parça puanlarını sabit tutar; budamadan sonra seçilen
+bölünmelerden yeni sayımlar oluşturur. Sözlükte kalan her parçaya verilen 0.001
+başlangıç sayımı da sıfır olasılığı önler. Bu nedenle aşağıdaki `loss`, tam
+Unigram modelinin marjinal olabilirliğiyle aynı amaç fonksiyonu değildir
+[@kudo2018subword].
+
+```python
+import math
+
+def train_wordpiece(corpus, size):
+    words = {tuple([w[0]] + ["##" + c for c in w[1:]]): n for w, n in corpus.items()}
+    vocab = {s for symbols in words for s in symbols}
+    first = None
+    while len(vocab) < size:
+        pairs, single = Counter(), Counter()
+        for symbols, n in words.items():
+            for s in symbols:
+                single[s] += n
+            for a, b in zip(symbols, symbols[1:]):
+                pairs[(a, b)] += n
+        score = {p: c / (single[p[0]] * single[p[1]]) for p, c in pairs.items()}
+        best = max(score, key=lambda p: (score[p], p))
+        first = first or (pairs, score)
+        glued = best[0] + best[1].removeprefix("##")
+        new = {}
+        for symbols, n in words.items():
+            out, i = [], 0
+            while i < len(symbols):
+                if symbols[i:i + 2] == best:
+                    out.append(glued)
+                    i += 2
+                else:
+                    out.append(symbols[i])
+                    i += 1
+            new[tuple(out)] = n
+        words, vocab = new, vocab | {glued}
+    return vocab, first
+
+def wordpiece_split(word, vocab):          # açgözlü: önce bilinen en uzun parça
+    pieces, start = [], 0
+    while start < len(word):
+        for end in range(len(word), start, -1):
+            piece = word[start:end] if start == 0 else "##" + word[start:end]
+            if piece in vocab:
+                break
+        else:
+            return ["[UNK]"]
+        pieces.append(piece)
+        start = end
+    return pieces
+
+def best_split(word, logp):                # Viterbi: en olası bölünme
+    best = [(0.0, [])] + [(-math.inf, None)] * len(word)
+    for end in range(1, len(word) + 1):
+        for start in range(end):
+            piece = word[start:end]
+            if piece in logp and best[start][1] is not None:
+                score = best[start][0] + logp[piece]
+                if score > best[end][0]:
+                    best[end] = (score, best[start][1] + [piece])
+    return best[-1]
+
+def train_unigram(corpus, size):
+    counts = Counter()                     # büyük başla: her alt dizi (substring)
+    for w, n in corpus.items():
+        for i in range(len(w)):
+            for j in range(i + 1, len(w) + 1):
+                counts[w[i:j]] += n
+    start_size = len(counts)
+    logprobs = lambda c: {p: math.log(k / sum(c.values())) for p, k in c.items()}
+    loss = lambda lp: -sum(n * best_split(w, lp)[0] for w, n in corpus.items())
+    while len(counts) > size:
+        lp = logprobs(counts)
+        base = loss(lp)
+        cost = {p: loss({q: v for q, v in lp.items() if q != p}) - base
+                for p in counts if len(p) > 1}     # tek harfler her zaman kalır
+        k = max(1, min(len(counts) - size, len(cost) // 5))
+        for p in sorted(cost, key=lambda p: (cost[p], p))[:k]:
+            del counts[p]                  # en ucuza mal olan parçaları buda
+        lp = logprobs(counts)              # en iyi bölünmelerden yeniden kestir
+        counts = Counter({p: 0.001 for p in counts})
+        for w, n in corpus.items():
+            for piece in best_split(w, lp)[1]:
+                counts[piece] += n
+    return logprobs(counts), start_size
+```
+:::
+
+```python
+wp_vocab, (pairs, score) = train_wordpiece(corpus, 60)
+uni_logp, start_size = train_unigram(corpus, 60)
+
+print("first step, WordPiece initial pairs:")
+print("  highest raw pair counts:  ",
+      [(a + b.removeprefix("##"), c) for (a, b), c in pairs.most_common(3)])
+print("  highest score (WordPiece):",
+      [(a + b.removeprefix("##"), round(s, 3))
+       for (a, b), s in sorted(score.items(), key=lambda x: -x[1])[:3]])
+print(f"  Unigram LM starts from {start_size} substrings and prunes to {len(uni_logp)}")
+print()
+for w in test:
+    print(f"{w:<11} BPE       : {' | '.join(apply_merges(w, merges))}")
+    print(f"{'':<11} WordPiece : {' | '.join(wordpiece_split(w, wp_vocab))}")
+    print(f"{'':<11} Unigram LM: {' | '.join(best_split(w, uni_logp)[1])}")
+```
+
+```text
+first step, WordPiece initial pairs:
+  highest raw pair counts:   [('##de', 72), ('##da', 72), ('##rd', 48)]
+  highest score (WordPiece): [('ok', 0.056), ('##ku', 0.056), ('ev', 0.028)]
+  Unigram LM starts from 322 substrings and prunes to 60
+
+evlerden    BPE       : ev | ler | den</w>
+            WordPiece : ev | ##l | ##e | ##r | ##d | ##e | ##n
+            Unigram LM: evlerde | n
+okullardan  BPE       : okul | lar | dan</w>
+            WordPiece : okullar | ##d | ##a | ##n
+            Unigram LM: okullarda | n
+```
+
+İlk iki çıktı satırı, WordPiece'in başlangıç gösterimindeki çiftleri iki ölçüte
+göre sıralıyor: ham sıklık ve oran puanı. Bu, ölçütlerin farkını gösterir. BPE
+örneğinin başlangıç alfabesi ve kelime sonu işareti farklı olduğundan, ilk
+satır onun birleştirme günlüğü olarak okunmamalıdır.
+
+**BPE**, her adımda en sık komşu sembol çiftini birleştirir. Bu derlemde
+tekrarlanan kök ve ek dizileri, farklı kelimelerde yeniden kullanılabilen
+parçaların oluşmasını sağlıyor. Gösterilen sonuçta iki test kelimesi de kök ve
+ek sınırlarından ayrılmıştır: `ev|ler|den` ve `okul|lar|dan`. Bu örtüşme,
+kullanılan derlem ve sözlük bütçesi için gözlenen sonuçtur; bütün yeni
+kelimeler için garanti değildir.
+
+**WordPiece.** Bu öğretici uygulama, çift sıklığını iki parçanın ayrı
+sıklıklarının çarpımına böler: $\frac{c(ab)}{c(a)\,c(b)}$. Başlangıçta
+`o` + `##k` ve `##k` + `##u` çiftleri aynı yüksek puanı alıyor (0,056). Kod,
+eşit puanlarda sembol çiftlerinin sıralamasını kullanarak `o` + `##k` çiftini
+seçiyor. Bu parçalar küçük derlemde `okul` ve onun çekimli biçimlerinde
+birlikte görülüyor. `##`, parçanın bir kelimenin devamı olduğunu işaretler.
+
+Verilen sözlük bütçesiyle oluşan sonuç, `okullar` gibi uzun başlangıç
+parçalarını içeriyor; `okullardan` kelimesinin geri kalanı ise gösterilen
+çıktıda tek harflere ayrılıyor. Bu davranış bütün WordPiece tokenizer'larına
+genellenemez. Yeni kelimeleri işlerken WordPiece birleştirme listesini tekrar
+uygulamaz; bulunduğu konumdan başlayan en uzun sözlük parçasını seçerek
+ilerler.
+
+**Unigram LM.** Küçük Unigram uygulaması, kelimelerdeki bütün kesintisiz alt
+dizileri (substring) aday olarak topluyor; yayımlanan çıktıda başlangıçta 322
+aday var. Ardından kendi yaklaşık kayıp ölçütüne göre düşük katkılı parçaları
+budayarak 60 parçaya iniyor. Gerçek Unigram uygulamaları aday oluşturma,
+olasılık kestirimi ve budamada farklı yöntemler kullanabilir.
+
+Burada öğrenilen puanlar, `evlerden` için `evlerde|n` bölünmesini öne
+çıkarıyor. Bu, kullanılan küçük derlemin ve yaklaşık eğitim yordamının
+sonucudur; en iyi morfolojik çözümleme veya bütün olası sözlükler arasında en
+iyi çözüm olduğu anlamına gelmez. Unigram, aynı kelimenin alternatif
+bölünmelerine de puan verir. `evlerden` için bu sözlükle mümkün olan bütün
+bölünmeleri listeleyelim:
+
+```python
+def every_split(word, logp, prefix=()):
+    if not word:
+        yield sum(logp[p] for p in prefix), list(prefix)
+    for end in range(1, len(word) + 1):
+        if word[:end] in logp:
+            yield from every_split(word[end:], logp, prefix + (word[:end],))
+
+splits = sorted(every_split("evlerden", uni_logp), reverse=True)
+print(f"{len(splits)} ways to split 'evlerden' with this vocabulary:")
+for logp, pieces in splits:
+    print(f"  score = {math.exp(logp):.1e}   {' | '.join(pieces)}")
+```
+
+```text
+4 ways to split 'evlerden' with this vocabulary:
+  score = 2.1e-03   evlerde | n
+  score = 1.2e-14   evler | d | e | n
+  score = 1.3e-22   ev | l | e | r | d | e | n
+  score = 1.1e-31   e | v | l | e | r | d | e | n
+```
+
+Burada basılan değer, bölünmedeki parça olasılıklarının çarpımıdır. Aynı
+kelimenin bölünmelerini sıralamak için bu değerler yeterlidir. Bu alternatifler
+üzerinden bir olasılık dağılımı oluşturmak istediğimizde ise her değeri,
+kelimenin bütün geçerli bölünmeleri için hesaplanan değerlerin toplamına
+böleriz.
+
+Daha az parça kullanmak tek başına daha yüksek puanı garanti etmez;
+karşılaştırılan parçaların olasılıkları da değişir. Bu çıktıda iki parçalı
+çözümün yaklaşık 28 büyüklük mertebesi önde olması, bu eğitimden elde edilen
+parça olasılıklarının sonucudur.
+
+Alternatif bölünmelere puan atanabilmesi, bunlar arasından olasılıksal
+örnekleme yapmayı mümkün kılar. Yukarıdaki kod yalnızca alternatifleri
+listeliyor; henüz bir bölünme örneklemiyor.
+
+::: {.callout-note collapse="true"}
+## Derinleşme: en küçük Unigram LM'i SentencePiece ile karşılaştırmak
+
+Yukarıdaki küçük sürüm, SentencePiece kütüphanesinin kendisi değil. Aşağıdaki
+kod, aynı kelime biçimlerini ve sıklıklarını kullanarak `sentencepiece` 0.2.2
+ile bir Unigram tokenizer eğitiyor. Hedef sözlük büyüklüğü 60'tır; ancak
+`hard_vocab_limit=False` nedeniyle gerçek sözlük daha küçük olabilir. Bu bütçe
+bilinmeyen token'ı da kapsar: bu koşuda eğitilen modelin 60 girdisinden biri
+`<unk>`. SentencePiece'in boşluk gösterimi ve diğer varsayılanları da küçük
+uygulamadan farklı olduğundan karşılaştırma birebir aynı koşullarda
+yapılmıyor.
+
+```python
+import sentencepiece as spm
+
+lines = [w for w, n in corpus.items() for _ in range(n)]
+with open("corpus.txt", "w", encoding="utf-8") as f:
+    f.write("\n".join(lines) + "\n")
+
+spm.SentencePieceTrainer.train(
+    input="corpus.txt", model_prefix="uni", model_type="unigram", vocab_size=60,
+    character_coverage=1.0, hard_vocab_limit=False, minloglevel=2,
+    bos_id=-1, eos_id=-1, pad_id=-1)
+uni = spm.SentencePieceProcessor(model_file="uni.model")
+for w in test:
+    print(f"{w:<11} {' | '.join(uni.encode(w, out_type=str))}")
+```
+
+```text
+evlerden    ▁evlerde | n
+okullardan  ▁okul | l | a | r | d | a | n
+```
+
+`evlerden` için gösterilen bölünme yine `evlerde|n` biçimindedir. Baştaki `▁`,
+SentencePiece'in varsayılan ayarla eklediği başlangıç boşluğunu temsil eder.
+`okullardan` için ise `▁okul|l|a|r|d|a|n` seçilmiş. Bu çıktı tek başına,
+`okullarda` parçasının sözlükte bulunmadığını göstermez; yalnızca seçilen
+bölünmede kullanılmadığını gösterir. Unigram'da bir parça sözlükte bulunduğu
+hâlde, başka bir bölünme daha yüksek puan aldığı için seçilmeyebilir. Sözlüğün
+kendisine baktığımızda, bu koşuda `▁okul` ve `▁evlerde` parçalarının bulunduğunu,
+`▁okullarda` parçasının ise bulunmadığını görüyoruz.
+
+SentencePiece'in Unigram eğitimi, küçük uygulamadan farklı bir olasılık
+kestirimi ve budama süreci kullanır. Normalleştirme, başlangıç adayları ve
+eğitim ayarları da sonucu etkileyebilir; başka sürüm veya ayarlarda farklı
+bölünmeler görülebilir.
+:::
+
+Altmış farklı kelime biçimi içeren bu yapay derlem, eğitim kurallarının etkisini
+görünür kılmak için seçildi. Buradaki WordPiece ve Unigram uygulamaları öğretici
+sadeleştirmeler içeriyor; sonuçları gerçek tokenizer'ların genel başarı
+sıralaması olarak okumamak gerekir. Kutunun sonunda anılan çalışma, daha büyük
+derlemlerde BPE ile Unigram LM'i karşılaştırıyor; WordPiece hakkında aynı
+deneyden sonuç çıkarılamaz.
+
+Bu örnekte iki ayrımı korumak önemli. İlk olarak, öğretici WordPiece puanı
+yalnızca çiftin sıklığını değil, bileşenlerinin sıklıklarını da kullanır. Çift
+sayımı aynı kaldığında, bileşenlerin daha sık olması puanı düşürür. Ancak bu
+kural genel olarak köklerin eklerden önce öğrenileceğini garanti etmez.
+
+İkinci olarak, Unigram bölünmeleri olasılıksal puanlarla değerlendirebilir.
+Kullanım sırasında en yüksek puanlı bölünme seçilebilir veya alternatiflerden
+örnekleme yapılabilir. Alt kelime düzenlileştirmesinde (subword
+regularization) amaç, modelin aynı metni farklı bölünmelerle görmesini
+sağlayarak tek bir bölünmeye bağımlılığını azaltmaktır [@kudo2018subword].
+Örnekleme, eğitim sırasında girdiler yeniden işlendiğinde yapılabilir; her tam
+geçiş (epoch) için tek bir seçimle sınırlı değildir. Sağladığı yarar deneyle
+ölçülmelidir. Benzer biçimde farklı bölünmeler üretmek BPE-Dropout ile de
+mümkündür [@provilkov2020bpe].
+
+SentencePiece [@kudo2018sentencepiece], BPE ve Unigram gibi yöntemleri ham
+metinden eğitmek ve uygulamak için kullanılan bir kütüphanedir. `▁`,
+boşlukların görünür gösterimidir; kullanılan ayarlar özgün boşlukları
+normalleştirebilir veya metnin başına bir boşluk ekleyebilir.
+
+@bostrom2020byte, İngilizce ve Japonca deneylerinde eşit sözlük büyüklüğü
+kullanarak Unigram LM ile BPE'yi karşılaştırdı. Unigram LM'in sınırları,
+kullanılan morfolojik referanslarla daha iyi örtüştü. Bu tokenleştirmeyle ön
+eğitilen modeller de değerlendirilen sonraki görevlerde BPE karşılıklarına denk
+veya daha iyi sonuçlar verdi. Bulgular, Unigram'ın bu deney koşullarındaki
+avantajını gösterir; bütün diller ve modeller için değişmez bir üstünlük
+sıralaması oluşturmaz.
+::::
+
 ## Tokenizer bir bütçe kararıdır {#sec-tokenizer-butcesi}
 
 Bir ön eğitim kararı ilk gradyan adımından önce verilir, bir daha asla
 gözden geçirilmez ve modelin bütün ömrü boyunca her kullanıcısını sessizce
 vergilendirir. O karar tokenizer'dır.
 
-@sec-metin-veri alt kelime tokenizasyonunu sınırsız bir sözlükten
-kaçınmanın bir yolu olarak tanıtmıştı. Bu çerçeve doğru ama eksik. Ön eğitim
+Önceki kısım alt kelime tokenleştirmesini sınırsız bir sözlükten
+kaçınmanın bir yolu olarak tanıttı. Bu çerçeve doğru ama eksik. Ön eğitim
 ölçeğinde tokenizer bir ön işleme kolaylığı değildir — [hesap bütçesinin
 diller arasında nasıl bölüştürüldüğüdür]{.hl} ve bu bölüşüm pratikte kalıcıdır.
 Sıradan bir fine-tuning tokenleştirmeyi olduğu yerde bırakır; onu değiştirmek, kendi
@@ -918,7 +2370,7 @@ varsaymayın — biraz önce yaptığımız gibi kontrol edin.
 ### BERT'in tokenizer'ı: WordPiece ve akrabaları {#sec-tokenizer-algoritmalari}
 
 Ölçüm tablosunda altı tokenizer var, ama arkalarında yalnızca iki algoritma
-duruyor. GPT-2, Llama 3, Qwen 2.5 ve Cosmos GPT-2, 2. bölümde adım adım
+duruyor. GPT-2, Llama 3, Qwen 2.5 ve Cosmos GPT-2, bu bölümde adım adım
 kurduğumuz BPE'yi (@sec-metin-veri-bpe) kullanıyor. İki BERT modeli ise
 **WordPiece** kullanıyor. Tabloda olmayan üçüncü bir algoritma, **Unigram
 LM**, T5 ve XLM-R gibi modellerde karşınıza çıkacak.
@@ -1049,7 +2501,7 @@ veya daha iyi sonuçlar verdi. Bulgular bu deney koşulları için geçerlidir;
 bütün diller ve modeller için değişmez bir sıralama oluşturmaz.
 
 ::: {.callout-tip appearance="simple" icon="false"}
-**Üçünü çalışırken görmek isterseniz.** 2. bölümde tokenization kısmının
+**Üçünü çalışırken görmek isterseniz.** Alt kelime tokenleştirmesi kısmının
 sonundaki katlanır "Derinleşme: aynı tür birimi öğrenmenin üç yolu" kutusu
 (@sec-metin-veri-birimler),
 üç algoritmanın en küçük sürümlerini altmış kelimelik bir Türkçe derlemde yan
@@ -2190,6 +3642,40 @@ sonradan mahkûm kaldığınızı bilmenizdir.
    tek model 405B'dir — dolayısıyla 8B rakamını kernel kalitesinin ölçümü değil,
    israf için bir üst sınır olarak alın.
 
+7. **Türkçe (ya da Arapça, ya da Fince) ürününüz İngilizce olandan istek başına çok daha pahalıya mal oluyor. Açıklayın ve çözün.**
+   Önce aynı içeriğin kullanılan tokenizer altında kaç token ürettiğini
+   karşılaştırın. Diller arası farklar; eğitim verisinin dağılımı, sözlük, yazı
+   sistemi ve tokenleştirme kurallarıyla ilişkili olabilir [@petrov2023language].
+   İstek maliyetinde girdi ve çıktı uzunluklarını, model fiyatlarını ve varsa
+   önbellek koşullarını da ayrı inceleyin. Bu bölümdeki kısa paralel metinde
+   Türkçe/İngilizce token oranı `cl100k_base` için 1,82, `o200k_base` için 1,39
+   çıktı. Bunlar tokenizer'a bağlı farkı örnekler; ürününüzün maliyet oranını
+   kestirmek için temsili çok sayıda istek üzerinde ölçüm yapın. Çareler, artan
+   emek sırasıyla: tokenizer'ı bu dilde daha az token üreten bir model seçmek;
+   maliyeti istek başına değil *görev* başına token cinsinden ölçmek; yeterli
+   ölçek ve eğitim bütçesi varsa, alana ve dile özgü bir tokenizer ile uyumlu bir
+   modeli birlikte eğitmeyi veya mevcut modeli buna uyarlamayı değerlendirmek
+   [@kudo2018sentencepiece]. Önceden eğitilmiş bir modelin tokenizer'ı, model
+   uyumluluğu sağlanmadan bağımsız bir parça gibi değiştirilemez.
+
+8. **BPE'yi anlatın. Tokenizer'ın hiç görmediği bir kelimeye ne olur?**
+   Birleştirme döngüsünü anlatın, sonra asıl soruyu cevaplayın: özel bir şey olmaz.
+   Kelime bilinen alt kelimelere, en kötü durumda tek tek karakterlere ayrışır.
+   Başlangıç alfabesi girdiyi kapsıyorsa veya tokenizer bilmediği karakteri
+   baytlarıyla yazabiliyorsa (byte fallback), temsil edilemeyen karakter nedeniyle
+   `<UNK>` kullanmak gerekmez. Ancak bu kapsama, ön işleme sırasında hiçbir bilginin
+   silinmediği anlamına gelmez; kayıpsızlığı tokenleştirme hattının tamamı için
+   değerlendirmek gerekir. Bilinmeyen karakterlerin işlenmesinde başlangıç alfabesi
+   ve byte fallback desteği belirleyicidir; algoritmanın parçalama kuralları ve
+   uygulamanın sınırları da önemlidir. Klasik BERT WordPiece tokenizer'ında
+   sözlükte olmayan bir karakter `[UNK]` üretebilir. Karakterler bilinse bile kelime
+   uzunluğu sınırı aynı sonucu verebilir: mBERT tokenizer'ı 100 tane `a` harfinden
+   oluşan bir kelimeyi 50 parçaya ayırır, 101 harflik olanı ise tek bir `[UNK]`
+   yapar. Bayt düzeyinde çalışan ya da byte fallback kullanan tasarımlarda
+   bilinmeyen karakter baytlarıyla yazılır. Bu bölümdeki işlenmiş örneği kullanın:
+   BPE tokenizer'ının eğitim örneğinde bulunmayan `lowest` kelimesi, öğrenilmiş
+   birleştirmelerle `low + est` olarak parçalanır.
+
 ## Daha derine inmek için
 
 Makalelerden herhangi birini okumadan önce yapmaya değer iki şey var.
@@ -2206,6 +3692,28 @@ videosunda dört saat boyunca gerçek bir ön eğitim yapılıyor ve bu, bölüm
 her sayıyı somut hâle getiriyor;
 [Stanford CS336](https://stanford-cs336.github.io/spring2025/) ise tamamen
 bunu kendiniz yapmanız üzerine kurulmuş bir ders.
+
+**Tokenization, uygulamalı.**
+
+- **[Hugging Face LLM Course, 6. bölüm](https://huggingface.co/learn/llm-course/chapter6/1)**.
+  BPE, WordPiece ve Unigram tokenizer'larını sıfırdan kurar ve hangi
+  modelin hangisini kullandığını anlatır.
+  [BPE dersi](https://huggingface.co/learn/llm-course/chapter6/5) bizim
+  buradaki küçük uygulamamızın doğrudan devamıdır.
+- **[minbpe](https://github.com/karpathy/minbpe)** ve eşlik eden
+  [iki saatlik video](https://www.youtube.com/watch?v=zduSFxRajkE), Andrej
+  Karpathy [@karpathy2024minbpe]. GPT sınıfı bir tokenizer'ı sıfırdan
+  kuran birkaç yüz satır temiz Python. Videoyu izledikten sonra kodu satır
+  satır okuyun; ikisi birlikte tasarlanmış.
+- **[The Tokenizer Playground](https://huggingface.co/spaces/Xenova/the-tokenizer-playground)**.
+  Metni yapıştırın, tokenizer değiştirin, bölünmeyi izleyin. Kendi
+  adınızı, şirketinizin parça numaralarını ve bir paragraf Türkçe deneyin.
+- **[tiktoken](https://github.com/openai/tiktoken)**. Bu bölümdeki maliyet
+  ölçümlerinde kullanılan kütüphane.
+- **[sentencepiece](https://github.com/google/sentencepiece)**
+  [@kudo2018sentencepiece]. Kendi tokenizer'ınızı eğitmeniz gerektiğinde —
+  örneğin Türkçe ağırlıklı bir derlem için — BPE ve Unigram modelleri eğitmekte
+  kullanılan açık kaynak araçlardan biri.
 
 Aşağıdaki makaleler, bu bölümdeki sayıların geldiği kaynaklar. Kabaca şu sırayla
 okuyun:
@@ -2288,3 +3796,51 @@ okuyun:
     Kalıp metin son derece tekrarlıdır. Tekilleştirmenin bunu neden öylece
     temizlemediğini ve bunun bir veri pipeline'ındaki işlem sırası hakkında size
     ne anlattığını açıklayın.
+11. **Tokenizer ekonomisi.** Kendi yazdığınız teknik bir metinden
+    Türkçe bir paragraf ve onun İngilizce çevirisini alın. Tokenizer Playground ya da
+    `tiktoken` ile iki farklı tokenizer'da token sayın. Önce aynı
+    içeriğin iki dildeki token sayısı oranını hesaplayın. Ardından seçtiğiniz
+    modelin, tarihini belirttiğiniz birim fiyatlarıyla ayda 100.000 istek için
+    yıllık maliyeti kestirin. Girdi ve çıktı token'larını, ortak istemi ve varsa
+    önbellekli girdileri ayrı belirtin; tek paragrafın bütün istekleri temsil
+    ettiği varsayımını açıkça yazın.
+12. **Türkçe morfoloji ve token sayısı.** `evlerimizden` örneğini
+    kendi alanınızın terimleriyle tekrarlayın: bir teknik terim seçin (`basınç`,
+    `sıcaklık`, `dayanım`) ve bu terimin beş farklı çekimli biçimini belirleyin.
+    Her biçimin token sayısını aynı tokenizer ile, örneğin `tiktoken` ile ölçün.
+    Kelime başına token sayısı nasıl değişiyor? Ardından Türkçe yazımı koruyan
+    biçimlerle ASCII'ye indirgenmiş biçimlerin token sayılarını karşılaştırın.
+    Sonucu bu örnekler ve bu tokenizer ile sınırlı yorumlayın: dönüşüm yazımı ve
+    ayırt edici bilgiyi değiştirir; daha az token üretmek daha doğru veya daha
+    yararlı bir temsil anlamına gelmez.
+13. **Türkçe token maliyetini çok sayıda örnekte ölçün.** Yukarıdaki
+    ölçüm tek bir kısa metin çifti üzerinde yapıldı ve oradaki 1,82 ile 1,39
+    oranları genel değil. Elinizdeki paralel bir metinden — İnsan Hakları
+    Evrensel Bildirgesi'nin maddeleri, bir yazılımın iki dildeki arayüz
+    metinleri, kendi çift dilli raporlarınız — 50 ile 100 arası cümle çifti
+    toplayın. Her tokenizer için iki ayrı ölçüm yapın: eşleştirilmiş her metin
+    çiftinde Türkçe/İngilizce token sayısı oranı ve her dilde 1.000 Unicode kod
+    noktası başına token sayısı. İlk ölçüm eş içerik için token farkını,
+    ikincisi yazı uzunluğuna göre token yoğunluğunu gösterir. Medyanı ve
+    çeyrekler arası aralığı raporlayın; toplam maliyet kestirimi için ayrıca
+    bütün örneklerdeki toplam token sayılarını ve beklenen istek dağılımını
+    kullanın. Tek metin çiftindeki ölçüm bu dağılımın neresine düşüyordu?
+
+::: {.callout-note collapse="true"}
+## 11–13. alıştırmalar için beklenen gözlemler
+
+Alıştırmaların çözümü burada değil; ama neyi görmeniz beklendiğini bilmek
+kendinizi kontrol etmenizi kolaylaştırır.
+
+11. Türkçe paragraf bazı tokenizer'larda daha fazla token üretebilir. Farkın
+    yönünü ve büyüklüğünü ölçün; sonucu seçtiğiniz metin çifti ve tokenizer
+    sürümüyle birlikte raporlayın.
+12. Ek sayısı arttığında token sayısı artabilir; ancak öğrenilmiş parçalar
+    nedeniyle artış monoton olmak zorunda değildir. ASCII dönüşümü de her örnekte
+    token sayısını azaltmaz. Yazımsal ayrımların kaybını örnekleyin; arama
+    kalitesindeki değişimi ileri sürecekseniz bunu ayrıca ölçün.
+13. Her iki dilin token yoğunluğunu ve eş içerikli metin çiftlerinin token
+    oranlarını ayrı raporlayın. Farkın yönü ve yayılımı örneklere ve tokenizer'a
+    bağlıdır. Tek örnek, dağılımın içindeki bir gözlemdir; dağılımın özeti
+    değildir.
+:::
