@@ -1208,13 +1208,16 @@ Her eğride, etiket sayısı arttıkça kazanımın nasıl değiştiğine bakın
 
 ### Her etiket aynı değerde değil
 
-Izgara, etiketlerin rastgele çekildiğini varsaydı. Böyle olması gerekmiyor. Belirsizlik örneklemesi (uncertainty sampling) — aktif öğrenmeye [@settles2009active] standart giriş kapısı — modeli küçük bir başlangıç kümesiyle eğitir, sonra kalan bütçeyi başlangıç modelinin en az emin olduğu öğelere harcar.
+Izgara, etiketlerin rastgele çekildiğini varsaydı. Böyle olması gerekmiyor. Aktif öğrenmenin yaygın yöntemlerinden **belirsizlik örneklemesi** (uncertainty sampling) [@settles2009active], küçük bir başlangıç kümesiyle bir model kurar ve sonraki etiketleri bu modelin en kararsız kaldığı örneklerden seçer.
 
 ```python
+# şematik örnek: X_seed, y_seed, X_pool ve pool önceden hazırlanmış olmalı
 m0 = clf().fit(X_seed, y_seed)                       # rastgele 200 etiket
-unc = np.abs(m0.predict_proba(X_pool)[:, 1] - 0.5)   # sınıra olan uzaklık
-picks = pool[np.argsort(unc)[:800]]                  # en belirsiz 800 örnek
+unc = np.abs(m0.predict_proba(X_pool)[:, 1] - 0.5)   # 0,5'e olan uzaklık
+picks = pool[np.argsort(unc)[:800]]                  # puanı 0,5'e en yakın 800 örnek
 ```
+
+Bu parça tek başına çalıştırılabilir bir deney değil, iş akışının özeti. En düşük `unc`, modelin puanı 0,5'e en yakın olan örnekleri seçer; puanların kalibrasyonu burada denetlenmedi.
 
 Tam olarak 1.000 etiketlik bir bütçeyle, üç seed'in ortalaması:
 
@@ -1226,30 +1229,29 @@ rastgele çekilen 1.000                     62  93.50      65.49     34.40
 200 rastgele + 800 belirsiz                248  93.59      68.80     40.99
 ```
 
-Mekanizma ilk sütunda tamamen görünüyor. %93,7'si olumlu olan bir derlemden rastgele çekilen 1.000 satırda yalnızca 62 olumsuz örnek çıkıyor. Belirsizlik örneklemesi **248** buluyor — dört katı — çünkü belirsiz öğeler orantısız biçimde azınlık sınıfına ait. Böylece modelin, onlar hakkında bir şey öğrenmeye yetecek kadar olumsuz örneği oluyor ve olumsuz sınıftaki F1 6,6 puan yükseliyor.
+Belirsizlikle seçilen 1.000 örnekte 248, rastgele seçilende 62 olumsuz etiket var — dört katı. Bu, azınlık sınıfının kapsanmasını artırmış olabilir; ama seçim aynı zamanda metinlerin güçlüğünü ve karar sınırına yakınlığını da değiştiriyor. Olumsuz sınıf F1'indeki 6,59 puanlık farkın ne kadarının olumsuz örnek sayısından geldiği, ayrı bir karşılaştırma olmadan söylenemez.
 
-Kendi başına ayakta duran karşılaştırma bu tablonun içinde: aynı bütçe, aynı
-seed'ler, aynı protokol — **65,49'a karşı 68,80** — yalnızca hangi bin satıra
-para ödediğinizi değiştirdiğiniz için 3,3 macro-F1 puanı.
+Bu iki satırda aynı 1.000 etiketlik bütçeyle belirsizlik örneklemesi 68,80, rastgele seçim 65,49 macro-F1 aldı: gözlenen fark 3,31 puan. Seed başına eşleştirilmiş farklar bildirilmediği için bunu kesin bir etki büyüklüğü olarak genellemeyin. Deneyi kendi kurduğumuz protokolle (başlangıç modeli 40.000 metnin vektörleştiricisiyle, son model seçilen 1.000 satırda uydurulan vektörleştiriciyle) yeniden koşturduğumuzda, üçer seed'lik iki grupta fark 5,3 ve 5,2 puan çıktı (63,13 → 68,46 ve 61,96 → 67,19); bulunan olumsuz sayısı gruba göre ortalama 188 ile 290 arasında değişti. Yön aynı; büyüklük protokole ve seed'e duyarlı.
 
 Bunu bütçe ızgarasının yanına koymak — *belirsizlikle seçilmiş 1.000 (68,80),
-rastgele 2.500'e (68,76) denk*, yani 2,5 katlık indirim — daha alıntılanabilir
-ama daha zayıf bir iddia, çünkü iki tablo aynı baseline'ı paylaşmıyor.
-Rastgele 1.000 etiket ızgarada 63,71, burada 65,49 alıyor. İki örnekleme
-protokolü arasındaki bu 1,78 puanlık farkı iki tablo da açıklamıyor. Bunlar
-tek bir protokol altında uzlaştırılana kadar 2,5 katı gösterge, 3,3 puanı ise
-ölçüm olarak alın.
+rastgele 2.500'e (68,76) denk* — daha alıntılanabilir ama daha zayıf bir
+iddia: iki tablo aynı baseline'ı paylaşmıyor (rastgele 1.000 etiket ızgarada
+63,71, burada 65,49). Bu 1,78 puanlık fark, 1.000 etiketlik hücrenin seed'den
+seed'e sapmasının (on seed'de 2,24 puan) içinde; yani üç seed'lik iki
+ortalamanın ayrışması için ayrı bir açıklama gerekmiyor, ama 2,5 katlık
+"indirimi" de bir ölçüm saymayın.
 
-Üç uyarı. Seçilen küme yapısı gereği yanlı, dolayısıyla yalnızca eğitim
-verisidir — bir test kümesini **asla** böyle kurmayın. İndirim, başlangıç
-modelinin "işe yarar biçimde belirsiz" olacak kadar iyi olmasına bağlı; 200
-yerine 20 başlangıç etiketiyle belirsizlik, gürültüden ayırt edilemez. Ve
-edinilen küme, **onu edinen modele bağlıdır**: doğrusal bir TF-IDF
-sınıflandırıcısı için belirsiz diye seçilmiş bir küme, @sec-siniflandirma-fine-tuning'te
-fine-tune edeceğiniz transformer için iyi bir küme olmayabilir. Mimari
-değiştiğinde böyle bir kümenin aynı boyuttaki rastgele bir örneklemden daha
-kötü sonuç verdiği de ölçülmüş [@lowell2019practical]. Aktif öğrenme size *bu*
-model için etiket satın alıyor. Bütçenizi ona göre yapın.
+Üç sınırı açıkça izleyin. Belirsizlikle seçilen eğitim kümesi doğal test
+dağılımını temsil etmez; test kümesini bağımsız ve uygun bir örneklemeyle
+kurun, **asla** böyle seçmeyin. Küçük bir başlangıç kümesinin ne kadar yeterli
+olduğu göreve ve sınıf oranına bağlıdır; burada 20 ve 200 başlangıç etiketi
+karşılaştırılmadı. Ve seçilen küme, **onu seçen modele bağlı** olabilir:
+doğrusal bir TF-IDF sınıflandırıcısı için belirsiz diye seçilmiş bir küme,
+ileride fine-tune edeceğiniz transformer için iyi bir küme olmayabilir
+(@sec-siniflandirma-fine-tuning). Mimari değiştiğinde böyle bir kümenin aynı
+boyuttaki rastgele bir örneklemden daha kötü sonuç verdiği de ölçülmüş
+[@lowell2019practical]; başka bir mimariye aktarımı, eşit bütçeli rastgele
+örneklemeye karşı sınayın.
 
 ## Elle yazmadığınız etiketler
 

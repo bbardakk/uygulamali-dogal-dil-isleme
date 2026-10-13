@@ -992,13 +992,16 @@ On each curve, look at how the gain changes as the number of labels grows; the h
 
 ### Not all labels are worth the same
 
-The grid assumed labels are drawn at random. They need not be. Uncertainty sampling — the standard entry point to active learning [@settles2009active] — trains on a small seed, then spends the remaining budget on the items the seed model is least sure about.
+The grid assumed labels are drawn at random. They need not be. **Uncertainty sampling**, one of the common methods of active learning [@settles2009active], fits a model on a small seed set and chooses the next labels from the examples that model is least decided about.
 
 ```python
+# schematic: X_seed, y_seed, X_pool and pool have to be prepared beforehand
 m0 = clf().fit(X_seed, y_seed)                       # 200 random labels
-unc = np.abs(m0.predict_proba(X_pool)[:, 1] - 0.5)   # distance from the boundary
-picks = pool[np.argsort(unc)[:800]]                  # 800 most uncertain
+unc = np.abs(m0.predict_proba(X_pool)[:, 1] - 0.5)   # distance from 0.5
+picks = pool[np.argsort(unc)[:800]]                  # the 800 examples scored closest to 0.5
 ```
+
+This fragment is not a runnable experiment by itself; it summarises the workflow. The lowest `unc` selects the examples whose model score is closest to 0.5; the calibration of the scores was not checked here.
 
 With a budget of exactly 1,000 labels, mean of three seeds:
 
@@ -1010,20 +1013,13 @@ With a budget of exactly 1,000 labels, mean of three seeds:
 200 random + 800 uncertain                248  93.59      68.80     40.99
 ```
 
-The mechanism is entirely visible in the first column. Random sampling of a 93.7%-positive corpus finds 62 negative examples in 1,000 draws. Uncertainty sampling finds **248** — four times as many — because uncertain items are disproportionately minority-class items. The model then has enough negative examples to learn something about them, and F1 on the negative class rises by 6.6 points.
+The 1,000 examples chosen by uncertainty contain 248 negative labels, the randomly chosen ones 62 — four times as many. That may have improved coverage of the minority class; but the selection also changes how hard the texts are and how close they lie to the decision boundary. How much of the 6.59-point difference in negative-class F1 comes from the number of negative examples cannot be said without a separate comparison.
 
-The comparison that stands on its own is inside this table: same budget, same
-seeds, same protocol, **65.49 against 68.80** — 3.3 macro-F1 points for changing
-only which thousand rows you pay for.
+In these two rows, with the same budget of 1,000 labels, uncertainty sampling scored 68.80 macro-F1 and random selection 65.49: an observed difference of 3.31 points. Because paired differences per seed are not reported, do not generalise it as a definite effect size. Re-running the experiment with a protocol we set up ourselves (the seed model on the vectoriser of the 40,000 texts, the final model on a vectoriser fitted on the 1,000 selected rows), the difference came out at 5.3 and 5.2 points in two groups of three seeds (63.13 → 68.46 and 61.96 → 67.19); the number of negatives found averaged between 188 and 290 depending on the group. The direction is the same; the size is sensitive to the protocol and to the seed.
 
-Putting it next to the budget grid — *1,000 uncertainty-sampled (68.80) matches
-2,500 random (68.76)*, a 2.5× discount — is the more quotable claim and the
-weaker one, because the two tables do not share a baseline. Random 1,000 is
-63.71 in the grid and 65.49 here, a 1.78-point gap that the sampling protocols
-differ by and that neither table explains. Until those are reconciled under one
-protocol, treat the 2.5× as indicative and the 3.3 points as measured.
+Putting it next to the budget grid — *1,000 uncertainty-sampled (68.80) matches 2,500 random (68.76)* — is the more quotable claim and the weaker one: the two tables do not share a baseline (random 1,000 is 63.71 in the grid and 65.49 here). That 1.78-point gap is inside the seed-to-seed deviation of the 1,000-label cell (2.24 points over ten seeds); so no separate explanation is needed for two three-seed means differing, but do not treat the 2.5× "discount" as a measurement either.
 
-Three warnings. The selected set is biased by construction, so it is training data only — **never** build a test set this way. The discount depends on the seed model being good enough to be usefully uncertain; with 20 seed labels instead of 200, uncertainty is indistinguishable from noise. And the acquired set is **tied to the model that acquired it**: a set chosen as uncertain for a linear TF-IDF classifier is not necessarily a good set for the transformer you fine-tune in @sec-classification-finetune, and has been measured to underperform a random sample of the same size once the architecture changes [@lowell2019practical]. Active learning buys you labels for *this* model. Budget accordingly.
+Keep three limits in view. A training set chosen by uncertainty does not represent the natural test distribution; build the test set with independent, appropriate sampling, and **never** select it this way. How small a seed set is enough depends on the task and the class ratio; 20 and 200 seed labels were not compared here. And the selected set can be **tied to the model that selected it**: a set chosen as uncertain for a linear TF-IDF classifier is not necessarily a good set for the transformer you fine-tune later (@sec-classification-finetune). Such a set has been measured to underperform a random sample of the same size once the architecture changes [@lowell2019practical]; test the transfer to another architecture against random sampling with an equal budget.
 
 ## Labels you do not write by hand
 
