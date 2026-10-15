@@ -1122,17 +1122,24 @@ Perplexity bir özettir ve özetler bazı şeyleri gizler. Bir dil modelinin
 daha çok şey ele veren ikinci bir arayüzü vardır: modelden örnek
 çekebilirsiniz. Başlangıç işaretiyle (`<s>`) başlayın, koşullu dağılımdan bir
 kelime çekin, bağlamı kaydırın, `</s>` gelene kadar tekrarlayın.
+
+Aşağıdaki örnekler ve kopyalama oranları **düzleştirilmemiş (MLE)** n-gram
+modellerinden çekildi; perplexity tablolarındaki Kneser-Ney modellerinden
+değil. MLE ile örneklemek sorunsuz: model yalnızca eğitimde görülmüş
+n-gram'ları üretebildiği için karşılaştığı her bağlam zaten görülmüş bir bağlam.
+Kneser-Ney'den örneklemenin ne verdiğine biraz aşağıda bakıyoruz.
 Burada saf örnekleme kullanıyoruz: her kelime, modelin dağılımından olduğu
 gibi çekiliyor. Greedy seçim, sıcaklık (temperature) ya da top-k gibi kod
 çözme (decoding) seçenekleri bu çıktıları — ve aşağıdaki kopyalama
 oranlarını — değiştirir; bunlar @sec-cozumleme'in konusu.
 
-Bir fark daha var. Eğitimde (ve perplexity ölçerken) bağlam her zaman
-gerçek metinden gelir; yapay sinir ağlarında bunun adı *teacher forcing*
-(öğretmen zorlaması). Örneklemede ise model kendi çektiği kelimelere
-koşullanır (free-running, serbest üretim): erken bir tuhaf seçim, sonraki
-bütün bağlamları eğitimde hiç görülmemiş bir yöne kaydırabilir. Aşağıdaki
-örneklerin birkaç kelime sonra dağılmasının bir kısmı buradan gelir. Modelin
+Bir fark daha var. Perplexity ölçerken bağlam her zaman gerçek test
+metninden, yani gerçek önekten gelir; sinir ağı eğitiminde modeli gerçek önekle
+koşullamaya *teacher forcing* (öğretmen zorlaması) deniyor. Örneklemede ise
+model kendi çektiği kelimelere koşullanır (free-running, serbest üretim):
+erken bir tuhaf seçim, sonraki bütün bağlamları eğitimde hiç görülmemiş bir
+yöne kaydırabilir. Aşağıdaki örneklerin birkaç kelime sonra dağılmasının bir
+kısmı buradan gelebilir. Modelin
 kendi çıktısına koşullanmasından doğan bozulmalar (tekrar döngüleri ve
 yozlaşma) büyük modellerde de sürüyor; @sec-cozumleme'de onlara döneceğiz.
 
@@ -1178,19 +1185,47 @@ trigram      5.8%
 ```
 
 [5-gram modelin "yazdığı" 8 kelimelik parçaların onda dokuzu, eğitim
-verisinden kelimesi kelimesine kopyalanmış.]{.hl} Bu akıcılık üretim
-değil, üretim kılığına girmiş bir erişim (retrieval), yani ezberden okuma.
-Seyreklik
-tablosu da bunu haber veriyordu. Eğitimdeki 5-gram'ların %98'i
-yalnızca bir kez geçtiği için, dört kelimeye koşullanmak modele çoğu
-zaman tek bir seçenek bırakıyor: geçen sefer bu dört kelimeden sonra
-gelen kelime.
+verisinde kelimesi kelimesine geçiyor.]{.hl} Bu akıcılık, büyük ölçüde
+üretim kılığına girmiş bir erişim (retrieval), yani ezberden okuma. Ölçünün ne
+dediğine dikkat edin: üretilen metnin sekiz kelimelik *pencerelerinin* eğitim
+metninde birebir bulunup bulunmadığı. Bütün bir yorumun kopyalandığını
+söylemiyor ve oran, örnekleme yöntemine ve pencere uzunluğuna bağlı. Yeniden
+koşuda üç tohumla (her birinde 200 örnek) MLE 5-gram %91,8, %92,6 ve %93,9,
+MLE trigram %7,0, %6,8 ve %7,2 veriyor; tablodaki sayılar tek bir tohuma ait,
+ama tesadüf değil. Seyreklik tablosu da bunu haber veriyordu. Eğitimdeki
+5-gram'ların %98'i yalnızca bir kez geçtiği için, dört kelimeye koşullanan bir
+MLE modeline çoğu zaman tek bir seçenek kalıyor: geçen sefer bu dört kelimeden
+sonra gelen kelime.
 
-Bu bölümden sonraki her şeyin sebebi işte bu çıkmaz. **Akıcılık uzun
-bağlam ister. Sayarak kestirilen uzun bağlam ise kopyalamak demektir.**
-Bir n-gram modeli aynı anda hem akıcı hem özgün olamaz; ne kadar
-düzleştirme yaparsanız yapın bu değişmez, çünkü düzleştirme olasılığı
-yeniden dağıtır, yeni bir genelleme yaratmaz.
+Düzleştirme bunu değiştiriyor mu? Aynı ölçüm, perplexity tablolarındaki
+Kneser-Ney modelleriyle (yeniden koşu, $d = 0{,}75$):
+
+```text
+### 8-word spans found verbatim in the training corpus (re-run, 200 samples per seed)
+                         seed 7   seed 8   seed 9
+trigram, MLE               7.0%     6.8%     7.2%
+5-gram,  MLE              91.8%    92.6%    93.9%
+trigram, Kneser-Ney        0.0%     0.0%     0.0%   (1 of 9,262 spans)
+5-gram,  Kneser-Ney        2.4%     1.9%     1.8%
+
+5-gram, Kneser-Ney, seed 7:
+  sürekli yazı <unk> düştü hem toplu alabilirsiniz
+  ürün güzel gösterecektir kargo güvenle eşi m kullaniyor
+```
+
+Değiştiriyor: Kneser-Ney 5-gram'ı neredeyse hiç kopyalamıyor. Ama örneklerine
+bakın: akıcılık da gitmiş, çıktı bigram'ınki kadar dağınık. Sebebi aynı
+seyreklik. Yalnızca bir kez görülmüş bir bağlamda Kneser-Ney, gözlenen tek
+devama kütlenin dörtte birini ($1 - 0{,}75$) bırakıyor, kalanını daha kısa
+bağlamlara veriyor; 5-gram'ların %98'i tek geçen olduğundan model çoğu adımda
+fiilen alt derecelerden örnekliyor.
+
+Bu bölümden sonraki her şeyin sebebi işte bu çıkmaz. **Akıcılık uzun bağlam
+ister. Sayarak kestirilen uzun bağlam ise ya kopyalıyor ya dağılıyor.** Bu
+ölçümlerde hiçbir n-gram modeli aynı anda hem akıcı hem özgün olmadı: MLE
+5-gram akıcı, çünkü kopyalıyor; Kneser-Ney 5-gram özgün, ama dağınık.
+Düzleştirme kopyalamayı azaltıyor; yeni bir genelleme yaratmıyor, olasılığı
+daha kısa bağlamlara yeniden dağıtıyor.
 
 Bu iki bozulma biçimiyle — ezberleyerek elde edilen akıcılık ve bu ezberin
 değerlendirmeye sızması — modern bir kılıkta yeniden karşılaşacaksınız:

@@ -1070,6 +1070,27 @@ a second, more revealing interface: you can sample from it. Start with
 the padding, draw a word from the conditional distribution, shift the
 context, repeat until `</s>`.
 
+The samples and copying rates below come from **unsmoothed (MLE)** n-gram
+models, not from the Kneser-Ney models of the perplexity tables. Sampling from
+MLE is well defined: the model can only produce n-grams seen in training, so
+every context it reaches is one it has seen. What sampling from Kneser-Ney gives
+comes a little further down.
+
+This is pure sampling: each word is drawn from the model's distribution as it
+is. Decoding choices such as greedy selection, temperature or top-k change these
+outputs — and the copying rates below — and they are the subject of
+@sec-decoding.
+
+One more difference. When perplexity is measured, the context always comes
+from the real test text, the true prefix; in neural network training,
+conditioning the model on the true prefix is called *teacher forcing*. When
+sampling, the model conditions on the words it drew itself (free-running): one
+odd early choice can push every later context somewhere training never went.
+Part of why the samples below fall apart after a few words may come from this.
+The degradations that come from a model conditioning on its own output
+(repetition loops and degeneration) persist in large models too; we return to
+them in @sec-decoding.
+
 ```text
 ### sampling, seed 7
 
@@ -1109,18 +1130,47 @@ trigram      5.8%
 5-gram      91.6%
 ```
 
-[Nine out of ten eight-word spans that the 5-gram model "writes" are
-copied word for word from the training data.]{.hl} The fluency is not
-generation, it is retrieval dressed up as generation — which is exactly what the
-sparsity table predicted, since 98% of training 5-grams occurred once,
-so conditioning on four words usually leaves the model exactly one
-choice: the word that followed last time.
+[Nine out of ten eight-word spans that the 5-gram model "writes" occur word
+for word in the training data.]{.hl} The fluency is largely retrieval dressed up
+as generation. Note what the measure says: whether the eight-word *windows* of
+the generated text occur verbatim in the training text. It does not say that
+whole reviews are copied, and the rate depends on the sampling method and the
+window length. In the re-run, with three seeds (200 samples each), the MLE
+5-gram gives 91.8%, 92.6% and 93.9% and the MLE trigram 7.0%, 6.8% and 7.2%; the
+table's numbers belong to one seed, but they are no accident. The sparsity table
+predicted this: since 98% of training 5-grams occurred once, conditioning an
+MLE model on four words usually leaves it exactly one choice — the word that
+followed last time.
+
+Does smoothing change that? The same measurement, with the Kneser-Ney models of
+the perplexity tables (re-run, $d = 0.75$):
+
+```text
+### 8-word spans found verbatim in the training corpus (re-run, 200 samples per seed)
+                         seed 7   seed 8   seed 9
+trigram, MLE               7.0%     6.8%     7.2%
+5-gram,  MLE              91.8%    92.6%    93.9%
+trigram, Kneser-Ney        0.0%     0.0%     0.0%   (1 of 9,262 spans)
+5-gram,  Kneser-Ney        2.4%     1.9%     1.8%
+
+5-gram, Kneser-Ney, seed 7:
+  sürekli yazı <unk> düştü hem toplu alabilirsiniz
+  ürün güzel gösterecektir kargo güvenle eşi m kullaniyor
+```
+
+It does: the Kneser-Ney 5-gram hardly copies at all. But look at its samples:
+the fluency has gone too, and the output is as scattered as the bigram's. The
+cause is the same sparsity. In a context seen only once, Kneser-Ney leaves the
+single observed continuation a quarter of the mass ($1 - 0.75$) and hands the
+rest to shorter contexts; with 98% of 5-grams singletons, the model is in effect
+sampling from the lower orders at most steps.
 
 This is the bind that motivates everything after this chapter. **Fluency
-needs long context. Long context, estimated by counting, means copying.**
-An n-gram model cannot be both fluent and original, and no amount of
-smoothing changes that, because smoothing redistributes probability
-without ever creating a new generalisation.
+needs long context. Long context, estimated by counting, either copies or
+falls apart.** In these measurements no n-gram model was both fluent and
+original: the MLE 5-gram is fluent because it copies; the Kneser-Ney 5-gram is
+original but scattered. Smoothing reduces the copying; it does not create a new
+generalisation, it redistributes probability to shorter contexts.
 
 You will meet this pair of failure modes again in a modern guise —
 verbatim memorisation of training data is a live problem for large
