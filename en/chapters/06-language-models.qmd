@@ -791,13 +791,13 @@ the rest, a smoothed model relies on the lower orders' estimates.
 :::
 ::::
 
-## Smoothing is regularisation with a different name
+## Smoothing is a form of regularisation {#smoothing-is-regularisation-with-a-different-name}
 
 Every statistician reading this has already diagnosed the problem: an
 unbiased estimator with catastrophic variance, fitted to sparse counts.
-The cure is the usual one. Give up a little bias to buy a large reduction in variance, and above all stop the estimate from ever reaching zero.
+The cure is the usual one. Give up a little bias to buy a large reduction in variance, and above all stop the estimate from ever reaching zero. That is exactly what smoothing does, which is why you can read it as a form of regularisation. The two words are still not synonyms: smoothing is a family of regularisers specific to count tables.
 
-**Add-one, the textbook first idea, and why it is a disaster.** Pretend
+**Add-one, the textbook first idea, and why it is a disaster on this corpus.** Pretend
 you saw every possible continuation once before you started:
 
 $$
@@ -807,8 +807,10 @@ $$
 For the statistically minded: it is the posterior mean under a symmetric
 Dirichlet prior with $\alpha_i = 1$ for every word — a flat prior over all possible next-word
 distributions, which on average treats every word as equally likely. Because each of the $V$ words gets one pseudo-count, the total concentration is $V$, not 1, and
-the MAP estimate under that prior would be the unsmoothed MLE instead. It is
-perfectly respectable, and on this corpus it is worse than useless:
+the MAP estimate under that prior would be the unsmoothed MLE instead. The $V$
+here is the whole support: 29,771 words, `<unk>` and `</s>`, 29,773 in all. It is
+perfectly respectable, and on this corpus it does worse than a model that uses
+no context at all:
 
 ```text
 ### test perplexity, add-one
@@ -823,7 +825,8 @@ than ignoring context entirely.** The arithmetic shows why. After
 `kargo`, with $c(h) = 2{,}472$, $V = 29{,}773$ and only 516 continuations ever
 observed, add-one leaves those 516 just
 $(2{,}472 + 516)/32{,}245 = 9.3\%$ of the probability mass and hands the
-remaining $29{,}257/32{,}245 = 90.7\%$ to word pairs that were never seen. (The
+remaining $29{,}257/32{,}245 = 90.7\%$ to word pairs that were never seen
+($29{,}257 = 29{,}773 - 516$; the 516 observed continuations include `</s>`). (The
 familiar $V/(c(h)+V) = 92.3\%$ is the *total* pseudo-count mass added, part of
 which lands back on observed continuations; the number that matters is the
 90.7%.) The model collected 2,472 examples of what follows `kargo`, and add-one
@@ -840,15 +843,17 @@ order   best k     dev      test
 5       0.0003 16,280.4  16,141.8
 ```
 
-Better at $n=2$, still catastrophic beyond it. Adding a constant to every
-count cannot work, because the problem is not that unseen events need a
-little mass — it is that we have no idea *which* unseen events deserve
-it, and a constant says they all deserve the same.
+Better at $n=2$, still catastrophic beyond it. On this corpus, with the values
+of $k$ tried, adding a constant to every count did not work beyond bigrams, and
+the reason is general: the problem is not that unseen events need a little
+mass — it is that we have no idea *which* unseen events deserve it, and a
+constant says they all deserve the same.
 
 ::: {#gloss-interpolation .column-margin .term-gloss}
-**interpolation** — blending the three-word, two-word and one-word
-estimates into a single number, with the blend weights decided by the
-data rather than by taste. [↩](#term-interpolation){.term-back}
+**interpolation** — blending the estimates of contexts of different
+lengths (three-word, two-word and one-word, say) into a single number, with
+non-negative weights that sum to one. In this chapter the weights are chosen
+on the dev set. [↩](#term-interpolation){.term-back}
 :::
 
 **The idea that works: ask a shorter model.** If you have never seen
@@ -862,7 +867,14 @@ $$
 with the $\lambda$s summing to one and fitted on the dev set by EM
 [@jelinek1980interpolated]. Now an unseen trigram falls back on a bigram
 estimate rather than on a uniform guess, and the fallback is graded by
-how much each order can be trusted.
+how much each order can be trusted. One detail does not show in the formula:
+if a context was never seen in training, that order's MLE term $c(h,w)/c(h)$ is
+undefined ($c(h)=0$). An implementation either counts the term as zero or drops
+it and rescales the remaining weights, and the choice changes the result: in
+the re-run the trigram's test perplexity is 408.3 with the first and 397.2 with
+the second. Which one the code behind the table below did was not recorded; the
+re-run gives lower numbers than the table with either choice, and weights very
+close to the table's.
 
 What EM decides is more interesting than the perplexity it produces:
 
@@ -875,27 +887,35 @@ What EM decides is more interesting than the perplexity it produces:
 5-gram model     0.4234  0.4900   0.0865  0.0001  0.0000
 ```
 
-[Nobody told EM that 4-grams and 5-grams are useless on this corpus; it
-worked it out.]{.hl} Given a free choice of how much to trust each order,
-it puts 0.03% of the weight on 4-grams and rounds 5-grams to zero. This
-is the sparsity figure above, rediscovered from the other direction, and
-it is the most honest model-selection result in the chapter.
+[Nobody told EM that 4-grams and 5-grams add almost nothing on this corpus;
+it worked it out.]{.hl} Given a free choice of how much to trust each order,
+it puts 0.03% of the weight on 4-grams and rounds 5-grams to zero (both are
+exactly zero in the re-run). This is the sparsity figure above, rediscovered
+from the other direction, and one of the clearest model-selection results in
+the chapter. Know its limit too: it is a single *global* weight for every
+context. Higher orders may still help in some contexts; this mixture cannot
+tell those apart.
 
-**Kneser-Ney, and one genuinely clever idea.** The best classical
-smoother [@kneser1995improved; @chen1999empirical] subtracts a fixed
-discount $d$ from every observed count and redistributes what it took:
+**Kneser-Ney, and one genuinely clever idea.** One of the strongest classical
+smoothers — its modified version came out best in Chen and Goodman's broad
+comparison [@kneser1995improved; @chen1999empirical] — subtracts a fixed
+discount $d$ from every observed count and redistributes what it took. The
+formula is for a context seen in training ($c(h) > 0$):
 
 $$
 P_{\text{KN}}(w \mid h) = \frac{\max(c(h,w) - d,\ 0)}{c(h)} + \lambda(h)\, P_{\text{KN}}(w \mid h')
 $$
 
 Here $h'$ is the context $h$ with its oldest word dropped, so the second term
-is the same formula one order down, applied recursively.
+is the same formula one order down, applied recursively. For a context never
+seen ($c(h) = 0$) the model goes straight to $P_{\text{KN}}(w \mid h')$.
 
 ::: {#gloss-backoff .column-margin .term-gloss}
-**backoff** — when a word has never been seen after the long context, drop a
-word off the front and ask the shorter context instead. Interpolation always
-blends; backoff only falls back when it has to. [↩](#term-backoff){.term-back}
+**backoff** — when the long context's estimate is not good enough (in the
+classic form, when the word has never been seen after it), drop a word off the
+front and ask the shorter context instead, rescaling its share so the
+probabilities still sum to one. Interpolation always blends; backoff only falls
+back when it has to. [↩](#term-backoff){.term-back}
 :::
 
 The variant written there is **interpolated** Kneser-Ney: it always adds a share
@@ -934,7 +954,9 @@ recursion, continuation counts replace the raw counts (for example
 $N_{1+}(\bullet\, h\, w)$ in place of $c(h, w)$); the unigram level is simply where
 the idea is clearest. (The discount $d$ is a constant
 between 0 and 1, tuned on the dev set or estimated from how many n-grams occur
-once and twice; values around 0.75 are typical.)
+once and twice, as $n_1/(n_1 + 2n_2)$. Modified Kneser-Ney uses separate
+discounts for counts of one, two and three-or-more at each order. 0.75 is a
+common starting value, not a value tuned for this corpus.)
 
 ```text
 ### test perplexity, everything together
@@ -947,29 +969,51 @@ order      MLE    add-1    add-k*   interpolated   Kneser-Ney
 ```
 
 The best model in the table is a **Kneser-Ney trigram at 333.5**, and
-three things about that table deserve to be said out loud.
+three things about that table deserve to be said out loud — but first a
+warning about its Kneser-Ney column. It uses $d = 0.75$ at every order; the
+discount was not tuned on the dev set. The re-run shows what that costs:
+
+```text
+### Kneser-Ney test perplexity in the re-run, by how d was set
+order    d = 0.75    d = n1/(n1+2n2) per order    one d chosen on dev
+2           352.3                        350.5
+3           336.5                        320.2                 320.7 (d = 0.9)
+4           347.7                        319.5
+5           354.2                        319.5
+```
+
+The first column reproduces the table's numbers to within one percent.
+Estimating the discount from the counts, or choosing it on the dev set, improves
+the trigram by about 5% and brings the 4-gram and 5-gram level with the trigram.
+The three observations below should be read with those two columns in mind.
 
 Smoothing is not a detail. It is the difference between an infinite
 perplexity and 333.5, on identical counts. The estimator matters more
 than the model class here.
 
-Going beyond trigrams does not help — it hurts. 4-grams and 5-grams are
-worse than trigrams under every smoothing scheme, which is the sparsity
-curve doing exactly what it promised. The extra context is real
-information the model cannot reach.
+Going beyond trigrams does not help. Under every smoothing scheme in the
+table, 4-grams and 5-grams are worse than trigrams; with a tuned discount the
+harm disappears but no gain arrives (319.5 against 320.2). That is the sparsity
+curve doing what it promised: the extra context is real information, and on
+this corpus the model cannot reach it.
 
 And a trigram at 333.5 means that after reading two words of a Turkish
-review, the model is still about as uncertain as if it were picking
-at random from 333 equally likely words. That is the ceiling of
-counting on this corpus, and it took thirty years of ingenuity to get there.
+review, the model gives the observed words, on average, as much probability as
+picking at random from 333 equally likely words would. It is not a ceiling —
+tuning the discount alone gets the re-run to 320 — but it is where the counting
+methods tried here end up on this corpus, and getting there took decades of
+work.
 
 ::: {.column-margin}
 Kneser-Ney was not beaten by cleverness so much as by scale. Google's
-n-gram models of the late 2000s used *stupid backoff*
+machine-translation systems of the late 2000s used *stupid backoff*
 [@brants2007large] — an unnormalised scheme that is not even a
-probability distribution — because at a trillion tokens the smoothing
-method stops mattering and only the engineering does
-[@heafield2011kenlm]. The idea of falling back to a shorter context when
+probability distribution. Brants and colleagues reported that as the data
+approached a trillion tokens this simple scheme caught up with Kneser-Ney in
+translation quality; at that scale and for that task, the engineering decided
+[@heafield2011kenlm]. That does not mean smoothing stops mattering for
+perplexity: stupid backoff gives no probability, so its perplexity is not even
+defined. The idea of falling back to a shorter context when
 evidence runs out is older still [@katz1987estimation]; Kneser-Ney's
 contribution was *what* to fall back to.
 :::
@@ -977,26 +1021,41 @@ contribution was *what* to fall back to.
 ::: {.callout-note collapse="true"}
 ## Intuition check: you double the corpus. Which Kneser-Ney number in that table moves most?
 
-Not the trigram's 333.5. The 5-gram's 353.8 — or so we predict; this is an
-expectation, not a measurement. (The add-one and add-k columns would move by
-far more in absolute terms, simply because they start so far off.)
+We cannot measure that directly, because there is no second corpus of the
+same size, but we can measure the reverse. In the re-run we kept the
+vocabulary and the test set fixed and took the counts from a random half of the
+38,000 reviews ($d = 0.75$):
 
-Every column of that table is limited by counts, and the higher orders
-are starved hardest — 98% of training 5-grams were singletons, and the extra
-data turns some of those singleton contexts into repeated observations, buying
-the 5-gram model real estimates where it previously had none. How far the
-singleton fraction falls is not something you can read off the corpus size: it
-depends on how much of the new text repeats 5-grams already seen and how many
-new ones it introduces, and for 5-grams of Turkish reviews most of it will be
-new. Measure it rather than assuming a halving. The trigram already had a
-context match for 69.6% of test predictions; the extra data mostly
-sharpens estimates it already had.
+```text
+### Kneser-Ney test perplexity, 19,000 -> 38,000 reviews (re-run)
+order    19,000    38,000    change
+2         410.0     352.3    -14.1%
+3         401.4     336.5    -16.2%
+4         413.9     347.7    -16.0%
+5         421.0     354.2    -15.9%
+```
 
-The transferable version: **the benefit of more data is largest exactly
-where the model was most starved.** The same intuition sits behind the
-scaling laws of @sec-pretraining, and it is why the models there are trained on
-trillions of tokens rather than millions — a big model on a small corpus
-ends up doing what the 5-gram table does: memorising.
+In absolute terms the number that moves most is indeed the 5-gram's (66.8
+points), but in relative terms the three higher orders improve at almost the
+same rate; the one that stands apart is the bigram, which improves less. The
+expectation "the most starved 5-gram gains most" does not hold at this scale:
+the 5-gram stays worse than the trigram at both sizes. With the discount
+estimated from the counts the picture is the same: trigram and 5-gram both
+improve by 15.8%.
+
+The sparsity table hints at why. Doubling the data turns some singleton
+5-grams into repeated observations, but the new text brings new singletons at
+the same time, and for 5-grams of Turkish reviews most of them are new. You
+cannot read off the corpus size how much an order will gain; you have to
+measure it.
+
+The transferable version: **measure where more data will help, with a
+learning curve over a fixed vocabulary and test set, rather than by intuition.**
+Here the bigram lagging fits the intuition that orders with few counts gain a
+little more, but the higher orders do not separate. The scaling laws of
+@sec-pretraining measure curves like this at large scale; one reason the
+models there are trained on trillions of tokens rather than millions is that a
+big model on a small corpus can drift into memorising.
 
 It also has a limit worth predicting now. Doubling the corpus improves
 the 5-gram model but does not make 5-grams *sufficient*, because English
