@@ -1549,8 +1549,10 @@ measure which of those really sets it apart from the count models.
 ### Where the neural model's advantage actually lives
 
 Split the test events by whether the two-word context was ever observed
-in training. Both models condition on exactly the same two words, so this
-is a fair cut:
+in training. Both models condition on the same two words, so the cut gives
+both the same events and the comparison is fair. But the two models differ in
+both the estimator and the parametrisation; the cut does not, by itself, show
+*why* they differ:
 
 ```text
                         events      KN    neural    mixture
@@ -1565,13 +1567,20 @@ model wins — 265.9 against 273.1. On contexts it has *never* seen, the
 neural model **loses**, and not narrowly: 554.4 against 526.7.
 
 [The generalisation story is backwards on this corpus.]{.hl} The
-smoothed count model is the one that handles novel contexts better,
-because Kneser-Ney's lower-order term is a carefully engineered answer to exactly
-that situation — when you have no evidence, fall back to how many
-*distinct* contexts a word completes. The neural model, faced with a
-context it has never seen, extrapolates from embedding geometry that was
-itself estimated from sparse and noisy counts, and its extrapolation is
-worse than a good backoff rule.
+smoothed count model is the one that handles novel contexts better. One
+plausible explanation: Kneser-Ney's lower-order term is a carefully engineered
+answer to exactly that situation — when you have no evidence, fall back to how
+many *distinct* contexts a word completes — while the neural model, faced with
+a context it has never seen, leans on an embedding geometry that was itself
+learned from sparse and noisy counts. This experiment does not prove that this
+is the cause; that would take varying the regularisation, the amount of data
+and the context groups separately.
+
+A Kneser-Ney with a tuned discount changes the split once more. In the re-run
+($d = 0.75$ gives 276.8 / 526.6, the neural model 265.7 / 561.2) the tuned
+Kneser-Ney gives 259.0 on seen contexts and 520.6 on unseen ones: ahead of the
+neural model in both groups. The "neural model wins" row on seen contexts, too,
+is an advantage won against an untuned discount.
 
 You can watch it happen in the model's own uncertainty:
 
@@ -1581,16 +1590,33 @@ context seen      7.42 bits  =  171.2 effective choices
 context unseen    7.83 bits  =  228.0 effective choices
 ```
 
-The model does know it is in trouble — it hedges, spreading mass over
-more words. It simply hedges less well than a purpose-built backoff.
+On unseen contexts the model spreads its mass over somewhat more words. That
+does not mean it knows how much trouble it is in. In the re-run we set the
+entropy beside the surprisal of the word that actually came, that is, beside
+the real loss:
+
+```text
+### re-run, seed 0: mean predictive entropy against mean surprisal (bits)
+                  entropy    surprisal    gap
+context seen         7.58         8.05    0.47
+context unseen       7.81         9.13    1.32
+```
+
+On unseen contexts the uncertainty rises by only 0.23 bits while the loss rises
+by 1.08. The model is overconfident in both groups, but far more so on novel
+contexts: its hedging covers a small part of its real difficulty. Entropy on its
+own is not evidence of good calibration; calibration has to be measured
+separately, as here.
 
 Be careful about how far you carry this finding. It is a result about
 **this corpus at this scale**: 896,000 training events, a 29,774-word
 vocabulary, and a feedforward model with two words of context. At the
-scales of @sec-pretraining the picture reverses, which is why the field
-went the way it did — and a stronger architecture changes it even at this
-scale: recurrent models (*From a window to a state*, below) were already beating
-Kneser-Ney clearly on corpora of a few million words [@mikolov2010recurrent].
+scales of @sec-pretraining neural models are clearly ahead, which is why the
+field went the way it did — and a stronger architecture can change it even at this
+scale: in Mikolov and colleagues' setup of a few million words, recurrent
+models (*From a window to a state*, below) were already beating Kneser-Ney
+clearly [@mikolov2010recurrent]. Where this particular split reverses was not
+measured here.
 What the result does establish, permanently, is that
 "neural models generalise better" is a claim to be measured on your data
 and not assumed from a textbook.
