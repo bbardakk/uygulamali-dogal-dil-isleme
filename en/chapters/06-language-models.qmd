@@ -1253,14 +1253,16 @@ entirely about the gap between those two things.
 
 ## Neural language models
 
-Every failure so far traces to one cause. `kargo` and `teslimat` mean
-almost the same thing, and to a count table they are two unrelated
-strings. Everything learned about one transfers nothing to the other. It
+The failures so far share a root. `kargo` and `teslimat` mean almost the
+same thing, and to a count table they are two unrelated strings: nothing
+counted for `kargo çok` is written into the row for `teslimat çok`. Smoothing
+does draw on shared lower-order information (the continuation probability of
+the next word, say), but it does not know that the two words are alike. It
 is @sec-embeddings' complaint, arriving now in a probabilistic setting:
 the model has no way to say that two contexts are *similar*.
 
-Bengio and colleagues [@bengio2003neural] proposed the fix that the whole
-field now runs on. Keep the Markov assumption — condition on the previous
+Bengio and colleagues [@bengio2003neural] proposed the fix that later neural
+language models all descend from. Keep the Markov assumption — condition on the previous
 $n-1$ words — but stop treating those words as symbols. Instead:
 
 1. **Look up a dense vector for each context word.** These are the
@@ -1281,12 +1283,14 @@ classes so that counts could be pooled. What Bengio et al. changed is
 that the grouping is *soft*, *learned*, and *continuous*: no word has to
 be assigned to exactly one class, and similarity is a matter of degree.
 
-The consequence is the entire point. Because the model is a *continuous*
-function of the context vectors, and because `kargo` and `teslimat` end
-up with nearby vectors, the model necessarily gives them similar
-predictions. [Generalisation across similar contexts is not a feature
-that was added; it is a mathematical consequence of replacing a lookup
-table with a smooth function.]{.hl}
+The consequence is the entire point. The model is a *continuous* function of
+the context vectors; if `kargo` and `teslimat` end up with nearby vectors and
+the rest of the context is the same, the model tends to give the two contexts
+similar predictions. [Generalisation across similar contexts is not a feature
+that was added; it is a consequence of replacing a lookup table with a smooth
+function.]{.hl} It is a tendency, not a guarantee: how much the nearness helps
+depends on the network's weights and the other words in the context. Whether it
+helps is measured below.
 
 In PyTorch the whole model is nine lines:
 
@@ -1303,9 +1307,14 @@ class NNLM(nn.Module):
         return self.net(self.emb(x).flatten(1))
 ```
 
+The same `V` sizes both the input table and the output layer; here `V` = 29,774:
+the prediction support (29,773) plus the `<s>` the input needs (explained under
+*Counting on 38,000 reviews*).
+
 `nn.Dropout(drop)` switches off a random fraction `drop` of the hidden units at
-each training step (and none at test time), so the network cannot rely on any
-single unit; it is a standard regulariser against overfitting.
+each training step (and none at test time), which makes it harder for the
+network to lean too heavily on any single unit; it is a standard regulariser
+against overfitting.
 
 Training minimises exactly the quantity the perplexity section defined: the
 average negative log-probability of the word that actually came next. The
@@ -1314,8 +1323,9 @@ takes the log in one step:
 
 ```python
 logits = model(x)                          # (batch, V) scores
-loss = F.cross_entropy(logits, y)          # mean of -ln P(y | context)
-# math.exp(loss on the dev set) is the dev perplexity
+loss = F.cross_entropy(logits, y)          # mean of -ln P(y | context) over the batch
+# dev perplexity: sum the loss over all dev events (reduction="sum"),
+# divide by the number of events, take math.exp; not a mean of batch means
 ```
 
 So the "train ppl" and "dev ppl" columns below are just `exp` of this loss on
@@ -1325,9 +1335,9 @@ cross-entropy, only with a much longer context and far more data.
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">Why a smooth function generalises where a table cannot</div>
+<div class="fig-title">Shared parameters can carry evidence between contexts a table keeps apart</div>
 <svg viewBox="0 0 760 342" style="max-width:740px" role="img"
-     aria-label="On the left, a count table stores a separate row for the context kargo and for the context teslimat, with no path between them, so evidence about one never reaches the other. On the right, a neural model maps both words to nearby points in an embedding space, passes them through a shared hidden layer, and produces similar distributions, so evidence is shared automatically.">
+     aria-label="On the left, a count table stores a separate row for the context kargo and for the context teslimat, with no path between them, so evidence about one never reaches the other. On the right, a neural model maps both words to nearby points in an embedding space, and passes them through a shared hidden layer; nearby vectors make similar distributions easier but do not guarantee them. Below, the measured result: against Kneser-Ney with d equal to 0.75, the neural model is ahead on contexts seen in training and behind on contexts never seen.">
   <defs>
     <marker id="nn-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0.5 L7.5,4 L0,7.5 z" class="head"/>
@@ -1352,7 +1362,7 @@ cross-entropy, only with a much longer context and far more data.
   <text x="264" y="70" class="t-xs t-mid t-muted">ROW 1 — 2,472 OBS.</text>
   <text x="264" y="86" class="t-xs t-mid">its own distribution</text>
   <rect x="200" y="100" width="128" height="42" rx="7" class="box"/>
-  <text x="264" y="118" class="t-xs t-mid t-muted">ROW 2 — 391 OBS.</text>
+  <text x="264" y="118" class="t-xs t-mid t-muted">ROW 2 — ~610 OBS.</text>
   <text x="264" y="134" class="t-xs t-mid">its own distribution</text>
 
   <line x1="160" y1="90" x2="160" y2="104" class="ln-dash"/>
@@ -1369,7 +1379,7 @@ cross-entropy, only with a much longer context and far more data.
   <circle cx="452" cy="112" r="4" class="head-accent"/>
   <text x="470" y="104" class="t-xs t-accent">kargo</text>
   <text x="478" y="120" class="t-xs t-accent">teslimat</text>
-  <text x="460" y="136" class="t-xs t-mid t-muted">NEARBY = SIMILAR</text>
+  <text x="460" y="136" class="t-xs t-mid t-muted">NEARBY ≈ SIMILAR</text>
 
   <line x1="518" y1="99" x2="556" y2="99" class="ln-accent" marker-end="url(#nn-b)"/>
 
@@ -1383,22 +1393,24 @@ cross-entropy, only with a much longer context and far more data.
   <text x="712" y="94" class="t-xs t-mid">softmax</text>
   <text x="712" y="110" class="t-xs t-mid t-muted">29,774</text>
 
-  <text x="404" y="168" class="t-xs t-accent t-b">MOVE ONE VECTOR AND BOTH PREDICTIONS MOVE.</text>
+  <text x="404" y="168" class="t-xs t-accent t-b">SHARED WEIGHTS LEARN FROM BOTH CONTEXTS.</text>
 
   <line x1="16" y1="196" x2="744" y2="196" class="ln-thin"/>
-  <text x="16" y="218" class="t-sm t-b">WHAT WE MEASURED, NOT WHAT WE HOPED</text>
-  <text x="16" y="240" class="t-sm">On this corpus the sharing pays off <tspan class="t-b">only where there is already some evidence.</tspan></text>
+  <text x="16" y="218" class="t-sm t-b">WHAT WE MEASURED — AGAINST KNESER-NEY WITH d = 0.75</text>
+  <text x="16" y="240" class="t-sm">The ranking depends on <tspan class="t-b">whether the two-word context was seen in training.</tspan></text>
   <text x="16" y="262" class="t-sm">Contexts seen in training: neural <tspan class="t-accent t-b">265.9</tspan> beats Kneser-Ney <tspan class="t-b">273.1</tspan>.</text>
   <text x="16" y="284" class="t-sm">Contexts never seen: neural <tspan class="t-rose t-b">554.4</tspan> <tspan class="t-b">loses</tspan> to Kneser-Ney <tspan class="t-b">526.7</tspan>.</text>
-  <text x="16" y="310" class="t-xs t-muted">THE TEXTBOOK STORY IS THAT NEURAL MODELS WIN ON NOVEL CONTEXTS. HERE THEY DO NOT. SEE BELOW.</text>
+  <text x="16" y="310" class="t-xs t-muted">A KNESER-NEY WITH A TUNED DISCOUNT LEADS IN BOTH GROUPS (RE-RUN). SEE BELOW.</text>
 </svg>
 ```
 
 ::: {.fig-cap}
-The mechanism on the right is real, and it is the reason the two models
-can be combined so usefully later in this section. But the measured
-benefit lands in a different place from the one the standard account
-promises, which is why it was worth measuring rather than asserting.
+The mechanism on the right is real, but nearby vectors make similar
+predictions easier, they do not guarantee them. The measured result on this
+corpus also does not fit the often-told expectation that neural models win on
+novel contexts, which is why it was worth measuring rather than asserting. The
+numbers at the bottom are against Kneser-Ney with $d = 0.75$; against a
+Kneser-Ney with a tuned discount the picture changes again (below).
 :::
 ::::
 

@@ -1314,15 +1314,17 @@ mükemmel olup, bir yorum hakkında sorulan soruyu yanıtlayamayabilir.
 
 ## Yapay sinir ağı tabanlı dil modelleri
 
-Buraya kadarki bütün başarısızlıkların tek bir sebebi var. `kargo` ile
+Buraya kadarki başarısızlıkların ortak bir kökü var. `kargo` ile
 `teslimat` neredeyse aynı anlama geliyor, ama bir sayım tablosu için
-bunlar birbiriyle alakasız iki karakter dizisi. Biri hakkında öğrenilen
-hiçbir şey diğerine aktarılmıyor. Bu, @sec-gommeler'ün
+bunlar birbiriyle alakasız iki karakter dizisi: `kargo çok` hakkında
+sayılan hiçbir şey `teslimat çok` satırına yazılmıyor. Düzleştirme alt
+derecelerden ortak bilgi kullanır (ikisinden sonra gelen kelimenin
+devam olasılığı gibi), ama iki kelimenin birbirine benzediğini bilmez. Bu, @sec-gommeler'ün
 şikâyetinin olasılıksal bir ortamda yeniden karşımıza çıkması: modelin
 iki bağlamın *benzer* olduğunu söyleyecek bir yolu yok.
 
-Bengio ve arkadaşları [@bengio2003neural], bugün bütün alanın dayandığı
-çözümü önerdi. Markov varsayımını koruyun — önceki $n-1$
+Bengio ve arkadaşları [@bengio2003neural], sonraki sinirsel dil
+modellerinin hepsinin öncüsü sayılan çözümü önerdi. Markov varsayımını koruyun — önceki $n-1$
 kelimeye koşullanın — ama bu kelimelere sembol muamelesi yapmayı bırakın.
 Bunun yerine:
 
@@ -1348,11 +1350,13 @@ olması: hiçbir kelimenin tam olarak tek bir sınıfa atanması gerekmiyor
 meselesi.
 
 Sonuç, meselenin ta kendisi. Model bağlam vektörlerinin *sürekli* bir
-fonksiyonu olduğu ve `kargo` ile `teslimat` eğitimin sonunda birbirine
-yakın vektörler aldığı için, model zorunlu olarak bu ikisine benzer
-kestirimler verir. [Benzer bağlamlar arasında genelleme sonradan eklenmiş bir özellik
-değildir; bir arama tablosunu pürüzsüz bir fonksiyonla değiştirmenin
-matematiksel sonucudur.]{.hl}
+fonksiyonu; `kargo` ile `teslimat` eğitimin sonunda birbirine yakın
+vektörler alırsa ve bağlamın geri kalanı aynıysa, model bu iki bağlama
+benzer kestirimler vermeye yatkın olur. [Benzer bağlamlar arasında
+genelleme sonradan eklenmiş bir özellik değil; bir arama tablosunu pürüzsüz
+bir fonksiyonla değiştirmenin sonucu.]{.hl} Bu bir yatkınlık, garanti değil:
+yakınlığın ne kadar işe yaradığı ağın ağırlıklarına ve bağlamdaki öteki
+kelimelere bağlı. İşe yarayıp yaramadığını aşağıda ölçüyoruz.
 
 PyTorch'ta modelin tamamı dokuz satır:
 
@@ -1369,10 +1373,14 @@ class NNLM(nn.Module):
         return self.net(self.emb(x).flatten(1))
 ```
 
+Aynı `V` hem girdi tablosunu hem çıktı katmanını boyutlandırıyor; burada
+`V` = 29.774: tahmin desteği (29.773) artı girdi için gereken `<s>`
+(*38.000 yorum üzerinde saymak* başlığı altında açıkladık).
+
 `nn.Dropout(drop)`, her eğitim adımında gizli birimlerin rastgele seçilmiş
 `drop` oranındaki kısmını kapatır (test sırasında hiçbirini kapatmaz); böylece
-ağ tek bir birime yaslanamaz. Aşırı öğrenmeye (overfitting) karşı kullanılan
-standart bir düzenlileştirme yöntemidir.
+ağın tek bir birime fazla yaslanması zorlaşır. Aşırı öğrenmeye (overfitting)
+karşı kullanılan standart bir düzenlileştirme yöntemidir.
 
 Eğitim, *Perplexity* başlığı altında tanımlanan niceliğin ta kendisini küçültür:
 gerçekten sonra gelen kelimenin ortalama negatif log olasılığını. İleri geçiş
@@ -1381,8 +1389,9 @@ adımda alır:
 
 ```python
 logits = model(x)                          # (batch, V) skorlar
-loss = F.cross_entropy(logits, y)          # -ln P(y | bağlam) ortalaması
-# geliştirme (dev) kümesindeki kaybın math.exp'i, dev perplexity'sidir
+loss = F.cross_entropy(logits, y)          # batch'teki -ln P(y | bağlam) ortalaması
+# dev perplexity'si: bütün dev olaylarının kaybını toplayın (reduction="sum"),
+# olay sayısına bölün, math.exp'ini alın; batch ortalamalarının ortalaması değil
 ```
 
 Yani aşağıdaki "train ppl" (eğitim) ve "dev ppl" (geliştirme) sütunları,
@@ -1394,9 +1403,9 @@ fazla veriyle.
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">Pürüzsüz bir fonksiyon, tablonun genelleyemediği yerde neden genelleyebiliyor</div>
+<div class="fig-title">Ortak parametreler, tablonun ayrı tuttuğu bağlamlar arasında bilgi paylaşabilir</div>
 <svg viewBox="0 0 760 342" style="max-width:740px" role="img"
-     aria-label="Solda, bir sayım tablosu kargo bağlamı ve teslimat bağlamı için ayrı satırlar tutuyor; aralarında hiçbir yol yok, bu yüzden biri hakkındaki kanıt diğerine hiç ulaşmıyor. Sağda, yapay sinir ağı tabanlı bir model iki kelimeyi de embedding uzayında birbirine yakın noktalara eşliyor, ortak bir gizli katmandan geçiriyor ve benzer dağılımlar üretiyor; böylece kanıt kendiliğinden paylaşılıyor.">
+     aria-label="Solda, bir sayım tablosu kargo bağlamı ve teslimat bağlamı için ayrı satırlar tutuyor; aralarında hiçbir yol yok, bu yüzden biri hakkındaki kanıt diğerine hiç ulaşmıyor. Sağda, yapay sinir ağı tabanlı bir model iki kelimeyi de embedding uzayında birbirine yakın noktalara eşliyor ve ortak bir gizli katmandan geçiriyor; yakın vektörler benzer dağılımları kolaylaştırıyor ama garanti etmiyor. Altta, ölçülen sonuç: d sıfır virgül yetmiş beşli Kneser-Ney'e karşı sinir ağı görülmüş bağlamlarda önde, görülmemiş bağlamlarda geride.">
   <defs>
     <marker id="nn-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0.5 L7.5,4 L0,7.5 z" class="head"/>
@@ -1421,7 +1430,7 @@ fazla veriyle.
   <text x="264" y="70" class="t-xs t-mid t-muted">SATIR 1 — 2.472 KEZ</text>
   <text x="264" y="86" class="t-xs t-mid">kendi dağılımı</text>
   <rect x="200" y="100" width="128" height="42" rx="7" class="box"/>
-  <text x="264" y="118" class="t-xs t-mid t-muted">SATIR 2 — 391 KEZ</text>
+  <text x="264" y="118" class="t-xs t-mid t-muted">SATIR 2 — ~610 KEZ</text>
   <text x="264" y="134" class="t-xs t-mid">kendi dağılımı</text>
 
   <line x1="160" y1="90" x2="160" y2="104" class="ln-dash"/>
@@ -1438,7 +1447,7 @@ fazla veriyle.
   <circle cx="452" cy="112" r="4" class="head-accent"/>
   <text x="470" y="104" class="t-xs t-accent">kargo</text>
   <text x="478" y="120" class="t-xs t-accent">teslimat</text>
-  <text x="460" y="136" class="t-xs t-mid t-muted">YAKIN = BENZER</text>
+  <text x="460" y="136" class="t-xs t-mid t-muted">YAKIN ≈ BENZER</text>
 
   <line x1="518" y1="99" x2="556" y2="99" class="ln-accent" marker-end="url(#nn-b)"/>
 
@@ -1452,22 +1461,23 @@ fazla veriyle.
   <text x="712" y="94" class="t-xs t-mid">softmax</text>
   <text x="712" y="110" class="t-xs t-mid t-muted">29.774</text>
 
-  <text x="404" y="168" class="t-xs t-accent t-b">BİR VEKTÖRÜ OYNATIN, İKİ KESTİRİM DE OYNAR.</text>
+  <text x="404" y="168" class="t-xs t-accent t-b">ORTAK AĞIRLIKLAR İKİ BAĞLAMDAN DA ÖĞRENİR.</text>
 
   <line x1="16" y1="196" x2="744" y2="196" class="ln-thin"/>
-  <text x="16" y="218" class="t-sm t-b">UMDUĞUMUZ DEĞİL, ÖLÇTÜĞÜMÜZ</text>
-  <text x="16" y="240" class="t-sm">Bu derlemde paylaşım <tspan class="t-b">yalnızca zaten bir miktar kanıt olan yerde</tspan> işe yarıyor.</text>
+  <text x="16" y="218" class="t-sm t-b">ÖLÇTÜĞÜMÜZ — d = 0,75'Lİ KNESER-NEY'E KARŞI</text>
+  <text x="16" y="240" class="t-sm">Sıralama, iki kelimelik bağlamın <tspan class="t-b">eğitimde görülüp görülmediğine</tspan> göre değişiyor.</text>
   <text x="16" y="262" class="t-sm">Eğitimde görülen bağlamlar: yapay sinir ağı <tspan class="t-accent t-b">265,9</tspan>, Kneser-Ney'i <tspan class="t-b">273,1</tspan> ile geçiyor.</text>
   <text x="16" y="284" class="t-sm">Hiç görülmemiş bağlamlar: yapay sinir ağı <tspan class="t-rose t-b">554,4</tspan>, Kneser-Ney'e <tspan class="t-b">526,7</tspan> ile <tspan class="t-b">kaybediyor</tspan>.</text>
-  <text x="16" y="310" class="t-xs t-muted">DERS KİTAPLARINA GÖRE SİNİR AĞLARI YENİ BAĞLAMLARDA KAZANIR. BURADA KAZANMIYOR — AŞAĞIYA BAKIN.</text>
+  <text x="16" y="310" class="t-xs t-muted">İNDİRİMİ AYARLANMIŞ KNESER-NEY İKİ GRUPTA DA ÖNDE (YENİDEN KOŞU) — AŞAĞIYA BAKIN.</text>
 </svg>
 ```
 
 ::: {.fig-cap}
-Sağdaki mekanizma gerçek; bu alt bölümün ilerisinde iki modelin bu kadar faydalı
-biçimde birleştirilebilmesinin sebebi de o. Ama ölçülen fayda, standart
-anlatının vaat ettiği yerde değil, başka bir yerde ortaya çıkıyor; iddia
-etmek yerine ölçmemizin sebebi de bu.
+Sağdaki mekanizma gerçek, ama yakın vektörler benzer kestirimleri
+kolaylaştırır, garanti etmez. Bu derlemde ölçülen sonuç da, sıkça anlatılan
+"sinir ağı yeni bağlamlarda kazanır" beklentisine uymuyor; iddia etmek yerine
+ölçmemizin sebebi bu. Alttaki sayılar $d = 0{,}75$'li Kneser-Ney'e karşı;
+indirimi ayarlanmış bir Kneser-Ney karşısında tablo yine değişiyor (aşağıda).
 :::
 ::::
 
