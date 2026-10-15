@@ -433,15 +433,17 @@ whether it is any *good*?
 We need a single number, and it should not require a downstream task, because the whole point is
 that the model was trained without one. Plain next-word accuracy is a poor
 choice too: many continuations are acceptable, and accuracy only asks whether
-the model's top guess was right, throwing away how much probability it gave to
-the word that actually came. What we can ask instead is how surprised the model
+the model's top guess was right and makes no use of how much probability it
+gave to the word that actually came. What we can ask instead is how surprised the model
 was by text it had not seen, and there is a standard way of putting a number on
 that.
 
 ::: {#gloss-perplexity .column-margin .term-gloss}
-**perplexity** — how many words the model is effectively choosing
-between at each step. Lower is better: a perplexity of 10 means the
-model is about as unsure as someone picking from a shortlist of ten. [↩](#term-perplexity){.term-back}
+**perplexity** — the exponential of the average negative log probability
+per token on held-out text. Lower is better. The intuitive reading: a
+perplexity of 10 means the model gives the observed words as much probability
+as someone picking uniformly from a shortlist of ten would; not that there are
+really ten options at every step. [↩](#term-perplexity){.term-back}
 :::
 
 The natural quantity is the probability the model assigns to text it has
@@ -454,33 +456,41 @@ $$
 $$
 
 Here $N$ is the number of prediction events and $h_i$ is the context (history)
-before word $i$. The formula is the geometric mean of $1/P(w_i \mid h_i)$ — the
-reciprocal of the typical probability the model gave to the word that actually
-came next.
+before event $i$. The events are the words and the `</s>` at the end of each
+review; on this chapter's test set $N = 239{,}055$. The formula is the geometric
+mean of $1/P(w_i \mid h_i)$ — the reciprocal of the geometric mean of the
+probabilities the model gave to the events that actually came.
 
 The base does not matter as long as you are consistent: $\mathrm{PPL} =
 \exp(H_e) = 2^{H_2}$, where $H$ is the average negative log probability per
 token — which is the model's **cross-entropy** against the held-out text. So
 minimising perplexity, maximising held-out log-likelihood and minimising
 cross-entropy are three names for one operation, and the pretraining loss of
-every language model in the rest of this book is that same quantity before the
-exponential. The widget below reports $H_2$ in bits, one token at a time; the
+the language models in the rest of this book has the same form before the
+exponential: the average negative log probability of the next token. What
+changes is the text it is measured on and the tokenizer; a training loss and a
+held-out value, or two values measured with different tokenizers, cannot be
+compared directly. The widget below reports $H_2$ in bits, one token at a time; the
 tables report $\exp(H_e)$.
 
 Two words in that paragraph deserve a line each. **Cross-entropy**
 $H(p, q) = -\sum_x p(x) \log q(x)$ measures how costly it is to describe data
 that really comes from $p$ (here, Turkish reviews) using a model $q$; the
 held-out average above is simply its estimate from a sample. It can never be
-lower than the entropy of $p$ itself, so even a perfect model keeps a
-perplexity above 1 — language has genuine uncertainty that no model removes.
-A **bit** is the information in one fair yes/no choice: $H_2 = 7$ bits per
-token means the model is as uncertain as if it had to answer seven fair
-yes/no questions to pin down each word, i.e. choose among $2^7 = 128$
-equally likely options.
+lower than the entropy of $p$ itself. As long as the next word of a review is
+genuinely uncertain, which it is, even a perfect model keeps a perplexity above
+1; a perplexity of 1 is possible only in a language where every next event is
+determined. A **bit** is the information in one fair yes/no choice: $H_2 = 7$
+bits per token means that, on average, the model is as uncertain as if it had
+to answer seven fair yes/no questions to pin down each word, i.e. choose among
+$2^7 = 128$ equally likely options. That is an analogy too: the real
+distribution is not uniform like that at every position.
 
 **Read it as an effective branching factor.** A model with [perplexity](#gloss-perplexity){#term-perplexity .term-ref} 100
-is, on average, as uncertain as if it were choosing uniformly among 100
-words at every position. A fair six-sided die has perplexity 6. A model
+gives the observed words, on average (a geometric average), as much
+probability as a model choosing uniformly among 100 words at every position
+would. The real model is not like that: almost certain at some positions,
+spread over thousands of options at others; perplexity averages them. A fair six-sided die has perplexity 6. A model
 that assigns the correct next word probability 1 every time has
 perplexity 1. Lower is better, and the units are "how many equally likely
 options am I effectively choosing between".
@@ -506,17 +516,20 @@ mean of 2, 4 and 8 — exactly the reciprocals of the three probabilities.
 
 Two properties fall out of this that matter in practice.
 
-**Perplexity is a geometric mean, so one catastrophic token dominates.**
-Replace the third probability with $10^{-6}$ and the perplexity jumps
-from 4.0 to **200** — the geometric mean of 2, 4 and $10^{6}$. Two tokens out of
-three were still predicted well, and the score moved by a factor of fifty. Replace it with 0 and the perplexity is infinite,
-regardless of how well the model did on every other token in the corpus.
-The next section is entirely about that fact.
+**Perplexity is a geometric mean, so one catastrophic token dominates a
+short sequence.** Replace the third probability with $10^{-6}$ and the
+perplexity jumps from 4.0 to **200** — the geometric mean of 2, 4 and $10^{6}$.
+Two tokens out of three were still predicted well, and the score moved by a
+factor of fifty. On a long test set a single small probability is divided by
+$N$: over 239,055 events one event at $10^{-6}$ moves perplexity by less than a
+tenth of a percent. Zero is different: replace it with 0 and the perplexity is
+infinite, regardless of how well the model did on every other token in the
+corpus. The next section is entirely about that fact.
 
-**Perplexity is per-token, so it depends on what a token is.** The same
-model, the same text, the same predictions — but split the text into
-characters instead of words and the number changes completely, because
-$N$ changed. This is not a subtlety; it is the reason two perplexity
+**Perplexity is per-token, so it depends on what a token is.** A model that
+splits the same text into characters instead of words predicts different
+events from different contexts, and $N$ changes too; the number it produces
+shares no common scale with the word-level one. This is not a subtlety; it is the reason two perplexity
 figures from two papers usually cannot be compared at all.
 :::
 
@@ -529,9 +542,10 @@ Each bar is one token's **surprisal**, $-\log_2 P(w \mid h)$, measured on
 the models built in this chapter. The models are Kneser-Ney smoothed
 (smoothing comes a few sections later), which is why a bigram never seen in
 training, such as `fiyat kötü`, gets 13.9 bits rather than infinity. A bar of 10 means the model gave that
-word a probability of about 1 in 1,000. Switch the context length and
-watch which bars collapse — that is precisely what the extra context
-bought.
+word a probability of about 1 in 1,000. The bars are rounded to one decimal; the
+sentence perplexity was computed from unrounded values. Switch the context
+length: most bars shrink, a few grow, and that is what the extra context gained
+and lost.
 
 ```{ojs}
 //| echo: false
@@ -618,11 +632,12 @@ Three things are worth hunting for. In `fiyatına göre…` the word `göre`
 drops from 8.2 bits to 0.2 once the model can see `fiyatına` — in Turkish
 `göre` is a postposition that almost has to follow that word, and one
 word of context is enough to know it. In `kalite kötü fiyat iyi` the
-surprisal *rises* with more context, because the model has learned that
-Turkish reviewers do not write that phrase. And in the last sentence
-`uyuyakaldı` is not in the vocabulary at all, so the model scores
-`<unk>` instead — and scores it as *unsurprising*, at 2.5 bits. Hold on
-to that.
+surprisal *rises* with more context, because that order is rare in the
+reviews of this corpus — which shows that the model has seldom seen it, not
+that Turkish does not use it. And in the last sentence `uyuyakaldı` is not in
+the vocabulary at all, so the model scores `<unk>` instead and finds it
+*unsurprising*, at 2.5 bits: that is the score of the class of unknown words,
+not of `uyuyakaldı`. Hold on to that.
 :::
 :::
 
