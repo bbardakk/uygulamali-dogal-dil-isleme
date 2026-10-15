@@ -1871,7 +1871,7 @@ would you actually deploy?
 | Repeats training text when sampled | [hardly ever with Kneser-Ney (trigram: 1 of 9,262 windows); yes with unsmoothed MLE (5.8% at $n=3$, 91.6% at $n=5$)]{.pro} | [0 of 2,989 windows (0 of 8,385 in the re-run); shorter matches not measured]{.pro} |
 | Gives you embeddings | [not in this word-level setup]{.con} | [yes, as model parameters; usefulness on another task to be tested]{.pro} |
 | Adding data | [retrain in seconds]{.pro} | [retrain in minutes]{.con} |
-| Returns from more data | [~16% better from 19,000 → 38,000 reviews (re-run); larger scales not measured]{.pro} | [not measured in this chapter; the evidence at scale is in @sec-pretraining]{.con} |
+| Returns from more data | [~16% better from 19,000 → 38,000 reviews (re-run); larger scales not measured]{.pro} | not measured in this chapter; the evidence at scale is in @sec-pretraining |
 | Debuggable | [inspect the counts and the backoff contributions]{.pro} | [no counts to read; event-level log losses, embedding neighbours, activations and samples can be inspected]{.con} |
 
 : What each model is actually for, on 38,000 Turkish reviews {tbl-colwidths="[30,35,35]"}
@@ -1895,12 +1895,16 @@ and this chapter is the moment in the book where the bet is placed.
 ::: {.callout-note collapse="true"}
 ## Your neural LM beats your n-gram baseline by 40 points. Your colleague asks one question. What is it?
 
-"Same vocabulary?" Perplexity is only comparable across models that share
-a vocabulary and a tokenisation. The table in *What perplexity does not
-tell you* moved one model from 752.5 to 10.9 by changing nothing but the
-frequency threshold. If the neural model was trained with a 30k
+"Same vocabulary?" Per-token perplexity can only be compared directly across
+models that share the test text, the vocabulary, the tokenisation and the event
+definition. The table in *What perplexity does not tell you* moved the same
+method from 752.5 to 10.9 by changing only the frequency threshold (and
+rebuilding the counts with it). If the neural model was trained with a 30k
 vocabulary and the baseline with 72k, the 40 points may be entirely a side
-effect of the `<unk>` rate, not a result.
+effect of the `<unk>` rate, not a result. If the vocabulary matches, the next
+questions: were the `</s>` events and the loss average counted the same way,
+and was the baseline tuned? This chapter's "tie" was against an untuned
+Kneser-Ney discount too.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -1911,9 +1915,12 @@ evidence rather than capacity. Even the 9.6-million-parameter first run, at
 roughly eleven parameters per training event, memorised the training set and
 its dev perplexity turned around at epoch 3; the 19.4-million-parameter model
 had roughly 22 per event and did worse still. Model capacity should be
-chosen against dataset size, and the sweep is how you find out — apart from
-the dropout change, every step down in capacity was a step up in quality,
-which is a signal you should keep stepping down.
+chosen against dataset size, and the sweep is how you find out. But this
+sweep does not say "keep stepping down": context, size and dropout changed
+together from row to row. In the ablation where only the context changed, the
+smallest network did better with five words of context (333.5 to 324.1). The
+right next step is new dev runs that vary capacity, context and regularisation
+one at a time.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -1923,7 +1930,12 @@ Because they are wrong about different things. The split by seen and
 unseen context shows the neural model ahead on familiar contexts (265.9
 vs 273.1) and behind on novel ones (554.4 vs 526.7), so a mixture is exposed to whichever model
 is better on each *kind* of event. It does not know, event by event, which one
-to trust: it always averages, and the averaging is what pays.
+to trust: it always averages, and the averaging is what pays. The group table is
+a good cut for looking into this, but it does not explain the 17% on its own: a
+mixture of two neural models with different seeds gains 9.1% too (re-run).
+Roughly half of the gain appears to come from plain averaging and the rest from
+the difference between the two families; separating them for certain takes the
+event-level log losses.
 
 Be careful with the general claim, because the usual version of it is false.
 What interpolation guarantees is weaker: by Jensen's inequality the mixture's
@@ -1937,22 +1949,25 @@ $\lambda$ on held-out data is what protects you — it can collapse to 0 or 1 �
 but a weight chosen on development data is still a bet that the same trade-off
 holds on the test set, not a guarantee that the mixture beats its best
 component there.
-Here it came out at 0.50, which is itself the evidence: on this corpus the
-data says the two are worth the same.
+Here it came out at 0.50, but that does not show the two models are worth the
+same on their own: in the re-run the best weight is 0.50 with the tuned
+Kneser-Ney too, which is 4% better than the neural model. The weight says what
+best lowers the log loss of the probabilities the two give *together*.
 :::
 
 ::: {.callout-note collapse="true"}
 ## A 5-gram model writes fluent Turkish. Why is that bad news rather than good?
 
-Because 91.6% of the eight-word spans it produces are copied verbatim
-from training data — against 5.8% for the trigram, which is the n-gram model
-that actually wins on perplexity. The fluency is retrieval, not generation. Sparsity
-explains it: 98% of training 5-grams occur once, so a four-word context
-usually admits exactly one continuation — the one that followed last
-time. It also means the model cannot be shown to a user without a
-plagiarism review. More data would help it — the singleton contexts are exactly
-what extra text fills in — but what it buys is more retrieved continuations, not
-a model that composes.
+Because 91.6% of the eight-word windows the (unsmoothed, MLE) 5-gram produces
+occur verbatim in the training data, against 5.8% for the trigram. The fluency
+is largely retrieval. Sparsity explains it: 98% of training 5-grams occur once,
+so a four-word context usually admits exactly one continuation — the one that
+followed last time. That is not a finding that whole reviews are copied, nor a
+legal judgement of plagiarism; but the model's output should not reach a user
+without checking its overlap with the training data. Check the window length,
+the seed and longer matches too. Smoothing nearly removes the copying (about 2%
+for the Kneser-Ney 5-gram) but takes the fluency with it. How more data would
+shift that balance this chapter did not measure.
 :::
 
 ## Interview questions
