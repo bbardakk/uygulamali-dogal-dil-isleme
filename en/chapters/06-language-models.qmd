@@ -262,11 +262,12 @@ That is the theory. Now the smallest possible version of it: count how often
 each word follows each context, divide, and see what comes out.
 
 The corpus is the Turkish product-review set from @sec-bake-off, and the
-split is deliberately the same one, so that everything you learned there
-about the data still applies here. There is one addition. [Smoothing](#gloss-smoothing){#term-smoothing .term-ref} has
+10,000-review test set is deliberately the same one, so that everything you
+learned there about the data still applies here. There is one addition. [Smoothing](#gloss-smoothing){#term-smoothing .term-ref} has
 hyperparameters, and hyperparameters chosen by looking at the test set
 are not hyperparameters, they are leakage. So the 40,000 training
-reviews are split again, with a [held-out](#gloss-held-out-data){#term-held-out-data .term-ref} dev slice the model never counts:
+reviews are split again: 2,000 become a [held-out](#gloss-held-out-data){#term-held-out-data .term-ref} dev slice the model never
+counts, and the counts come from the remaining 38,000:
 
 ::: {#gloss-smoothing .column-margin .term-gloss}
 **smoothing** — taking a little probability away from the word
@@ -275,9 +276,11 @@ combinations you did see and giving it to the ones you did not, so that
 :::
 
 ::: {#gloss-held-out-data .column-margin .term-gloss}
-**held-out data** — text the model was not allowed to count. It is the
-only place a score means anything, because a model can always recite the
-text it memorised. [↩](#term-held-out-data){.term-back}
+**held-out data** — text the model was not allowed to count. It is where
+a score measures generalisation: a score on the training text rewards
+memorisation too, although set beside the held-out score it shows
+overfitting. The dev set is for choosing settings, the test set for the final
+evaluation. [↩](#term-held-out-data){.term-back}
 :::
 
 ```text
@@ -290,21 +293,38 @@ distinct word forms        72,087
 vocabulary (count >= 2)    29,773
 ```
 
-That 29,773 is the number this chapter's count-based sections mean by $V$:
-word types surviving the count threshold, with the hapax words folded into
-`<unk>`. The neural model later in the chapter reports a 29,774-way softmax —
-one class more, because it must also be able to emit `</s>`. The two numbers
-are the same vocabulary counted for two different jobs.
+Two of the notes in that table state an intention, and neither was kept
+exactly, so say it up front. The test set was not read "exactly once, at the
+end": the test values of the first neural attempt and of the neural sweep are
+printed below too, and those places are marked. Of the smoothing constants,
+add-k's $k$ and the interpolation weights really were chosen on the dev set;
+Kneser-Ney's discount was not, and was kept at the textbook value of 0.75 (the
+Kneser-Ney section measures what that costs).
 
-Watch that extra class, because the count models predict `</s>` as well — the
-test table below counts 10,000 of those events. Anywhere a count model's
-probabilities have to sum to one over everything it can emit, the terminator
-belongs in the support with the 29,773, so a strict implementation smooths over
-29,774. On this corpus that moves the add-one arithmetic below by less than a
-hundredth of a percentage point, which is exactly why it goes unnoticed. Define
-the support once and use the same number for smoothing, for the softmax and for
-the count of prediction events; three different definitions in one pipeline is
-the most common way a published perplexity becomes incomparable with anyone
+That 29,773 is the number this chapter's count-based sections mean by $V$: the
+size of the set of symbols the model can assign probability to, the set its
+probabilities have to sum to one over. That set is the distribution's
+**support**. The row's label undersells it: the number adds two symbols to the
+29,771 word types that pass the threshold — `<unk>`, into which the words seen
+once are folded, and `</s>`, which marks the end of a review. The count models
+predict `</s>` too; the test table below counts 10,000 of those events. The
+chapter's own numbers show it: further on, with the count threshold at 1, the
+vocabulary is 72,089, exactly two more than the 72,087 distinct forms.
+
+The neural model later in the chapter reports a 29,774-way softmax. The extra
+class is not `</s>` — that is already inside the 29,773 — but `<s>`. The
+network's input table needs a vector for `<s>`, and because the same $V$ sizes
+the output layer, `<s>` also appears as an output class that is never a target.
+The parameter count confirms it: $161 \times 29{,}774 + 8{,}320 = 4{,}801{,}934$
+(per class, 32 embedding weights, 128 output weights and one bias; the hidden
+layer's $2 \times 32 \times 128 + 128$). The model learns to give a class that
+is never a target almost no probability, so it does not affect perplexity; it
+does take up parameters.
+
+The lesson: define the support once, write down which special symbols are in
+it, and use that same definition for smoothing, for the softmax and for the
+count of prediction events. Different definitions in one pipeline are one of
+the most common ways a published perplexity becomes incomparable with anyone
 else's.
 
 Two housekeeping decisions do real work later, so they are worth stating
@@ -313,16 +333,19 @@ plainly.
 **Every review is padded and terminated.** A `<s>` marker is prepended so
 the first real word has a context, and a `</s>` marker is appended so the
 model has to predict *that the review ends*. Without the terminator the
-probabilities do not sum to one over sentences of all lengths, and the
-model cannot be used to generate anything, because it would never stop.
+probabilities do not sum to one over sentences of all lengths, and generation
+stops only at a length limit imposed from outside, because the model has not
+learned when to stop.
 
 **Words seen once are replaced by `<unk>`.** @sec-bake-off measured 58.6%
 hapax on its own 40,000-review split — a different sample from this one, so take
 it as the scale of the problem rather than as this corpus's number. Here the
-threshold takes 72,087 distinct forms down to 29,773, so more than forty
+threshold takes 72,087 distinct forms down to 29,771 words, so more than forty
 thousand forms would otherwise have had a probability estimated from a single
 observation each. Mapping them to a single "unknown word" symbol gives the
-model a way to assign non-zero probability to words it has never seen.
+model a way to assign non-zero probability when a word outside the vocabulary
+arrives — but it is the probability of the `<unk>` *class*. The model cannot
+tell which unknown word it is (`uyuyakaldı`, or anything else).
 It also has a consequence we will come back to, at some length, because
 it is the most common way published perplexity numbers are made
 meaningless.
@@ -332,9 +355,14 @@ meaningless.
 test tokens                229,055
 test tokens -> <unk>        17,003     7.42%
 distinct test forms         32,573
-  never seen in training    15,352     47.1%
+  not in the vocabulary     15,352     47.1%
 prediction events          239,055     229,055 words + 10,000 </s>
 ```
+
+Not being in the vocabulary is not the same as never having been seen: some of
+those 15,352 forms occurred once in training and were folded into `<unk>` at the
+threshold. The forms never seen at all are, in the re-run, 11,151 of the
+32,573 (34.2%).
 
 Now the model itself. A bigram model is two dictionaries and a division:
 
@@ -348,6 +376,8 @@ for s in train_seqs:                       # each already padded
         ngr[(s[i - 1], s[i])] += 1
 
 def p_mle(prev, w):
+    # prev is always <s> or a vocabulary word (including <unk>); each occurs
+    # as a context in training, so ctx[prev] > 0 and the division is defined
     return ngr[(prev, w)] / ctx[prev]
 ```
 
@@ -371,8 +401,9 @@ context count 2,472; 516 distinct continuations observed
 
 Nobody wrote a grammar. The model has discovered that `kargo` is followed
 by function words, by adjectives about speed and cost, and — 3.3% of the
-time — by the end of the review. It is a description of how Turkish
-shoppers actually write, extracted by counting.
+time — by the end of the review. It is a description, extracted by counting,
+of how the reviewers *in this corpus* write; it is not direct evidence about
+Turkish grammar or Turkish usage in general.
 
 ::: {.callout-note collapse="true"}
 ## Intuition check: why does the end of a review need to be a token?
@@ -382,15 +413,16 @@ Because otherwise the model is not a distribution over *sentences*.
 Suppose you drop `</s>`. Then $P(\text{"kargo hızlı"})$ and
 $P(\text{"kargo hızlı geldi"})$ are both products of conditionals, and
 the shorter one is necessarily larger, since the longer is the shorter
-multiplied by another probability below 1. Sum over all sequences of all
+multiplied by another probability below 1. Both are really the probabilities
+of *prefixes*, not of finished sentences. Sum over all sequences of all
 lengths and you get infinity, not one. The model has no way to express
 "and then it stopped".
 
-Practically it shows up the moment you generate: without a terminator
-your sampler runs until you get bored and cut it off, and every sentence
-it writes is a fragment. `</s>` is what a generation loop is waiting for,
-and in a modern chat model it is exactly the same mechanism under the
-name *end-of-turn token*.
+Practically it shows up the moment you generate: without a terminator,
+unless you impose a length limit from outside, your sampler runs until you cut
+it off, and every sentence it writes is a fragment wherever it stops. `</s>` is
+what a generation loop is waiting for; the *end-of-turn token* of a modern chat
+model does a similar job.
 :::
 
 ## Perplexity
