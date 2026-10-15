@@ -1755,15 +1755,19 @@ olan modeli %20 iyileştiriyor — 526,7'den 421,8'e. Bu, olasılıkların
 birbirini tamamladığıyla uyumlu; kazancın hangi olaylarda oluştuğunu ise grup
 ortalaması değil, olay düzeyindeki log kayıpları gösterir.
 
-### Sayım modelinin asla yapamayacağı iki şey
+### Perplexity'de görünmeyen iki özellik {#sayım-modelinin-asla-yapamayacağı-iki-şey}
 
-Perplexity'deki beraberlik yapay sinir ağı modelini olduğundan kötü gösteriyor,
-çünkü modelin iki özelliği perplexity'de hiç görünmüyor.
+Perplexity, modelin iki özelliğini hiç göstermiyor: öğrendiği kelime
+temsillerini ve örneklediğinde eğitim metnini ne kadar tekrarladığını. İkisini
+de ayrıca ölçmek gerekiyor; birincisi sinir ağını gerçekten sayım
+modellerinden ayırıyor, ikincisi sanıldığı kadar ayırmıyor.
 
 **Birincisi, embedding'ler.** Kimse onları istemedi. Bir dil modelini
-eğitmenin yan ürünü olarak ilk katmanda kendiliğinden ortaya çıkıyorlar.
-Kosinüs benzerliğine göre en yakın komşular, her kelimenin eğitimdeki
-sıklığıyla birlikte:
+eğitmenin yan ürünü olarak ilk katmanda ortaya çıkıyorlar: sonraki kelimeyi
+kestirme hedefi, embedding tablosunu da güncelliyor. Kosinüs benzerliğine göre
+en yakın komşular, her kelimenin eğitimdeki sıklığıyla birlikte (yakınlık
+eşanlamlılık değil; başka bir görevde işe yarayıp yaramadıkları da ayrıca
+sınanması gereken bir soru):
 
 ```text
 güzel      (7547x)  harika, hoş, kaliteli, kaçırılmıyacak, kullanışlı
@@ -1781,37 +1785,48 @@ Türk e-ticaretinin kargo sözlüğünü yalnızca sonraki kelimeyi kestirmeye
 çalışarak keşfetti. Bir de `hızlı`'ya bakın: komşuları arasında `hizli` ve
 `hizlı` yazım hataları var (bir de `mükemmel` yerine `mikemmel`). Tabloda
 gösterilmeyen `tavsiye`'nin komşuları arasında da `tevsiye`, `tafsiye` ve
-`tasviye` var. **Model,
-bir kelimenin yazım hatalarının aynı kelime olduğunu öğrendi**, çünkü
-bunlar aynı yerlerde geçiyor. Hiçbir sayım tablosu bunu yapamaz; bir
-sayım tablosu için `hızlı` ile `hizli`, `hızlı` ile `kedi` kadar
-alakasızdır.
+`tasviye` var. **Model, bir kelimenin yazım hatalarına doğru yazılışa yakın
+vektörler verdi**, çünkü bunlar aynı yerlerde geçiyor. Bu, onları aynı kelime
+olarak tanıdığı anlamına gelmiyor; yakın olmaları yeterli. Kelime düzeyindeki
+bir sayım tablosu bunu yapamaz; onun için `hızlı` ile `hizli`, `hızlı` ile
+`kedi` kadar alakasızdır. (Sayım tarafının da yolları var: metni önceden
+normalleştirmek ya da karakter düzeyinde saymak gibi.)
 
 Şimdi sıklık sütununu yukarıdan aşağı okuyun, çünkü bölümün asıl
-uyarısı orada. Komşular 7.547 geçişte mükemmel, 2.472'de iyi,
+uyarısı orada. Bu yedi örnekte komşular 7.547 geçişte mükemmel, 2.472'de iyi,
 657'de zayıf; 143 geçişte ise `kalitesiz` kelimesi `konsantre`,
-`lezzetlı`, `kapıdaydı` döndürüyor — gürültü. [Embedding'ler sihir
+`lezzetlı`, `kapıdaydı` döndürüyor — gürültü. Sıklık bunun olası
+sebeplerinden biri (kelimenin kaç farklı bağlamda geçtiği ve çok anlamlılığı
+da rol oynar); kaç geçişin yeterli olduğu yedi satırlık bir tablodan çıkmaz. [Embedding'ler sihir
 değildir; kılık değiştirmiş sayımlardır]{.hl} ve altlarındaki
 sayımlarla birlikte, tam da @sec-gommeler'te bulunduğu gibi
 bozulurlar. İstatistiksel gücün paylaşılması gerçek bir şey, ama bir
 alt sınırı var.
 
-**İkincisi ve daha önemlisi: yapay sinir ağı modeli kopyalamıyor.**
+**İkincisi: kopyalama — ama ayrım sanıldığı yerde değil.**
 
 ```text
 ### 8-word spans found verbatim in the training corpus
-trigram model  (2 kelimelik bağlam)    5.8%
-5-gram model   (4 kelimelik bağlam)   91.6%
-neural, ctx=2  (2 kelimelik bağlam)    0.0%   (2.989 parçanın 0'ı)
+                      context    chapter (seed 7)        re-run, seeds 7 / 8 / 9
+trigram, MLE          2 words     5.8%                    7.0% / 6.8% / 7.2%
+5-gram,  MLE          4 words    91.6%                   91.8% / 92.6% / 93.9%
+trigram, Kneser-Ney   2 words       —                     1 of 9,262 spans
+neural, ctx=2         2 words     0.0% (0 of 2,989)       0 of 8,385 spans
 ```
 
-Yüzdelerden önce bağlam sütununu okuyun. %91,6, *dört* kelimeye koşullanan bir
-modele ait; yapay sinir ağı modeli ise iki kelimeye koşullanıyor. Bağlam
-uzunluğu eşitlendiğinde adil karşılaştırma, trigram'ın %5,8'ine karşı yapay
-sinir ağı modelinin %0,0'ı — hâlâ tek taraflı, ama artık aynı anda tek bir
-değişken oynuyor. 5-gram akıcılığını fazladan iki kelimelik bağlama borçlu;
-bu bağlamın bedelini de ancak kopyalayarak ödeyebiliyor. Asıl mesele bu, ama
-bu mesele mimari kadar bağlam uzunluğuyla da ilgili.
+Yüzdelerden önce bağlam sütununu okuyun. %91,6, *dört* kelimeye koşullanan
+bir MLE modeline ait; yapay sinir ağı modeli iki kelimeye koşullanıyor. Bağlam
+uzunluğu eşitlendiğinde MLE trigram'ı %5,8 kopyalıyor, sinir ağı hiç. Ama
+yeniden koşudaki üçüncü satır karşılaştırmayı değiştiriyor: aynı iki kelimelik
+bağlamla *düzleştirilmiş* Kneser-Ney trigram'ı da neredeyse hiç kopyalamıyor.
+Kopyalayan, düzleştirilmemiş sayım; sinir ağının kopyalamaması onu MLE'den
+ayırıyor, Kneser-Ney'den değil.
+
+Sinir ağı tarafında sıfır gözlem de bir sınır, garanti değil: üç tohumda 8.385
+pencerenin hiçbiri eğitimde birebir geçmiyor; "üç kuralı" ile bu, birebir
+eşleşme oranının büyük olasılıkla %0,04'ün altında olduğunu söylüyor — sıfır
+olduğunu değil. Daha kısa eşleşmeleri ya da anlamca kopyalamayı bu ölçü hiç
+görmüyor.
 
 Yapay sinir ağı modelinden örnekler (rastgele tohum, yani seed = 7):
 
@@ -1821,20 +1836,19 @@ sevimli hediye olarak aldım çok güzel çıktı olduğunu göreceksiniz…
 her gün bu <unk> bütün fonksiyonları bir verilen parayı hak ediyor…
 ```
 
-Bu metin 5-gram'ın çıktısından daha kötü — dağılıyor ve bir iki yan
-cümleden sonra ipin ucunu kaçırıyor. Ama **ürettiği 2.989 sekiz kelimelik
-parçanın bir tanesi bile eğitim verisinin hiçbir yerinde geçmiyor.**
-5-gram modeli akıcılığını hazır parçaları ezberden aktararak elde ediyordu;
-bu model ise benzer bir perplexity'de cümleyi kendisi kuruyor. Yoruma
-benzemekte daha kötü, ama ikisi arasında ileride gerçek bir üretime
-dönüşebilecek bir şey yapan tek model o.
+Bu metin MLE 5-gram'ının çıktısından daha kötü — dağılıyor ve bir iki yan
+cümleden sonra ipin ucunu kaçırıyor — ama eğitim metnini tekrarlamadan
+kuruluyor. Aynı bağlamlı Kneser-Ney trigram'ının örnekleri de kopya değil,
+ama gözle bakınca daha dağınık; bunu ölçmedik. Sinir ağını sayım modellerinden
+gerçekten ayıran şey bu bölümde perplexity ya da kopyalama oranı değil,
+embedding'ler ve (aşağıda) ölçekle birlikte neyin iyileşebildiği.
 
-Bu bölümün adım adım yaklaştığı ödünleşim (trade-off) bu ve Kısım II'nin var olma sebebi
-de bu. Kopyaladığı için akıcı olan bir modelle, cümleyi kendisi kurduğu
-için beceriksiz kalan bir model arasında seçim yapmak gerektiğinde,
-bütün alan beceriksiz olanın üstüne oynadı — sonradan görüldüğü
-gibi haklı olarak, çünkü beceriksiz olan ölçekle iyileşiyor, kopyalayan
-iyileşemiyor.
+Bu bölümün adım adım yaklaştığı ödünleşim (trade-off) bu ve Kısım II'nin var
+olma sebebi de bu. Sayarak kurulan modeller bu derlemde ya kopyalayarak akıcı
+ya da kopyalamadan dağınık kaldı. Alan, cümleyi kendisi kuran ve parametrelerini
+benzer bağlamlar arasında paylaşan modellerin üstüne oynadı; bu modellerin
+ölçekle nasıl iyileştiğini @sec-on-egitim gösteriyor. Sayım modellerinin
+çok daha büyük derlemlerde ne kadar iyileşeceğini ise bu bölüm ölçmedi.
 
 Son olarak, @sec-karsilastirma'teki cümle çifti, son bir kez
 puanlanmış hâliyle:
@@ -1845,11 +1859,12 @@ kalite iyi fiyat kötü    -11.069
 kalite kötü fiyat iyi    -11.262    ratio 1.561
 ```
 
-Beraberliği doğru yönde bozuyor, ama Kneser-Ney'in 2,933'ünden daha
-zayıf biçimde. Bu çiftte — dört yaygın kelime, bir kalıp ifade — sayma hâlâ
-daha iyi bir araç; ama tek bir çift bir örnektir, bir benchmark
-değil. 4. bölümün açık bıraktığı soru kapandı ve
-cevap, kurgunun ima ettiği kadar zafer dolu değil; asıl ders de zaten bu.
+O da `a` cümlesini tercih ediyor, ama Kneser-Ney'in 2,933'ünden daha zayıf
+biçimde (1,561). Tek bir çift bir örnek, bir benchmark değil: genel bir
+sıralamayı da, iki modelin anlamı ne kadar kavradığını da ölçmüyor. 4. bölümün
+açık bıraktığı soruya cevap verdik — sıralı bir dizinin artık bir olasılığı
+var — ve cevap, kurgunun ima ettiği kadar zafer dolu değil; asıl ders de
+zaten bu.
 
 ## Pencereden duruma
 

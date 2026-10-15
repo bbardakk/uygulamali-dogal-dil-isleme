@@ -1680,15 +1680,18 @@ by 20%, from 526.7 to 421.8. That is consistent with the probabilities
 complementing each other; which events the gain comes from is shown by the
 event-level log losses, not by a group average.
 
-### Two things the count model could never do
+### Two properties perplexity does not show {#two-things-the-count-model-could-never-do}
 
-The perplexity tie makes the neural model look worse than it is,
-because two of its
-properties do not show up in perplexity at all.
+Perplexity does not show two properties of the model at all: the word
+representations it learns, and how much it repeats the training text when
+sampled. Both have to be measured separately; the first really does set the
+neural model apart from the count models, the second less than it seems.
 
 **First, the embeddings.** Nobody asked for them. They are a by-product
-of training a language model, falling out of the first layer. Nearest
-neighbours by cosine, with each word's training frequency:
+of training a language model, falling out of the first layer: the next-word
+objective updates the embedding table too. Nearest neighbours by cosine, with
+each word's training frequency (nearness is not synonymy, and whether the
+vectors help on another task is a separate question to test):
 
 ```text
 güzel      (7547x)  harika, hoş, kaliteli, kaçırılmıyacak, kullanışlı
@@ -1706,36 +1709,48 @@ model discovered the shipping vocabulary of Turkish e-commerce from
 nothing but next-word prediction. And look at `hızlı`: its
 neighbours include the misspellings `hizli` and `hizlı` (and `mikemmel` for
 `mükemmel`); `tavsiye` ("recommendation"), not shown in the table, has
-`tevsiye`, `tafsiye` and `tasviye` among its neighbours. **The model learned that misspellings of a word are the same
-word**, because they occur in the same places. No count table can do
-that; to a count table `hızlı` and `hizli` are as unrelated as `hızlı`
-and `kedi`.
+`tevsiye`, `tafsiye` and `tasviye` among its neighbours. **The model gave a
+word's misspellings vectors close to the correct spelling**, because they occur
+in the same places. That does not mean it recognises them as the same word;
+being close is enough. A word-level count table cannot do that; to it `hızlı`
+and `hizli` are as unrelated as `hızlı` and `kedi`. (The counting side has its
+own routes: normalising the text first, or counting at the character level.)
 
 Now read the frequency column downwards, because the honesty of this
-chapter depends on it. The neighbours are excellent at 7,547
-occurrences, good at 2,472, thin at 657, and at 143 occurrences
+chapter depends on it. In these seven examples the neighbours are excellent
+at 7,547 occurrences, good at 2,472, thin at 657, and at 143 occurrences
 `kalitesiz` ("low quality") returns `konsantre`, `lezzetlı`, `kapıdaydı`
-— noise. [Embeddings are not magic; they are counts in a trench
+— noise. Frequency is one plausible cause (how many different contexts a word
+occurs in, and how many senses it has, play a part too); how many occurrences
+are enough cannot be read off a seven-row table. [Embeddings are not magic; they are counts in a trench
 coat]{.hl} — counts in disguise — and they degrade with the counts underneath them exactly as
 @sec-embeddings found. The sharing of statistical strength is real, and
 it has a floor.
 
-**Second, and more important: the neural model does not copy.**
+**Second, copying — but the difference is not where it seems.**
 
 ```text
 ### 8-word spans found verbatim in the training corpus
-trigram model  (2 words of context)    5.8%
-5-gram model   (4 words of context)   91.6%
-neural, ctx=2  (2 words of context)    0.0%   (0 of 2,989 spans)
+                      context    chapter (seed 7)        re-run, seeds 7 / 8 / 9
+trigram, MLE          2 words     5.8%                    7.0% / 6.8% / 7.2%
+5-gram,  MLE          4 words    91.6%                   91.8% / 92.6% / 93.9%
+trigram, Kneser-Ney   2 words       —                     1 of 9,262 spans
+neural, ctx=2         2 words     0.0% (0 of 2,989)       0 of 8,385 spans
 ```
 
-Read the context column before the percentages. The 91.6% belongs to a model
-conditioning on *four* words; the neural model conditions on two. Matched on
-context length the honest comparison is the trigram's 5.8% against the neural
-model's 0.0% — still one-sided, and now one variable at a time. The 5-gram buys
-its fluency with two extra words of context that it can only afford by copying,
-which is the point, but it is a point about context length as much as about
-architecture.
+Read the context column before the percentages. The 91.6% belongs to an MLE
+model conditioning on *four* words; the neural model conditions on two.
+Matched on context length, the MLE trigram copies 5.8% and the neural model
+nothing. But the third row, from the re-run, changes the comparison: with the
+same two words of context, the *smoothed* Kneser-Ney trigram hardly copies
+either. The copying comes from unsmoothed counting; the neural model's not
+copying sets it apart from MLE, not from Kneser-Ney.
+
+On the neural side, zero observations are a bound, not a guarantee: across
+three seeds none of 8,385 windows occurs verbatim in training; by the "rule of
+three" that says the verbatim-match rate is very probably below 0.04% — not
+that it is zero. Shorter matches, or copying of meaning, this measure does not
+see at all.
 
 Sampling from the neural model, seed 7:
 
@@ -1745,19 +1760,20 @@ sevimli hediye olarak aldım çok güzel çıktı olduğunu göreceksiniz…
 her gün bu <unk> bütün fonksiyonları bir verilen parayı hak ediyor…
 ```
 
-That text is worse than the 5-gram's output — it wanders, and it loses
-the thread after a clause or two. But **not one of the 2,989 eight-word
-spans it produced appears anywhere in the training data.** The 5-gram
-model achieved its fluency by retrieval; this model, at a similar
-perplexity, is composing. It is worse at sounding like a review and it is
-the only one of the two doing something that could ever become
-generation.
+That text is worse than the MLE 5-gram's output — it wanders, and it loses the
+thread after a clause or two — but it is put together without repeating the
+training text. The Kneser-Ney trigram's samples, with the same context, are not
+copies either, but to the eye they are more scattered; we did not measure that.
+What really sets the neural model apart from the count models in this chapter is
+not perplexity or the copying rate, but the embeddings and (below) what can
+improve with scale.
 
-That is the trade this chapter has been walking towards, and it is why
-Part II exists. Given the choice between a model that is fluent by
-copying and a model that is clumsy by composing, [the entire field bet on
-the clumsy one]{.hl} — correctly, as it turned out, because the clumsy
-one gets better with scale and the copier cannot.
+That is the trade this chapter has been walking towards, and it is why Part II
+exists. On this corpus the counted models were either fluent by copying or
+scattered without copying. The field bet on models that compose the sentence
+themselves and share their parameters across similar contexts; how those models
+improve with scale is what @sec-pretraining shows. How much the count models
+would improve on far larger corpora this chapter did not measure.
 
 Finally, the pair from @sec-bake-off, scored one last time:
 
@@ -1767,10 +1783,11 @@ kalite iyi fiyat kötü    -11.069
 kalite kötü fiyat iyi    -11.262    ratio 1.561
 ```
 
-It breaks the tie in the right direction, more weakly than Kneser-Ney's
-2.933. On this pair — four common words, one stock phrase — counting is
-still the better tool; one pair is an illustration, not a benchmark. The question chapter 4 left open is closed, and the
-answer is less triumphant than the setup implied — which is the answer.
+It also prefers sentence `a`, more weakly than Kneser-Ney's 2.933 (1.561).
+One pair is an illustration, not a benchmark: it measures neither an overall
+ranking nor how far either model grasps meaning. The question chapter 4 left
+open has an answer — an ordered sequence now has a probability — and the
+answer is less triumphant than the setup implied, which is the lesson.
 
 ## From a window to a state
 
