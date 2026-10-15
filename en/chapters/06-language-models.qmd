@@ -1500,24 +1500,51 @@ Kneser-Ney trigram           333.5         1,087,421 counts
 neural, ctx=2 32/128         332.4         4,801,934 parameters
 ```
 
-**That is a tie, not a victory.** A 0.3% difference is well inside the
-noise, and there is no need to take my word for it: retraining the same
-configuration, changing nothing, gave test 330.3 instead of 332.4. [The
-run-to-run variance is larger than the margin of victory.]{.hl} Anyone
-reporting this as "the neural model wins" is claiming too much, and the cheap
-way to catch it is the one used here — train it twice.
+**That is a tie, not a victory.** A 0.3% difference is inside the
+run-to-run variation: retraining the same configuration, changing nothing, gave
+test 330.3 instead of 332.4. [The run-to-run variance is larger than the margin
+of victory.]{.hl} Two runs do not give a distribution; in the re-run we tried
+five seeds:
+
+```text
+### re-run: neural ctx=2 32/128, five seeds, against Kneser-Ney trigrams
+seed                       0       1       2       3       4
+neural test ppl        333.5   332.7   335.6   331.9   332.6
+vs KN, d = 0.75 (336.5)  -0.9%   -1.1%   -0.3%   -1.4%   -1.2%
+vs KN, tuned d (320.2)   +4.1%   +3.9%   +4.8%   +3.7%   +3.9%
+```
+
+The five seeds average 333.2 with a standard deviation of 1.4. A paired
+bootstrap over the test reviews (which covers the uncertainty of the test
+sample, not of the seed) shows the difference from the $d = 0.75$ Kneser-Ney
+excluding zero for four of the five seeds: the neural model is ahead, by a small
+but consistent margin. Against the Kneser-Ney with a tuned discount it is about
+4% behind for all five. So the "tie" is a tie against a textbook-tuned
+Kneser-Ney; tune the counting side too and the count model leads. Improving both
+sides does not change that: the small network with five words of context
+reaches 324.1 (one seed), the tuned Kneser-Ney 5-gram 319.5. Anyone reporting
+this as "the neural model wins" is claiming too much, and the cheap way to catch
+it is the one used here — train it several times, and tune the model it is
+compared against.
 
 Note the second column too, because the usual claim that neural models
 are more compact is *false here*: the neural model stores four and a half
-times as many numbers as the count table it merely matches, and takes two
-minutes rather than one second to fit. Almost all of those numbers sit at the
+times as many numbers as the count table it merely matches, and in this
+implementation takes two minutes rather than seconds to fit. These are item
+counts, not bytes: with 32-bit weights the network is about 19 MB, while what
+the count table takes depends on how you store its keys and counts (much more
+in plain Python dictionaries, much less in compressed n-gram structures). Almost all of those numbers sit at the
 two ends of the network: the embedding table ($29{,}774 \times 32$) and the
 output layer ($128 \times 29{,}774$ weights plus one bias per word) together
 hold 4.79 of the 4.80 million parameters. The vocabulary size, not the hidden
 layer, sets the cost of a model like this.
 
-Which raises the obvious question — what was the point? Two answers, and
-the second is the one that matters.
+Which raises the obvious question — what was the point? Two answers. First,
+the two models are good in different places, so they can be combined, and the
+combination is clearly better than either (the next two subsections). Second,
+the neural model has properties perplexity does not show: it produces
+embeddings, and when sampled it does not copy the training text. We will
+measure which of those really sets it apart from the count models.
 
 ### Where the neural model's advantage actually lives
 
