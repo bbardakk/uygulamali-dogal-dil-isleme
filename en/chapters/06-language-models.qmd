@@ -1429,17 +1429,22 @@ epoch  train ppl   dev ppl
 ```
 
 Training perplexity falls through the floor while dev perplexity turns
-around at epoch 3. That is textbook overfitting: 9.6 million parameters
-against 896,000 training events, a ratio of roughly eleven parameters per
-example. Publishing "neural language models lose to Kneser-Ney" on the
+around at epoch 3. That is textbook overfitting. One number describes the
+capacity: 9.6 million parameters against 896,000 training events, roughly
+eleven parameters per event. That ratio does not prove the cause on its own
+(the events are not independent either); the evidence is the two curves
+pulling apart. Publishing "neural language models lose to Kneser-Ney" on the
 strength of that run would have been a statement about my hyperparameter
 choices dressed up as a statement about architectures.
 
-So the honest next step is a search — on the **dev** split, with test
-untouched until the end.
+So the honest next step is a search, choosing on the **dev** split. A note in
+the same spirit: we had already read the first run's test value (429.0), and
+the table below prints every configuration's test value too. They were not
+used to choose, but that makes them exploratory results shown for audit, not
+an independent final evaluation.
 
 ```text
-### 7 configurations, ranked by dev perplexity
+### 7 configurations, ranked by dev perplexity (test shown for audit, not used to choose)
 ctx   emb   hid   drop        params       dev      test
   2    32   128    0.5     4,801,934     329.8     332.4
   2    64   256    0.5     9,590,478     362.5     362.6
@@ -1451,23 +1456,41 @@ ctx   emb   hid   drop        params       dev      test
 ```
 
 Read that table from the bottom up, because the ordering is the lesson.
-[Apart from one row, every step *down* in capacity was a step up in
-quality.]{.hl} (The exception is the `drop=0.2` run: it has exactly as many
+[In this sweep, apart from one row, every step *down* in capacity was a step up
+in quality.]{.hl} (The exception is the `drop=0.2` run: it has exactly as many
 parameters as the second row, 9,590,478, and differs from it only in
 regularisation — raising dropout alone moved test perplexity from 429.0 to
-362.6.) The largest model tried, with
+362.6.) The table is not a one-variable sweep: context, embedding, hidden layer
+and dropout change together from row to row, so the ordering cannot be pinned
+on a single cause. The largest model tried, with
 five words of context and 19.4 million parameters, is the worst model in the
 sweep at 548.8 — worse than every interpolated and Kneser-Ney n-gram model in the
 smoothing table. The winner is the smallest model tried: two words
 of context, 32-dimensional embeddings, a 128-unit hidden layer.
 
 This is the same lesson as @sec-bake-off's, arriving through a different
-door. Thirty-eight thousand reviews is a small corpus. On a small corpus
-the binding constraint is data, not capacity, and extra parameters buy
-you nothing but a faster route to memorising the training set. The
-`ctx=5` row is the clearest case: giving the model more context made it
-strictly worse, because it had no more evidence with which to use that
-context.
+door. Thirty-eight thousand reviews is a small corpus. On a small corpus the
+binding constraint is often data, not capacity, and extra parameters may buy
+you nothing but a faster route to memorising the training set.
+
+At first sight the `ctx=5` row says "more context made the model worse"; but in
+that row the embeddings and the hidden layer grew along with the context. In
+the re-run we changed only the context, holding the smallest configuration
+(32/128/0.5) fixed:
+
+```text
+### re-run: only the context changes (emb 32, hid 128, drop 0.5)
+ctx        params       dev      test
+  2     4,802,578     319.0     333.5
+  3     4,806,674     315.5     327.0
+  5     4,814,866     312.9     324.1
+```
+
+On the same small network, longer context *helps*. The sweep's bad `ctx=5` came
+not from the context but from the capacity that grew with it. It is a
+single-seed measurement and the sweep had only seven rows, but the table is a
+reminder that the winner of a sweep is not the best of the configurations
+nobody tried.
 
 ### The result, stated honestly
 
