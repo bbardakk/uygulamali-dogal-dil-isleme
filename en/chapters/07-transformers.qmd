@@ -625,9 +625,12 @@ exactly as designed, since verbs advertise nothing.
 ### Step 3 — divide by the square root of the head size
 
 Why divide at all? Because dot products grow with dimension, and a softmax
-handed large numbers becomes almost one-hot — one token takes all the weight
-and the gradient through the rest vanishes. Dividing keeps the scores in a
-range where the softmax still has opinions rather than certainties.
+handed large numbers becomes almost one-hot — one token takes nearly all the
+weight and the gradient through the rest becomes very small. If the components
+of $q$ and $k$ are independent with mean zero and unit variance, dividing makes
+the scale of the scores independent of the head width and reduces that
+saturation; a trained head's vectors need not satisfy that assumption, so the
+division does not prevent saturation in every case.
 
 $$
 \frac{QK^{\top}}{\sqrt{d_k}} = \frac{QK^{\top}}{\sqrt{2}}
@@ -648,7 +651,8 @@ $d_k$-dimensional vectors (independent components with zero mean and unit
 variance) has a standard deviation that grows like
 $\sqrt{d_k}$, so without the division the scores get systematically larger as
 heads get wider — and softmax reacts to *absolute* size. Measured over 20,000
-random pairs:
+random pairs with independent standard-normal components (not a trained head;
+this tests the assumption itself):
 
 | $d_k$ | std. dev. of $q\cdot k$ | $\sqrt{d_k}$ | after dividing by $\sqrt{d_k}$ |
 |--:|--:|--:|--:|
@@ -676,8 +680,8 @@ average weight the *winning* key receives:
 ::: {.callout-note appearance="simple" icon="false"}
 Without the scaling, a 512-dimensional head hands 93% of its weight to a
 single token — before it has learned anything. That is a softmax in
-saturation, and a saturated softmax has almost no gradient, so the head can no
-longer be *taught* where to look. With the scaling, the competition stays at
+saturation, and a saturated softmax has very small derivatives with respect to
+its scores, so *teaching* the head where to look becomes very hard. With the scaling, the competition stays at
 roughly the same temperature no matter how wide the head is. The scaled column
 barely moves: 0.104, 0.105, 0.108, 0.107.
 :::
