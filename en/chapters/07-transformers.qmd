@@ -2572,7 +2572,8 @@ the same result without ever building it.
 ### When does attention actually dominate?
 
 The quadratic term is not always the term that matters, and people routinely
-overestimate it. Per layer, ignoring constants:
+overestimate it. Assuming full multi-head attention and $d_{\text{ff}} = 4d$, per
+layer in a full-sequence forward pass, roughly (as FLOP counts):
 
 $$
 \underbrace{24\,n\,d^2}_{\text{projections and FFN}}
@@ -2580,9 +2581,10 @@ $$
 \underbrace{4\,n^2 d}_{\text{scores and weighting}}
 $$
 
-Setting them equal gives $n = 6d$. Below that, the transformer spends most of
-its time on matrix multiplications that are perfectly ordinary and linear in
-sequence length:
+Setting them equal gives $n = 6d$. That is a rough threshold for operation
+counts; real latency also depends on memory access, the kernel and the hardware.
+Below it, the transformer spends most of its arithmetic on matrix
+multiplications that are perfectly ordinary and linear in sequence length:
 
 | $d_{\text{model}}$ | sequence length $n$ | | attention's share of FLOPs |
 |--:|--:|:--|--:|
@@ -2593,12 +2595,14 @@ sequence length:
 | 4,096 | 24,576 | *crossover* | 50% |
 | 4,096 | 100,000 | | 80% |
 
-[At the context lengths most applications actually use, attention is a
-*minority* of the compute.]{.hl} A 4,096-wide model running 4,096 tokens
+[At contexts of a few thousand tokens, attention is a *minority* of the
+arithmetic.]{.hl} A 4,096-wide model running 4,096 tokens
 spends 86% of its arithmetic on the feed-forward and projection matrices. The
 quadratic term is a wall you hit at long context, not a tax you pay at every
-length — and knowing which regime you are in tells you whether optimising
-attention is worth any of your time.
+length. Knowing which regime you are in is a good first hint as to whether
+optimising attention is worth your time; but even with a small FLOP share,
+attention can be a bottleneck through memory traffic (next section), so decide
+on measured latency.
 
 ### FlashAttention: don't build the matrix
 
