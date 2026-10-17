@@ -3363,40 +3363,44 @@ cevaplar sayılarla birlikte veriliyor.
 ::: {.column-margin}
 "Attention'ı anlat" denirse, softmax formülüyle başlama dürtüsüne direnin.
 Attention'ın *ne işe yaradığıyla* başlayın — her token diğer her token'a
-bakabilir ve her birinin ne kadar önemli olduğunu öğrenebilir — sonra formülü
-türetin. Mülakatçılar konuyu kavradığınızı mı yoksa ezberlediğinizi mi anlamaya
-çalışır; anlatma sıranız sizi ele verir.
+bakabilir ve her birinden ne kadar bilgi alacağını öğrenebilir — sonra formülü
+türetin: Q/K skorları, softmax ağırlıkları, V karışımı. Bu sıra, hesapla işlev
+arasındaki bağı görünür kılar.
 :::
 
 1. **Regresyon bilen birine self-attention'ı anlatın.** Öğrenilmiş bir ağırlıklı
    ortalamadır. Her token bir query öne sürer, her token bir key ilan eder, iç
    çarpımlar softmax'tan geçerek ağırlığa dönüşür ve çıktı, bu ağırlıkların
-   value'lara uygulanmış hâlidir. Alışılmadık olan tek kısım, ağırlıkların bir
-   kez kestirilmek yerine *çıkarım anında veriden hesaplanmasıdır* — aynı
+   value'lara uygulanmış hâlidir. Alışılmadık olan kısım şu: eğitim Q/K/V
+   izdüşümlerinin parametrelerini öğrenir, ama attention ağırlıkları bir kez
+   kestirilmez, *her girdi için çıkarım anında yeniden hesaplanır* — aynı
    kelimenin farklı bir cümlede farklı bir vektör almasının sebebi
    budur. Sonra ölçeklemeden söz edin: skorlar $\sqrt{d_k}$'ya bölünür, çünkü
-   $d_k$ boyutlu vektörlerin iç çarpımları $\sqrt{d_k}$ ile orantılı büyür ve
-   ölçeklenmemiş bir softmax doyuma ulaşır.
+   bileşenleri bağımsız ve birim varyanslı $d_k$ boyutlu vektörlerin iç
+   çarpımları $\sqrt{d_k}$ ile orantılı büyür ve ölçeklenmemiş bir softmax
+   doyuma yaklaşır.
 
 2. **Attention'dan sonra neden bir feed-forward ağı var?** Çünkü attention
    token'ları karıştırır ama ağırlıkları verildiğinde bunu *value'lar açısından
    doğrusal* biçimde yapar — içerdiği doğrusal olmayanlık, taşıdığı şeyi
    işleme biçiminde değil, ağırlıkları hesaplama biçiminde yatar. Her token'ın
    kendine özgü doğrusal olmayan bir işlemden geçtiği yer feed-forward alt
-   katmanıdır: $W_1$ bir
-   dedektör bankası, $W_2$ ise her dedektörün tetiklendiğinde yaydığı şeydir. Oranı doğru bilin, çünkü adayların çoğu
+   katmanıdır; bir okumaya göre $W_1$ bir dedektör bankası, $W_2$ ise her
+   dedektörün tetiklendiğinde yaydığı şeydir. Oranı doğru bilin, çünkü adayların çoğu
    tersini söylüyor: bu bölüm boyunca kullanılan standart
    $d_{\text{ff}} = 4d$ bloğunda [bir transformer bloğunun parametrelerinin üçte
    ikisi feed-forward alt katmanıdır]{.hl}, attention değil. Oran bu
-   $d_{\text{ff}}$ tercihinden çıkar; başka türlü kurulmuş bir blok için
-   aktarmadan önce kontrol edin.
+   $d_{\text{ff}}$ tercihinden ve tam genişlikli attention'dan çıkar; GQA,
+   SwiGLU ya da MoE kullanan bir blok için yeniden hesaplayın.
 
-3. **Bir modelin GPU'nuza sığıp sığmadığını nasıl kestirirsiniz?** İki sayıyı
-   toplarsınız. Ağırlıklar: parametre × parametre başına bayt (fp16'da 7B = 14 GB).
+3. **Bir modelin GPU'nuza sığıp sığmadığını nasıl kestirirsiniz?** İlk
+   yaklaşım olarak iki sayıyı toplarsınız. Ağırlıklar: parametre × parametre başına bayt (fp16'da 7B = 14 GB).
    KV önbelleği: $2 \times \text{katman} \times \text{KV head} \times
    \text{head boyutu} \times \text{token} \times \text{bayt}$, **eşzamanlı istek
    başına**. Çözümlü örneği verin: 32.768 token'da 7B'lik bir model 14 GB ağırlık
-   ve 17,2 GB önbellek ister; yani bağlam şimdiden modelden pahalıya gelmiştir.
+   ve 17,2 GB ham önbellek ister; yani bağlam şimdiden modelden pahalıya
+   gelmiştir. Sonra aktivasyonlar, attention çalışma alanı, bellek ayırıcısı ve
+   dağıtım payı için yer bırakın; gerçek ihtiyaç bundan yüksek olur.
    Kıdemli bir cevap, maliyeti düşürecek yöntemi de adlandırır — GQA,
    nicemleme ya da daha kısa bağlam — ve önce hangisine başvuracağınızı
    söyler.
@@ -3406,8 +3410,9 @@ türetin. Mülakatçılar konuyu kavradığınızı mı yoksa ezberlediğinizi m
    sırasını değiştirdiği için yalnızca son basamaklar oynar. Değiştirdiği şey
    *belleğe neyin yazıldığıdır*: $n \times n$ skor matrisi hiç
    somutlaştırılmaz, bunun yerine hızlı yonga içi bellekte kalan bloklar
-   hâlinde hesaplanır. Bu, attention'ı bellek bant genişliği sınırlı
-   olmaktan çıkarıp hesap sınırlı hâle getirir. Motivasyonu veren sayı: 100.000
+   hâlinde hesaplanır. Uzun dizilerde bu, attention'ı bellek bant genişliği
+   sınırlı olmaktan çıkarıp hesap sınırlı olmaya yaklaştırır; duvar saati
+   etkisini dizi uzunluğu, head boyutu ve donanımla ölçün. Motivasyonu veren sayı: 100.000
    token'da **tek katmandaki tek bir head** için tek bir skor matrisi fp16'da
    18,63 GiB. Bunu 32 head ve 32 katmanla çarpın; naif sürüm yavaş değil,
    imkânsızdır.
@@ -3421,14 +3426,18 @@ türetin. Mülakatçılar konuyu kavradığınızı mı yoksa ezberlediğinizi m
    Decoder-only nedensel olarak maskelenmiştir ve üretim için gereken odur. Encoder-decoder ikisini birden
    tutar ve decoder'ın encoder'a bakmasına izin verir; çeviride varlığını
    sürdürmesinin sebebi budur. Pratik sürümü söyleyin: etiketli sınıflandırmada
-   2026'da hâlâ varsayılan encoder'dır; ölçüm için bkz. @sec-siniflandirma-kesisim.
+   encoder güçlü bir başlangıç noktası olmayı sürdürüyor (bu kitaptaki ölçüm
+   için bkz. @sec-siniflandirma-kesisim); seçimi kalite, gecikme ve servis
+   yüküyle kendi görevinizde verin.
 
-6. **Transformer'lar RNN'lerin yerini neden aldı?** İfade güçleri daha
+6. **Transformer'lar RNN'lerin yerini neden aldı?** Temelde ifade güçleri daha
    yüksek olduğu için değil — eğitimde paralelleştirilebildikleri için. Bir RNN
    $t+1$'inci token'dan önce $t$'inci token'ı işlemek zorundadır; transformer
-   bütün konumları aynı anda hesaplar, bu da ardışık bir bağımlılığı matris
-   çarpımına çevirir ve GPU'yu düzgün kullanmanızı sağlar. Bedeli, karesel terim
-   ve sınırsız bağlamın kaybıdır. Şunu net söyleyin: bu, ölçeğin önünü açan bir
+   bir katmandaki bütün konumları aynı anda hesaplar (katmanlar yine sırayla
+   gelir), bu da ardışık bir bağımlılığı matris çarpımına çevirir ve GPU'yu
+   düzgün kullanmanızı sağlar. Bedeli, yoğun attention'daki karesel terim ve
+   sonlu bir bağlam penceresidir (RNN'in bağlamı da ilkesel olarak sınırsızdır,
+   ama sonlu bir gizli durumda özetlenir). Şunu net söyleyin: bu, ölçeğin önünü açan bir
    *mühendislik* zaferiydi ve yetenekleri üreten şey ölçekti.
    @sec-olcekleme-yasalari bu argümanı nicel olarak kuruyor.
 

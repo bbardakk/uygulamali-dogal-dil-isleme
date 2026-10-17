@@ -3287,45 +3287,51 @@ The answers below are the ones with numbers attached.
 ::: {.column-margin}
 If you get asked to "explain attention", resist the temptation to start with
 the softmax formula. Start with what it is *for* — every token can look at
-every other token and learn how much each one matters — then derive the
-formula. Interviewers are listening for whether you understand it or memorised
-it, and the order gives you away.
+every token it may see and learn how much to take from each — then derive the
+formula: Q/K scores, softmax weights, the V mixture. That order makes the link
+between the computation and its job visible.
 :::
 
 1. **Explain self-attention to someone who knows regression.** It is a learned
    weighted average. Each token proposes a query, every token advertises a key,
    the dot products become weights through a softmax, and the output is those
-   weights applied to the values. The only unusual part is that the weights are
-   *computed from the data at inference time* rather than fitted once — which is
+   weights applied to the values. The unusual part: training learns the
+   parameters of the Q/K/V projections, but the attention weights are not fitted
+   once — they are *recomputed for each input at inference time* — which is
    exactly what makes the same word get a different vector in a different
    sentence. Then name the scaling: divide by $\sqrt{d_k}$, because dot products
-   of $d_k$-dimensional vectors grow like $\sqrt{d_k}$ and an unscaled softmax
-   saturates.
+   of $d_k$-dimensional vectors with independent unit-variance components grow
+   like $\sqrt{d_k}$ and an unscaled softmax drifts towards saturation.
 
 2. **Why is there a feed-forward network after attention?** Because attention
    mixes tokens but, given its weights, does so *linearly in the values* — the
    non-linearity it does have lives in how the weights are computed, not in what
    it does with what it moves. The feed-forward sublayer is where each token
-   gets non-linear processing of its own: $W_1$ is a bank of detectors and
-   $W_2$ is what each detector broadcasts when it fires. Get the proportion right, because most candidates
+   gets non-linear processing of its own; on one reading $W_1$ is a bank of
+   detectors and $W_2$ is what each detector broadcasts when it fires. Get the proportion right, because most candidates
    have it backwards: in the standard $d_{\text{ff}} = 4d$ block used
    throughout this chapter, [two thirds of a transformer block's parameters are
    the feed-forward sublayer]{.hl}, not attention. The ratio follows from that
-   choice of $d_{\text{ff}}$, so check it before quoting it elsewhere.
+   choice of $d_{\text{ff}}$ and from full-width attention; recompute it for a
+   block with GQA, SwiGLU or MoE.
 
-3. **How do you estimate whether a model fits on your GPU?** Two numbers, added.
+3. **How do you estimate whether a model fits on your GPU?** As a first
+   approximation, two numbers, added.
    Weights: parameters × bytes per parameter (7B at fp16 = 14 GB). KV cache:
    $2 \times \text{layers} \times \text{KV heads} \times \text{head dim} \times
    \text{tokens} \times \text{bytes}$, **per concurrent request**. Give the
    worked case: a 7B model at 32,768 tokens needs 14 GB of weights and 17.2 GB
-   of cache, so context has already cost more than the model. The senior version
+   of raw cache, so context has already cost more than the model. Then leave
+   room for activations, attention workspace, the allocator and the deployment;
+   the real requirement is higher. The senior version
    of the answer names the lever — GQA, quantisation, or a shorter context — and
    says which one you would pull first.
 
 4. **What does FlashAttention actually change?** Not the mathematics: it computes the same function, and only the last digits move, because the tiled sums re-associate floating-point addition. It changes *what gets written to memory*: the $n \times
    n$ score matrix is never materialised, computed instead in tiles that stay in
-   fast on-chip memory. That turns attention from memory-bandwidth-bound to
-   compute-bound. The number that motivates it: at 100,000 tokens one score
+   fast on-chip memory. At long sequences that moves attention from
+   memory-bandwidth-bound towards compute-bound; measure the wall-clock effect for
+   your sequence length, head size and hardware. The number that motivates it: at 100,000 tokens one score
    matrix for **one head at one layer** is 18.63 GiB in fp16. Multiply by 32
    heads and 32 layers and the naive version is not slow, it is impossible.
 
@@ -3337,15 +3343,19 @@ it, and the order gives you away.
    result in @sec-classification. Decoder-only is causally masked and is what
    you need to generate. Encoder-decoder keeps both and lets the decoder attend
    to the encoder, which is why it persists in translation. Say the practical
-   version: [for classification with labels, an encoder is still the default in
-   2026]{.hl}, and @sec-classification-crossover has the measurement.
+   version: [for classification with labels, an encoder is still a strong
+   starting point]{.hl} (@sec-classification-crossover has this book's
+   measurement); make the choice on quality, latency and serving load for your
+   own task.
 
-6. **Why did transformers replace RNNs?** Not because they are more expressive —
-   because they are parallelisable in training. An RNN must process token $t$
-   before token $t+1$; a transformer computes all positions at once, which
-   converts a sequential dependency into a matrix multiplication and lets you
-   use a GPU properly. The cost is the quadratic term and the loss of unbounded
-   context. Be precise that this was an *engineering* win that unlocked scale,
+6. **Why did transformers replace RNNs?** Not mainly because they are more
+   expressive — because they are parallelisable in training. An RNN must process
+   token $t$ before token $t+1$; a transformer computes all positions of a layer
+   at once (layers still come in sequence), which converts a sequential
+   dependency into a matrix multiplication and lets you use a GPU properly. The
+   cost is the quadratic term of dense attention and a finite context window (an
+   RNN's context is unbounded in principle, but squeezed into a finite hidden
+   state). Be precise that this was an *engineering* win that unlocked scale,
    and that scale is what produced the capabilities — the argument
    @sec-scaling-laws makes quantitatively.
 
