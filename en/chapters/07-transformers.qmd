@@ -265,8 +265,8 @@ $$
 Only the **product** $M$ ever touches the score. A single learned $d \times d$
 matrix would give the same scores — still asymmetric, still free of the
 self-similarity trap, because nothing forces $M$ to be symmetric. So the honest
-claim is not "two matrices are necessary"; it is [two matrices are necessary
-*once you also want the model to be cheap*]{.hl}. Three concrete reasons:
+claim is not "two matrices are necessary"; it is [two matrices are a *choice*
+you make once you also want the model to be cheap]{.hl}. Three concrete reasons:
 
 - **Parameters.** For a 7B-class model (Llama 2 7B: $d = 4096$, 32 heads
   of $d_k = 128$): one head's
@@ -275,8 +275,9 @@ claim is not "two matrices are necessary"; it is [two matrices are necessary
   is the same for a whole layer, since you would need one $M$ per head:
   $32$ heads cost $2d^2 = 33.5$M factored against $32d^2 = 537$M unfactored.
   The factorisation is a deliberate low-rank constraint: $M$ is forced to rank
-  $\le d_k$, and that is a feature, not a loss.
-- **Arithmetic.** Scoring through $Q$ and $K$ costs $O(n^2 d_k)$. Scoring
+  $\le d_k$. A full $M$ would offer a wider family of scores; factoring gives
+  some of that expressiveness up in exchange for cost.
+- **Arithmetic.** With $Q$ and $K$ already computed, pairwise scoring costs $O(n^2 d_k)$. Scoring
   through $M$ costs $O(n^2 d)$ — you would pay $d/d_k = 32\times$ more for the
   same numbers.
 - **Cache width.** This is the one that decides the design. With $M$ you can
@@ -286,8 +287,8 @@ claim is not "two matrices are necessary"; it is [two matrices are necessary
   own, and once they live there you can *shrink that space*: letting each key
   head serve four query heads (8 key heads instead of 32) takes the keys in
   the cache from $4096$ numbers per token per layer to $1024$. That trick is called GQA, it is the subject of
-  @sec-attention-cost, and it is impossible to even state without a separate
-  $W^K$.
+  @sec-attention-cost. A separate $W^K$ makes that narrow, shared cache natural
+  and efficient; a single full $M$ gives no direct way to build the same layout.
 
 The same non-identifiability applies on the value path: a head's output enters
 the residual stream as $x W^V W^O_{\text{head}}$, another product of two
@@ -391,7 +392,9 @@ real ones for `içti` from the head built in @sec-attention-worked.
 That last point deserves its own sentence, because it explains why the softmax
 is there at all rather than some simpler normalisation. A hard lookup — take
 the single best-matching key — is a step function, and step functions have zero
-gradient almost everywhere, so nothing upstream could ever learn. [Softmax is
+gradient almost everywhere, so with ordinary backpropagation nothing upstream
+could learn (there are other ways to train discrete choices, all more
+roundabout). [Softmax is
 the price of being able to train the thing]{.hl}: it keeps the "pick the best
 match" behaviour in spirit, while leaving a usable derivative with respect to
 every score.
