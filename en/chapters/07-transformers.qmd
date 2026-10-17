@@ -2849,21 +2849,39 @@ On the 32-layer, 32-head, 100,000-token model above:
 | GQA | 8 | 13.1 GB | **4×** |
 | MQA | 1 | 1.6 GB | **32×** |
 
-MQA's 32× is tempting and slightly too aggressive — quality degrades and
-training gets unstable. GQA with 4 or 8 groups recovers essentially all the
-quality for most of the saving, which is why Llama 2 70B, Llama 3, Mistral,
-and nearly everything since ship with it. [It is a rare case where the
-efficiency trick has almost no accuracy cost, which is exactly why it became
-universal.]{.hl}
+MQA's 32× is tempting and often slightly too aggressive — in the GQA paper's
+experiments MQA lost quality and trained less stably. GQA with 4 or 8 groups
+kept most of the saving and recovered nearly all the quality in those
+experiments, which is why Llama 2 70B, Llama 3, Mistral, and many models since
+ship with it. [It is a rare case where the efficiency trick costs very little
+accuracy, which is why it became so common]{.hl} (still measure the quality–speed
+balance for your own model and task).
 
 Notice, finally, that this is a decision you inherit rather than tune. You
 cannot flip an MHA checkpoint to GQA in your serving config. You *can* convert
 one — the GQA paper's own recipe mean-pools the key and value heads of each
 group and then **uptrains** on roughly 5% of the original pretraining compute
 [@ainslie2023gqa] — but 5% of a pretraining run is still a training run, with a
-cluster and a budget and a week. For every practical purpose, "how big is the
+cluster, a budget and days to weeks depending on the model's scale. For every practical purpose, "how big is the
 KV cache" belongs in your model-selection checklist, not in your optimisation
 backlog.
+
+**Other ways out of the quadratic term and the growing cache.** The techniques
+in this section fall into three branches. *Kernel optimisations that speed up
+full attention* — FlashAttention, say — leave the result unchanged and only
+reduce memory traffic. *Sparse or windowed attention* lets each token look at a
+subset only: in sliding-window attention a token sees just the last $w$ tokens,
+and if the implementation drops older K/V entries that layer's cache stays
+bounded by $w$ (the first Mistral 7B used it in every layer, Gemma 2 and 3 in
+some of them). *Methods that compress the cache or replace attention* go
+further: DeepSeek's MLA (multi-head latent attention) compresses keys and values
+into a low-dimensional latent vector and caches that; linear attention and
+state-space layers — Mamba, Gated DeltaNet — summarise the past in a fixed-size
+state and never build the $n \times n$ matrix. Some current models mix these:
+of the 40 layers of `qwen3.6:35b-a3b`, measured in this book, 30 are Gated
+DeltaNet and only 10 are full attention (the `layer_types` field of its official
+config, checked on 15 October 2026), so the KV-cache formula above applies to
+those 10 layers only, while the other 30 keep a fixed-size state.
 
 ## Mixture of Experts {#sec-moe}
 
