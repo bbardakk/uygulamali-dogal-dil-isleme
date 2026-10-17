@@ -3163,24 +3163,30 @@ Usually false, and believing it sends you optimising the wrong thing.
 
 Per layer the two terms are $24nd^2$ for the projections and feed-forward
 against $4n^2d$ for attention. They are equal at $n = 6d$ — so for a
-4,096-wide model the crossover is at **24,576 tokens**. At the 4,096-token
-context most applications actually run, [attention is 14% of the arithmetic
-and the feed-forward and projection matrices are 86%]{.hl}.
+4,096-wide model the crossover is at **24,576 tokens**. At a 4,096-token
+context [attention is 14% of the arithmetic and the feed-forward and projection
+matrices are 86%]{.hl} (assuming full multi-head attention and
+$d_{\text{ff}} = 4d$, as operation counts).
 
 The quadratic term is a wall you hit at long context, not a tax you pay at
 every length. Before optimising attention, work out which regime you are in;
-if $n < 6d$ you should be looking at the feed-forward half instead.
+if $n < 6d$ most of the arithmetic is in the feed-forward half. But $n = 6d$ is
+not a wall-clock threshold: prefill and decode behave differently, and attention
+can still bottleneck on memory traffic. The measured profile has the last word.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. If Q, K and V all come from the same input, why not use one matrix instead of three?
 
-Because they answer three different questions, and collapsing them removes the
-model's ability to ask.
+Because they answer three different questions. Which "one matrix" you mean
+matters: using the same vector as both query and key (one shared projection)
+makes the score table symmetric, while a single learned $M$ in $x_i M x_j^{\top}$
+can give directed scores but is expensive (see *Two matrices, or one?*). What
+follows is the shared-projection case.
 
 $Q$ is what a token is looking *for*; $K$ is what it offers to be found *by*;
 $V$ is what it actually contributes once found. [$Q$ and $K$ together decide
-**where** information moves; $V$ alone decides **what** moves.]{.hl} Tie them
+**where** information moves; $V$ supplies **what** moves.]{.hl} Tie them
 and a token's advert becomes identical to its query, so the score table is
 forced to be a symmetric Gram matrix (a table of all pairwise dot products). Row normalisation can still produce
 different weights in the two directions; what a head loses is the ability to
@@ -3196,15 +3202,17 @@ dot product of the inputs.
 ::: {.callout-note collapse="true"}
 ## 3. Your model has 100,000 tokens of context. What is the first resource to run out?
 
-Memory, and not the model's. A 7B model in fp16 is 14 GB of weights. Its KV
+Under this example's assumptions (full MHA, fp16, one GPU): memory, and not the
+model's. A 7B model in fp16 is 14 GB of weights. Its KV
 cache at 100,000 tokens is **52.4 GB** — [nearly four times the model itself,
 for one conversation]{.hl} — and that figure is *per concurrent request*,
 while the weights are shared across all of them.
 
 This is why the KV cache, not the parameter count, usually decides how many
 users a GPU can serve, and why GQA became universal: dropping from 32 KV heads
-to 8 takes the same cache from 52.4 GB to **13.1 GB**, a 4× saving with
-essentially no quality cost.
+to 8 takes the same cache from 52.4 GB to **13.1 GB**, a 4× saving with very
+little quality cost in published experiments. Once GQA, KV quantisation or
+several GPUs come in, the first limit may be bandwidth or another memory item.
 
 If you answered "the $n \times n$ score matrix", that was the right answer
 before FlashAttention, which never materialises it.
@@ -3218,21 +3226,26 @@ entire point of the architecture.
 
 You must hold **all** 35B parameters in memory, because any token might route
 to any expert. But only the top-$k$ experts run per token — about 3B active —
-so latency tracks the small number. [Total parameters set your hardware bill;
-active parameters set your latency.]{.hl}
+so per-token arithmetic tracks the small number. [Total parameters set your
+memory bill; active parameters set your per-token arithmetic;]{.hl} latency also
+depends on bandwidth, routing balance and the deployment layout.
 
 @sec-classification-crossover measured exactly this: `qwen3.6:35b-a3b`
 classifies a document in 0.353 s against 0.365 s for a *dense* 9.7B model and
-0.592 s for a dense 27.4B — faster than both, while scoring higher than both,
-and needing 23.9 GB on disk to do it.
+0.592 s for a dense 27.4B (on the same laptop, through `ollama`, all four
+quantised to 4 bits, median per document) — in that setup faster than both,
+while scoring higher than both, from a 23.9 GB quantised file on disk, which is
+not the same as working memory. On other hardware or another task the order can
+change.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Your model was trained with 1,024-position embeddings. What happens at token 1,025?
 
 With learned absolute positions, nothing good: there is no row 1,025 in the
-table, so the model has no vector to add. GPT-2 cannot process a longer
-sequence at all — the failure is a lookup error, not a degradation.
+table, so the model has no vector to add. GPT-2's standard forward pass does
+not accept a longer sequence — the failure is a lookup error, not a degradation
+(implementations can work around it by truncating or with a sliding window).
 
 This is the concrete reason the field moved to RoPE and ALiBi. RoPE encodes
 position as a *rotation*, so the score between two tokens depends only on
@@ -3243,7 +3256,7 @@ when the position vector is added to the embedding instead. [When position enter
 missing.]{.hl}
 
 Note what this does *not* buy: extrapolating far beyond the training length
-still degrades quality. It removes a hard failure and replaces it with a soft
+still often degrades quality; it has to be measured. It removes a hard failure and replaces it with a soft
 one.
 :::
 
@@ -3255,8 +3268,9 @@ width never changes.
 
 Attention and the feed-forward network both take the residual stream in and
 add a correction back. That is why [stacking blocks is trivial — block 12
-looks exactly like block 1]{.hl} — and it is why pre-norm normalises the
-residual sum rather than the sublayer output.
+looks exactly like block 1]{.hl}. In pre-norm the normalisation sits at each
+branch's *input*: the branch reads the residual stream (all the sums so far)
+normalised, and adds its own output back un-normalised.
 
 The practical consequence: when you inspect what a transformer "knows" at some
 depth, you are reading the residual stream, not any one layer's output. So does

@@ -3236,25 +3236,31 @@ koyulursunuz.
 
 Katman başına iki terim şu: izdüşümler ve feed-forward için $24nd^2$, attention
 için $4n^2d$. $n = 6d$'de eşitleniyorlar — yani 4.096 genişliğindeki bir model
-için dönüm noktası **24.576 token**. Uygulamaların çoğunun gerçekte çalıştığı
-4.096 token'lık bağlamda attention aritmetiğin %14'ü, feed-forward ve izdüşüm
-matrisleri ise %86'sı.
+için dönüm noktası **24.576 token**. 4.096 token'lık bir bağlamda attention
+aritmetiğin %14'ü, feed-forward ve izdüşüm matrisleri ise %86'sı (tam
+multi-head attention ve $d_{\text{ff}} = 4d$ varsayımıyla, işlem sayısı
+olarak).
 
 Karesel terim uzun bağlamda çarptığınız bir duvardır, her uzunlukta ödediğiniz
 bir vergi değil. Attention'ı optimize etmeden önce hangi rejimde olduğunuzu
-hesaplayın; $n < 6d$ ise bakmanız gereken yer feed-forward tarafıdır.
+hesaplayın; $n < 6d$ ise aritmetiğin çoğu feed-forward tarafında. Ama $n = 6d$
+bir duvar saati eşiği değil: prefill ile decode farklı davranır ve attention
+bellek trafiği yüzünden yine darboğaz olabilir. Son kararı ölçülen profil
+verir.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Q, K ve V aynı girdiden geliyorsa neden üç matris yerine tek matris kullanmıyoruz?
 
-Çünkü üç farklı soruyu cevaplıyorlar ve onları tek matriste toplamak modelin
-soru sorma yeteneğini elinden alıyor.
+Çünkü üç farklı soruyu cevaplıyorlar. Ayrım şuna göre değişir: aynı vektörü
+hem query hem key olarak kullanmak (tek bir paylaşılan izdüşüm) skor tablosunu
+simetrik yapar; tek bir öğrenilmiş $M$ ile $x_i M x_j^{\top}$ ise yönlü skorlar
+verebilir ama pahalıdır (bkz. *İki matris mi, bir matris mi?*). Aşağıdaki
+paylaşılan izdüşüm durumu.
 
 $Q$, bir token'ın *aradığı* şeydir; $K$, bulunabilmek için *ilan ettiği*
 şeydir; $V$ ise bulunduğunda gerçekte kattığı şeydir. $Q$ ile $K$ birlikte
-bilginin **nereye** aktığına karar verir; $V$ tek başına **neyin** aktığına
-karar verir. Bunları birbirine bağlarsanız bir token'ın ilanı sorgusuyla
+bilginin **nereye** aktığına karar verir; aktarılan içeriği $V$ sağlar. Bunları birbirine bağlarsanız bir token'ın ilanı sorgusuyla
 aynı hâle gelir. Böylece skor tablosu simetrik bir Gram matrisi (bütün ikili
 iç çarpımların tablosu) olmak zorunda kalır. Satır normalleştirmesi iki yönde yine de farklı ağırlıklar üretebilir;
 ama iki yön de aynı elemanı okuduğu için head bu ağırlıkları *seçme*
@@ -3270,15 +3276,17 @@ ikinci etki bir eğilimdir, garanti değil.
 ::: {.callout-note collapse="true"}
 ## 3. Modelinizin 100.000 token'lık bağlamı var. İlk tükenen kaynak hangisi olur?
 
-Bellek — ama modelin belleği değil. fp16'daki 7B'lik bir model 14 GB ağırlık
-demek. 100.000 token'da KV önbelleği **52,4 GB** — tek bir sohbet için modelin
+Bu örneğin varsayımlarıyla (tam MHA, fp16, tek GPU): bellek — ama modelin
+belleği değil. fp16'daki 7B'lik bir model 14 GB ağırlık demek. 100.000 token'da KV önbelleği **52,4 GB** — tek bir sohbet için modelin
 kendisinin neredeyse dört katı — ve bu rakam *eşzamanlı istek başına*,
 oysa ağırlıklar hepsi arasında paylaşılıyor.
 
 Bu yüzden bir GPU'nun kaç kullanıcıya hizmet verebileceğini genelde parametre
 sayısı değil, KV önbelleği belirler. GQA'nın evrenselleşmesinin sebebi de bu: 32
 KV head'den 8'e inmek aynı önbelleği 52,4 GB'tan **13,1 GB**'a indiriyor;
-kalitede neredeyse hiç bedel ödemeden 4 kat tasarruf.
+yayımlanmış deneylerde kalitede çok az bedelle 4 kat tasarruf. GQA, KV
+nicemleme ya da birden çok GPU devreye girince ilk tükenen kaynak bant
+genişliği ya da başka bir bellek kalemi olabilir.
 
 "$n \times n$ skor matrisi" dediyseniz, bu FlashAttention'dan önceki doğru
 cevaptı; FlashAttention o matrisi hiç somutlaştırmıyor.
@@ -3291,23 +3299,28 @@ Bunlar iki farklı cevabı olan iki farklı soru; mimarinin bütün meselesi de 
 
 35B parametrenin **hepsini** bellekte tutmanız gerekir, çünkü herhangi bir token
 herhangi bir uzmana yönlenebilir. Ama token başına yalnızca en iyi $k$ uzman
-çalışır — yaklaşık 3B aktif — dolayısıyla gecikme küçük sayıya göre şekillenir.
-[Toplam parametre donanım faturanızı, aktif parametre gecikmenizi
-belirler.]{.hl}
+çalışır — yaklaşık 3B aktif — dolayısıyla token başına aritmetik küçük sayıya
+göre şekillenir. [Toplam parametre bellek faturanızı, aktif parametre token
+başına aritmetiğinizi belirler;]{.hl} gecikme ise buna ek olarak bant
+genişliğine, yönlendirmenin dengesine ve dağıtım düzenine bağlı.
 
 @sec-siniflandirma-kesisim bunu ölçtü: `qwen3.6:35b-a3b` bir belgeyi
 0,353 saniyede sınıflandırıyor; *yoğun* 9,7B'lik bir model için bu süre 0,365
-saniye, yoğun 27,4B için 0,592 saniye. Yani MoE modeli ikisinden de hızlı,
-üstelik ikisinden de yüksek puan alıyor; bunu yaparken diskte 23,9 GB yer
-kaplıyor.
+saniye, yoğun 27,4B için 0,592 saniye (aynı dizüstü bilgisayarda, `ollama`
+ile, dördü de 4 bit'e nicemlenmiş, belge başına medyan). Yani bu kurulumda MoE
+modeli ikisinden de hızlı, üstelik ikisinden de yüksek puan alıyor; diskte 23,9
+GB'lık nicemlenmiş bir dosya, ki bu çalışma belleğine birebir eşit değil. Başka
+donanımda ve başka bir görevde sıralama değişebilir.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Modeliniz 1.024 konumluk embedding'lerle eğitildi. 1.025. token'da ne olur?
 
 Öğrenilmiş mutlak konumlarla hiç iyi bir şey olmaz: tabloda 1.025. satır yoktur,
-dolayısıyla modelin ekleyecek bir vektörü yoktur. GPT-2 daha uzun bir diziyi hiç
-işleyemez — yaşanan şey bir kalite düşüşü değil, bir arama hatasıdır.
+dolayısıyla modelin ekleyecek bir vektörü yoktur. GPT-2'nin standart ileri
+geçişi daha uzun bir diziyi kabul etmez — yaşanan şey bir kalite düşüşü değil,
+bir arama hatasıdır (uygulamalar girdiyi kırparak ya da kayan bir pencereyle
+bunun etrafından dolaşabilir).
 
 Alanın RoPE ve ALiBi'ye geçmesinin somut sebebi budur. RoPE konumu bir *döndürme*
 olarak kodlar, böylece iki token arasındaki skor yalnızca aralarındaki kaydırmaya
@@ -3318,7 +3331,7 @@ eklendiğinde ise yayılım 26 civarındadır. Konum yalnızca bir kaydırma ola
 kalabilecek bir 1.025. satır yoktur.
 
 Bunun neyi *sağlamadığına* dikkat edin: eğitim uzunluğunun çok ötesine
-ekstrapolasyon kaliteyi yine de bozar. Sert bir başarısızlığı ortadan
+ekstrapolasyon kaliteyi yine de çoğu zaman bozar; kaliteyi ölçmek gerekir. Sert bir başarısızlığı ortadan
 kaldırıp yerine yumuşak bir tanesini koyar.
 :::
 
@@ -3330,8 +3343,9 @@ değişmez.
 
 Attention da feed-forward ağı da residual akışı okur ve ona bir düzeltme ekler.
 Bu yüzden blokları üst üste dizmek çok kolaydır — 12. blok birebir 1. blok
-gibi görünür. Pre-norm'un alt katman çıktısını değil, residual toplamı
-normalleştirmesinin sebebi de budur.
+gibi görünür. Pre-norm'da normalleştirme her dalın *girişinde*: dal, residual
+akışı (önceki bütün toplamaları) normalleştirilmiş hâliyle okur ve kendi
+çıktısını normalleştirmeden akışa ekler.
 
 Pratikteki sonuç: bir transformer'ın belli bir derinlikte "ne bildiğini"
 incelediğinizde, herhangi bir katmanın çıktısını değil residual akışı
