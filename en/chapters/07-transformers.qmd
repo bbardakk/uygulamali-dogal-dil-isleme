@@ -2193,7 +2193,7 @@ The most economical answer is to encode nothing and simply subtract a penalty
 proportional to distance, directly on the attention scores [@press2022alibi]:
 
 $$
-\text{score}(i, j) = \frac{q_i \cdot k_j}{\sqrt{d_k}} - m\,(i - j)
+\text{score}(i, j) = \begin{cases} \dfrac{q_i \cdot k_j}{\sqrt{d_k}} - m\,(i - j), & j \le i \\[4pt] -\infty, & j > i \end{cases}
 $$
 
 The penalty is subtracted *after* the $\sqrt{d_k}$ scaling, not before. That
@@ -2205,10 +2205,12 @@ in models of different width.
 Each head gets its own fixed slope $m$, on a geometric schedule. With eight
 heads the slopes are $\tfrac12, \tfrac14, \tfrac18, \dots, \tfrac{1}{256}$, so
 the head with $m = 0.5$ has accumulated a penalty of 1 after 2 tokens (a
-score lower by 1, which divides the attention weight by $e \approx 2.7$) and
-is effectively local, while the head with $m = 1/256$ needs 256 tokens to
-accumulate the same penalty and is effectively global. Different heads see
-different distance scales, by construction.
+score lower by 1, which, other scores being equal, divides the attention
+weight by $e \approx 2.7$) and leans local, while the head with $m = 1/256$
+needs 256 tokens to accumulate the same penalty and leans global. Different
+heads lean towards different distance scales, by construction; how local a
+head actually behaves also depends on the content scores — a distant token with
+a high content score can still get a high weight.
 
 The bias a head with $m = 0.5$ adds, over six tokens:
 
@@ -2223,9 +2225,10 @@ The bias a head with $m = 0.5$ adds, over six tokens:
 
 That single matrix is the causal mask and the position signal at once, and it
 contains no learned parameters whatsoever. Because it is defined by a formula
-over $i - j$, it is defined for any distance, which is what lets an ALiBi
-model trained at length 1,024 run at length 2,048 without falling over — the
-result the paper's title advertises.
+over $i - j$, it is defined for any distance. The original paper reported a
+1.3B-parameter ALiBi model trained at length 1,024 doing well at length 2,048 —
+the result the paper's title advertises. A formula defined at every length does
+not mean every ALiBi model runs at every length without degrading.
 
 ### Choosing
 
