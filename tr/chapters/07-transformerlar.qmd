@@ -2953,7 +2953,9 @@ Bir bloktaki tek feed-forward ağının yerine onun $E$ kopyasını, yani
 tanesine gönderen küçük, öğrenilmiş bir **router** (yönlendirici) ekleyin;
 aşağıdaki örnekte $k = 2$, yeni modellerin birçoğunda ise $k = 8$. Yalnızca o $k$ uzman çalışır. Diğer $E - k$ tanesi o
 token için boşta kalır ve aynı cümledeki başka bir token farklı bir çift
-seçebilir.
+seçebilir. Bu, en basit MoE; gerçek modellerde uzmanların genişliği, her
+token'ın uğradığı paylaşılan uzmanlar ve MoE'nin kaç katmanda kullanıldığı
+değişebiliyor (aşağıda).
 
 ::: {#gloss-mixture-of-experts .column-margin .term-gloss}
 **mixture of experts** (uzman karışımı, MoE) — tek bir feed-forward ağının yerine çok sayıda ağ koyar ve her token'ı bunlardan birkaçına yönlendirir; böylece toplam parametre sayısı ile token başına hesap artık aynı sayı olmaktan çıkar. [↩](#term-mixture-of-experts){.term-back}
@@ -3044,28 +3046,30 @@ uzman, top-2 yönlendirme alalım:
 | yoğun (dense) | 6,4B | 6,4B |
 | MoE, 8 uzman, top-2 | **36,5B** | **10,7B** |
 
-MoE modeli yoğun modelin 5,7 katı parametre tutuyor ve 1,67 katı aritmetik
-yapıyor. Bellek faturasını ilk sayı belirliyor; ikincisi ise token başına
+Bu varsayımsal tabloda (embedding'ler hariç) MoE modeli yoğun modelin 5,7
+katı parametre tutuyor ve token başına 1,67 katı aktif parametre kullanıyor. Bellek faturasını ilk sayı belirliyor; ikincisi ise token başına
 aritmetiğin birinci mertebeden kestirimi, bir gecikme rakamı değil. Fiilen
 beklediğiniz süre, yönlendirmenin uzmanlara ne kadar dengeli dağıldığına, o
 dağılımın getirdiği iletişim maliyetine, batch boyutuna ve bant genişliğine de
 bağlı.
 
 ::: {.callout-warning appearance="simple" icon="false"}
-**GPU'yu toplam için kiralar, aktif olanın gecikmesini alırsınız.** 36,5B
-parametrenin tamamı bellekte durmalı — router'ın seçimi token başına olduğu için
-herhangi bir uzmana herhangi bir anda ihtiyaç duyulabilir. Bir tanıtım
+**Belleği toplam için ayırır, aritmetiği aktif olan için yaparsınız.** 36,5B
+parametrenin tamamı erişilebilir olmalı — router'ın seçimi token başına olduğu
+için herhangi bir uzmana herhangi bir anda ihtiyaç duyulabilir. Bu ağırlıklar
+birden çok GPU'ya bölünebilir, nicemlenebilir ya da kısmen CPU belleğine
+taşınabilir; her seçim bellek ihtiyacını, iletişimi ve gecikmeyi birlikte
+değiştirir. Bir tanıtım
 yazısındaki "düşük aktif parametre sayısı" size hızdan bahseder, ne satın almanız
 gerektiğinden değil. Açık ağırlıklı model duyurularında en çok yanlış okunan tek
 sayı budur ve kendi sunucunuzda barındırmanın maliyetini çıkarırken (@sec-servis)
 işinizi doğrudan etkiler.
 :::
 
-Fikir 1990'ların başına kadar uzanıyor; seyrek, kapılı biçimiyle büyük dil
-modellerine uygulanması ise 2017'ye dayanıyor [@shazeer2017outrageously].
-Yönlendirme token başına tek uzmana
-sadeleştirilip mühendislik sorunları büyük ölçekte çözülünce pratik hâle geldi
-[@fedus2022switch]. Pratikte zor olan kısım yönlendirme kuralı değil, **yük
+Fikir 1990'ların başına kadar uzanıyor; seyrek, kapılı biçimiyle büyük
+ölçekte kullanılması 2017'ye dayanıyor [@shazeer2017outrageously]. Switch
+Transformer yönlendirmeyi token başına tek uzmana sadeleştirip ölçeği büyüttü ve
+yaklaşımın yaygınlaşmasında önemli bir adım oldu [@fedus2022switch]. Pratikte zor olan kısım yönlendirme kuralı değil, **yük
 dengeleme**: router'ın neredeyse her token'ı aynı birkaç uzmana gönderip geri
 kalanları aç bırakmasını engelleyen hiçbir şey yok. Bu da parasını ödediğiniz
 parametreleri boşa harcar ve eğitimi tamamen bozabilir.
@@ -3081,8 +3085,8 @@ $$
 
 Yük dengeleme için klasik çözüm, dengesiz kullanımı cezalandıran yardımcı bir
 kayıp — ana amacın seve seve düştüğü bir hata moduna karşı açıkça konulmuş bir
-düzeltme. Ama bu, birinciyle çatışan ikinci bir amaç ve 2025'e gelindiğinde en
-büyük açık MoE'ler onu ikinci plana atmıştı: DeepSeek-V3 dengeyi ağırlıklı
+düzeltme. Ama bu, birinciyle çatışan ikinci bir amaç ve bazı büyük açık MoE'ler
+onu ikinci plana attı: DeepSeek-V3 dengeyi ağırlıklı
 olarak uzman başına bir bias terimiyle kuruyor. Bu terim yönlendirme skoruna ekleniyor,
 çevrimiçi ayarlanıyor ve kendine ait bir gradyan taşımıyor. "Ağırlıklı olarak"
 burada kilit ifade, çünkü model bu mekanizmanın yanında küçük, tamamlayıcı bir
@@ -3096,7 +3100,8 @@ yerine, top-8 ile 64–256 dar uzman ve her token'ın uğradığı bir ya da iki
 paylaşılan uzman. Aynı toplam, çok daha küçük aktif oran: toplamı yaklaşık 35B olan bir
 modelin aktif parametresi bu sayede 10,7B yerine 3B civarına iner;
 `qwen3.6:35b-a3b` (@sec-siniflandirma) bunu yapıyor. Bir lansman
-yazısı okurken bakmanız gereken şey aktif/toplam oranıdır; yayına alınmış
+yazısı okurken bakmanız gereken şey aktif/toplam oranıdır (uzman sayısına, top-$k$'ya,
+uzman genişliğine ve paylaşılan parçalara bağlı); bilinen yayımlanmış
 modellerde bu oran yaklaşık %30 ile %3 arasında değişiyor.
 
 ## Ölçekleme yasaları ve neyi öngördükleri {#sec-olcekleme-yasalari}

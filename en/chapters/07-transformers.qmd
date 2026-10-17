@@ -2893,7 +2893,9 @@ Replace the single feed-forward network in a block with $E$ copies — the
 token and sends it to the best $k$ — $k = 2$ in the example below, $k = 8$
 in many recent models. Only those $k$ run. The
 other $E - k$ sit idle for that token, and a different token in the same
-sentence may take a different pair.
+sentence may take a different pair. This is the simplest MoE; in real models the
+width of the experts, shared experts that every token visits, and the number of
+layers that use MoE can all vary (below).
 
 ::: {#gloss-mixture-of-experts .column-margin .term-gloss}
 **mixture of experts** — replaces one feed-forward network with many, routing each token to a few of them, so total parameters and per-token compute stop being the same number. [↩](#term-mixture-of-experts){.term-back}
@@ -2984,25 +2986,27 @@ layers, 8 experts, top-2 routing:
 | dense | 6.4B | 6.4B |
 | MoE, 8 experts, top-2 | **36.5B** | **10.7B** |
 
-The MoE model holds 5.7× the parameters of the dense one and does 1.67× the
-arithmetic. Its memory bill follows the first number; the second is a
+In this hypothetical table (embeddings excluded) the MoE model holds 5.7× the
+parameters of the dense one and uses 1.67× the active parameters per token. Its memory bill follows the first number; the second is a
 first-order estimate of the per-token arithmetic, not a latency figure. What you
 actually wait for also depends on how evenly the routing spreads across experts,
 on the communication that spreading costs, and on batch size and bandwidth.
 
 ::: {.callout-warning appearance="simple" icon="false"}
-**You rent the GPU for the total and get the latency of the active.** All 36.5B
-parameters must be resident — the router's choice is per token, so any expert
-may be needed at any moment. A "small active parameter count" in a launch post
+**You provision memory for the total and do arithmetic for the active.** All
+36.5B parameters must be reachable — the router's choice is per token, so any
+expert may be needed at any moment. Those weights can be split across several
+GPUs, quantised, or partly moved to CPU memory; each choice changes memory,
+communication and latency together. A "small active parameter count" in a launch post
 tells you about speed, not about what you need to buy. This is the single
 most misread number in open-weight model announcements, and it matters
 directly when you cost out self-hosting in @sec-serving.
 :::
 
-The idea goes back to the early 1990s; its sparse, gated form for large
-language models is due to @shazeer2017outrageously, and it became practical when the
-routing was simplified to one expert per token and the engineering worked out
-at scale [@fedus2022switch]. The hard part in practice is not the routing rule
+The idea goes back to the early 1990s; its sparse, gated form at large scale is
+due to @shazeer2017outrageously, and the Switch Transformer simplified the routing
+to one expert per token and pushed the scale further, an important step in the
+approach spreading [@fedus2022switch]. The hard part in practice is not the routing rule
 but **load balancing**: nothing stops the router from sending almost every
 token to the same few experts and starving the rest, which wastes the parameters you paid for
 and can collapse training.
@@ -3018,8 +3022,8 @@ $$
 
 The classical fix for load balancing is an auxiliary loss penalising uneven
 usage — an explicit correction for a failure mode the main objective is happy
-to walk into. But it is a second objective fighting the first, and by 2025 the
-largest open MoEs had demoted it: DeepSeek-V3 balances mainly with a per-expert
+to walk into. But it is a second objective fighting the first, and some large
+open MoEs demoted it: DeepSeek-V3 balances mainly with a per-expert
 bias added to the routing score and adjusted online, carrying no gradient of its
 own. "Mainly" is the operative word — it keeps a small complementary
 sequence-wise balancing loss alongside that mechanism. Check which mechanism a
@@ -3032,8 +3036,9 @@ granularity**: instead of 8 large experts with top-2, use 64–256 narrow expert
 with top-8, plus one or two shared experts that every token visits. Same total,
 far smaller active fraction — which is how a 35B-total model ends up near 3B
 active rather than 10.7B, as `qwen3.6:35b-a3b` does in @sec-classification.
-When you read a launch post, the ratio to look for is active over total, and
-across shipped models it has ranged from about 30% down to 3%.
+When you read a launch post, the ratio to look for is active over total (it
+depends on the number of experts, top-$k$, expert width and shared parts), and
+across well-known shipped models it has ranged from about 30% down to 3%.
 
 ## Scaling laws and what they predict {#sec-scaling-laws}
 
