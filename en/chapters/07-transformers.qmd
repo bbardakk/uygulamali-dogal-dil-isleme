@@ -1163,9 +1163,11 @@ at the same time.
 ::::
 
 With two heads of width 2, the concatenation is exactly 4 wide — back to
-$d_{\text{model}}$, which is not a coincidence. [The head size is chosen as
-$d_k = d_{\text{model}} / h$ precisely so that concatenating them lands you
-where you started]{.hl}:
+$d_{\text{model}}$, which is not a coincidence. [In the classic layout the head
+size is chosen as $d_k = d_{\text{model}} / h$ precisely so that concatenating
+them lands you where you started]{.hl}. That is a convention, not a necessity:
+in general $W^O$ projects the concatenated $h\,d_v$-wide vector back to
+$d_{\text{model}}$ anyway:
 
 | token | h1 agent | h1 object | h2 action | h2 noun |
 |:--|--:|--:|--:|--:|
@@ -1200,12 +1202,15 @@ multiply or add) as one head of width $d_{\text{model}}$: the
 $W^Q$, $W^K$, $W^V$ projections are $3d^2$ either way, $W^O$ adds $d^2$, and
 scoring costs $h \cdot n^2 \cdot (d/h) = n^2 d$ regardless of $h$. Splitting
 into heads buys several independent attention patterns for very close to
-nothing, which is why the design stuck.
+nothing in parameters and FLOPs, which is why the design stuck. Real latency is
+another matter: $h$ separate score and softmax matrices can change memory
+traffic and the kernel used.
 
 Two costs do move, and they matter later in this chapter:
 
-- **The score tensor grows.** One head stores $n^2$ scores; $h$ heads store
-  $h \cdot n^2$. At $n = 1024$, $h = 32$ that is 33.5M entries instead of
+- **The score tensor grows.** In a naive implementation that materialises the
+  scores, one head stores $n^2$ of them and $h$ heads store $h \cdot n^2$ (blocked
+  implementations such as FlashAttention never build the full tensor). At $n = 1024$, $h = 32$ that is 33.5M entries instead of
   1.05M — a 32× increase in the memory that @sec-attention-cost is about, and
   in the softmax work, which is not a matrix multiply.
 - **Each head gets narrower.** A head of width $d/h$ constrains the
