@@ -1338,7 +1338,7 @@ $$
 $$
 
 ::: {#gloss-layer-normalization .column-margin .term-gloss}
-**layer normalization** — rescaling each token's feature vector to zero mean and unit variance, computed across that token's own features rather than across the batch. [↩](#term-layer-normalization){.term-back}
+**layer normalization** — rescaling each token's feature vector to zero mean and unit variance, then applying a learned scale $\gamma$ and shift $\beta$; computed across that token's own features rather than across the batch. [↩](#term-layer-normalization){.term-back}
 :::
 
 Apply it in the block's real order. In a pre-norm block the normalisation
@@ -1372,11 +1372,15 @@ Every row now has mean 0 and standard deviation 1. Note what that costs:
 [after normalisation a feature is only meaningful *relative to the token's own
 other features*]{.hl}. `içti` gained a lot of animate content above, but it
 gained even more liquid and action content, so its animate value comes out
-negative. Absolute magnitudes are gone; only the profile survives.
+negative. In this table ($\gamma = 1$, $\beta = 0$) absolute magnitudes are
+gone; only the profile survives. In a real model the learned $\gamma$ and $\beta$,
+and the residual path that flows on un-normalised, can still carry some scale
+information.
 
 That independence from other examples is why layer norm and not batch norm.
-Batch normalisation computes statistics across the batch, which breaks when
-sequences have different lengths, makes training depend on batch composition,
+Batch normalisation computes statistics across the batch, which needs extra
+machinery such as padding and masks when sequences have different lengths,
+makes training depend on batch composition,
 and requires storing running statistics for inference. Layer norm needs one
 token's own numbers and nothing else, so it behaves identically at batch size
 512 and batch size 1.
@@ -1388,20 +1392,24 @@ $x + f(\operatorname{LN}(x))$ — pre-norm. The difference is that pre-norm
 leaves the residual path completely clean: there is an unbroken identity
 connection from the input embedding to the final layer, with nothing sitting
 on it. Post-norm rescales the stream at every block, so the identity path
-is no longer an identity, and deep post-norm models need a learning-rate
-warmup to train at all [@xiong2020layernorm]. Everything below is pre-norm.
+is no longer an identity; @xiong2020layernorm showed that the deep post-norm
+models they studied could not train stably without a learning-rate warmup,
+because of large gradients at the start, and that pre-norm largely removes the
+need. Everything below is pre-norm.
 
-**And in practice, not even layer norm.** GPT-2 and BERT still use layer norm,
-but every recent open-weight family this chapter names — Llama, Mistral, Qwen,
-Gemma — uses **RMSNorm** [@zhang2019root]:
+**And in practice, often not even layer norm.** GPT-2 and BERT use layer norm;
+the recent open-weight families this chapter names — Llama, Mistral, Qwen,
+Gemma — use **RMSNorm** [@zhang2019root]:
 
 $$\operatorname{RMSNorm}(x) = \frac{x}{\sqrt{\tfrac{1}{d}\sum_j x_j^2 + \epsilon}} \odot \gamma$$
 
 Two things are gone: the mean subtraction and the shift $\beta$. The claim —
 supported by ablation rather than by theory — is that re-centring was never the
-part that helped; only the re-scaling was. It has half the parameters, and
-skipping the mean makes it cheaper to run — its authors report 7–64% shorter
-running times, depending on the model. It is also why a Llama config file has an
+part that helped; only the re-scaling was. Its normalisation layer has half the
+parameters of layer norm's (no $\beta$; a negligible difference for the model's
+total), and skipping the mean makes it cheaper to run — its authors report 7–64%
+shorter running times on the models they studied. The gain in your own model
+depends on the architecture and the implementation. It is also why a Llama config file has an
 `rms_norm_eps` field and no `layer_norm_eps`. Everything above about *where*
 the normalisation goes applies unchanged; only the function inside the box gets
 simpler.

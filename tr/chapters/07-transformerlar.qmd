@@ -1362,7 +1362,7 @@ $$
 $$
 
 ::: {#gloss-layer-normalization .column-margin .term-gloss}
-**layer normalization** (katman normalleştirmesi) — her token'ın öznitelik vektörünü sıfır ortalama ve birim varyansa yeniden ölçeklemek; hesap, batch boyunca değil o token'ın kendi öznitelikleri boyunca yapılır. [↩](#term-layer-normalization){.term-back}
+**layer normalization** (katman normalleştirmesi) — her token'ın öznitelik vektörünü sıfır ortalama ve birim varyansa yeniden ölçeklemek, sonra öğrenilmiş bir $\gamma$ ölçeği ve $\beta$ kaydırması uygulamak; hesap, batch boyunca değil o token'ın kendi öznitelikleri boyunca yapılır. [↩](#term-layer-normalization){.term-back}
 :::
 
 Bunu bloğun gerçek sırasında uygulayın. Bir pre-norm blokta *feed-forward* alt
@@ -1396,12 +1396,15 @@ Artık her satırın ortalaması 0, standart sapması 1. Bunun bedeline dikkat
 edin: normalleştirmeden sonra bir öznitelik yalnızca *o token'ın kendi diğer
 özniteliklerine göre* anlamlıdır. `içti` yukarıda bir hayli canlı içerik
 kazandı, ama daha da fazla sıvı ve eylem içeriği kazandı; bu yüzden canlı
-değeri negatif çıkıyor. Mutlak büyüklükler gitti; ayakta kalan yalnızca profil.
+değeri negatif çıkıyor. Bu tabloda ($\gamma = 1$, $\beta = 0$) mutlak
+büyüklükler gitti; ayakta kalan yalnızca profil. Gerçek bir modelde öğrenilmiş
+$\gamma$, $\beta$ ve normalleştirilmeden akan residual yol, ölçek bilgisinin bir
+kısmını yine taşıyabiliyor.
 
 Layer norm'u batch norm'a tercih etmemizin sebebi, onun diğer örneklerden bu
 şekilde bağımsız olmasıdır. Batch normalleştirmesi istatistikleri batch boyunca
-hesaplar. Bu yaklaşım diziler farklı uzunlukta olduğunda işlemez, eğitimi
-batch'in bileşimine bağımlı kılar ve çıkarım için eğitim boyunca güncellenen
+hesaplar. Diziler farklı uzunlukta olduğunda dolgu (padding) ve maske gibi ek
+düzenekler ister, eğitimi batch'in bileşimine bağımlı kılar ve çıkarım için eğitim boyunca güncellenen
 istatistiklerin saklanmasını gerektirir. Layer norm'un ihtiyaç duyduğu tek şey
 bir token'ın kendi sayılarıdır; bu yüzden batch boyutu ister 512 ister 1
 olsun, birebir aynı davranır.
@@ -1412,14 +1415,15 @@ GPT-2'den beri standart, onu alt katmandan *önce* koymaktır:
 $x + f(\operatorname{LN}(x))$ — pre-norm. Fark şu: pre-norm, residual yolu
 tamamen temiz bırakır; girdi embedding'inden son katmana kadar üzerinde hiçbir
 işlem bulunmayan, kesintisiz bir birim bağlantı vardır. Post-norm ise akışı her
-blokta yeniden ölçekler, dolayısıyla birim yol artık birim değildir ve derin
-post-norm modeller eğitilebilmek için bir öğrenme oranı ısınmasına (warmup:
-öğrenme oranını ilk adımlarda çok küçük bir değerden yavaşça artırmak) ihtiyaç duyar
-[@xiong2020layernorm]. Aşağıdaki her şey pre-norm'dur.
+blokta yeniden ölçekler, dolayısıyla birim yol artık birim değildir;
+@xiong2020layernorm, inceledikleri derin post-norm modellerin başlangıçta büyük
+gradyanlar yüzünden bir öğrenme oranı ısınması (warmup: öğrenme oranını ilk
+adımlarda çok küçük bir değerden yavaşça artırmak) olmadan kararlı
+eğitilemediğini ve pre-norm'un bu ihtiyacı büyük ölçüde kaldırdığını gösterdi. Aşağıdaki her şey pre-norm'dur.
 
-**Pratikte ise layer norm bile değil.** GPT-2 ve BERT hâlâ layer norm
-kullanır; ama bu bölümün adını andığı yeni açık ağırlıklı model ailelerinin
-hepsi — Llama, Mistral, Qwen, Gemma — **RMSNorm** kullanıyor
+**Pratikte ise çoğu zaman layer norm bile değil.** GPT-2 ve BERT layer norm
+kullanır; bu bölümün adını andığı yeni açık ağırlıklı model aileleri — Llama,
+Mistral, Qwen, Gemma — ise **RMSNorm** kullanıyor
 [@zhang2019root]:
 
 $$\operatorname{RMSNorm}(x) = \frac{x}{\sqrt{\tfrac{1}{d}\sum_j x_j^2 + \epsilon}} \odot \gamma$$
@@ -1427,9 +1431,11 @@ $$\operatorname{RMSNorm}(x) = \frac{x}{\sqrt{\tfrac{1}{d}\sum_j x_j^2 + \epsilon
 İki şey gitti: ortalama çıkarma ve $\beta$ kaydırması. Kuramla değil
 ablasyon deneyleriyle (bir bileşeni çıkarıp etkisini ölçen deneyler) desteklenen iddia şu: işe yarayan kısım hiçbir zaman
 yeniden merkezleme değildi, yalnızca yeniden ölçeklemeydi. RMSNorm'un
-parametre sayısı layer norm'unkinin yarısıdır; ortalamayı hesaplamadığı için de daha
-hızlı çalışır — yazarları, modele göre %7 ile %64 arasında daha kısa çalışma
-süreleri bildiriyor. Bir Llama
+normalleştirme katmanındaki parametre sayısı layer norm'unkinin yarısı ($\beta$
+yok; modelin toplam parametresi açısından önemsiz bir fark); ortalamayı
+hesaplamadığı için de daha ucuz çalışıyor — yazarları, inceledikleri modellerde
+%7 ile %64 arasında daha kısa çalışma süreleri bildiriyor. Kendi modelinizdeki
+kazanç mimariye ve uygulamaya bağlı. Bir Llama
 yapılandırma dosyasında `layer_norm_eps` değil `rms_norm_eps` alanı
 bulunmasının nedeni de bu. Normalleştirmenin *nereye*
 konduğuna dair yukarıda söylenen her şey aynen geçerli; yalnızca kutunun
