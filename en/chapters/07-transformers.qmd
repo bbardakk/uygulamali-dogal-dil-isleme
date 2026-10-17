@@ -3112,28 +3112,37 @@ Work in NumPy first; reach for a framework only in step 3.
    in the axis you are normalising over — those are the only two candidates.
 3. **Verify against a reference.** Compare to
    `torch.nn.functional.scaled_dot_product_attention` on random inputs at
-   several shapes and report the maximum absolute difference. Anything above
-   about $10^{-5}$ in fp32 is a real disagreement, not rounding.
+   several shapes, with the same mask, scale and `dropout_p=0` (in this API a
+   boolean `attn_mask` uses `True` for *allowed* positions), and report the
+   maximum absolute difference along with the backend used. In fp32, anything
+   above about $10^{-5}$ is very likely a real disagreement; choose a looser
+   tolerance for fp16 and bfloat16.
 4. **Confirm permutation equivariance.** With *no* mask, shuffle the tokens,
-   run again, un-shuffle the outputs, and report the maximum difference. You
-   should get machine epsilon, as this chapter did. Then add a positional
+   run again, un-shuffle the outputs, and report the maximum difference. It
+   should stay within your data type's numerical tolerance (this chapter got
+   machine-epsilon level). Then add a positional
    encoding and report the number again. Finally repeat the whole test with a
    causal mask and no positional encoding: equivariance breaks even though you
    added no position signal. Explain why to someone who has not read this
    chapter.
 5. **Measure the exponent.** Time attention at $n = 128, 256, \dots, 4096$
-   with $d = 64$, holding everything else fixed. Plot on log-log axes and fit
-   a slope. State what exponent you measured and whether it is 2 — and if it
-   is well below 2 at small $n$, explain which fixed costs are hiding it.
-6. **Measure the memory.** Instrument the peak size of the score matrix and
-   compare it against the table in @sec-attention-cost. Find the $n$ at which
+   with $d = 64$, holding everything else fixed, after warm-up runs, with
+   repeats and (on a GPU) synchronisation. Plot on log-log axes and fit local
+   slopes. The theoretical cost is $O(n^2 d)$, but the wall-clock slope need not
+   be exactly 2: fixed costs intrude at small $n$, memory and kernel changes at
+   large $n$; explain which shows up where.
+6. **Measure the memory.** First compute the expected bytes of the raw
+   $n \times n$ score tensor and compare against the table in
+   @sec-attention-cost; then measure the process's peak allocated and reserved
+   memory separately (temporaries and the allocator can make them differ). Find the $n$ at which
    your machine refuses. Report it.
 7. **Add a causal mask**, then prove it works behaviourally rather than by
    inspection: run on a sequence, append one token, run again, and confirm
    the outputs for the original positions are unchanged. This invariant is
    what makes the next step legal.
-8. **Build a KV cache.** Generate 512 tokens one at a time, first recomputing
-   everything each step, then caching K and V. Plot per-token latency for both
+8. **Build a KV cache.** With the same starting prefix, weights, data type and
+   hardware, generate 512 tokens one at a time, first recomputing everything each
+   step, then caching K and V. Time prefill separately from the decode steps. Plot per-token latency for both
    and report the speedup at token 512. Compute the cache's size in bytes from
    the formula in @sec-attention-cost and check it against what your process
    actually allocated.

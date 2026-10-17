@@ -3182,31 +3182,39 @@ Bu laboratuvarın amacı, karesel terim hakkında okumak değil, onu hissetmek.
    `[0.4230, 0.5012, 0.0759]` çıktığını doğrulayın. Çıkmıyorsa hatanız ya
    devrik almada ya da normalleştirdiğiniz eksendedir — başka aday yok.
 3. **Bir referansla doğrulayın.** Birkaç farklı tensör şeklindeki rastgele
-   girdilerde `torch.nn.functional.scaled_dot_product_attention` ile
-   karşılaştırın ve
-   maksimum mutlak farkı raporlayın. fp32'de yaklaşık $10^{-5}$ üstündeki her
-   şey yuvarlama değil, gerçek bir uyuşmazlıktır.
+   girdilerde, aynı maske, ölçek ve `dropout_p=0` ile
+   `torch.nn.functional.scaled_dot_product_attention` ile karşılaştırın
+   (bu API'de boolean `attn_mask`'ın `True` değeri *izin verilen* konum
+   demek) ve maksimum mutlak farkı, kullanılan backend'le birlikte raporlayın.
+   fp32'de yaklaşık $10^{-5}$ üstündeki fark büyük olasılıkla gerçek bir
+   uyuşmazlıktır; fp16 ve bfloat16 için daha gevşek bir tolerans seçin.
 4. **Permütasyona eşdeğişkenliği doğrulayın.** Maske *olmadan* token'ları
    karıştırın, tekrar çalıştırın, çıktıları eski sırasına dizin ve
-   maksimum farkı raporlayın. Bu bölümde olduğu gibi makine epsilonu
-   çıkmalı. Sonra bir konumsal kodlama ekleyip sayıyı tekrar raporlayın. Son
+   maksimum farkı raporlayın. Seçtiğiniz veri tipinin sayısal toleransı içinde
+   kalmalı (bu bölümde makine epsilonu mertebesindeydi). Sonra bir konumsal kodlama ekleyip sayıyı tekrar raporlayın. Son
    olarak bütün testi nedensel maskeyle ve konumsal kodlama olmadan tekrarlayın:
    hiçbir konum sinyali eklemediğiniz hâlde eşdeğişkenlik bozulur. Bunun
    sebebini, bu bölümü okumamış birine anlatın.
 5. **Üssü ölçün.** $d = 64$ alın, geri kalan her şeyi sabit tutun
-   ve attention'ın süresini $n = 128, 256, \dots, 4096$ için ölçün. Log-log eksenlerde çizip bir
-   eğim kestirin. Ölçtüğünüz üssü ve 2 olup olmadığını belirtin — küçük $n$
-   değerlerinde 2'nin epey altındaysa, onu hangi sabit maliyetlerin gizlediğini
-   açıklayın.
-6. **Belleği ölçün.** Skor matrisinin tepe boyutunu ölçün ve
-   tabloyla (@sec-attention-maliyeti) karşılaştırın. Makinenizin pes
+   ve attention'ın süresini $n = 128, 256, \dots, 4096$ için, ısınma
+   turlarından sonra, tekrarlayarak ve (GPU'daysanız) eşzamanlayarak ölçün.
+   Log-log eksenlerde çizip yerel eğimleri kestirin. Teorik maliyet
+   $O(n^2 d)$ olsa da duvar saati eğiminin tam 2 olması gerekmez: küçük $n$'de
+   sabit maliyetler, büyük $n$'de bellek ve kernel değişimleri araya girer;
+   hangisinin nerede devreye girdiğini açıklayın.
+6. **Belleği ölçün.** Önce ham $n \times n$ skor tensörünün beklenen bayt
+   sayısını hesaplayıp tabloyla (@sec-attention-maliyeti) karşılaştırın; sonra
+   sürecin tepe tahsisli ve ayrılmış belleğini ayrı ayrı ölçün (geçici tensörler
+   ve bellek ayırıcısı yüzünden farklı çıkabilirler). Makinenizin pes
    ettiği $n$ değerini bulun. Raporlayın.
 7. **Nedensel maske ekleyin**, sonra çalıştığını gözle inceleyerek değil,
    davranışsal olarak kanıtlayın: bir dizide çalıştırın, sona bir token ekleyip
    tekrar çalıştırın ve önceki konumlardaki çıktıların değişmediğini doğrulayın.
    Bir sonraki adımı meşru kılan şey bu değişmezdir.
-8. **Bir KV önbelleği kurun.** 512 token'ı teker teker üretin; önce her adımda her
-   şeyi yeniden hesaplayarak, sonra K ve V'yi önbelleğe alarak. İkisi için de
+8. **Bir KV önbelleği kurun.** Aynı başlangıç öneki, ağırlıklar, veri tipi ve
+   donanımla 512 token'ı teker teker üretin; önce her adımda her şeyi yeniden
+   hesaplayarak, sonra K ve V'yi önbelleğe alarak. Prefill süresini decode
+   adımlarından ayrı ölçün. İkisi için de
    token başına gecikmeyi çizin ve 512. token'daki hızlanmayı raporlayın.
    Önbelleğin bayt cinsinden boyutunu (@sec-attention-maliyeti)
    formülden hesaplayın ve sürecinizin gerçekte ayırdığı bellekle karşılaştırın.
