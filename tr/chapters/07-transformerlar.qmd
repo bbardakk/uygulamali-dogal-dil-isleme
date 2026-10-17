@@ -2679,8 +2679,11 @@ olmasının sebebi de budur.
 Üretim artımlıdır. Model 500 token ürettikten sonra 501.'yi üretir — ve maske
 nedensel olduğu için ilk 500'ün key ve value'ları değişmemiştir. Onları yeniden
 hesaplamak saf israf olurdu, o yüzden saklanırlar. Bu depoya
-[KV önbelleği](#gloss-kv-cache){#term-kv-cache .term-ref} (KV cache) denir;
-üretimin token başına maliyetini kareselden doğrusala indirir.
+[KV önbelleği](#gloss-kv-cache){#term-kv-cache .term-ref} (KV cache) denir.
+Her adımda bütün öneki modelden yeniden geçirmek yerine yalnızca yeni token
+işlenir ve yeni query geçmişteki $n$ key'e bakar: token başına attention
+maliyeti kareselden doğrusala iner. Üretim yine sabit zamanlı olmaz; yeni
+token'ın izdüşüm ve feed-forward hesabı ve ağırlıkların okunması sürüyor.
 
 ::: {#gloss-kv-cache .column-margin .term-gloss}
 **KV cache** (KV önbelleği, yani anahtar-değer önbelleği) — önceki token'lardan saklanan key ve value'lar; böylece üretim onları yeniden hesaplamaz. Bir GPU'nun kaç kullanıcıya hizmet verebileceğine genelde modelin değil, bu önbelleğin boyutu karar verir. [↩](#term-kv-cache){.term-back}
@@ -2690,8 +2693,10 @@ Bu durum, bir isteği karakteri birbirinden çok farklı iki evreye ayırır.
 Prompt tek seferde, eğitimdeki gibi paralel olarak işlenir ve onun key ile
 value'ları önbelleği doldurur;
 buna *prefill* (ön doldurma) denir. Ardından her yeni token küçük bir adımdır (*decode*, kod çözme adımı):
-adım başına aritmetik azdır, ama her yeni token için modelin bütün ağırlıkları
-ve önbelleğin tamamı bellekten okunmak zorundadır. Üretim hızının genellikle
+adım başına aritmetik azdır, ama tam attention'lı klasik bir decoder'da her yeni
+token için modelin bütün ağırlıkları ve her katmanın önbelleği bellekten
+okunur (kayan pencere, sıkıştırılmış önbellek ya da durum-uzayı katmanları bu
+miktarı değiştirir; aşağıda). Üretim hızının genellikle
 aritmetikle değil bellek bant genişliğiyle sınırlanmasının sebebi budur;
 @sec-servis bu noktanın üzerine kurulur.
 
@@ -2754,8 +2759,10 @@ aritmetikle değil bellek bant genişliğiyle sınırlanmasının sebebi budur;
 
 ::: {.fig-cap}
 Üretimin ucuz, uzun bağlamın pahalı olmasının sebebi aynı şey: önbellek.
-Önbellek, adım başına $O(n)$ yeniden hesaplamayı — bütün bir üretim boyunca
-$O(n^2)$ — eşzamanlı her istek için ayrı tutulan $O(n)$ depolamayla değiş tokuş eder.
+Önbellek, her adımda bütün öneki yeniden işlemeyi (katman başına önekteki $n$
+token'ın izdüşümleri, feed-forward'ı ve aralarındaki attention) eşzamanlı her
+istek için ayrı tutulan $O(n)$ depolamayla değiş tokuş eder. Yeni query'nin
+$n$ key'e bakışı ise yine uzunlukla doğrusal büyür.
 :::
 ::::
 
@@ -2779,8 +2786,11 @@ attention'ın kısaltmasıdır.
 | 70B sınıfı, *varsayımsal* MHA | 80 | 64 | 128 | 32.768 | 85,9 GB |
 | 7B sınıfı | 32 | 32 | 128 | 100.000 | 52,4 GB |
 
-fp16'daki 7B'lik bir model 14 GB ağırlık demektir. 100.000 token'lık bağlamda
-KV önbelleği 52 GB — [tek bir sohbet için modelin kendisinin neredeyse dört
+Tablo, değerleri 16 bit, bütün katmanları tam attention'lı ve her isteğin
+önbelleği ayrı olan ham K/V tensörünün baytlarını veriyor (GB ondalık; 52,4 GB
+yaklaşık 48,8 GiB). Nicemleme, GQA, kayan pencere, sayfalama ve çalışma alanı
+gerçekte ayrılan belleği değiştirir. fp16'daki 7B'lik bir model 14 GB ağırlık
+demektir. 100.000 token'lık bağlamda KV önbelleği 52 GB — [tek bir sohbet için modelin kendisinin neredeyse dört
 katı.]{.hl} "Uzun bağlam neden bu kadar pahalı?" sorusunun arkasındaki aritmetik
 budur ve servis sistemlerinin bu belleğin nasıl bölümlendiğine ve yeniden
 kullanıldığına bu kadar kafa yormasının sebebi de budur (@sec-servis).
@@ -2794,7 +2804,9 @@ iner. Bu tek değişiklik, 32k bağlamlı *tek bir isteğin* önbelleğinin 80 G
 bir kartın tamamından büyük olmasıyla (85,9 GB) kartın sekizde birine sığması
 (10,7 GB) arasındaki farktır. Ağırlıklar yine de bir düğüm ister — fp16'da
 140 GB — ama 9. alıştırmadaki dört kartlık düğümde ağırlıklardan arta kalan
-alana aynı bağlamda sekiz kat daha fazla eşzamanlı istek sığar. Bu bölümdeki en
+180 GB'a, yalnızca bu iki kalem hesaba katılırsa, aynı bağlamda 2 yerine 16
+istek, yani sekiz kat fazlası sığar. Gerçek bir serviste çalışma alanı ve
+dağıtım düzeni bu üst sınırı düşürür. Bu bölümdeki en
 belirleyici tek sayı da budur.
 
 ::: {.anlp-widget}

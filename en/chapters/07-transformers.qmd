@@ -2634,8 +2634,11 @@ even though the computation is still quadratic.
 Generation is incremental. Having produced 500 tokens, the model produces the
 501st — and because the mask is causal, the keys and values of the first 500
 have not changed. Recomputing them would be pure waste, so they are kept. That
-store is the [KV cache](#gloss-kv-cache){#term-kv-cache .term-ref}, and it converts generation from quadratic-per-token to
-linear-per-token.
+store is the [KV cache](#gloss-kv-cache){#term-kv-cache .term-ref}. Instead of running the whole prefix through the model at
+every step, only the new token is processed and its query looks at the $n$ keys
+in the past: per-token attention cost goes from quadratic to linear. Generation
+still is not constant-time; the new token's projections and feed-forward, and
+reading the weights, remain.
 
 ::: {#gloss-kv-cache .column-margin .term-gloss}
 **KV cache** — stored keys and values from earlier tokens, so generation does not recompute them. Its size, not the model's, usually decides how many users a GPU can serve. [↩](#term-kv-cache){.term-back}
@@ -2644,9 +2647,10 @@ linear-per-token.
 This splits a request into two phases with very different characters. The
 prompt is processed all at once, in parallel, exactly as in training, and its
 keys and values fill the cache — this is called *prefill*. After that, each
-new token is one small step (*decode*): little arithmetic per step, but all of
-the model's weights and the whole cache must be read from memory for every
-new token. That is why generation speed is usually limited by memory
+new token is one small step (*decode*): little arithmetic per step, but in a
+classic full-attention decoder all of the model's weights and every layer's
+cache are read from memory for every new token (sliding windows, compressed
+caches and state-space layers change how much; below). That is why generation speed is usually limited by memory
 bandwidth rather than by arithmetic, a point @sec-serving builds on.
 
 :::: {.anlp-fig}
@@ -2708,8 +2712,10 @@ bandwidth rather than by arithmetic, a point @sec-serving builds on.
 
 ::: {.fig-cap}
 The cache is the reason generation is affordable and the reason long context
-is not. It trades $O(n)$ recomputation per step — $O(n^2)$ over a whole
-generation — for $O(n)$ storage, held separately for every concurrent request.
+is not. It trades re-processing the whole prefix at every step (per layer, the
+projections and feed-forward of the prefix's $n$ tokens and the attention among
+them) for $O(n)$ storage, held separately for every concurrent request. The new
+query's look at $n$ keys still grows linearly with length.
 :::
 ::::
 
@@ -2731,8 +2737,11 @@ tokens, linearly, and **per concurrent request**.
 | 70B-class, *hypothetical* MHA | 80 | 64 | 128 | 32,768 | 85.9 GB |
 | 7B-class | 32 | 32 | 128 | 100,000 | 52.4 GB |
 
-A 7B model in fp16 is 14 GB of weights. At 100,000 tokens of context its KV
-cache is 52 GB — [nearly four times the model itself, for one
+The table gives the raw bytes of the K/V tensors with 16-bit values, every layer
+full-attention and each request's cache separate (GB decimal; 52.4 GB is about
+48.8 GiB). Quantisation, GQA, sliding windows, paging and working space change
+what is actually allocated. A 7B model in fp16 is 14 GB of weights. At 100,000
+tokens of context its KV cache is 52 GB — [nearly four times the model itself, for one
 conversation.]{.hl} This is the arithmetic behind every "why is long context
 so expensive?" question, and it is why serving systems care so much about how
 that memory is partitioned and reused (@sec-serving).
@@ -2745,8 +2754,9 @@ arithmetic with $h_{\text{kv}} = 8$ and the 85.9 GB becomes **10.7 GB**. That
 one substitution is the difference between a single 32k-context request whose
 cache is larger than an entire 80 GB card (85.9 GB) and one that fits in an
 eighth of it (10.7 GB). The weights still need a node — 140 GB in fp16 — but on
-the four-card node of exercise 9 the room left over holds eight times as many
-concurrent requests at the same context. It is the single most consequential
+the four-card node of exercise 9 the 180 GB left over holds, counting only those
+two items, 16 requests at the same context instead of 2 — eight times as many. In
+a real service, working space and the deployment layout lower that ceiling. It is the single most consequential
 number in this chapter.
 
 ::: {.anlp-widget}
