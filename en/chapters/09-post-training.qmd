@@ -272,20 +272,23 @@ sequence it produces.
 
 ### Loss masking: the detail that silently breaks runs
 
-Now the second detail. The sequence above is, say, 46 tokens long. Six of them
-are the answer. On which tokens do you compute the loss?
+Now the second detail. With Llama 3's tokenizer the sequence above is 31 tokens
+long (re-run), and four of them are the answer: `Ol`, `umlu`, `.` and
+`<|eot_id|>`. On which tokens do you compute the loss?
 
 If you say *all of them* — which is what you get if you naively reuse the
-pretraining objective — then 40 of your 46 gradient signals are teaching the
-model **to generate the prompt**. You are training a question generator that
-occasionally emits an answer.
+pretraining objective — then most of the loss terms, 27 positions, teach the
+model **to generate the prompt and the template**. Those terms do not have
+equal-sized gradients, but the target is no longer just the answer: you are
+pushing the model to model the user's text as well. For answer-focused SFT,
+masking the non-assistant target positions is the more direct choice.
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">Loss masking: which tokens the gradient is allowed to come from</div>
 <svg viewBox="0 0 764 268" style="max-width:744px" role="img"
-     aria-label="Two rows of token boxes over the same sequence. The top row, labelled wrong, shades every token including the user prompt, with a note saying forty of forty-six gradient signals teach the model to write the prompt. The bottom row, labelled right, shades only the six assistant response tokens and greys the rest, with a note saying only the response contributes to the loss. Both rows show the same token sequence: a header marker, the Turkish question, an assistant header marker, the word Olumlu, and an end-of-turn marker.">
-  <text x="14" y="22" class="t-xs t-b t-muted">THE SAME 46-TOKEN SEQUENCE, TWO CHOICES OF LOSS MASK</text>
+     aria-label="Two rows of token boxes over the same sequence. The top row, labelled wrong, shades every token including the user prompt, with a note saying twenty-seven of thirty-one loss terms teach the model to write the prompt and template. The bottom row, labelled right, shades only the four assistant response tokens and greys the rest, with a note saying only the response contributes to the loss. Both rows show the same token sequence: a header marker, the Turkish question, an assistant header marker, the word Olumlu, and an end-of-turn marker.">
+  <text x="14" y="22" class="t-xs t-b t-muted">THE SAME 31-TOKEN SEQUENCE, TWO CHOICES OF LOSS MASK</text>
 
   <text x="14" y="60" class="t-xs t-b t-rose">✗ loss on everything</text>
   <rect x="14" y="72" width="120" height="30" rx="5" class="box-rose"/>
@@ -298,7 +301,7 @@ occasionally emits an answer.
   <text x="656" y="92" class="t-xs t-mid t-mono">Olumlu.</text>
   <rect x="700" y="72" width="50" height="30" rx="5" class="box-rose"/>
   <text x="725" y="92" class="t-xs t-mid t-mono">eot</text>
-  <text x="14" y="122" class="t-xs t-rose">40 of 46 gradient signals teach the model to write the question.</text>
+  <text x="14" y="122" class="t-xs t-rose">27 of 31 loss terms teach the model to write the question and template.</text>
 
   <text x="14" y="168" class="t-xs t-b t-accent">✓ loss on the response only</text>
   <rect x="14" y="180" width="120" height="30" rx="5" class="box"/>
@@ -311,28 +314,31 @@ occasionally emits an answer.
   <text x="656" y="200" class="t-xs t-mid t-mono t-b">Olumlu.</text>
   <rect x="700" y="180" width="50" height="30" rx="5" class="box-accent"/>
   <text x="725" y="200" class="t-xs t-mid t-mono t-b">eot</text>
-  <text x="14" y="230" class="t-xs t-muted">Masked tokens are still read — they are the context. They just do not produce gradient.</text>
+  <text x="14" y="230" class="t-xs t-muted">Masked tokens are still read — they are the context. They just do not enter the loss.</text>
   <text x="14" y="252" class="t-xs t-b">Set the label of every masked position to −100 and the loss function skips it.</text>
 </svg>
 ```
 ::: {.fig-cap}
-Masking is not about hiding the prompt from the model. The model still attends
-to every prompt token; that is what conditioning *means*. Masking only decides
-which positions are allowed to say “you should have predicted something else
-here”.
+Masking is not about hiding the prompt from the model. The user's message stays
+in the input and the model still attends to every prompt token; that is what
+the response being *conditioned* on it means. The mask only decides which
+next-token predictions enter the loss: the target labels of the user message
+and template markers are `-100`, those of the assistant response are token
+ids.
 :::
 ::::
 
 In practice you build a `labels` tensor that is a copy of `input_ids` with
-every non-response position set to `-100`, the value PyTorch's cross-entropy
-treats as *ignore*. Modern SFT libraries do this for you if you tell them
+every non-response position set to `-100`, the default `ignore_index` of
+PyTorch's cross-entropy loss, which then *ignores* those positions. Modern SFT libraries do this for you if you tell them
 where the response starts; the failure mode is reaching for a plain causal-LM
-training loop and forgetting. Two related details. Do not shift the labels one
-position yourself: Hugging Face causal-LM models already compare the prediction
-at position $t$ with the label at $t+1$ internally, and shifting twice trains
-the model to predict two tokens ahead. And in a multi-turn conversation the
-usual choice is to keep the loss on *every* assistant turn and mask every user
-turn, not just the last exchange.
+training loop and forgetting. Two related details. If your model or trainer
+shifts the loss internally, do not shift the labels yourself: Hugging Face
+causal-LM models already compare the prediction at position $t$ with the label
+at $t+1$, and shifting twice trains the model to predict two tokens ahead.
+Check the alignment on a small example. And in a multi-turn conversation the
+common choice is to keep the loss on *every* assistant turn and mask every user
+turn, not just the last exchange; choose which turns to target for your task.
 
 ::: {.column-margin}
 There is one legitimate reason to train on prompt tokens: if your prompts are
