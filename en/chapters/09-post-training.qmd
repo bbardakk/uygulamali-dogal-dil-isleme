@@ -852,8 +852,8 @@ arithmetic here predicts.
 
 ### QLoRA: quantize the part you are not training
 
-That last step needs one more idea. In the LoRA row above, the 15.5 GiB is now
-almost entirely the frozen bf16 base — the adapter's optimizer state is a
+That last step needs one more idea. In the LoRA row above, the 15.5 GiB static
+subtotal is now almost entirely the frozen bf16 base — the adapter's optimizer state is a
 rounding error. So squeeze the base.
 
 QLoRA [@dettmers2023qlora] does exactly that, storing frozen weights in a
@@ -868,22 +868,28 @@ work:
 - **double quantization**, which quantizes the per-block scaling constants
   themselves, because at small block sizes those constants become a
   non-trivial share of the total;
-- **paged optimizers**, which let optimizer state spill to CPU memory during the memory spikes that would otherwise kill a long run outright.
+- **paged optimizers**, which, on supported unified-memory setups, let
+  optimizer state spill to CPU memory during memory spikes and so manage some
+  of them; the gain and the speed cost have to be measured on the
+  implementation.
 
 The headline result: fine-tuning a 65B model goes from ">780 GB of GPU memory
 to &lt;48 GB without degrading the runtime or predictive performance compared to
-a 16-bit fully finetuned baseline" [@dettmers2023qlora]. Their Guanaco 65B,
-trained this way in 24 hours on a single GPU, reached 99.3% of ChatGPT's score
-on the 80-question Vicuna benchmark, as scored by GPT-4 acting as judge rather
-than by humans.
+a 16-bit fully finetuned baseline" [@dettmers2023qlora] — a result reported for
+the paper's own task comparisons. Their Guanaco 65B, trained this way in 24
+hours on a single GPU, reached 99.3% of ChatGPT's score on the 80-question
+Vicuna benchmark, as scored by GPT-4 acting as judge rather than by humans;
+that ratio is not a general accuracy or human-preference measure (on the limits
+of LLM judges see @sec-llm-eval-judge).
 
 ::: {.callout-warning appearance="simple"}
 **"Without degrading" is measured against full fine-tuning, not plain LoRA.**
 The paper's claim covers runtime too, but its comparison is a 16-bit *full*
-fine-tune. Against plain LoRA, dequantizing every block on every forward and
-backward pass costs arithmetic. QLoRA buys you the ability to run at all on a
-small card; it does not make the step faster than plain LoRA on a card where
-plain LoRA already fits, and usually makes it somewhat slower.
+fine-tune. Against plain LoRA, dequantizing blocks on every forward and
+backward pass costs arithmetic; on the other hand, lower memory use can ease
+other bottlenecks in some setups. QLoRA buys you the ability to run at all on a
+small card; on a card where plain LoRA already fits, measure the step time of
+both on the same hardware and batch.
 :::
 
 ### The payoff nobody mentions until they are on call
