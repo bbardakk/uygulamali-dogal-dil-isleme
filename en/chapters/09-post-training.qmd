@@ -654,17 +654,19 @@ $$
 
 The stated purpose of the division is practical rather than theoretical. The
 authors write that the scaling "helps to reduce the need to retune
-hyperparameters when we vary $r$" [@hu2022lora] — that is, it is there so a
-rank sweep stays a rank sweep instead of silently becoming a learning-rate
-sweep at the same time. Without it, every change to $r$ would perturb the
-effective step size on the adapter path, and you could not tell which knob
-produced the change in your metric.
+hyperparameters when we vary $r$" [@hu2022lora] — the aim is to stop a rank
+sweep from silently becoming a learning-rate sweep at the same time. That does
+not mean gradient size or the best learning rate stays the same across ranks
+(@kalajdzievski2023rank shows that under $1/r$ scaling gradients shrink at
+high rank); do the rank sweep on validation data.
 
-Which leaves $\alpha$ doing one job, and the paper says exactly what that job
-is: "tuning $\alpha$ is roughly the same as tuning the learning rate"
-[@hu2022lora]. It is a fixed multiplier on the whole adapter path, so the
-widespread convention $\alpha = 2r$ means nothing more exotic than "scale the
-adapter by 2".
+$\alpha$ is a fixed multiplier on the whole adapter path, and the paper says
+how it sees it: "tuning $\alpha$ is *roughly* the same as tuning the learning
+rate" [@hu2022lora]. Roughly: $\alpha$ scales the adapter's contribution in
+the forward pass and interacts with the learning rate without being identical
+to it; its best value has to be judged together with the learning rate, the
+rank and the target modules. The widespread convention $\alpha = 2r$ means, in
+the forward pass, "scale the adapter by 2".
 
 That convention is the community's, not the authors'. They report setting
 $\alpha$ "to the first $r$ we try" and then leaving it alone. In other words,
@@ -674,18 +676,20 @@ at $\alpha/r = 0.5$. [Treat $\alpha = 2r$ as a default someone else picked for y
 as a result.]{.hl}
 
 ::: {.callout-tip appearance="simple"}
-**Two knobs, two questions.**
+**Two knobs, two questions; tune both by measuring.**
 
-- **$r$** asks *how much capacity does this adaptation need?* Raise it when
-  the task is far from anything in pretraining — a new language, a new
-  notation, a genuinely new output format.
-- **$\alpha$** asks *how hard should the adapter push?* Raise it when training
-  is underfitting and lower it when the model has started producing
-  confident nonsense.
+- **$r$** sets the adapter's parameter count and the rank the update may have:
+  *how much capacity does this adaptation need?* When the task is far from
+  pretraining (a new language, a new notation), a higher rank is worth trying.
+- **$\alpha/r$** scales the adapter's contribution: *how hard should the
+  adapter push?*
 
-They are commonly conflated because $\alpha = 2r$ makes them move together.
-Break the convention when you sweep, or you are sweeping one knob and calling
-it two.
+Underfitting or confident nonsense can come not only from rank or alpha but
+from the data, the learning rate, the number of epochs and the target modules.
+Try a small rank/scale grid at fixed data and learning rate, and judge the
+results both on task performance and on regression against the starting model.
+They are commonly conflated because $\alpha = 2r$ makes them move together;
+break the convention when you sweep.
 :::
 
 ### The arithmetic of an adapter
