@@ -24,14 +24,15 @@ largely from pretraining and the architecture.
 
 ## The model that answers a different question {#sec-base-model-failure}
 
-Here is the entire problem in one exchange. You have a base model — the raw
-output of stage 1, nothing else done to it. You type:
+Here is the problem in one representative exchange (the actual output varies
+with the model, the prompt and the sampling settings). You have a base model —
+the raw output of stage 1, nothing else done to it. You type:
 
 ```text
 What is the capital of Turkey?
 ```
 
-and it continues:
+and it may continue:
 
 ```text
 What is the capital of France?
@@ -41,54 +42,57 @@ What is the largest city in Turkey?
 
 Nothing has gone wrong. [The model did exactly what it was trained to do, and
 that is the problem]{.hl}. It was trained on one objective — *given this text,
-what text usually comes next* — and on the open web, a line that looks like a
-quiz question is followed, far more often than not, by another quiz question.
-It is completing a worksheet. It has no idea that you wanted it to stop and
-turn around and address you.
+what text usually comes next* — and reading the prompt as the start of a list
+of questions is a reading that objective allows. It may be completing a
+worksheet; with another prompt or sampling setting it may just say "Ankara".
+Supervised fine-tuning aims to make the question-and-answer behaviour
+*reliable*.
 
 ::: {.column-margin}
 Try this yourself: on the Hub, models named `Llama-3.1-8B` and
 `Llama-3.1-8B-Instruct` are the same pretraining run. The first is the base
 model. The second has been through the two stages in this chapter. The
-difference in behaviour is enormous; the difference in cost is large but not
-published for these two models. For scale, InstructGPT's own figures put SFT
-plus PPO at 64.9 petaflop/s-days against 3,640 for pretraining — about 1.8%, or a
-factor of 56, before the reward model and everything around it.
+difference in behaviour is large; the post-training compute for these two
+models is not published. For scale, a separate example: the SFT (4.9) and
+PPO-ptx (60) figures reported for InstructGPT's 175B version total 64.9
+petaflop/s-days against 3,640 for GPT-3's pretraining — about 1.8%, or a factor
+of 56, leaving out the reward model and data collection.
 :::
 
-Ask the same base model a factual question it certainly knows, and phrase it as
-a sentence to be finished — `The capital of Turkey is` — and it will answer
-correctly. So the knowledge is present. What is missing is not information. It
-is a *convention*: that a question addressed to you is a request for an answer
-from you.
+Give the same base model a fact it very likely knows, phrased as a sentence to
+be finished — `The capital of Turkey is` — and it may well produce "Ankara".
+That shows it can use the fact in some contexts, not that it will answer every
+question correctly and consistently. What is missing here is less information
+than a *convention*: that a question addressed to you is a request for an
+answer from you.
 
 This is worth being precise about, because it sets up everything that follows.
 
 ::: {.callout-note appearance="simple"}
-**Four things you might be missing, and only one of them is fixed by training
-on more text.**
+**Four things you might be missing, and what to try first for each.**
 
-| what is missing | symptom | what fixes it |
+| what is missing | symptom | what to try first |
 |:--|:--|:--|
-| **knowledge** | confidently wrong about your documents, your prices, last week | retrieval (@sec-rag) |
-| **format** | right content, wrong shape: prose where you needed JSON | prompting, constrained decoding |
-| **behaviour** | answers the wrong *kind* of question; wrong register; will not refuse | fine-tuning (this chapter) |
-| **cost** | correct, but too slow or too expensive per call | distillation, quantization |
+| **knowledge** | confidently wrong about your documents, your prices, last week | retrieve the source and verify the answer (@sec-rag) |
+| **format** | right content, wrong shape: prose where you needed JSON | a clear prompt, constrained decoding or an output schema |
+| **behaviour** | answers the wrong *kind* of question; wrong register; inconsistent refusals | evaluate with examples; fine-tune if needed (this chapter) |
+| **cost** | accurate enough, but too slow or too expensive per call | a smaller model, quantization or distillation |
 
-Most fine-tuning projects that fail are attempts to fix row 1 with the
-technique from row 3.
+These are not strict mappings (retrieval fails if it fetches the wrong
+document, and knowledge can also be added by continued pretraining), but they
+are a good start. Fine-tuning a model whose knowledge is out of date on
+behaviour examples alone may not fix the problem if the problem is a wrong
+source.
 :::
 
 We will come back to that table at the end and turn it into a decision tree.
 First, the machinery.
 
-**What we will look at.** Why a pretrained model answers the wrong question,
-and the sequence of stages that fixes it. Then each stage in turn, with the
-cheap version alongside the expensive one: supervised fine-tuning and its
-parameter-efficient cousin, preference optimization, feedback that is not
-human, and distillation. Finally, the two questions that matter more than any
-of them — when *not* to fine-tune, and what the model quietly forgets when you
-do.
+**What we will look at.** First the training example and loss mask of
+supervised fine-tuning, then LoRA and preference optimization; after that,
+feedback that is not human, distillation and continued pretraining. Finally,
+when *not* to fine-tune, and how to measure performance regressions after you
+adapt a model.
 
 ## What the stages actually do {#sec-stage-anatomy}
 
