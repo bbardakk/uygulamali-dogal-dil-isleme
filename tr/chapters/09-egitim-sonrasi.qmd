@@ -1119,19 +1119,25 @@ modelin ne yapabileceğini söylediğine inanmamak için de iyi bir argüman.
 ### DPO: kestirmeyi türetip çıkarmak
 
 Şemaya tekrar bakın ve hangi kutunun vazgeçilmez bir iş yaptığını sorun. Ödül
-modeli yalnızca PPO sırasında örnekleri puanlamak için var. Policy'nin kendi
-olasılıkları bir ödül olarak okunabilseydi, o kutu gereksiz olurdu.
+modeli yalnızca PPO sırasında örnekleri puanlamak için var. Policy'nin
+olasılıkları, referansa göre log-oranı olarak bir ödül gibi okunabilseydi, o
+kutuyu ayrıca eğitmek gerekmezdi.
 
-Okunabiliyor. Bu,
+KL ile düzenlenmiş tercih hedefinde okunabiliyor. Bu,
 [direct preference optimization](#gloss-direct-preference-optimization){#term-direct-preference-optimization .term-ref}
-(doğrudan tercih optimizasyonu) sonucu [@rafailov2023dpo]. Türetimi
+(doğrudan tercih optimizasyonu) sonucu [@rafailov2023dpo]: ödülü policy ile
+referansın log-olasılık oranı üzerinden yeniden ifade ediyor, böylece tercih
+çiftleriyle ayrı bir ödül ağı ve PPO örnekleme döngüsü olmadan eğitim
+yapılabiliyor. İnsan tercihi verisi ya da ödül modelleme varsayımı ortadan
+kalkmıyor. Türetimi
 anlatacağız; çünkü kısa, üstelik onu bilmeden bakınca sonuç akıl almaz görünüyor.
 
 ::: {#gloss-direct-preference-optimization .column-margin .term-gloss}
-**direct preference optimization** (doğrudan tercih optimizasyonu) — RLHF'teki
-ödül modelinin aslında hiçbir zaman ayrı bir nesne olmadığını kanıtladıktan
-sonra, tercih çiftleri üzerinde sıradan bir gradyan adımıyla eğitmek. Genelde
-*DPO* yazılır.
+**direct preference optimization** (doğrudan tercih optimizasyonu) — tercih
+çiftleri üzerinde, KL ile düzenlenmiş ödül hedefinin yeniden
+parametrelenmesinden türetilen bir kayıpla policy'yi eğitmek. Ayrı bir ödül
+ağı ya da eğitim içi örnekleme gerektirmez; başarısı yöntemin varsayımlarına
+ve veri uyumuna bağlıdır. Genelde *DPO* yazılır.
 [↩](#term-direct-preference-optimization){.term-back}
 :::
 
@@ -1163,8 +1169,8 @@ $\sigma(2) = 0{,}881$.
 uzaklaştıkça da cezalandırılıyor:
 
 $$
-\max_{\pi_\theta}\; \mathbb{E}_{x \sim \mathcal{D},\, y \sim \pi_\theta(\cdot \mid x)}\big[r_\phi(x, y)\big]
-\;-\; \beta\, \mathbb{D}_{\text{KL}}\!\left[\pi_\theta(y \mid x) \,\|\, \pi_{\text{ref}}(y \mid x)\right]
+\max_{\pi_\theta}\; \mathbb{E}_{x \sim \mathcal{D}}\Big[\mathbb{E}_{y \sim \pi_\theta(\cdot \mid x)}\big[r_\phi(x, y)\big]
+\;-\; \beta\, \mathbb{D}_{\text{KL}}\!\left[\pi_\theta(\cdot \mid x) \,\|\, \pi_{\text{ref}}(\cdot \mid x)\right]\Big]
 $$
 
 $\beta$ sayısı tasmanın gücüdür. Büyük bir $\beta$ policy'yi referansa yakın
@@ -1190,9 +1196,11 @@ $$
 r(x, y) = \beta \log \frac{\pi^{*}(y \mid x)}{\pi_{\text{ref}}(y \mid x)} + \beta \log Z(x)
 $$
 
-[Ödül hiçbir zaman ayrı bir nesne değildi.]{.hl} Herhangi bir policy, referansa
-karşı log-oranı olarak okunduğunda zaten *bir* ödül modelidir. Ve o baş belası
-$Z(x)$ — mümkün her cevap üzerinden bir toplam, kimsenin hesaplamamasının
+[Bu türetimde ödül, policy ile referansın log-oranı olarak, yalnızca prompt'a
+bağlı bir terim dışında temsil edilir.]{.hl} Öğrenilmiş ödül modellerinin
+gereksiz olduğu anlamına gelmez; bu varsayımlar altında, tercih çiftleriyle
+ayrı bir ödül modeli eğitmeden policy'nin güncellenebileceği anlamına gelir. Ve
+o baş belası $Z(x)$ — mümkün her cevap üzerinden bir toplam, kimsenin hesaplamamasının
 sebebi de bu — yalnızca prompt'a bağlı; yani *aynı* prompt'a verilen iki cevabı
 karşılaştırdığınız anda sadeleşiyor. Tercih verisinin size verdiği şey de tam
 olarak bu.
@@ -1204,10 +1212,11 @@ $$
 \mathcal{L}_{\text{DPO}} = -\,\mathbb{E}\left[ \log \sigma\!\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]
 $$
 
-Kelimelerle okuyun, korkutuculuğu kalmaz: *tercih edilen cevabın olasılığını
-yükseltin, reddedilenin olasılığını düşürün — ama ikisini de referans modelin
-onları zaten bıraktığı yere göre ölçün; böylece referansla aynı fikirde olduğunuz
-için değil, doğru yönde hareket ettiğiniz için ödüllendirilirsiniz.*
+Kelimelerle okuyun, korkutuculuğu kalmaz: *tercih edilen cevabın referansa
+göre log-olasılık oranını, reddedilenin oranından daha büyük hâle getirin;
+böylece referansla aynı fikirde olduğunuz için değil, doğru yönde hareket
+ettiğiniz için ödüllendirilirsiniz.* Kayıp, tek tek olasılıkların hangi yöne
+gideceğini belirlemez.
 
 "Yükseltin" ve "düşürün" konusunda bir incelik. Kayıp yalnızca iki log-oran
 arasındaki *farkın* açılmasını ister. Pratikte DPO sırasında iki olasılık da
@@ -1215,7 +1224,8 @@ arasındaki *farkın* açılmasını ister. Pratikte DPO sırasında iki olasıl
 tercih edilen cevabın kendi olabilirliği azalıyorsa şaşırmayın.
 
 $\pi_{\text{ref}}$'in ne iş yaptığına dikkat edin, çünkü ileride
-karşılaşacağınız "temel modele asla DPO uygulama" kuralının sebebi o.
+karşılaşacağınız "temel modele DPO uygulamaktan kaçının" önerisinin sebebi
+o.
 
 DPO'nun kurulumu, tercih çiftlerinin referanstan örneklendiğini varsayıyor; bu
 yüzden makale, ortada bir SFT modeli olduğu her durumda
@@ -1224,34 +1234,39 @@ edilen* tamamlamalar üzerinde fine-tune edip onu kullanmayı öneriyor. Gerekç
 ile DPO'nun kullandığı $\pi_{\text{ref}}$ arasındaki dağılım kaymasını
 hafifletmek için" [@rafailov2023dpo].
 
-Böylece başarısızlığın kaynağı da belli oluyor. [Kayıp hiçbir
-zaman örnekleme yapmaz — temel model üzerinde DPO'yu bozan şey,
-"sıralayamamak" değil, referans ile veri arasındaki uyumsuzluktur.]{.hl}
+Böylece olası bir başarısızlığın kaynağı da belli oluyor. [Kayıp hiçbir
+zaman örnekleme yapmaz; tercih çiftleri talimat izleyen bir modelden
+geliyorsa, temel model zayıf bir referanstır ve sorun "sıralayamamak" değil,
+referans ile veri arasındaki uyumsuzluktur.]{.hl} Temel model üzerinde DPO
+matematiksel olarak tanımlı; başarısını veri kapsamı, referans seçimi ve görev
+değerlendirmesi belirler.
 
 ::: {.callout-note appearance="simple" icon="false"}
 **Yerine koymanın gerçekte kazandırdığı.**
 
-| | RLHF (PPO) | DPO |
+| | PPO tabanlı RLHF | çevrimdışı DPO |
 |:--|:--|:--|
-| bellekteki model sayısı | 4 | 2 (policy + donmuş referans) |
-| ayrı ödül modeli | önce eğitilir, sonra saklanır | yok |
-| eğitim sırasında örnekleme | var, policy her adımda üretir | yok, çiftler sabittir |
+| bileşenler | policy, referans, ödül ve değer işlevleri | policy + referans olasılıkları (önceden hesaplanabilir) |
+| ayrı ödül modeli | genellikle önce eğitilir | gerekmez |
+| eğitim sırasında örnekleme | var, policy cevap üretir | yok, mevcut çiftler kullanılır (çevrimiçi varyantlar üretir) |
 | bir adım nedir | pekiştirmeli öğrenme güncellemesi | sınıflandırma kaybı üzerinde gradyan adımı |
 | ayar yükü | PPO'nun kırpma (clip) aralığı, değer kaybı (value loss), GAE (genelleştirilmiş avantaj tahmini: bir eylemin beklenenden ne kadar iyi olduğunu birkaç adımın ödüllerinden yumuşatarak kestirme), artı $\beta$ | $\beta$, artı öğrenme oranı |
 
-DPO, uygulayıcıların gerçekten şikâyet ettiği iki şeyi kaldırdı — ödül modeli
-ve eğitim içindeki metin üretme döngüsü. Yaklaşık bir yıl içinde bir makaleden varsayılan yönteme
-dönüşmesinin sebebi de bu.
+DPO, uygulayıcıların sık şikâyet ettiği iki şeyi kaldırıyor — ayrı ödül
+modeli ve eğitim içindeki metin üretme döngüsü; bu da birçok ekipte kurulumu ve
+hesap maliyetini azaltıyor.
 :::
 
 ::: {.callout-warning appearance="simple"}
-**DPO'nun kaldırmadığı.** Tercih çiftleri hâlâ etiketleme demek ve pahalı olan
-kısım hâlâ orası. DPO *algoritmayı* ucuzlatır; *veri* eskisi kadar
-tutar. Ayrıca daha ince bir sorunu da miras alır: çiftler tek seferde ve
-başka bir modelin çıktılarından toplandığı için, policy'niz onları üreten şeyden
-uzaklaştıkça bayatlar. Tülu 3, on-policy tercih verisinin — yani eğitilen modelin
-kendisinin ürettiği verinin — yeniden kullanılan off-policy çiftlere kıyasla
-gerçek görev sonuçlarını iyileştirdiğini buldu [@lambert2025tulu3].
+**DPO'nun kaldırmadığı.** Güvenilir tercih etiketleri ve bunların kapsamını
+değerlendirmek hâlâ gerekir; etiketleme insanla, bir modelle ya da bir
+doğrulayıcıyla yapılabilir ve maliyeti yönteme bağlıdır. DPO *algoritmayı*
+ucuzlatır, *veriyi* değil. Ayrıca daha ince bir sorunu da miras alır: çiftler
+tek seferde ve başka bir modelin çıktılarından toplandıysa, policy'niz onları
+üreten şeyden uzaklaştıkça temsil güçleri azalabilir. Tülu 3 çalışmasında
+on-policy tercih verisi — eğitilen modelin kendisinin ürettiği veri — yeniden
+kullanılan off-policy çiftlere kıyasla görev sonuçlarını iyileştirdi
+[@lambert2025tulu3]; aynı kazancı her derlem için varsaymayın.
 :::
 
 ### GRPO: bunun yerine değer modelini silin

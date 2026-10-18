@@ -1082,18 +1082,24 @@ parameter count alone tells you what a model can do.
 ### DPO: deriving the shortcut away
 
 Look again at the diagram and ask which box is doing indispensable work. The
-reward model exists only to score samples during PPO. If the policy's own
-probabilities could be read as a reward, the box would be redundant.
+reward model exists only to score samples during PPO. If the policy's
+probabilities, read as a log-ratio against the reference, could serve as a
+reward, the box would not need training separately.
 
-They can. This is the
+In the KL-regularized preference objective, they can. This is the
 [direct preference optimization](#gloss-direct-preference-optimization){#term-direct-preference-optimization .term-ref}
-result [@rafailov2023dpo], and the derivation is worth stating because it is
+result [@rafailov2023dpo]: it re-expresses the reward through the log-ratio of
+policy and reference, so training on preference pairs needs no separate reward
+network and no PPO sampling loop. The preference data and the reward-modelling
+assumption do not go away, and the derivation is worth stating because it is
 short and the conclusion is otherwise mystifying.
 
 ::: {#gloss-direct-preference-optimization .column-margin .term-gloss}
-**direct preference optimization** — training on preference pairs with an
-ordinary gradient step, having proved that the reward model in RLHF was never a
-separate object. Usually written *DPO*.
+**direct preference optimization** — training the policy on preference pairs
+with a loss derived from reparameterising the KL-regularized reward objective.
+It needs no separate reward network and no sampling during training; how well
+it works depends on its assumptions and on how well the data fit. Usually
+written *DPO*.
 [↩](#term-direct-preference-optimization){.term-back}
 :::
 
@@ -1122,8 +1128,8 @@ Second, the policy is optimised against that frozen reward, leashed to the
 reference:
 
 $$
-\max_{\pi_\theta}\; \mathbb{E}_{x \sim \mathcal{D},\, y \sim \pi_\theta(\cdot \mid x)}\big[r_\phi(x, y)\big]
-\;-\; \beta\, \mathbb{D}_{\text{KL}}\!\left[\pi_\theta(y \mid x) \,\|\, \pi_{\text{ref}}(y \mid x)\right]
+\max_{\pi_\theta}\; \mathbb{E}_{x \sim \mathcal{D}}\Big[\mathbb{E}_{y \sim \pi_\theta(\cdot \mid x)}\big[r_\phi(x, y)\big]
+\;-\; \beta\, \mathbb{D}_{\text{KL}}\!\left[\pi_\theta(\cdot \mid x) \,\|\, \pi_{\text{ref}}(\cdot \mid x)\right]\Big]
 $$
 
 The number $\beta$ is the strength of the leash. A large $\beta$ keeps the
@@ -1149,9 +1155,11 @@ $$
 r(x, y) = \beta \log \frac{\pi^{*}(y \mid x)}{\pi_{\text{ref}}(y \mid x)} + \beta \log Z(x)
 $$
 
-[The reward was never a separate object.]{.hl} Any policy already *is* a
-reward model, read as its log-ratio against the reference. And the awkward
-$Z(x)$ — a sum over every possible response, which is why nobody computes it —
+[In this derivation the reward is represented, up to a term that depends only
+on the prompt, as the log-ratio of policy and reference.]{.hl} That does not
+make learned reward models pointless; it means that, under these assumptions,
+the policy can be updated on preference pairs without training a separate
+reward model. And the awkward $Z(x)$ — a sum over every possible response, which is why nobody computes it —
 depends only on the prompt, so it cancels the moment you compare two responses
 to the *same* prompt. Which is precisely what preference data gives you.
 
@@ -1162,11 +1170,11 @@ $$
 \mathcal{L}_{\text{DPO}} = -\,\mathbb{E}\left[ \log \sigma\!\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]
 $$
 
-Read it in words and it stops being intimidating: *raise the probability of
-the preferred answer and lower the probability of the rejected one — but
-measure both relative to where the reference model already had them, so you
-are rewarded for moving in the right direction rather than for agreeing with
-the reference.*
+Read it in words and it stops being intimidating: *make the preferred answer's
+log-probability ratio against the reference larger than the rejected answer's,
+so you are rewarded for moving in the right direction rather than for agreeing
+with the reference.* The loss does not fix the direction of either probability
+on its own.
 
 One precision on "raise" and "lower". The loss only asks for the *gap* between
 the two log-ratios to widen. In practice both probabilities often fall during
@@ -1174,7 +1182,7 @@ DPO, the rejected one faster, so do not be surprised if the preferred answer's
 own likelihood goes down while the loss improves.
 
 Notice what $\pi_{\text{ref}}$ is doing here, because it is the reason for the
-*"never DPO a base model"* rule you will meet later.
+*"avoid DPO on a base model"* advice you will meet later.
 
 DPO's setup assumes the preference pairs were sampled from the reference. So the
 paper sets $\pi_{\text{ref}} = \pi_{\text{SFT}}$ whenever an SFT model
@@ -1183,34 +1191,39 @@ completions first and using that, explicitly "to mitigate the distribution
 shift between the true reference distribution which is unavailable, and
 $\pi_{\text{ref}}$ used by DPO" [@rafailov2023dpo].
 
-Which locates the failure precisely. [The loss never samples anything. It is
-the mismatch between reference and data — not an inability to "rank" — that
-breaks DPO on a base model.]{.hl}
+Which locates one likely failure. [The loss never samples anything; if the
+preference pairs come from an instruction-following model, a base model is a
+weak reference, and the problem is the mismatch between reference and data, not
+an inability to "rank".]{.hl} DPO on a base model is mathematically well
+defined; whether it works depends on data coverage, the choice of reference and
+the task evaluation.
 
 ::: {.callout-note appearance="simple" icon="false"}
 **What the substitution actually bought.**
 
-| | RLHF (PPO) | DPO |
+| | PPO-based RLHF | offline DPO |
 |:--|:--|:--|
-| models in memory | 4 | 2 (policy + frozen reference) |
-| separate reward model | trained first, then kept | none |
-| sampling during training | yes, the policy generates every step | no, the pairs are fixed |
+| components | policy, reference, reward and value functions | policy + reference probabilities (can be precomputed) |
+| separate reward model | usually trained first | not needed |
+| sampling during training | yes, the policy generates | no, existing pairs are used (online variants do generate) |
 | what a step is | a reinforcement-learning update | a gradient step on a classification loss |
 | tuning burden | PPO's clip range, value loss, GAE, plus $\beta$ | $\beta$, plus the learning rate |
 
-DPO removed the two things practitioners actually complained about — the
-reward model and the generation loop — which is why it went from paper to
-default in about a year.
+DPO removes the two things practitioners often complained about — the separate
+reward model and the generation loop — which reduces setup and compute cost for
+many teams.
 :::
 
 ::: {.callout-warning appearance="simple"}
-**What DPO did not remove.** Preference pairs are still annotation, and they
-are still the expensive part. DPO makes the *algorithm* cheap; the *data* costs
-exactly what it did before. It also inherits a subtler problem: because the
-pairs are collected once, from some other model's outputs, they go stale as
-your policy moves away from whatever generated them. Tülu 3 found that
-on-policy preference data — generated by the model being trained — improves
-downstream results over reused off-policy pairs [@lambert2025tulu3].
+**What DPO did not remove.** You still need reliable preference labels and an
+evaluation of their coverage; labelling can be done by people, by a model or by
+a verifier, and its cost depends on the method. DPO makes the *algorithm*
+cheap, not the *data*. It also inherits a subtler problem: if the pairs were
+collected once, from some other model's outputs, they can represent your policy
+less well as it moves away from whatever generated them. In the Tülu 3 study,
+on-policy preference data — generated by the model being trained — improved
+downstream results over reused off-policy pairs [@lambert2025tulu3]; do not
+assume the same gain for every corpus.
 :::
 
 ### GRPO: delete the value model instead
