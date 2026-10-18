@@ -3635,50 +3635,58 @@ more text, what you keep matters much more.
 
 ## Interview questions {#sec-pretraining-interview}
 
-Pretraining questions are rarely about whether you would run one. They are
-about whether you can reason quantitatively about a system you inherited, which
-is the actual job.
+Pretraining questions are rarely about whether you would run one. They test
+whether you can reason quantitatively about a system you inherited — compute,
+data and tokenizer decisions, the conditions of model choice. Give numerical
+estimates together with the assumptions they rest on.
 
 ::: {.column-margin}
 Almost nobody being interviewed has pretrained a model, and the interviewer
 knows it. What separates answers is whether you can do the arithmetic that
 decides *build, fine-tune, or buy* — and whether you know which pretraining
-decisions you are stuck with afterwards.
+decisions are expensive to change afterwards.
 :::
 
 1. **Estimate the compute for a 7B model on 2 trillion tokens.** $C \approx 6ND
    = 6 \times 7\times10^9 \times 2\times10^{12} \approx 8.4\times10^{22}$
-   FLOPs. Then convert to something a budget-holder understands: divide by the
-   per-GPU throughput you actually expect — not peak, roughly 40% of dense peak
-   — times 3,600 seconds, and you have GPU-hours. Say out loud that $6ND$
-   ignores attention, which for a 7B model adds roughly 4% at 2K context, 8% at
-   4K and 15% at 8K, and much more at long context, and that [the thing that actually blows up a pretraining schedule is
-   almost never the FLOPs, it is the calendar]{.hl}: interruptions, restarts and
-   checkpoint reloads.
+   FLOPs. Then convert to something a budget-holder understands: multiply the
+   chosen accelerator's dense peak by a measured or scenario MFU range for this
+   job (say 25–40%) and by 3,600 seconds; dividing the budget by that gives a
+   range of GPU-hours. Say out loud that $6ND$ ignores attention, which for a 7B
+   model with 32 layers and width 4096 adds roughly 4% at 2K context, 8% at 4K
+   and 15% at 8K, and much more at long context, and that [what blows up a
+   pretraining schedule is often not the FLOPs but the calendar]{.hl}:
+   interruptions, restarts and checkpoint reloads.
 
-2. **What is the single pretraining decision you cannot undo later?** The
-   tokenizer. Everything else — instruction behaviour, safety, domain
-   knowledge, even a good deal of factual content — can be moved by
-   post-training (@sec-post-training). The tokenizer is the one that resists,
-   because changing it means rebuilding the embedding table the rest of the
-   weights were trained against — possible, but a project rather than a
-   fine-tune. Quantify the
+2. **Which pretraining decisions are expensive to change later?** The
+   tokenizer leads the list. Instruction behaviour, safety, domain knowledge,
+   even a good deal of factual content can be moved by post-training
+   (@sec-post-training). The tokenizer resists: changing or extending the
+   vocabulary needs new embedding rows and an adaptation run in which the rest
+   of the weights are updated too — possible, but a project rather than a
+   fine-tune. The data mix, the architecture and the base capacity are also
+   expensive to change later; rather than ranking "the one decision you cannot
+   undo", explain what each change would take. Quantify the
    stakes with the same-content ratio from the tokenizer table: a Turkish user on GPT-2's tokenizer pays
    **1.98×** the tokens of an English user for the same content, and on BERTurk
    **0.58×**. Same language, same text, a 3.4× spread driven entirely by a
    decision made before training started.
 
 3. **How would you decide whether to pretrain, fine-tune, or use an API for a
-   Turkish product?** Three numbers, in this order. The same-content ratio
-   (Turkish ÷ English tokens), because it sets your per-content cost forever and may by itself justify a Turkish-native model.
-   The $6ND$ budget for the smallest model that could work, which is almost
-   always large enough to end the conversation. And the break-even month: the
+   Turkish product?** First the filters: quality on the target task, data
+   handling conditions and the licence. Then three numbers, in this order. The
+   same-content ratio (Turkish ÷ English tokens) measured on real Turkish
+   requests, because it sets your per-content cost for as long as you use that
+   tokenizer; but on its own it does not justify a Turkish model. The $6ND$
+   budget for the smallest model that could work, which is often large enough
+   to end the conversation. And the break-even month: the
    point where API spend at your projected traffic exceeds training plus
    serving. If that month is years away, buy. (This is the build-versus-buy
    break-even, not the inference-optimal one from @sec-pretraining-compute;
-   keep the two apart.) The answer
-   for nearly every product is *fine-tune or buy* — being able to show *why*
-   with arithmetic is the skill.
+   keep the two apart.) Compare the options over the same time horizon and
+   show how the decision moves when an assumption changes. The answer often
+   comes out as *fine-tune or buy*; but show it with arithmetic and your own
+   quality measurement rather than assuming it.
 
 4. **Where does pretraining data actually come from, and what is thrown away?**
    Common Crawl or a cleaned derivative such as FineWeb, and the honest headline
@@ -3686,20 +3694,23 @@ decisions you are stuck with afterwards.
    remove the large majority of raw crawl. Name the specific steps — boilerplate
    removal, language identification, deduplication across crawls, quality
    classifiers — and the counter-intuitive finding that FineWeb's authors hit:
-   aggressive deduplication across *all* crawls made things worse, because it
-   preferentially kept the low-quality text that had not been repeated.
-   [Deduplication is not monotonically good]{.hl}, which is the kind of detail
-   that shows you read the report rather than the summary.
+   aggressive deduplication across *all* crawls raised the share of low-quality
+   text in what an old crawl kept, and did worse at an equal token budget.
+   [Deduplication is not monotonically good]{.hl}, which is why a filter's
+   strength needs testing with small, controlled runs.
 
 5. **A model claims a 128K context window. What should you be sceptical about?**
    That the quality is uniform across it, and that you can afford it. On
-   quality, training rarely happens at full length throughout — the context is
-   usually extended in stages near the end — so the last 100K tokens have seen
-   far less training than the first 8K. On cost, take @sec-attention-cost's
-   arithmetic: with plain multi-head attention a 7B model's KV cache at 100,000 tokens is
-   52.4 GB per concurrent request, against 14 GB of weights — but with the
-   grouped-query attention that Llama 3 8B uses (8 KV heads instead of 32)
-   the same cache is 13.1 GB. A 4× difference out of one line of config. The window being *advertised*
+   quality, training rarely happens at full length throughout — as in Llama 3,
+   the context is often extended in stages near the end — so the last 100K
+   tokens may have seen far less training than the first 8K. On cost, take
+   @sec-attention-cost's arithmetic: for a model with 32 layers and width 4096
+   (Llama 3 8B's dimensions), at 16 bits and one request, the KV cache at
+   100,000 tokens would be 52.4 GB per concurrent request with plain
+   multi-head attention, against 14 GB of weights; with the grouped-query
+   attention Llama 3 8B uses (8 KV heads instead of 32) the same cache is
+   13.1 GB. Other 7B–8B models can differ; measure long-context quality and
+   per-request KV use on your own model. A 4× difference out of one line of config. The window being *advertised*
    and the window being *usable at your budget* are different numbers.
 
 6. **Why do small pretraining runs look so much less efficient than large
@@ -3707,10 +3718,11 @@ decisions you are stuck with afterwards.
    and small models give it less to work with: less arithmetic per unit of
    communication, less work to hide latency behind. Reconstructed MFU for
    Llama 3.1 goes 15.8–17.2% at 8B, 27.4–29.0% at 70B, 36.0–37.1% at 405B. Then
-   add the caveat that makes the answer honest: published GPU-hours are
-   *allocated* hours including evaluation, checkpointing and idle time, and only
-   the 405B has a published MFU to check against — so treat the 8B figure as an
-   upper bound on waste rather than a measurement of kernel quality.
+   add the caveat that makes the answer honest: the card does not say how far
+   the published GPU-hours include downtime, evaluation or checkpointing, and
+   only the 405B has a published MFU to check against — so you cannot
+   apportion the factors, and the 8B figure should not be read as a measure of
+   kernel quality.
 
 7. **Your Turkish (or Arabic, or Finnish) product costs far more per request than the English one. Explain and fix.**
    First compare how many tokens the same content produces under the tokenizer in
@@ -3731,8 +3743,9 @@ decisions you are stuck with afterwards.
    compatible.
 
 8. **Explain BPE. What happens to a word the tokenizer has never seen?**
-   Describe the merge loop, then answer the real question: nothing special happens.
-   The word decomposes into known subwords, in the worst case single characters. If
+   Describe the merge loop, then answer the real question: if the base alphabet
+   covers the word's characters, nothing special happens; the word decomposes
+   into known subwords, in the worst case single characters. If
    the base alphabet covers the input, or the tokenizer can write an unknown
    character as its bytes (byte fallback), there is no need for `<UNK>` because of
    an unrepresentable character. That coverage does not mean no information is
