@@ -786,8 +786,11 @@ $r = 128$'de bile modelin yüzde birinin üçte ikisini eğitiyorsunuz.
 
 Yukarıdaki aritmetik tek bir yapılandırma için. Sizinki farklı olacak ve
 sayılar, sezginin yetişebileceğinden hızlı değişiyor. Bu yüzden pratik bir
-kurala güvenmek yerine kendi model boyunuzu ve rankınızı girin, bellek
-ihtiyacını doğrudan okuyun.
+kurala güvenmek yerine kendi model boyunuzu ve rankınızı girin. Araç,
+seçtiğiniz parametre sayısı ve saklama düzeni için **ağırlık, gradyan ve
+optimizer durumunun yaklaşık alt toplamını** verir; gereken GPU belleği
+aktivasyonlara, dizi ve batch uzunluğuna, geçici tamponlara ve uygulamaya da
+bağlıdır. Sonucu bir sığma garantisi olarak kullanmayın.
 
 ```{ojs}
 //| echo: false
@@ -813,11 +816,11 @@ loraCalc = {
   const N = loraN * 1e9;
   const trainable = loraMode === "tam fine-tuning" ? N : N * loraShare / 100;
   const frozen = N - trainable;
-  const baseBytes = loraMode.startsWith("QLoRA") ? 0.5 : 2;
+  const baseBytes = loraMode.startsWith("QLoRA") ? 0.5 : 2; // QLoRA: raw 4-bit weights only, a lower bound (no scaling constants)
   const bytes = frozen * baseBytes + trainable * 16;
   const gib = bytes / 2 ** 30;
   const cards = [16, 24, 40, 48, 80, 141];
-  const fits = cards.find((g) => gib * 1.35 < g);
+  const fits = cards.find((g) => gib * 1.35 < g); // an assumed 35% headroom, not a real fit test
   return { trainable, gib, fits, full: (N * 16) / 2 ** 30 };
 }
 ```
@@ -833,9 +836,9 @@ html`<table style="width:100%; border-collapse:collapse; font-size:0.95rem">
       }</td></tr>
   <tr><td style="padding:6px 10px">ağırlıklar + gradyanlar + optimizer</td>
       <td style="padding:6px 10px; text-align:right; font-weight:600">${loraCalc.gib.toFixed(1).replace(".", ",")} GiB</td></tr>
-  <tr><td style="padding:6px 10px">makul olarak sığacağı en küçük kart</td>
+  <tr><td style="padding:6px 10px">%35 varsayımsal payla ilk kart (sığma garantisi değil)</td>
       <td style="padding:6px 10px; text-align:right; font-weight:600">${
-        loraCalc.fits ? loraCalc.fits + " GB" : "141 GB'tan fazla"
+        loraCalc.fits ? loraCalc.fits + " GB" : "listelenen kartların hiçbiri"
       }</td></tr>
   <tr><td style="padding:6px 10px">tam fine-tuning'e kıyasla</td>
       <td style="padding:6px 10px; text-align:right; font-weight:600">${
@@ -845,17 +848,19 @@ html`<table style="width:100%; border-collapse:collapse; font-size:0.95rem">
 <p style="font-size:0.85rem; opacity:0.75; margin-top:8px">
 Aktivasyonlar ve aktivasyon gradyanları hariç tutuldu; LoRA boyutundaki
 adaptör sayılarında bunlar bir yuvarlama hatası değil — aşağıdaki uyarıya
-bakın. "Sığacağı kart" satırı onlar için %35 pay bırakıyor; bu, ölçülmüş bir
-sabit değil, bu araç için yapılmış bir seçim.</p>`
+bakın. Kart satırı onlar için %35 pay bırakıyor; bu, ölçülmüş bir sabit değil,
+bu araç için yapılmış bir seçim. QLoRA satırı yalnızca ham 4 bit ağırlıkları
+sayar; nicemleme ölçek sabitleri ve nicemlenmeyen katmanlar dışarıda.</p>`
 ```
 
 Varsayılanlar, attention ve MLP katmanları üzerinde $r{=}16$ adaptörü olan
 Llama 3.1 8B (8,03B parametre) — 41.943.040 parametre, yani modelin %0,52'si.
-Tam fine-tuning: **119,7 GiB**; yaygın 24–80 GB'lık tek GPU yapılandırmalarının
-tamamının ötesinde. 141 GB'lık H200'ü ise ancak gerçek bir batch (yığın) boyutunda
-aktivasyonları da eklediğinizde aşıyor.
-LoRA: **15,5 GiB**, 24 GB'lık bir tüketici kartı. QLoRA: **4,3 GiB**, bir
-dizüstü.
+Aracın *yalnızca statik durum* hesabı: tam fine-tuning **119,7 GiB**, yaygın
+24–80 GB'lık tek GPU yapılandırmalarının tamamının ötesinde; bf16 tabanlı LoRA
+**15,5 GiB**; 4 bit ham tabanlı QLoRA **4,3 GiB**. Bu sayılara aktivasyonlar,
+geçici tamponlar ve QLoRA'nın ölçek bilgisi eklenmeden belirli bir karta
+sığacakları söylenemez; aşağıdaki uyarı bunun neden önemli olduğunu
+gösteriyor.
 
 ::: {.callout-warning appearance="simple"}
 **Bu aracın dışarıda bıraktığı şey sizi şaşırtacak olan kısım.** Ağırlıkları,
@@ -864,11 +869,16 @@ gradyanları ve optimizer durumunu sayıyor; çünkü LoRA'nın ortadan kaldırd
 kalan da onlar. QLoRA'nın yazarları bunu ölçmüş: batch boyu 1 olan
 7B'lik bir LLaMA'da, "özgün model ağırlıklarının yaygın kullanılan %0,2'si"
 büyüklüğünde bir adaptörle, LoRA *girdi gradyanları* 567 MB yer kaplarken
-LoRA *parametreleri* 26 MB kaplıyor [@dettmers2023qlora]. [Donmuş ağ boyunca
-geri yayılıma, eğittiğiniz şeye ayrılanın yirmi iki katı bellek gidiyor.]{.hl}
+LoRA *parametreleri* 26 MB kaplıyor; gradyan checkpoint'lemesiyle ilk kalem
+dizi başına ortalama 18 MB'a iniyor [@dettmers2023qlora]. [Bu örnekte LoRA
+girdi gradyanları, eğittiğiniz adaptörün yaklaşık yirmi iki katı yer
+tutuyor.]{.hl} Bu değerler o modele, batch boyuna ve dizi uzunluğuna ait;
+başka bir kuruluma taşınmaz.
 
-Gradyan checkpoint'lemesinin her ciddi LoRA tarifinde yer almasının ve bu
-aracın sayılarının bir kestirim değil bir alt sınır olmasının sebebi bu.
+Gradyan checkpoint'lemesinin yaygın LoRA tariflerinde yer almasının ve bu
+aracın sayılarının bir kestirim değil bir alt toplam olmasının sebebi bu. Kart
+seçmeden önce hedef kurulumda kısa bir pilot koşu yapıp tepe belleği
+ölçün.
 Bölümün sonundaki labın, buradaki aritmetiğin öngördüğünden çok daha az
 çarpıcı bir oran ölçmesinin sebebi de aynı.
 :::

@@ -755,7 +755,11 @@ Even at $r = 128$ you are training two thirds of one percent of the model.
 
 The arithmetic above is for one configuration. Yours will differ, and the
 numbers move faster than intuition does — so rather than trusting a rule of
-thumb, put your own model size and rank in and read the memory off.
+thumb, put your own model size and rank in. The widget gives an **approximate
+subtotal of weights, gradients and optimizer state** for the parameter count
+and storage scheme you choose; the GPU memory a run needs also depends on
+activations, sequence and batch length, temporary buffers and the
+implementation. Do not use the result as a guarantee that a run fits.
 
 ```{ojs}
 //| echo: false
@@ -781,11 +785,11 @@ loraCalc = {
   const N = loraN * 1e9;
   const trainable = loraMode === "full fine-tune" ? N : N * loraShare / 100;
   const frozen = N - trainable;
-  const baseBytes = loraMode.startsWith("QLoRA") ? 0.5 : 2;
+  const baseBytes = loraMode.startsWith("QLoRA") ? 0.5 : 2; // QLoRA: raw 4-bit weights only, a lower bound (no scaling constants)
   const bytes = frozen * baseBytes + trainable * 16;
   const gib = bytes / 2 ** 30;
   const cards = [16, 24, 40, 48, 80, 141];
-  const fits = cards.find((g) => gib * 1.35 < g);
+  const fits = cards.find((g) => gib * 1.35 < g); // an assumed 35% headroom, not a real fit test
   return { trainable, gib, fits, full: (N * 16) / 2 ** 30 };
 }
 ```
@@ -801,9 +805,9 @@ html`<table style="width:100%; border-collapse:collapse; font-size:0.95rem">
       }</td></tr>
   <tr><td style="padding:6px 10px">weights + gradients + optimizer</td>
       <td style="padding:6px 10px; text-align:right; font-weight:600">${loraCalc.gib.toFixed(1)} GiB</td></tr>
-  <tr><td style="padding:6px 10px">smallest card it plausibly fits on</td>
+  <tr><td style="padding:6px 10px">first card with an assumed 35% headroom (not a fit guarantee)</td>
       <td style="padding:6px 10px; text-align:right; font-weight:600">${
-        loraCalc.fits ? loraCalc.fits + " GB" : "more than 141 GB"
+        loraCalc.fits ? loraCalc.fits + " GB" : "none of the listed cards"
       }</td></tr>
   <tr><td style="padding:6px 10px">versus a full fine-tune</td>
       <td style="padding:6px 10px; text-align:right; font-weight:600">${
@@ -812,15 +816,19 @@ html`<table style="width:100%; border-collapse:collapse; font-size:0.95rem">
 </table>
 <p style="font-size:0.85rem; opacity:0.75; margin-top:8px">
 Activations and activation gradients are excluded, and at LoRA-sized adapter
-counts they are not a rounding error — see the caution below. The "fits on"
+counts they are not a rounding error — see the caution below. The "card"
 column allows 35% headroom for them, which is a convention chosen for this
-widget, not a measured constant.</p>`
+widget, not a measured constant. The QLoRA row counts raw 4-bit weights only;
+quantization scaling constants and unquantized layers are left out.</p>`
 ```
 
 The defaults are Llama 3.1 8B (8.03B parameters) with an $r{=}16$ adapter on
-attention and MLP — 41,943,040 parameters, or 0.52% of the model. Full
-fine-tune: **119.7 GiB**, past every common 24–80 GB single-GPU configuration
-and past the 141 GB H200 only once you add activations at a real batch size. LoRA: **15.5 GiB**, a 24 GB consumer card. QLoRA: **4.3 GiB**, a laptop.
+attention and MLP — 41,943,040 parameters, or 0.52% of the model. The
+widget's *static-state-only* sums: full fine-tune **119.7 GiB**, past every
+common 24–80 GB single-GPU configuration; LoRA on a bf16 base **15.5 GiB**;
+QLoRA on a raw 4-bit base **4.3 GiB**. Without activations, temporary buffers
+and QLoRA's scaling metadata you cannot say which card they fit; the caution
+below shows why that matters.
 
 ::: {.callout-warning appearance="simple"}
 **What this widget leaves out is the part that will surprise you.** It counts
@@ -828,12 +836,16 @@ weights, gradients and optimizer state, because those are what LoRA removes.
 It does not count activations, and once the optimizer is gone they are what is
 left. QLoRA's authors measured it: for a 7B LLaMA at batch size 1, with an
 adapter at "commonly used 0.2% of the original model weights", the LoRA *input
-gradients* occupy 567 MB while the LoRA *parameters* occupy 26 MB
-[@dettmers2023qlora]. [Twenty-two times more memory goes to backpropagating
-through the frozen network than to the thing you are training.]{.hl}
+gradients* occupy 567 MB while the LoRA *parameters* occupy 26 MB; with
+gradient checkpointing the first figure drops to an average of 18 MB per
+sequence [@dettmers2023qlora]. [In that example the LoRA input gradients take
+about twenty-two times the room of the adapter you are training.]{.hl} Those
+values belong to that model, batch size and sequence length; they do not carry
+over to another setup.
 
-This is why gradient checkpointing appears in every serious LoRA recipe, and
-why the widget's numbers are a floor rather than an estimate. It is also why
+This is why gradient checkpointing appears in common LoRA recipes, and why the
+widget's numbers are a subtotal rather than an estimate. Before choosing a
+card, run a short pilot on the target setup and measure peak memory. It is also why
 the lab at the end of this chapter measures a much less dramatic ratio than the
 arithmetic here predicts.
 :::
