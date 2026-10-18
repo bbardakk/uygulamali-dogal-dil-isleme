@@ -695,11 +695,14 @@ break the convention when you sweep.
 ### The arithmetic of an adapter
 
 A LoRA adapter on a $d_{\text{in}} \times d_{\text{out}}$ matrix adds exactly
-$r(d_{\text{in}} + d_{\text{out}})$ parameters. Everything else is bookkeeping:
-which matrices you attach to, and how many layers there are.
+$r(d_{\text{in}} + d_{\text{out}})$ *adapter parameters*. Everything else is
+bookkeeping: which matrices you attach to, and how many layers there are. The
+total trainable count can also include biases, a classification head or other
+modules left trainable; the table below counts adapters only (the lab table
+adds the head).
 
 The three configurations below were computed from each model's own
-`config.json`, so they are what you would actually get:
+`config.json` (we recomputed every row):
 
 | model | targets | $r$ | trainable | share of model |
 |:--|:--|--:|--:|--:|
@@ -713,11 +716,12 @@ The three configurations below were computed from each model's own
 | | attention + MLP | 8 | 20,185,088 | 0.265% |
 
 ::: {.column-margin}
-LoRA is not the only parameter-efficient method, only the one that won. Prompt
-tuning [@lester2021power] trains a handful of *virtual tokens* prepended to the
-input and touches no weight at all — it becomes competitive with full
-fine-tuning as the model grows, and it is worth knowing about as the extreme
-end of the same idea.
+LoRA is not the only parameter-efficient method; it is one of the most widely
+used today. Prompt tuning [@lester2021power] trains the representations of a
+handful of *virtual tokens* prepended to the input and leaves the base model's
+weights untouched; in its authors' experiments it becomes competitive with full
+fine-tuning as the model grows. The memory, quality and latency trade-offs of
+these methods vary with model size and task.
 :::
 
 ::: {.column-margin}
@@ -729,13 +733,16 @@ rather than $4096 \times 1024$. Give Qwen 8 KV heads and the count rises to
 $d = 3584$ against 4096, over 28 layers against 32.
 :::
 
-Two things fall out. First, **the MLP is most of the model**, and adding it to
-an attention-only adapter is the single largest jump on the table: 2.25× on
-BERTurk, 3.08× on Llama. Measured from `q_proj, v_proj` alone the jump is
-larger still — 4.5× on BERTurk, 6.2× on Llama, 8.0× on Qwen. Second, even the
-most generous setting here is under 0.3% of an 8B model. Rank spans a wider
-range than targets do — $r$ from 1 to 128 is a factor of 128 — yet even the
-top of that range stays well under one percent of the model:
+Two things fall out. First, adding the MLP matrices to an attention adapter is
+the largest jump on the table: 2.25× on BERTurk, 3.08× on Llama (from
+`q_proj, v_proj` alone, 4.5× on BERTurk, 6.2× on Llama, 8.0× on Qwen). The jump
+comes from the number and size of the target matrices; separately, the MLP
+does hold much of these models' weights (by our count ~70% of Llama 3.1 8B,
+~75% of Qwen 2.5 7B, ~51% of BERTurk). Second, even the most generous setting
+here is under 0.3% of an 8B model. Raising $r$ from 1 to 128 multiplies the
+adapter count on the same targets by 128 — no one should expect quality to
+rise in proportion — yet even the top of that range stays well under one
+percent of the model:
 
 | $r$ | 1 | 4 | 8 | 16 | 32 | 64 | 128 |
 |:--|--:|--:|--:|--:|--:|--:|--:|
