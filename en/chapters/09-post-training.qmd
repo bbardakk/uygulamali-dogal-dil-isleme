@@ -981,11 +981,13 @@ preferences, then optimize the language model against it.
 
 
 Two words from reinforcement learning appear from here on. The **policy** is
-simply the model being trained, seen as a rule that picks the next token given
-the text so far. The **KL divergence** $\mathbb{D}_{\text{KL}}[\pi \,\|\, \pi_{\text{ref}}]$
-measures how far one probability distribution has moved from another; it is
-zero when the two are identical and grows as they separate. Here it measures
-how far the policy has drifted from the model it started as.
+simply the model being trained, seen as defining a probability distribution
+over possible answers (token by token) given a prompt. The **KL divergence**
+$\mathbb{D}_{\text{KL}}[\pi \,\|\, \pi_{\text{ref}}]$ measures how far one
+probability distribution has moved from another; it is zero when the two are
+identical and grows as they separate. Here it compares the policy's answer
+distribution with the frozen reference's, averaged over prompts in the
+training objective.
 
 ::: {#gloss-reward-model .column-margin .term-gloss}
 **reward model** — a model trained on human comparisons that reads a prompt and
@@ -996,9 +998,9 @@ something an optimizer can maximise.
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">RLHF, and what has to be in memory at once</div>
+<div class="fig-title">RLHF, and the components you have to budget for</div>
 <svg viewBox="0 0 764 456" style="max-width:744px" role="img"
-     aria-label="A two-phase diagram. Phase one, on the left, shows a prompt producing two candidate answers, a human choosing the better one, and that comparison training a reward model that outputs a single scalar score. Phase two, on the right, shows a training loop with four models resident in memory at once: the policy being trained, a frozen reference copy of it used to compute a KL penalty, the frozen reward model that scores samples, and a value model that estimates expected return. The policy generates a sample, the reward model scores it, the KL term penalises drift from the reference, and PPO updates the policy. A note at the bottom states that four models of comparable size must be held simultaneously, which is the practical objection to RLHF.">
+     aria-label="A two-phase diagram. Phase one, on the left, shows a prompt producing two candidate answers, a human choosing the better one, and that comparison training a reward model that outputs a single scalar score. Phase two, on the right, shows a training loop with four components: the policy being trained, a frozen reference copy of it used to compute a KL penalty, the frozen reward model that scores samples, and a value model that estimates expected return. The policy generates a sample, the reward model scores it, the KL term penalises drift from the reference, and PPO updates the policy and the value model. A note at the bottom states that the four components together add compute and memory, which is the practical objection to RLHF.">
   <defs>
     <marker id="rl-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0.5 L7.5,4 L0,7.5 z" class="head"/>
@@ -1034,7 +1036,7 @@ something an optimizer can maximise.
   <rect x="584" y="104" width="150" height="40" rx="6" class="box-warm"/>
   <text x="659" y="122" class="t-xs t-mid t-b t-warm">VALUE MODEL</text>
   <text x="659" y="137" class="t-xs t-mid t-muted">trained, gives a baseline</text>
-  <text x="571" y="172" class="t-xs t-mid t-b">PPO update on the policy only</text>
+  <text x="571" y="172" class="t-xs t-mid t-b">PPO updates the policy and value model</text>
   <text x="571" y="194" class="t-xs t-mid t-muted">reward − β · KL(policy ‖ reference)</text>
 
   <line x1="14" y1="240" x2="750" y2="240" class="ln-thin"/>
@@ -1044,34 +1046,37 @@ something an optimizer can maximise.
   <text x="14" y="324" class="t-xs t-muted">it makes “score higher” compete against “stay recognisable”.</text>
 
   <text x="14" y="360" class="t-xs t-b t-rose">The practical objection</text>
-  <text x="14" y="382" class="t-xs t-muted">Four models of comparable size, resident at once, plus generation inside the training loop. For a 70B policy</text>
-  <text x="14" y="400" class="t-xs t-muted">that is a cluster, not a node — and the value model is trained, so it carries the full 16 bytes per parameter.</text>
-  <text x="14" y="428" class="t-xs t-b">Everything after this section is an attempt to delete one of those four boxes.</text>
+  <text x="14" y="382" class="t-xs t-muted">In this setup four components add compute and memory together, plus generation inside the training loop.</text>
+  <text x="14" y="400" class="t-xs t-muted">For a 70B policy that usually means a cluster; the load depends on sharing, sharding and precision.</text>
+  <text x="14" y="428" class="t-xs t-b">DPO removes the need to train a separate reward model; GRPO removes the value model.</text>
 </svg>
 ```
 ::: {.fig-cap}
 The reward model is the interesting object: it converts an *ordering* — A beat
 B — into a *scalar*, which is what a reinforcement-learning algorithm needs.
-Everything expensive about RLHF follows from having built that converter and
-then needing to keep it, and a frozen reference, and a value estimator, all in
-memory while the policy generates. The reinforcement-learning algorithm in the middle is PPO
-[@schulman2017ppo], chosen for stability rather than for anything to do with
-language.
+The diagram shows the four functions of InstructGPT-style PPO-based RLHF: the
+policy being updated, a frozen reference, the reward model and a value
+component for advantage estimation. They need not be separate networks, nor
+held on one GPU at once (the value estimator can share the trunk, components
+can sit on different devices); the memory cost depends on the implementation.
+The reinforcement-learning algorithm in the middle is PPO [@schulman2017ppo],
+one of the methods used to update the policy.
 :::
 ::::
 
-The result was not marginal. InstructGPT's 1.3B model, put through this
-pipeline, produced outputs that human labellers preferred to those of the 175B
-GPT-3 — "despite having 100x fewer parameters" [@ouyang2022training]. And the
-stage that reversed a hundredfold difference in size was cheap. The authors
-report it: training the 175B SFT model took 4.9 petaflop/s-days and the 175B
+The result was not marginal. On the prompts studied, human labellers
+preferred the outputs of InstructGPT's 1.3B model, put through this pipeline,
+to those of the 175B GPT-3 — "despite having 100x fewer parameters"
+[@ouyang2022training]. That is a preference for particular answers, not a
+general capability advantage. The cost figure is separate and belongs to the
+study's 175B version: training the 175B SFT model took 4.9 petaflop/s-days and the 175B
 PPO-ptx model 60, "compared to 3,640 petaflops/s-days for GPT-3"
 [@ouyang2022training]. [The reported SFT and PPO-ptx runs together cost about 1.8% of what pretraining cost, and that total leaves out the reward model.]{.hl}
 
 ::: {.column-margin}
 That comparison is the strongest single argument in this chapter for taking
-post-training seriously. It is also the strongest argument for *not* believing
-that parameter count tells you what a model can do.
+post-training seriously. It is also a good argument against believing that
+parameter count alone tells you what a model can do.
 :::
 
 ### DPO: deriving the shortcut away

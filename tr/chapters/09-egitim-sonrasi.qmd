@@ -1016,12 +1016,13 @@ eğitiliyor, sonra dil modeli ona karşı optimize ediliyor.
 
 Buradan itibaren pekiştirmeli öğrenmeden iki kelime karşımıza çıkacak.
 **Policy** (politika; bu bölümde İngilizce adıyla kullanıyoruz), eğitilen
-modelin ta kendisi; yalnızca o ana kadarki metne bakıp bir sonraki token'ı
-seçen bir kural olarak görülüyor. **KL
+modelin ta kendisi; bir prompt verildiğinde olası cevaplar üzerinde (token
+token) bir olasılık dağılımı tanımlayan model olarak görülüyor. **KL
 ıraksaması** $\mathbb{D}_{\text{KL}}[\pi \,\|\, \pi_{\text{ref}}]$ ise bir
 olasılık dağılımının diğerinden ne kadar uzaklaştığını ölçer: iki dağılım
-aynıysa sıfırdır, ayrıştıkça büyür. Burada policy'nin başladığı modelden ne
-kadar saptığını ölçüyor.
+aynıysa sıfırdır, ayrıştıkça büyür. Burada policy'nin cevap dağılımını donmuş
+referansınkiyle karşılaştırıyor; eğitim hedefinde bu uzaklık promptlar
+üzerinde ortalanıyor.
 
 ::: {#gloss-reward-model .column-margin .term-gloss}
 **reward model** (ödül modeli) — insan karşılaştırmaları üzerinde eğitilmiş,
@@ -1032,9 +1033,9 @@ iyidir*'i bir optimizer'ın maksimize edebileceği bir şeye çevirmek için var
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">RLHF ve aynı anda bellekte ne bulunmak zorunda</div>
+<div class="fig-title">RLHF ve hesaba katılması gereken bileşenler</div>
 <svg viewBox="0 0 764 456" style="max-width:744px" role="img"
-     aria-label="İki aşamalı bir şema. Soldaki birinci aşamada bir prompt iki aday cevap üretiyor, bir insan daha iyisini seçiyor ve bu karşılaştırma, tek bir skaler puan veren bir ödül modeli eğitiyor. Sağdaki ikinci aşamada, aynı anda bellekte duran dört modelli bir eğitim döngüsü var: eğitilen policy, KL cezasını hesaplamak için kullanılan donmuş referans kopyası, örnekleri puanlayan donmuş ödül modeli ve beklenen getiriyi kestiren değer modeli. Policy bir örnek üretiyor, ödül modeli onu puanlıyor, KL terimi referanstan uzaklaşmayı cezalandırıyor ve PPO policy'yi güncelliyor. Alttaki not, benzer boyutta dört modelin aynı anda tutulması gerektiğini, RLHF'e yöneltilen pratik itirazın da bu olduğunu söylüyor.">
+     aria-label="İki aşamalı bir şema. Soldaki birinci aşamada bir prompt iki aday cevap üretiyor, bir insan daha iyisini seçiyor ve bu karşılaştırma, tek bir skaler puan veren bir ödül modeli eğitiyor. Sağdaki ikinci aşamada, dört bileşenli bir eğitim döngüsü var: eğitilen policy, KL cezasını hesaplamak için kullanılan donmuş referans kopyası, örnekleri puanlayan donmuş ödül modeli ve beklenen getiriyi kestiren değer modeli. Policy bir örnek üretiyor, ödül modeli onu puanlıyor, KL terimi referanstan uzaklaşmayı cezalandırıyor ve PPO policy'yi ve değer modelini güncelliyor. Alttaki not, bu dört bileşenin birlikte hesap ve bellek yükü yarattığını, RLHF'e yöneltilen pratik itirazın da bu olduğunu söylüyor.">
   <defs>
     <marker id="rl-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0.5 L7.5,4 L0,7.5 z" class="head"/>
@@ -1070,7 +1071,7 @@ iyidir*'i bir optimizer'ın maksimize edebileceği bir şeye çevirmek için var
   <rect x="584" y="104" width="150" height="40" rx="6" class="box-warm"/>
   <text x="659" y="122" class="t-xs t-mid t-b t-warm">DEĞER MODELİ</text>
   <text x="659" y="137" class="t-xs t-mid t-muted">eğitilir, baseline verir</text>
-  <text x="571" y="172" class="t-xs t-mid t-b">PPO güncellemesi yalnızca policy üzerinde</text>
+  <text x="571" y="172" class="t-xs t-mid t-b">PPO: policy ve değer modeli güncellenir</text>
   <text x="571" y="194" class="t-xs t-mid t-muted">ödül − β · KL(policy ‖ referans)</text>
 
   <line x1="14" y1="240" x2="750" y2="240" class="ln-thin"/>
@@ -1080,26 +1081,30 @@ iyidir*'i bir optimizer'ın maksimize edebileceği bir şeye çevirmek için var
   <text x="14" y="324" class="t-xs t-muted">“daha yüksek puan al”ı “tanınabilir kal”la yarıştırır.</text>
 
   <text x="14" y="360" class="t-xs t-b t-rose">Pratikteki itiraz</text>
-  <text x="14" y="382" class="t-xs t-muted">Benzer boyutta dört model aynı anda bellekte; üstelik metin üretimi eğitim döngüsünün içinde. 70B'lik policy için</text>
-  <text x="14" y="400" class="t-xs t-muted">bu bir düğüm değil, bir küme demektir — ve değer modeli eğitildiği için parametre başına tam 16 baytı taşır.</text>
-  <text x="14" y="428" class="t-xs t-b">Bu bölümden sonraki her şey, o dört kutudan birini silme denemesidir.</text>
+  <text x="14" y="382" class="t-xs t-muted">Bu düzende dört bileşen birlikte hesap ve bellek yükü yaratır; üstelik metin üretimi eğitim döngüsünün içinde.</text>
+  <text x="14" y="400" class="t-xs t-muted">70B'lik bir policy için bu çoğu zaman bir küme demek; yük, paylaşım, parçalama ve hassasiyete göre değişir.</text>
+  <text x="14" y="428" class="t-xs t-b">DPO ayrı ödül modeli eğitme gereğini, GRPO ise değer modelini ortadan kaldırır.</text>
 </svg>
 ```
 ::: {.fig-cap}
 Buradaki ilginç nesne ödül modeli: bir *sıralamayı* — A, B'yi yendi — bir
 *skalere* çeviriyor ve pekiştirmeli öğrenme algoritmasının ihtiyaç duyduğu şey
-de bu. RLHF'in pahalı olan her yanı, bu çeviriciyi kurmuş olmaktan ve sonra
-onu, donmuş bir referansı ve bir değer kestiricisini, policy metin üretirken
-hep birlikte bellekte tutmak zorunda kalmaktan geliyor. Ortadaki pekiştirmeli öğrenme algoritması PPO
-[@schulman2017ppo]; dille ilgili bir sebeple değil, kararlılığı için seçilmiş.
+de bu. Şema, InstructGPT türü PPO tabanlı RLHF'in dört işlevini gösteriyor:
+güncellenen policy, donmuş referans, ödül modeli ve avantaj kestirimi için
+değer bileşeni. Bunların ayrı ağlar olması ya da aynı anda tek bir GPU'da
+tutulması zorunlu değil (değer kestiricisi gövdeyi paylaşabilir, bileşenler
+farklı cihazlara dağıtılabilir); bellek maliyeti uygulamaya bağlı. Ortadaki
+pekiştirmeli öğrenme algoritması PPO [@schulman2017ppo], policy'yi güncellemek
+için kullanılan yöntemlerden biri.
 :::
 ::::
 
 Sonuç küçük bir fark değildi. Bu süreçten geçirilen InstructGPT'nin
-1,3B'lik modeli, insan etiketleyicilerin 175B'lik GPT-3'ünkilere tercih ettiği
-çıktılar üretti — "100 kat daha az parametresi olmasına rağmen"
-[@ouyang2022training]. Üstelik boyuttaki yüz katlık farkı tersine çeviren bu
-aşama ucuzdu. Yazarlar rakamı veriyor: 175B SFT modelini eğitmek 4,9
+1,3B'lik modelinin çıktılarını insan etiketleyiciler, incelenen promptlarda
+175B'lik GPT-3'ünkilere tercih etti — "100 kat daha az parametresi olmasına
+rağmen" [@ouyang2022training]. Bu, belirli bir cevap tercihi; genel bir yetenek
+üstünlüğü değil. Maliyet tarafında ayrı bir rakam var ve o, çalışmanın 175B
+sürümüne ait: 175B SFT modelini eğitmek 4,9
 petaflop/s-gün, 175B PPO-ptx modelini eğitmek 60 petaflop/s-gün gerektirdi;
 "GPT-3 için 3.640 petaflop/s-güne kıyasla" [@ouyang2022training].
 [Bildirilen SFT ve PPO-ptx maliyetlerinin toplamı, ön eğitim maliyetinin
@@ -1107,8 +1112,8 @@ yaklaşık %1,8'i; ödül modelinin eğitimi bu toplama dâhil değil.]{.hl}
 
 ::: {.column-margin}
 Bu karşılaştırma, bu bölümde eğitim sonrasını ciddiye almak için verilebilecek
-en güçlü tek argüman. Aynı zamanda, parametre sayısının bir modelin ne
-yapabileceğini söylediğine *inanmamak* için de en güçlü argüman.
+en güçlü argümanlardan biri. Aynı zamanda, parametre sayısının tek başına bir
+modelin ne yapabileceğini söylediğine inanmamak için de iyi bir argüman.
 :::
 
 ### DPO: kestirmeyi türetip çıkarmak
