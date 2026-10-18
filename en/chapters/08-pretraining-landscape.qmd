@@ -3063,9 +3063,11 @@ with a different objective.
 
 ### Train once, serve forever
 
-Chinchilla minimises the cost of *reaching* a given loss. If you are going to
-serve the model, that is the wrong objective, because training is paid once
-and inference is paid on every request until the model is retired.
+A Chinchilla-style choice minimises the loss reached for a given training
+compute (equivalently: the training compute needed to *reach* a given loss). If
+you are going to serve the model on many requests, that objective is
+incomplete, because training is paid once and inference is paid on every
+request until the model is retired.
 
 The arithmetic is short. Generating one token costs about $2N$ FLOPs — the
 forward pass only, no backward. So for Llama 3.1 8B:
@@ -3076,8 +3078,9 @@ $$
 $$
 
 [Forty-five trillion generated tokens, and the serving FLOPs have equalled the
-training FLOPs.]{.hl} A service producing 100 billion tokens a day passes that
-point in 450 days. Any product with real usage crosses it.
+training FLOPs.]{.hl} (generation FLOPs only, under the $2N$ approximation). A
+hypothetical service producing 100 billion tokens a day passes that point in
+450 days. Not every product reaches that traffic.
 
 Say what that point is and is not. It is FLOP parity for *one* model: the moment
 its lifetime inference has cost as much arithmetic as its training. It is not
@@ -3087,8 +3090,11 @@ count does that. The break-even that answers "should we have trained longer" is
 between two models of *equal quality*: $A$, the smaller one trained longer, and
 $B$, the larger one trained to the compute-optimal point. It is
 $T_{\text{break}} = (\text{Train}_A - \text{Train}_B)/(\text{Serve}_B - \text{Serve}_A)$
-generated tokens, where Serve is the cost per token, which is the calculation that makes a smaller, longer-trained model
-worth its extra training run. And the build-versus-buy question is a third
+generated tokens, where Serve is the cost per token. The formula gives a
+positive threshold only when $A$ costs more to train and less to serve per
+token; the costs must be in the same unit, and input processing, idle capacity
+and operating costs have to be added separately. This is the calculation that
+makes a smaller, longer-trained model worth its extra training run. And the build-versus-buy question is a third
 thing again, comparing training plus deployment plus operations against an API
 invoice.
 
@@ -3125,24 +3131,28 @@ training cluster was]{.hl}. Written down like that, the assumption is obviously
 untenable — the whole point of decode is that it cannot batch the way training
 does.
 
-So 45 trillion is an upper bound, and the real crossover is somewhere between
-about two months and just over a year of serious traffic. Which only sharpens the argument:
-overtraining pays back faster than the clean formula suggests, not slower.
+So 45 trillion is the favourable end of this table; in GPU-hours the crossover
+is somewhere between about two months and just over a year of serious traffic,
+depending on decode efficiency. That crossover does not by itself say when
+overtraining pays for itself — the two-model break-even above does, with the
+training, serving and operating costs of two equal-quality models. What it
+does say is that under serious traffic the cost of inference can catch up with
+the cost of training sooner than the clean FLOP count suggests, which is why
+cutting the inference cost per token matters.
 
-That is the whole justification for training an 8B model on 15 trillion
-tokens. You spend 93× the compute-optimal token budget for an 8B model up
-front, to get a model that is permanently cheaper to run than the larger
-compute-optimal model that would reach the same quality with less training
-compute. The bigger, "correct" model would have been cheaper to train and more
-expensive forever.
+That is the justification for training an 8B model on 15 trillion tokens. You
+spend 93× the Chinchilla reference in tokens up front, to get a model that is
+cheaper per token to run than a larger model that would reach the same quality
+with less training compute. The larger equal-quality model might have been
+cheaper to train, but it would cost more on every token it serves.
 
 ::: {.callout-tip appearance="simple" icon="false"}
 **The same arithmetic makes the first cut on your build-versus-buy question.**
 Work out the *total* tokens you expect the model to generate over its
 lifetime, multiply by the model's $2N$, and compare to that model's training
 compute. If you are three orders of magnitude below it, you are a rounding
-error in someone else's inference fleet and you should be renting, not
-training. Most teams are. The full comparison that actually decides it — API
+error in someone else's inference fleet, and renting is most likely the more
+sensible choice than training. The full comparison that actually decides it — API
 bill against training plus deployment plus operations — is interview question
 3 in @sec-pretraining-interview.
 :::
