@@ -3492,14 +3492,17 @@ recommendation.
 
 ## Intuition checks {#sec-pretraining-intuition}
 
-Answer before expanding. Each is a place where the intuitive answer is wrong in
-a direction that costs money — which is the recurring theme of pretraining
-decisions you inherit and cannot undo.
+Answer with your own reasoning before expanding. In most of them the intuitive
+answer is wrong in a direction that costs money; watch which assumptions the
+numbers in the answers depend on.
 
 ::: {.callout-note collapse="true"}
 ## 1. With Llama 3's tokenizer, Turkish needs 2.12 tokens per word and English needs 1.28. Does Turkish cost 66% more?
 
-No. It costs about 23% more, and the comparison is invalid as posed.
+No; the comparison is invalid as posed. On this chapter's parallel corpus
+Llama 3's tokenizer produced about 23% more tokens for the same content in
+Turkish. That is an input-token difference, not a total fee before model price,
+output and traffic are counted.
 
 Tokens-per-word compares units of different size. Turkish is agglutinative:
 *evlerinizden* is one word meaning "from your houses". [The honest measurement
@@ -3507,7 +3510,8 @@ is tokens for the *same content*]{.hl} — tokenize a sentence and its
 professional translation and divide.
 
 Do that on 1,157 aligned pairs and BERTurk costs **0.58×** what English costs;
-the Turkish-native tokenizers are the only ones where Turkish is *cheaper*.
+among those tested, the Turkish-native tokenizers are the only ones where
+Turkish is *cheaper*.
 GPT-2 costs **1.98×**, Llama 3 and multilingual BERT **1.23×**.
 
 The same corpus is 8,058 Turkish words against 10,862 English words of matched
@@ -3521,8 +3525,11 @@ touches it.
 Not with an ordinary fine-tune, and that is why the tokenizer belongs in a
 pretraining chapter rather than a preprocessing one.
 
-Changing the tokenizer changes the embedding table, which changes every weight
-downstream. It is not impossible: you can extend the vocabulary, initialise the
+Changing or extending the tokenizer needs new token ids and embedding (and,
+where needed, output) rows for them. The old weights do not change by
+themselves; but because the rest of the network was learned on the old
+segmentation, using the new tokens reliably takes adaptation training, which
+updates those weights too. It is not impossible: you can extend the vocabulary, initialise the
 new embeddings from the pieces they replace, and continue pretraining until the
 model settles — a documented and occasionally worthwhile procedure, and
 vocabulary-adaptation methods exist that initialise the new rows from the old
@@ -3555,7 +3562,10 @@ reported MFU. Llama 3's Table 4 reports 430 TFLOP/s per GPU; against the H100's
 dense BF16 peak that is $430/989 = 43.5\%$, and against the 2:4-sparsity peak
 the same run would report $430/1{,}979 = 21.7\%$. The 43.5% confirms they used the
 dense figure. Two MFUs are comparable only when they used the same peak, and
-nobody is obliged to tell you which they used.
+vendors do not always say which they used; ask. Ask too which model operations
+the count includes and over what period the ratio was taken: Llama 3's 41% for
+one stage and the ratio derived from the model card's total GPU-hours are not
+the same kind of measurement.
 
 The second trap is the numerator. Reconstructing Llama 3.1 405B from $6ND$
 alone gives 34.5%; adding the attention term gives **36.0–37.1%**, which brackets the **36.9%** our illustrative 41% × 0.90 estimate predicts. [$6ND$ omits attention, which is fine for a
@@ -3580,43 +3590,45 @@ optimiser needs to know what to change.
 So the forward pass is $2ND$ and is only a third of the bill — which
 immediately tells you that inference costs roughly $2N$ FLOPs *per token*
 (hence $2ND$ for $D$ tokens), not $6N$, and that is the number that decides whether serving or training dominates your
-budget. It also tells you why $6ND$ is a *pretraining* law and does not
+budget. It also tells you why $6ND$ is a *pretraining* rule and does not
 transfer unchanged to fine-tuning with frozen weights.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. You have more compute. Should you train a bigger model or use more data?
 
-Both, in roughly equal measure — and the interesting part is that this was the
-field's mistake for two years.
+Under Chinchilla's experimental conditions, and if enough new data exists,
+both in roughly equal measure — and the interesting part is that this was the
+field's mistake for several years. The split depends on how much data is
+available and on the target loss.
 
 Chinchilla's finding is that parameters and tokens should scale together;
 earlier models were badly undertrained for their size. But the compute-optimal
 answer is not the answer you want if you are going to *serve* the model:
-[a smaller model trained longer costs more to train and less to run
-forever]{.hl}, which is why production models are routinely trained well past
+[a smaller model trained longer costs more to train and less to run per
+token]{.hl}, which is why production models are routinely trained well past
 the compute-optimal point.
 
-The lab's break-even question is the practical form: if your model serves for
-more than a few months, inference-optimal and compute-optimal are different
-objectives and the one you should be optimising is inference-optimal, not
-compute-optimal.
+The lab's break-even question is the practical form: if your model will serve
+many requests, inference-optimal and compute-optimal are different objectives.
+Which to aim for is decided not by service time alone but by the expected total
+request volume, the quality bar and the cost per token.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. Can you just train on the same data twice instead of collecting more?
 
-Up to a point that is measurable and then not.
+Up to a point; after that the marginal benefit shrinks.
 
-Muennighoff et al. found repeated data "yields negligible changes to loss
-compared to having unique data" for up to about four epochs. Past that, each
-further epoch is worth less; the paper still finds meaningful gains up to
-around 16 epochs, after which returns fall off very fast and you are mostly
-spending compute to memorise.
+Muennighoff et al. found that, in the regime they measured, repeated data
+"yields negligible changes to loss compared to having unique data" for up to
+about four epochs. Past that, each further epoch is worth less; the paper still
+finds gains up to around 16 epochs, after which returns fall off fast and the
+value of extra compute approaches zero.
 
-The practical reading for a language like Turkish: [the constraint on a
-Turkish pretraining run is the corpus, not the GPUs]{.hl}, and repetition buys
-you a small multiple rather than an escape. That is also why the data-filtering
+The practical reading for a language like Turkish: [in many Turkish pretraining
+runs the constraint may be the corpus more than the GPUs]{.hl}, and repetition
+buys you a small multiple rather than an escape. That is also why the data-filtering
 decisions in @sec-pretraining-data get so much attention — when you cannot get
 more text, what you keep matters much more.
 :::
