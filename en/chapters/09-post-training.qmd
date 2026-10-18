@@ -1663,13 +1663,16 @@ question that has nothing to do with sentiment: *how well does the encoder
 still model Turkish?*
 
 The probe is the original pretraining objective. Mask 15% of the tokens in
-held-out Turkish text and measure how surprised the model's own masked-language
-head is by the answers — the masked-LM counterpart of the perplexity
-measurement in @sec-language-models, applied before and after.
+held-out Turkish text and measure the mean cross-entropy of the model's own
+masked-language head at those positions, before and after. This is a
+*masked-language-modelling probe*; it is not directly comparable with the
+autoregressive perplexity in @sec-language-models.
 
-One methodological point decides whether the numbers mean anything. The LoRA
-row is probed with the adapter **merged into the base weights**, not with the
-adapter deleted. Deleting it would recover the original model exactly and the
+One methodological point decides whether the numbers mean anything. In the
+LoRA row the adapter is *active*: here it was probed **merged into the base
+weights**. (Merging is not required; in the re-run the merged model and the
+model with the adapter active differed by at most $4.8\times10^{-6}$ in any
+logit, in fp32.) Deleting the adapter would recover the starting model and the
 measurement would be a tautology. What is being asked is: *when you deploy the
 LoRA-adapted model, has that model's grip on Turkish loosened?*
 
@@ -1680,17 +1683,18 @@ that head* — which mixes genuine loss of linguistic information with a
 representation the old head can no longer read. Those are not the same thing,
 and this design cannot separate them. What would separate them is a freshly
 fitted probe on top of each encoder, or a downstream Turkish task the encoder
-has not been tuned on. Read the table as evidence that the representation
-moved, and moved most where the training data was, rather than as a
-measurement of how much Turkish was destroyed.
+has not been tuned on. Read the table as a change in fit seen through the
+existing frozen head, not as a measurement of how much Turkish knowledge was
+lost.
 
 Two probe sets, because they answer different questions. **General Turkish** is
 1,826 sentences of ordinary prose from a parallel corpus [@zhang2020improving] —
 nothing to do with reviews, nothing to do with sentiment. **Held-out reviews**
 is the test split from the lab below (@sec-lora-lab): same domain as the fine-tune, included so
 that nobody can dismiss the result as a domain-shift artefact. The masked
-tensors are generated once and reused for all three encoders, so every
-difference below is the weights and nothing else.
+tensors are generated once and reused for all three encoders, which removes
+sampling differences; the evaluation mode, the MLM head and the numerical
+precision should be held equal too.
 
 | encoder | general TR loss | top-1 | reviews loss | top-1 |
 |:--|--:|--:|--:|--:|
@@ -1705,6 +1709,19 @@ single best guess is the token that was actually there. Lower loss and higher
 top-1 are both better, and the base row is the model as the Hub ships it.
 :::
 
+The probe's code had not been saved; we rewrote it from the text and ran it
+(re-run, October 2026). For general Turkish we used the Turkish side of the
+OPUS-100 `en-tr` test split (1,976 deduplicated sentences, 2,860 masked
+positions), for reviews the first 2,000 reviews of the test split (9,753
+positions); the full fine-tune is our 2e-5 run (85.34 macro-F1), and LoRA
+$r=8$ is the run that reproduces the book's lab row exactly. The pretrained
+model scored 2.897 loss and 47.0% top-1 on general Turkish, 2.602 and 49.1% on
+reviews. After the full fine-tune the loss rose **+9.7%** on general Turkish
+(top-1 44.1%) and **+55.5%** on reviews (35.0%); with merged LoRA the rises were
+**+1.7%** (46.2%) and **+25.9%** (42.2%). Because the text and the full
+fine-tune's settings differ, the magnitudes differ from the book's table; the
+ordering and the in-domain pattern are the same.
+
 Three things in that table are worth more than the paragraph that introduced
 them.
 
@@ -1712,27 +1729,29 @@ them.
 4.6× more.** Say what that ratio is: 12.5% against 2.7% is a ratio of *relative
 loss increases* measured through a frozen head, not a measurement that one model
 forgot 4.6 times as much Turkish. On text that has nothing to do with the task,
-a full fine-tune raises the model's masked-language loss by 12.5% and costs four
-points of top-1 accuracy. That is not
-catastrophic in the dramatic sense — the model still speaks Turkish — but it is
-a real, measurable loss of the thing you paid for during pretraining, bought
-with a task nobody will ever ask this model about again.
+a full fine-tune raises the masked-language loss measured through the frozen
+head by 12.5% and costs four points of top-1 accuracy. That is not catastrophic
+in the dramatic sense, but it is a meaningful regression under this probe; it
+does not show that the model's general Turkish ability fell by the same share.
+Test the product abilities you want to keep separately.
 
-**LoRA reduces the damage; it does not avoid it.** +2.7% is small, but it is not
-zero, and the merged model reads measurably worse through the head it started
+**In this experiment LoRA's loss increase is smaller than the full fine-tune's,
+but not zero.** +2.7% is small, but it is not zero, and the merged model reads measurably worse through the head it started
 with. Anyone who tells you parameter-efficient tuning cannot forget is quoting
 the reversibility argument and calling it the forgetting argument.
 
-**The damage is worst where the training data was.** This is the row that
+**The regression is larger on the in-domain probe.** This is the row that
 surprises people: the full fine-tune's loss rises 12.5% on general Turkish and
 **71.6%** on held-out reviews — nearly six times as much on the domain it was
-trained on. Forgetting is not the model drifting *away* from your data. It is
-the model repurposing, as hard as it can, exactly the representations your data
-touched most: review text got reshaped from *"everything a sentence can mean"*
-into *"which of two buttons to press"*, and the masked-language head can no
-longer read what is left. The corollary is uncomfortable — the most sensitive
-detector of forgetting was the in-domain probe, which is precisely the one no
-team builds, because it looks redundant next to the task test set.
+trained on (9.7% against 55.5% in the re-run). One possible reading: the model
+reorganises, for the task, the representations your data touched most — review
+text shifts from *"everything a sentence can mean"* towards *"which of two
+buttons to press"* — and the masked-language head can no longer read it as
+well. How much of that is representational change and how much a mismatch with
+the old head, this design cannot separate. The practical point stands: in this
+experiment the probe most sensitive to regression was the in-domain one, which
+is exactly the kind of probe that looks redundant next to the task test set and
+so does not get built.
 
 ::: {.callout-important appearance="simple"}
 **Both probes deteriorated while the number you were watching improved.**
@@ -1749,10 +1768,11 @@ better at the one thing you measured.
 
 The first is **reversibility**, and it is arithmetic rather than empirical.
 With LoRA the base weights are never written to; the adapter is a separate pair
-of matrices. Delete the adapter file and you have the original model back, bit
-for bit. A full fine-tune has no such undo — the only copy of the pretrained
-weights is the one you overwrote, or the one still on the Hub, which is why you
-should record the exact revision hash. This advantage is guaranteed.
+of matrices. Remove the adapter with the same base checkpoint, dtype and
+loading setup and the starting outputs come back. A full fine-tune can be
+undone too if you kept the base checkpoint; the difference is that the task
+update is not managed as a separate, small file. That is why you should record
+the exact revision hash of the base you used.
 
 The second is **reduced forgetting in the merged model**, and it is not
 guaranteed by the first. $W_0 + \frac{\alpha}{r}BA$ is a genuinely different

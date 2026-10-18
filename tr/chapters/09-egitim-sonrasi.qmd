@@ -1723,13 +1723,16 @@ ve sonra duygu analiziyle hiç ilgisi olmayan bir soru soralım: *encoder
 
 Probe (yoklama aracı), orijinal ön eğitim hedefinin kendisi. Ayrılmış Türkçe
 metindeki token'ların %15'ini maskeleyin ve modelin kendi masked-language
-head'inin (maskeli dil modelleme çıktı katmanı) cevaplar karşısında ne kadar
-şaşırdığını ölçün — @sec-dil-modelleri'daki perplexity ölçümünün maskeli dil
-modeli karşılığı; bu kez fine-tuning'den önce ve sonra uygulanıyor.
+head'inin (maskeli dil modelleme çıktı katmanı) bu konumlardaki ortalama
+çapraz entropisini ölçün; fine-tuning'den önce ve sonra. Bu bir *maskeli dil
+modelleme yoklaması*; @sec-dil-modelleri'daki otoregresif perplexity
+değeriyle doğrudan karşılaştırılamaz.
 
 Sayıların bir anlam taşıyıp taşımadığını tek bir yöntem kararı belirliyor. LoRA
-satırı, adaptör silinerek değil, adaptör **taban ağırlıklara kaynaştırılarak**
-yoklanıyor. Adaptörü silmek orijinal modeli birebir geri getirirdi ve ölçüm bir
+satırında adaptör *etkin*: bu çalışmada **taban ağırlıklara kaynaştırılarak**
+yoklandı. (Kaynaştırma şart değil; yeniden koşuda kaynaştırılmış model ile
+adaptörü etkin model arasındaki logit farkı fp32'de en fazla $4{,}8\times10^{-6}$
+çıktı.) Adaptörü silmek ise başlangıç modelini geri getirirdi ve ölçüm bir
 totoloji olurdu. Sorulan şey şu: *LoRA ile uyarlanmış modeli dağıttığınızda, o
 modelin Türkçeye hâkimiyeti zayıflamış mıdır?*
 
@@ -1740,17 +1743,18 @@ uzaklaşmasını* ölçüyor. Bu ölçüm iki şeyi birbirine karıştırır: ge
 bilgi kaybını ve eski head'in artık okuyamadığı bir temsili. İkisi aynı şey
 değil ve bu tasarım onları ayıramaz. Ayıracak olan şey, her encoder'ın üstüne
 yeniden eğitilmiş bir probe ya da encoder'ın üzerinde ayarlanmadığı bir Türkçe
-alt görev olurdu. Tabloyu, "temsil hareket
-etti ve en çok da eğitim verisinin bulunduğu yerde hareket etti" kanıtı olarak
-okuyun; Türkçenin ne kadarının yok edildiğinin ölçümü olarak değil.
+alt görev olurdu. Tabloyu, mevcut donmuş head ile görülen bir uyum değişimi
+olarak okuyun; Türkçe bilgisinin ne kadarının kaybolduğunun ölçümü olarak
+değil.
 
 İki probe kümesi var, çünkü farklı sorulara cevap veriyorlar. **Genel
 Türkçe**, paralel bir derlemden alınmış 1.826 cümlelik sıradan düzyazı
 [@zhang2020improving] — yorumlarla da duygu analiziyle de ilgisi yok. **Ayrılmış
 yorumlar** ise aşağıdaki labın (@sec-lora-lab) test bölümü: fine-tuning ile aynı alan; sonucun
 bir alan kayması yan etkisi diye geçiştirilememesi için dâhil edildi. Maskeli
-tensörler bir kez üretilip üç encoder için de yeniden kullanılıyor; yani
-aşağıdaki her fark ağırlıklardan geliyor, başka hiçbir şeyden değil.
+tensörler bir kez üretilip üç encoder için de yeniden kullanılıyor; böylece
+örnekleme farkı ortadan kalkıyor. Değerlendirme modu, MLM head ve sayısal
+hassasiyet de üçünde aynı tutulmalı.
 
 | encoder | genel TR kaybı | top-1 | yorumlarda kayıp | top-1 |
 |:--|--:|--:|--:|--:|
@@ -1765,6 +1769,19 @@ tahmininin gerçekten orada olan token'a ne sıklıkta denk geldiği. Düşük k
 yüksek top-1 de iyidir; ilk satır ise modelin Hub'dan geldiği hâli.
 :::
 
+Yoklamanın kodu kaydedilmemişti; onu metinden yeniden yazıp çalıştırdık
+(yeniden koşu, Ekim 2026). Genel Türkçe kümesi olarak OPUS-100 `en-tr` test
+bölümünün Türkçe tarafını (tekilleştirilmiş 1.976 cümle, 2.860 maskeli konum),
+yorumlar için test bölümünün ilk 2.000 yorumunu (9.753 konum) kullandık; tam
+fine-tuning satırı bizim 2e-5'lik koşumuz (85,34 macro-F1), LoRA $r=8$ ise
+kitabın lab satırını birebir yeniden üreten koşu. Ön eğitimli model genel
+Türkçede 2,897 kayıp ve %47,0 top-1, yorumlarda 2,602 ve %49,1 aldı. Tam
+fine-tuning sonrası kayıp genel Türkçede **+%9,7** (top-1 %44,1), yorumlarda
+**+%55,5** (%35,0) arttı; kaynaştırılmış LoRA'da artışlar **+%1,7** (%46,2) ve
+**+%25,9** (%42,2). Metin ve tam fine-tuning ayarı farklı olduğu için
+büyüklükler kitabın tablosundan ayrılıyor; sıralama ve alan içi örüntü
+aynı.
+
 Tablodan üç ders çıkıyor ve üçü de tabloyu tanıtan paragraftan daha önemli.
 
 **Donmuş eski head üzerinden bakıldığında iki uyarlama da kaybı artırıyor;
@@ -1772,28 +1789,29 @@ tam fine-tuning'de artış çok daha büyük.** Oranı ve neyi ifade ettiğini a
 söyleyelim: %12,5'e karşı %2,7 — yaklaşık 4,6 kat — donmuş bir head
 üzerinden ölçülmüş *göreli kayıp artışlarının* oranıdır; bir modelin 4,6 kat
 daha fazla Türkçe unuttuğunun ölçümü değil. Görevle hiç ilgisi olmayan metinde
-tam fine-tuning, modelin masked-language kaybını %12,5 artırıyor, top-1
-doğruluğunu da dört puan düşürüyor. Bu, dramatik anlamda yıkıcı değil — model hâlâ Türkçe konuşuyor — ama ön eğitim
-sırasında parasını ödediğiniz şeyin gerçek, ölçülebilir bir kaybı; üstelik bu
-modele bir daha kimsenin sormayacağı bir görev karşılığında göze alınmış bir
-kayıp.
+tam fine-tuning, donmuş head ile ölçülen masked-language kaybını %12,5
+artırıyor, top-1 doğruluğunu da dört puan düşürüyor. Bu, dramatik anlamda
+yıkıcı değil ama bu yoklama düzeninde anlamlı bir gerileme; modelin genel
+Türkçe yeteneğinin aynı oranda kaybolduğunu göstermez. Korumak istediğiniz
+ürün becerilerini ayrıca test edin.
 
-**LoRA hasarı azaltıyor; ortadan kaldırmıyor.** +%2,7 küçük bir sayı ama sıfır
-değil. Kaynaştırılmış model, başlangıçtaki head üzerinden okunduğunda
+**Bu deneyde LoRA'nın kayıp artışı tam fine-tuning'den küçük, ama sıfır
+değil.** +%2,7 küçük bir sayı ama sıfır değil. Kaynaştırılmış model, başlangıçtaki head üzerinden okunduğunda
 ölçülebilir biçimde daha kötü sonuç veriyor. Parametre-verimli fine-tuning'de
 unutma olamayacağını söyleyen biri, aslında geri alınabilirlik argümanını tekrarlayıp
 ona unutma argümanı adını veriyordur.
 
-**Hasar, eğitim verisinin bulunduğu yerde en büyük.** İnsanları şaşırtan satır
-bu: tam fine-tuning'in kaybı genel Türkçede %12,5, ayrılmış yorumlarda ise
-**%71,6** artıyor — üzerinde eğitildiği alanda neredeyse altı katı.
-Unutma dediğimiz şey, modelin verinizden *uzaklaşması* değil. Model, tam da
-verinizin en çok dokunduğu temsilleri elinden geldiğince başka bir amaca
-yönlendiriyor: yorum metninin temsili *"bir cümlenin anlatabileceği her
-şey"*den *"iki düğmeden hangisine basılacağı"*na dönüşüyor ve masked-language
-head'i geriye kalanı artık okuyamıyor. Bundan çıkan sonuç rahatsız edici —
-unutmanın en hassas dedektörü alan içi probe'du ve bu, tam da çoğu ekibin
-kurmadığı probe; çünkü görevin kendi test kümesi dururken gereksiz görünüyor.
+**Alan içi yoklamada gerileme daha büyük.** İnsanları şaşırtan satır bu: tam
+fine-tuning'in kaybı genel Türkçede %12,5, ayrılmış yorumlarda ise **%71,6**
+artıyor — üzerinde eğitildiği alanda neredeyse altı katı (yeniden koşuda
+%9,7'ye karşı %55,5). Olası bir okuma şu: model, verinizin en çok dokunduğu
+temsilleri görev için yeniden düzenliyor — yorum metninin temsili *"bir
+cümlenin anlatabileceği her şey"*den *"iki düğmeden hangisine basılacağı"*na
+kayıyor — ve masked-language head'i bunu eskisi kadar okuyamıyor. Ama bunun ne
+kadarının temsil değişimi, ne kadarının eski head ile uyumsuzluk olduğu bu
+düzenle ayrılamaz. Pratik sonuç yine de önemli: bu deneyde gerilemeye en
+duyarlı yoklama alan içi olandı ve bu, görevin kendi test kümesi dururken
+gereksiz görünüp kurulmayan türden bir yoklama.
 
 ::: {.callout-important appearance="simple"}
 **Sizin izlediğiniz sayı iyileşirken iki probe'da da sonuç kötüleşti.** Her
@@ -1809,12 +1827,12 @@ bakarak görülemez. Tuzağın tam biçimi bu: kötüleşen bir model değil,
 **Sık karıştırılan iki ayrı avantaj.** Bunları ayrı tutun.
 
 Birincisi **geri alınabilirlik** ve deneysel değil, aritmetik bir şey. LoRA'da
-taban ağırlıklara hiç yazılmaz; adaptör ayrı bir matris çiftidir. Adaptör
-dosyasını silin, orijinal model bit düzeyinde birebir geri gelir. Tam
-fine-tuning'de böyle bir geri alma imkânı yoktur — ön eğitimli ağırlıkların tek
-kopyası ya üzerine yazdığınız kopyadır ya da hâlâ Hub'da durandır; tam
-revizyon hash'ini kayda geçirmeniz gerekmesinin sebebi de bu. Bu avantaj
-garantilidir.
+taban ağırlıklara hiç yazılmaz; adaptör ayrı bir matris çiftidir. Aynı temel
+checkpoint, dtype ve yükleme düzeniyle adaptörü kaldırın, başlangıçtaki
+çıktılar geri gelir. Tam fine-tuning'de de temel checkpoint'i sakladıysanız
+geri dönebilirsiniz; fark, görev güncellemesinin ayrı ve küçük bir dosya olarak
+yönetilmemesi. Kullandığınız temel revizyonun hash'ini kayda geçirmeniz
+gerekmesinin sebebi de bu.
 
 İkincisi **kaynaştırılmış modelde unutmanın azalması** ve bu, birinci avantajın
 garantilediği bir şey değil. $W_0 + \frac{\alpha}{r}BA$, $W_0$'dan gerçekten
