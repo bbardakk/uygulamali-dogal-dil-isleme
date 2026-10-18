@@ -897,11 +897,11 @@ both on the same hardware and batch.
 LoRA has an operational property that matters more, in a company, than any of
 the training savings: an adapter can be **merged back into the base weights**.
 Since $h = W_0x + \frac{\alpha}{r}BAx = (W_0 + \frac{\alpha}{r}BA)x$, you can
-compute that sum once and ship an ordinary model. Serving is exactly as fast
-as the original — the paper's "no additional inference latency"
-[@hu2022lora], and the reason LoRA displaced the earlier bottleneck adapters
-[@houlsby2019parameter], which insert extra layers and therefore extra latency
-forever.
+compute that sum once, in a suitable linear layer, and ship an ordinary model;
+the separate adapter multiply goes away — the paper's "no additional inference
+latency" [@hu2022lora]. Real latency still depends on the serving stack,
+precision and quantization; measure it. It is a significant advantage over
+bottleneck adapters [@houlsby2019parameter], which insert extra layers.
 
 Or you can *not* merge, keep the base shared in memory, and swap adapters per
 request:
@@ -920,9 +920,12 @@ adapter in fp32 and double whatever you expected. [Always state targets and
 dtype when you quote an adapter size]{.hl}; on its own the rank tells you
 almost nothing.
 
-Even at the generous end, a thousand customers with a thousand private
-fine-tunes fit, together, on one node. This is why "fine-tuning" is a product
-at all, rather than a research technique —
+Even at the generous end, the weights of a thousand customers' private
+fine-tunes — one bf16 base and a thousand adapters — come to 93.1 GiB. That is
+a *weight-storage* sum; it does not show that one node can serve a thousand
+tenants at the concurrency and latency you need: KV caches, adapter loading,
+workspace and traffic have to be budgeted separately. Still, it is one reason
+"fine-tuning" can be a product at all, rather than a research technique —
 and it is worth noticing that the paper made the same point about GPT-3 in
 2021: 100 adapted models cost 350 GB + 35 MB × 100 ≈ 354 GB, against 35 TB for
 100 separate copies [@hu2022lora].
