@@ -2101,44 +2101,48 @@ regression suite before the fine-tune, not after.
 
 ## Interview questions {#sec-post-training-interview}
 
-Fine-tuning is where candidates most often confuse a technique with a decision.
-Every answer below has a measurement or a piece of arithmetic behind it.
+The questions below test when to choose a technique as much as how it works;
+every answer has a measurement or a piece of arithmetic behind it.
 
 ::: {.column-margin}
-The strongest signal in this area is a candidate who volunteers *when not to
-fine-tune*. Prompting, retrieval and a better schema fix more production
-problems than fine-tuning does, and @sec-decision-tree exists because the
-default answer to "should we fine-tune?" is usually no.
+A good signal in this area is a candidate who volunteers *when not to
+fine-tune*. As in the decision tree (@sec-decision-tree), first pin down the
+kind of error and a measurable quality bar; then compare prompting, retrieval
+and adaptation.
 :::
 
 1. **What does fine-tuning actually fix, and what does it not?** It fixes
    *behaviour* — format, style, task framing, refusal patterns, domain register.
-   It does not reliably install *facts*; retrieval does that, and a fact injected
-   by fine-tuning is expensive to update and hard to attribute. The framing that
+   It can teach chosen facts too, but for keeping current organisational
+   knowledge reliable and citable, consider retrieval separately; a fact added by
+   fine-tuning is expensive to update and hard to attribute. The framing that
    makes this land: a base model is not broken, it is answering a different
    question — given this text, what comes next. Fine-tuning teaches it which
    question you are asking; it does not reliably teach it new answers, and
-   [whenever a team uses fine-tuning as its knowledge-update mechanism, that
-   is precisely when fine-tuning disappoints]{.hl}. Then say the uncomfortable half: most fine-tuning requests
-   that arrive in a real team are better served by a better prompt, retrieval, or
-   a fixed label schema.
+   [when a team uses fine-tuning as its knowledge-update mechanism, it often
+   disappoints]{.hl}. Then say the practical half: first test whether the error
+   comes from knowledge, the prompt, the output schema or the model's ability,
+   and choose the method accordingly.
 
 2. **Explain LoRA to someone who knows linear algebra.** Freeze $W$ and learn
    $\Delta W = BA$ where $B$ is $d \times r$ and $A$ is $r \times k$ with $r \ll
    \min(d,k)$. Forward becomes $Wx + \frac{\alpha}{r}BAx$, and at serving time
-   you can fold $\frac{\alpha}{r}BA$ into $W$ so inference costs nothing extra. Two details that show you have used
+   you can fold $\frac{\alpha}{r}BA$ into $W$, removing the separate adapter
+   multiply. Two details that show you have used
    it: $A$ is randomly initialised and $B$ is zeroed, so the adapter starts as an
    exact no-op and training cannot destabilise the pretrained model at step 0;
-   and $\alpha$ behaves as a learning-rate multiplier on the adapter path, which
+   and $\alpha$ behaves *roughly* as a learning-rate multiplier on the adapter
+   path, which
    is why $\alpha = 2r$ is a convention rather than a law.
 
 3. **How much memory does fine-tuning need?** Decompose it rather than guessing.
-   Per trainable parameter with mixed-precision Adam: bf16 weight, bf16 gradient,
-   fp32 master weight, fp32 $m$, fp32 $v$ — roughly 16 bytes, of which
-   [the model itself is one eighth, the optimizer state three quarters, and the
-   gradient the remaining eighth]{.hl}. Then name the term that decomposition
-   omits and that dominates at small scale: activations, which grow with batch
-   and sequence length and which no amount of parameter freezing reduces. That
+   Per trainable parameter in a chosen mixed-precision Adam setup: bf16 weight 2,
+   bf16 gradient 2, fp32 master weight 4, fp32 $m$ and $v$ 8 together — roughly
+   16 bytes of static parameter state. Then name the term that decomposition
+   omits and that often dominates at small scale: activations and temporary
+   buffers, which vary with batch, sequence length and checkpointing and which
+   freezing parameters does not much reduce (in the lab LoRA cut peak memory
+   only 1.40×). That
    last sentence is what separates someone who has read about LoRA from someone
    who has watched it fail to fit.
 
@@ -2147,30 +2151,34 @@ default answer to "should we fine-tune?" is usually no.
    express *this answer is better than that one*, and for qualities like
    helpfulness or tone the judgement is comparative — which is exactly why
    preference optimization exists as a separate stage. DPO's contribution is
-   showing you can optimise the same objective RLHF targets without training a
-   separate reward model: [the reward was never a separate object]{.hl}, it is
-   recoverable from the policy. Practical note worth adding: DPO expects a model
-   that has already been through SFT, and running it on a base model is a common
-   and disappointing mistake.
+   showing you can optimise the KL-regularized preference objective without
+   training a separate reward network: [in that objective the reward can be
+   expressed as the policy/reference log-ratio]{.hl} [@rafailov2023dpo].
+   Practical note worth adding: an SFT start gives data–reference match in most
+   recipes; DPO on a base model is mathematically defined, but it often
+   disappoints when the preference data come from an instruction-following
+   model.
 
-5. **When would you *not* fine-tune?** When the problem is knowledge (use
-   retrieval), when the problem is format (try the prompt and a schema first),
-   when you have fewer than a few hundred examples, when the target behaviour
-   will change monthly, or when you cannot build a regression suite for what you
-   might break. Add the deployment argument: one base model serving many LoRA
-   adapters is operationally far simpler than many full fine-tunes, so if you
-   *are* going to fine-tune, the adapter form has an ops advantage that has
-   nothing to do with training cost.
+5. **When would you *not* fine-tune?** When a simpler prompt, schema or
+   reliable retrieval solves the measured problem; when you lack enough clean
+   training and evaluation data; when the target behaviour will change often;
+   when maintenance and regression costs outweigh the gain; or when you cannot
+   build a regression suite for what you might break. Add the deployment
+   argument: serving adapters cuts storage and the number of copies — but
+   measure routing, versioning and concurrency costs too.
 
-6. **You fine-tuned and the score got worse. How do you debug it?** In this
-   order, because it is roughly the order of frequency: check the chat template
+6. **You fine-tuned and the score got worse. How do you debug it?** First check
+   the data split, the label distribution and that the evaluation code is
+   correct. Then check the chat template
    — training with the wrong one teaches a format the server will never send;
    check whether the model collapsed to the majority class, which on an
    imbalanced task looks like a plausible accuracy (ours read 93.68% while
    scoring 0.00 F1 on the minority class); check the learning rate, since too
    high destroys pretrained structure and too low does nothing; and check
    whether your eval moved at all, because a frozen number usually means the
-   trainable parameters were not the ones you thought.
+   trainable parameters were not the ones you thought. These are possible
+   causes; test the learning rate and class balance in separate validation
+   experiments rather than pinning one symptom on one cause.
 
 ## Where to go deeper
 
