@@ -2709,34 +2709,43 @@ length*, which appears nowhere in $N$ or $D$.
 @sec-attention-cost gives attention's forward cost for a whole sequence as
 $4n^2d$ per layer. Three steps turn that into a per-token figure: divide by $n$
 to get $4nd$ per token, halve it because causal masking means the average
-position attends to only half the sequence, then multiply by 3 because the
+position attends to only half the sequence (in an implementation that really
+skips the masked pairs; kernels that apply the mask but still compute the full
+square do not get this halving), then multiply by 3 because the
 backward pass costs twice the forward. That leaves about $6\,L\,n\,d$ per token
 for $L$ layers, sequence length $n$, and width $d$.
 
 How much does ignoring it matter? Exactly as much as your context is long.
 
-| model and context | $6N$ per token | attention per token | attention as share of $6N$ | true cost ÷ $6ND$ |
+| model and context | $6N$ per token | approximate attention per token | attention as share of $6N$ | $(6N + \text{attention}) \div 6N$ |
 |:--|--:|--:|--:|--:|
 | Llama 3 8B at 8K context | $4.82\times10^{10}$ | $6.44\times10^{9}$ | 13% | 1.13× |
 | Llama 3 8B at 128K context | $4.82\times10^{10}$ | $1.03\times10^{11}$ | 214% | 3.14× |
 | Llama 3 405B at 8K context | $2.43\times10^{12}$ | $1.02\times10^{11}$ | 4% | 1.04× |
 
-Read the last column as "what you should multiply $6ND$ by to get the truth".
+Read the last column as the approximate multiplier you get by adding this
+causal attention count to the $6ND$ estimate; it is not measured GPU time or
+the true total operation count.
 
 ::: {.column-margin}
 There is a smaller error pushing the other way. The input embedding is a
 *lookup*, not a matrix multiply, so it costs essentially no FLOPs — yet its
 parameters are counted in $N$. Llama 3 8B's untied embedding is $128{,}256
 \times 4096 = 525$M parameters, **6.5%** of its $N$; in the wider models the
-embedding's share shrinks to only 1.5% of the 70B's and 0.5% of the 405B's. So $6ND$ over-counts small models slightly at
-the same time as it under-counts attention. For the 8B at 8K the two partly
+embedding's share shrinks to only 1.5% of the 70B's and 0.5% of the 405B's. The untied output layer, by contrast, is a real matrix
+multiply, and its parameters are counted correctly in $6ND$. So on the input
+embedding, $6ND$ over-counts small models slightly at the same time as it
+under-counts attention. For the 8B at 8K the two partly
 cancel.
 :::
 
-Two lessons, both practical. First, [$6ND$ is a *pretraining* law]{.hl}: it is
-accurate because pretraining runs at short context, and the 405B is the most
+Two lessons, both practical. First, [$6ND$ is a rule of thumb for short-context
+dense *pretraining*]{.hl}: it is accurate because pretraining mostly runs at
+short context, and the 405B is the most
 accurate case of all because a wide model buries the attention term. Second,
-at 128K context the true cost is more than three times what the law says —
+at 128K context the 8B's attention term, under this counting assumption, pushes
+the total past three times the $6ND$ estimate (the multiplier is not the same
+for every model and implementation) —
 which is precisely why long-context training is done as a short separate stage
 on a fraction of the tokens rather than for the whole run.
 
