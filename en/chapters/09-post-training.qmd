@@ -2225,30 +2225,35 @@ training–serving template mismatch early, and it takes a few seconds.
    model families. List every token that differs. Then explain, in terms of
    what SFT actually optimizes, why serving with family A's template a model
    trained with family B's degrades quality without raising an error.
-2. You have 46 tokens, 6 of them the answer. Write out the `labels` tensor for
-   both the masked and unmasked choice. Then compute, for each, what fraction
-   of the gradient signal is teaching the model to generate the prompt — and
-   say what behaviour you would expect to see at inference from the unmasked
-   model.
-3. @sec-lora gives two decompositions of QLoRA's ">780 GB" that both come to 12
-   bytes per parameter. Write down a third that also totals 12, and say what
-   evidence would let you decide between them. Then redo your preferred
-   decomposition for 8-bit Adam, which stores $m$ and $v$ in one byte each:
-   state the new total, the new ratio between a trained and a frozen parameter,
-   and one thing the reduced precision could plausibly cost you.
-4. Open the `config.json` of a model not in @sec-lora's table. From
-   `hidden_size`, `num_hidden_layers`, `num_attention_heads`,
-   `num_key_value_heads` and `intermediate_size` alone, compute the trainable
-   parameter count for LoRA $r=16$ on (a) `q_proj, v_proj` and (b) attention +
-   MLP. Then load the model with `peft` and check. Explain any discrepancy —
-   there usually is one, and it is usually the classifier head.
+2. Reproduce the example from @sec-sft with Llama 3's tokenizer: 31 tokens, 4
+   of them the answer. Write out the `labels` tensor for both the masked and
+   unmasked choice, and compute, for each, what fraction of the loss terms
+   comes from prompt and template positions; do not mistake that share for
+   gradient magnitude. Then run a short pilot with each mask and compare the
+   answering behaviour on the same prompts.
+3. @sec-lora gives two *possible* decompositions of QLoRA's ">780 GB" that both
+   come to 12 bytes per parameter. Separate the memory items the paper reports
+   from those it does not, and say what evidence you would need to choose
+   between them. Then compute a conditional total for 8-bit Adam ($m$ and $v$
+   in one byte each), listing the weight, gradient, master copy, moments and
+   scaling metadata you assume; state the new ratio between a trained and a
+   frozen parameter and one thing the reduced precision could plausibly cost
+   you. Do not present the result as real peak memory.
+4. Open the `config.json` of a model not in @sec-lora's table and check the
+   input/output sizes of the actual target `Linear` modules (`head_dim`, gated
+   MLPs and module names vary by model). Compute the *adapter-only* parameter
+   count for LoRA $r=16$ on (a) `q_proj, v_proj` and (b) attention + MLP. Then
+   load the model with `peft` and compare with the total trainable count;
+   verify the source of any difference (biases, a classifier head or other
+   modules left trainable) in the model.
 5. LoRA initialises $A$ random and $B$ zero. Work out what happens for $A$
    zero and $B$ random: write down $\partial\mathcal{L}/\partial A$ and
-   $\partial\mathcal{L}/\partial B$ at step 0 and say whether the run escapes.
-   Two of the four combinations start exactly at the pretrained model *and*
-   have a non-zero gradient — identify them and say what the gradients have in
-   common. Then propose an experiment that could distinguish the two in
-   practice, and predict its result before you run it.
+   $\partial\mathcal{L}/\partial B$ at step 0 (state the non-zero input and
+   upstream-gradient assumption) and say whether the run escapes. Two of the
+   four combinations start exactly at the pretrained model *and* generally have
+   a non-zero gradient — identify them and say what the gradients have in
+   common. Then propose an experiment that tests whether the same starting
+   output guarantees the same training trajectory.
 6. A team says their model "gives wrong prices for our products" and asks for
    a fine-tune. Walk them down @sec-decision-tree, out loud, in five sentences.
    Then construct the variant of their complaint for which fine-tuning *is* the
@@ -2257,16 +2262,21 @@ training–serving template mismatch early, and it takes a few seconds.
    model "is too verbose and too eager to agree". Decide between more SFT and
    DPO. Say exactly what you would collect for each, how many items, and how
    you would know within a week whether it worked.
-8. A colleague explains that DPO fails on a base model because "the model does
-   not answer yet, so there is nothing to rank". Look at
-   $\mathcal{L}_{\text{DPO}}$ and say precisely why that explanation is wrong —
-   what does the loss actually sample, and what does it hold fixed? Then give
-   the correct account in terms of $\pi_{\text{ref}}$, and say what you would
-   observe if someone ran it anyway.
+8. A colleague explains a disappointing DPO run on a base model with "the model
+   does not answer yet, so there is nothing to rank". Look at
+   $\mathcal{L}_{\text{DPO}}$: does the loss generate new answers during
+   training, and what does it hold fixed? Explain the role of the reference
+   log-probabilities. Then design an experiment that compares a base model and
+   an SFT model on the same preference pairs, measuring data coverage and
+   evaluation results; do not assume the failure or its cause before
+   measuring.
 9. GRPO replaces the value model with the mean reward of $G$ samples from the
-   same prompt. State the condition on $G$ and on reward variance under which
-   this is a *worse* baseline than a learned value model, and describe a task
-   where that condition holds.
+   same prompt. Under independent samples the group mean has variance
+   $\operatorname{Var}(r)/G$. Taking a learned value estimator's error variance
+   and bias into account too, discuss which estimator would have the lower
+   mean squared error; if the samples are not independent, say how correlation
+   changes this. Then describe a task where the group mean would be the worse
+   baseline.
 10. Design the forgetting evaluation you would actually run for a Turkish
     customer-support fine-tune. Name the benchmark, say why it is the right
     one, and state the threshold at which you would refuse to ship. Then
