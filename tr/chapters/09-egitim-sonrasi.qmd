@@ -421,14 +421,20 @@ LIMA ve Tülu 3, veri seçiminin sonucu etkileyebildiğine iki farklı ölçekte
 ## Parametre-verimli fine-tuning {#sec-lora}
 
 Buraya kadarki her şey, eğitim adımını çalıştırabildiğinizi baştan
-varsaydı. Kabaca bir milyar parametrenin üstündeki her şey için, elinizde olma
-ihtimali yüksek donanımda bunu yapamazsınız — ve sebep modelin kendisi değil.
+varsaydı. Model büyüdükçe, elinizde olma ihtimali yüksek tek bir GPU'da tam bir
+eğitim adımı hızla sığmaz hâle gelir. Sınırı model boyutu kadar optimizer
+durumu, aktivasyonlar, dizi ve batch uzunluğu ve GPU belleği belirler: aşağıdaki
+örnek düzende 1B parametre, aktivasyonlardan önce yalnızca parametreyle ilgili
+durum için yaklaşık 16 GB ister. Sebebin büyük kısmı modelin ağırlıkları
+değil, onları eğitmenin getirdiği ek durumdur.
 
 ### Bellek gerçekte nereye gidiyor
 
 Karma hassasiyetli AdamW eğitimi sırasında tek bir parametrenin kaç bayta mal
-olduğunu, yaygın yazılım yığınlarının varsayılan olarak kullandığı düzende
-sayalım: bf16 hesap, fp32 ana kopya ve fp32 optimizer momentleri. Başka
+olduğunu yaygın bir *örnek düzende* sayalım: bf16 hesap ağırlıkları ve
+gradyanlar, fp32 ana kopya ve iki fp32 Adam momenti. Kullandığınız uygulamanın
+hangi kopyaları gerçekten tuttuğunu, aktivasyonları ve geçici tamponları ayrıca
+denetleyin. Başka
 düzenler de var ve maliyetleri farklı: 8 bitlik optimizer durumları, fp32
 kullanmayan birleştirilmiş (fused) şemalar ve parçalanmış optimizer'lar bu
 tabloyu değiştirir. 16 bir varsayılandır, bir yasa
@@ -450,17 +456,21 @@ olmadan, $1$ büyüklüğündeki bir ağırlığa eklenen $10^{-5}$ büyüklüğ
 güncelleme bf16'da doğrudan $1$'e yuvarlanır — fp32 ise onu 1,00001 olarak
 tutar — ve eğitim sessizce durur. Örneği dikkatli seçin: $10^{-8}$ fp32'de de
 kaybolurdu, çünkü tek hassasiyette kabaca yedi ondalık hane vardır.
-Düşük hassasiyetli eğitim, ancak ağırlıkların yüksek hassasiyetli bir kopyası
-tutulduğunda çalışır.
+Bu düzende küçük güncellemeleri biriktiren şey fp32 ana kopyadır. Bu, fp32
+kopyanın her düşük hassasiyetli eğitimde zorunlu olduğu anlamına gelmez: başka
+optimizer ve güncelleme düzenleri bu sorunu farklı çözer ve o zaman bellek
+hesabı da değişir.
 :::
 
-İki toplamı birbiriyle karşılaştırın. [Modelin kendisi faturanın sekizde biri.
-Optimizer durumu — üç fp32 satırı — dörtte üçü, gradyan da kalan sekizde
-bir.]{.hl}
+İki toplamı birbiriyle karşılaştırın. [Bu örnek düzende modelin kendisi
+parametre faturasının sekizde biri. fp32 satırları — ana kopya ile Adam'ın iki
+momenti — dörtte üçü, gradyan da kalan sekizde bir.]{.hl}
 [Parametre-verimli fine-tuning'in](#gloss-parameter-efficient-fine-tuning){#term-parameter-efficient-fine-tuning .term-ref}
-(PEFT) tamamı bu orandan ibaret: bir
-parametreyi dondurun, sekiz taksidinin *yedisi* buharlaşır; geriye yalnızca
-yine de okumanız gereken bf16 ağırlık kalır.
+(PEFT) parametre durumu tarafındaki kazancı bu orandan geliyor: bir parametreyi
+dondurun, sekiz taksidinin *yedisi* buharlaşır; geriye yalnızca yine de
+okumanız gereken bf16 ağırlık kalır. Aktivasyonlar ve hesap ise kalır; bu
+kazancı toplam GPU belleğine 8 kat olarak taşımayın
+(laboratuvarda, @sec-lora-lab, ölçülen fark 1,40 kat).
 
 ::: {#gloss-parameter-efficient-fine-tuning .column-margin .term-gloss}
 **parameter-efficient fine-tuning** (parametre-verimli ince ayar) — LoRA'nın
@@ -471,24 +481,26 @@ eğitin, gerisini donmuş bırakın. Genelde *PEFT* diye yazılır.
 
 Bu aritmetiği yayımlanmış bir rakamla sınayabilirsiniz. QLoRA, 65B'lik bir
 LLaMA'yı 16 bitte fine-tune etmenin "780 GB'tan fazla GPU belleği gerektirdiğini"
-söylüyor [@dettmers2023qlora]. 780 nereden geliyor?
+söylüyor [@dettmers2023qlora]. Bu büyüklüğü açıklayan bir örnek hesap:
 
 $$
 65 \times 10^9 \;\text{parametre} \times 12 \;\text{bayt} = 780 \;\text{GB}
 $$
 
 Parametre başına on iki bayt; yukarıdaki tablodaki on altı baytın büyük kısmı.
-Makale bu on iki baytın hangileri olduğunu söylemiyor, ama hangi okumayı
-seçerseniz seçin sonuç aynı: [manşet rakama, yalnızca parametre eğitildiği için
-var olan durum hâkim.]{.hl} LoRA makalesinin GPT-3 rakamı da aynı mantıkla
+Makale bellek kalemlerinin dökümünü vermiyor; bu çarpım olası bir ayrıştırma,
+makalenin kendi dökümü değil. Aşağıdaki iki olası okumada da [manşet rakamın
+büyük kısmı, yalnızca parametre eğitildiği için var olan durum.]{.hl} LoRA makalesinin GPT-3 rakamı da aynı mantıkla
 okunabilir; iki rakamın ayrıntılı ayrıştırması aşağıdaki kutuda.
 
 ::: {.callout-note collapse="true"}
 ## Ayrıntı: 780 GB ve 1,2 TB nasıl ayrıştırılır
 
-Yukarıdaki tabloya göre on iki baytın doğal okuması üç fp32 satırıdır: ana ağırlık,
-$m$ ve $v$. Bunlara bf16 ağırlık ile gradyan eklenince gerçek ihtiyaç
-$65 \times 16 = 1{.}040$ GB'a ulaşır; "fazla" ifadesini haklı çıkaran da budur. İkinci bir okuma da
+Yukarıdaki tabloya göre on iki baytın bir okuması üç fp32 satırıdır: ana ağırlık,
+$m$ ve $v$. 16 baytlık düzende bunlara bf16 ağırlık ile gradyan eklenince
+yalnızca parametreyle ilgili durum $65 \times 16 = 1{.}040$ GB eder;
+aktivasyonlar ve tamponlar bunun üstüne gelir. Bu, "fazla" ifadesiyle
+tutarlı. İkinci bir okuma da
 aynı on ikiye tam oturuyor: bf16 ağırlık, bf16 gradyan, fp32 $m$, fp32 $v$,
 ana kopya yok; bu kez "fazla" ifadesini aktivasyonlar dolduruyor.
 
@@ -504,17 +516,21 @@ $$
 175 \times 10^9 \times 2\;\text{bayt} = 350\;\text{GB}
 $$
 
-ifadesi yalnızca donmuş bf16 ağırlıkları sayar, *başka hiçbir şeyi* değil.
-Başlangıç noktası öyle değil. 175B parametre üzerinde 1,2 TB, parametre
+ifadesi donmuş bf16 ağırlıkların ham boyutudur. Başlangıç noktası daha az
+temiz. 175B parametre üzerinde 1,2 TB, parametre
 başına yaklaşık 6,9 bayt
 eder; tablonun öngördüğü 16'nın epey altında. Yani o rakam, makalenin açıkça
-yazmadığı bir kurulumda ölçülmüş. Bu rakama ancak parametre başına daha ucuz
-bir durum götürür: 8 ya da 16 bitlik optimizer momentleri veya fp32 ana
-kopyanın olmaması. Çok sayıda karta bölme (sharding) ve aktivasyon
-checkpoint'lemesi (ara kayıt alma) götürmez: bölme aynı baytları daha çok
-GPU'ya dağıtır, checkpoint'leme ise parametre başına durumu değil aktivasyonları kırpar.
-350 GB'ı yeniden üretebileceğiniz bir aritmetik olarak, 1,2 TB'ı ise *onların*
-ölçümü olarak aktarın.
+yazmadığı bir kurulumda ölçülmüş. Onu ya parametre başına daha ucuz bir durum
+(8 ya da 16 bitlik optimizer momentleri, fp32 ana kopyanın olmaması) ya da
+durumun bir kısmının GPU dışında tutulması (örneğin CPU'ya aktarma) açıklayabilir;
+makale hangisi olduğunu söylemiyor. Çok sayıda karta bölme (sharding) ve
+aktivasyon checkpoint'lemesi (ara kayıt alma) tek başına açıklamaz: bölme aynı
+baytları daha çok GPU'ya dağıtır, checkpoint'leme ise parametre başına durumu
+değil aktivasyonları kırpar. 350 GB da donmuş bf16 ağırlıkların ham boyutuna
+denk geliyor; adaptör ve aktivasyonlar da yer tuttuğundan bu eşitlik makalenin
+bütün kalemlerini açıklamaz. İki rakamı da *onların* raporu olarak aktarın;
+350 GB'ın neye denk geldiğini yeniden hesaplayabilirsiniz, 1,2 TB'ın dökümünü
+ise bu iki toplamdan çıkaramazsınız.
 :::
 
 ### Düşük ranklılık hipotezi

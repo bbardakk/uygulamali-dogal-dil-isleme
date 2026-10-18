@@ -403,15 +403,20 @@ shaping the result: in both, curation mattered as much as collection.
 
 ## Parameter-efficient tuning {#sec-lora}
 
-Everything so far assumed you can run the training step at all. For anything
-above about a billion parameters, on the hardware you are likely to have, you
-cannot — and the reason is not the model.
+Everything so far assumed you can run the training step at all. As models
+grow, a full training step soon stops fitting on the single GPU you are likely
+to have. The limit is set by the optimizer state, the activations, the sequence
+and batch length and the GPU memory as much as by model size: in the example
+setup below, 1B parameters need about 16 GB for parameter-related state alone,
+before activations. Most of that is not the weights themselves but the extra
+state that training them brings.
 
 ### Where the memory actually goes
 
 Count the bytes one parameter costs during mixed-precision AdamW training in
-the configuration mainstream stacks default to — bf16 compute with an fp32
-master copy and fp32 optimizer moments. Other configurations exist and cost
+a common *example setup* — bf16 compute weights and gradients, an fp32 master
+copy and two fp32 Adam moments. Check which copies your implementation actually
+keeps, and the activations and temporary buffers, separately. Other configurations exist and cost
 differently: 8-bit optimizer states, fused fp32-free schemes and sharded
 optimizers all change this table. The 16 is a default, not a law.
 
@@ -430,17 +435,22 @@ The fp32 master copy is the least obvious row and the one people try to delete
 first. Without it, an update of size $10^{-5}$ added to a weight of size $1$
 rounds straight back to $1$ in bf16 — while fp32 keeps it, as 1.00001 — and the
 training silently stalls. Pick the example carefully: $10^{-8}$ would vanish in
-fp32 as well, since single precision has about seven decimal digits. Keeping
-one high-precision copy of the weights is what makes low-precision training
-work at all.
+fp32 as well, since single precision has about seven decimal digits. In this setup
+it is the fp32 master copy that accumulates the small updates. That does not
+make an fp32 copy mandatory for every low-precision run: other optimizer and
+update schemes solve the problem differently, and then the memory arithmetic
+changes too.
 :::
 
-Read the two totals against each other. [The model itself is one eighth of the
-bill. Optimizer state — the three fp32 rows — is three quarters of it, and the
-gradient is the remaining eighth.]{.hl} That ratio is the whole of
+Read the two totals against each other. [In this example setup the model
+itself is one eighth of the parameter bill. The fp32 rows — the master copy and
+Adam's two moments — are three quarters of it, and the gradient is the
+remaining eighth.]{.hl} That ratio is where
 [parameter-efficient fine-tuning](#gloss-parameter-efficient-fine-tuning){#term-parameter-efficient-fine-tuning .term-ref}
-(PEFT): freeze a parameter and *seven* of its eight
-instalments disappear, leaving only the bf16 weight you still have to read.
+(PEFT) gets its saving on parameter state: freeze a parameter and *seven* of
+its eight instalments disappear, leaving only the bf16 weight you still have to
+read. Activations and compute remain; do not carry this saving over to total
+GPU memory as a factor of 8 (the lab in @sec-lora-lab measured 1.40×).
 
 ::: {#gloss-parameter-efficient-fine-tuning .column-margin .term-gloss}
 **parameter-efficient fine-tuning (PEFT)** — the family LoRA belongs to: train
@@ -451,20 +461,21 @@ frozen. Usually written *PEFT*.
 
 The arithmetic is checkable against a published figure. QLoRA states that
 16-bit fine-tuning of a 65B LLaMA "requires more than 780 GB of GPU memory"
-[@dettmers2023qlora]. Where does 780 come from?
+[@dettmers2023qlora]. One example calculation that explains its size:
 
 $$
 65 \times 10^9 \;\text{params} \times 12 \;\text{bytes} = 780 \;\text{GB}
 $$
 
-Twelve bytes per parameter — and the paper does not say which twelve. The
-natural reading against the table above is the three fp32 rows, master weight,
-$m$ and $v$, with the bf16 weight and gradient pushing the real requirement to
-$65 \times 16 = 1{,}040$ GB and so justifying "more than". A second reading
-fits the same twelve exactly: bf16 weight, bf16 gradient, fp32 $m$, fp32 $v$,
-no master copy, with "more than" absorbing activations instead. [Either
-decomposition lands on the same conclusion — the headline number is dominated
-by state that exists only because the parameter is being trained.]{.hl}
+Twelve bytes per parameter — and the paper does not itemise its memory, so
+this product is a possible decomposition, not the paper's own. One reading
+against the table above is the three fp32 rows, master weight, $m$ and $v$;
+in the 16-byte setup the bf16 weight and gradient bring parameter-related state
+to $65 \times 16 = 1{,}040$ GB, before activations and buffers, consistent with
+"more than". A second reading fits the same twelve exactly: bf16 weight, bf16
+gradient, fp32 $m$, fp32 $v$, no master copy, with "more than" absorbing
+activations instead. [In either reading most of the headline number is state
+that exists only because the parameter is being trained.]{.hl}
 
 ::: {.column-margin}
 Reconstructing a published memory figure is worth doing precisely because it
@@ -480,14 +491,19 @@ $$
 175 \times 10^9 \times 2\;\text{bytes} = 350\;\text{GB}
 $$
 
-is the frozen bf16 weights *and nothing else*. The starting point is not.
+is the raw size of the frozen bf16 weights. The starting point is less clean.
 1.2 TB across 175B parameters is about 6.9 bytes each, well under the 16 the
 table predicts, so that figure was measured under a setup the paper does not
-spell out. Only cheaper per-parameter state gets you there — 8-bit or 16-bit
-optimizer moments, or no fp32 master copy. Sharding across many cards and
-activation checkpointing do not: sharding spreads the same bytes over more
-GPUs, and checkpointing trims activations, not the per-parameter state. Quote the 350 GB as arithmetic you can
-reproduce, and the 1.2 TB as *their* measurement.
+spell out. Either cheaper per-parameter state (8-bit or 16-bit optimizer
+moments, no fp32 master copy) or keeping part of the state off the GPU (CPU
+offloading, for instance) could explain it; the paper does not say which.
+Sharding across many cards and activation checkpointing do not explain it on
+their own: sharding spreads the same bytes over more GPUs, and checkpointing
+trims activations, not the per-parameter state. The 350 GB, too, matches the
+raw size of the frozen bf16 weights; the adapter and activations also take
+room, so the equality does not account for every item in the paper. Quote both
+figures as *their* report: you can recompute what the 350 GB corresponds to,
+but you cannot recover the 1.2 TB's itemisation from the two totals.
 
 ### The low-rank hypothesis
 
