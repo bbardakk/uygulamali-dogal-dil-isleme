@@ -215,37 +215,38 @@ erişim çoğu zaman daha uygun bir başlangıçtır; @sec-rag bunu ele alıyor.
 ### Tek bir örnek, baştan sona
 
 Bir [denetimli fine-tuning](#gloss-supervised-fine-tuning){#term-supervised-fine-tuning .term-ref}
-(supervised fine-tuning, SFT) örneği, bir prompt ile modelin vermiş olmasını
-istediğiniz cevaptan ibarettir.
-Fikrin tamamı bu. Zorluğun tamamı, bunun nasıl yazıya döküldüğüyle
-ilgili ayrıntılarda; bu ayrıntılardan ikisi koşuları sessizce bozuyor.
+(supervised fine-tuning, SFT) örneği çoğunlukla bir ya da birkaç kullanıcı
+iletisiyle modelin vermiş olmasını istediğiniz asistan cevabından oluşur;
+aşağıda tek turlu bir örnek kullanacağız. Fikir basit. Zorluğun büyük kısmı,
+bunun nasıl yazıya döküldüğüyle ilgili ayrıntılarda; bu ayrıntılardan ikisi
+koşuları sessizce bozabiliyor.
 
 ::: {#gloss-supervised-fine-tuning .column-margin .term-gloss}
-**supervised fine-tuning** (denetimli ince ayar) — prompt-cevap çiftleri
-üzerinde, olağan sonraki token kaybıyla yapılan eğitim; kayıp yalnızca cevap
-üzerinde hesaplanır. Ön eğitimle aynı amaç; farklı olan, hangi metne uygulandığı.
+**supervised fine-tuning** (denetimli ince ayar) — örnek iletiler ile hedef
+cevaplar üzerinde, olağan sonraki token kaybıyla yapılan eğitim. Bu bölümdeki
+kurulumda kayıp yalnızca asistan cevabında hesaplanır; başka kurulumlar farklı
+konumları da hedefleyebilir. Ön eğitimle aynı amaç; farklı olan, hangi metne
+uygulandığı.
 [↩](#term-supervised-fine-tuning){.term-back}
 :::
 
-Bir JSONL dosyasında durduğu hâliyle tek bir Türkçe örnek:
+Bir JSONL dosyasında durduğu hâliyle tek bir Türkçe örnek (JSONL'de her örnek tek bir satırdır):
 
 ```text
-{"messages": [
-  {"role": "user",      "content": "Bu yorum olumlu mu olumsuz mu? 'Kargo çok hızlı geldi, teşekkürler.'"},
-  {"role": "assistant", "content": "Olumlu."}
-]}
+{"messages": [{"role": "user", "content": "Bu yorum olumlu mu olumsuz mu? 'Kargo çok hızlı geldi, teşekkürler.'"}, {"role": "assistant", "content": "Olumlu."}]}
 ```
 
 Model bunu görmeden önce bu yapı, modelin
 [sohbet şablonu](#gloss-chat-template){#term-chat-template .term-ref} (chat
-template) ile tek bir token dizisine düzleştirilir. Bu şablon tokenizer'la
-birlikte gelir ve her model ailesinde farklıdır:
+template) ile tek bir token dizisine düzleştirilir. Bu şablon çoğu dağıtımda
+tokenizer yapılandırmasıyla birlikte gelir ve model ailesine göre değişir;
+eğitimde ve serviste aynı model sürümüyle uyumlu şablonu kullanın:
 
 ::: {#gloss-chat-template .column-margin .term-gloss}
-**chat template** (sohbet şablonu) — bir sohbet modeli fine-tune edilirken
-kullanılan, özel işaret token'ları dâhil tam metin biçimi. Modelde değil
-tokenizer'da durur ve yanlışını kullanmak hata vermek yerine kaliteyi
-sessizce düşürür. [↩](#term-chat-template){.term-back}
+**chat template** (sohbet şablonu) — rolleri, ileti sınırlarını ve özel
+işaret token'larını içeren, konuşmayı model girdisine dönüştüren tam metin
+biçimi. Çoğu dağıtımda tokenizer yapılandırmasıyla gelir; yanlışını kullanmak
+çoğu zaman hata vermek yerine kaliteyi sessizce düşürür. [↩](#term-chat-template){.term-back}
 :::
 
 ```text
@@ -256,23 +257,28 @@ Bu yorum olumlu mu olumsuz mu? 'Kargo çok hızlı geldi, teşekkürler.'<|eot_i
 Olumlu.<|eot_id|>
 ```
 
-O `<|...|>` işaretleri gerçek embedding'leri (gömme vektörleri) olan gerçek token'lardır. Model, kendi sırasının nerede başladığını — dolayısıyla devam etmek yerine *cevap vermesi* gerektiğini — bu token'lardan anlar. Peşinde olduğumuz davranış değişimi,
-mekanik olarak, büyük ölçüde modelin assistant başlık token'ından sonra ne
-geldiğini öğrenmesinden ibarettir.
+O `<|...|>` işaretleri, bu model ailesinin tokenizer'ında kendi embedding'leri
+olan özel token'lardır ve kullanıcı iletisiyle asistan sırasının sınırını
+gösterir. Devam etmek yerine *cevap verme* davranışı ise bu işaretlerle
+biçimlenmiş örnekler üzerindeki eğitimle öğrenilir: mekanik olarak, modelin
+assistant başlığından sonra ne gelmesi gerektiğini öğrenmesi.
 
 ::: {.callout-important appearance="simple"}
-**Şablonu asla elle yazmayın.**
-`tokenizer.apply_chat_template(messages, tokenize=False)` çağırıp sonucu bir
-kez ekrana basın. Her model ailesi farklı işaretler kullanıyor ve eğitim ile
-servis arasındaki bir şablon uyuşmazlığı, hiçbir yerde hata mesajı vermeden
-kaliteyi düşürür — insanların haftalarca veriyi suçlayacağı kadar
-sessizce. Başka her şeyi doğru olan bir fine-tuning'in beklenenin altında
-kalmasının açık ara en yaygın sebebi budur.
+**Şablonu elle yazmayın; çıktısını kontrol edin.**
+`tokenizer.apply_chat_template(messages, tokenize=False)` çağırıp bir eğitim
+örneğinin sonucunu ekrana basın; rol işaretleri ve cevap sınırı beklediğiniz
+yerde mi bakın. Model aileleri farklı işaretler kullanıyor ve eğitim ile servis
+arasındaki bir şablon uyuşmazlığı, çoğu zaman hata mesajı vermeden kaliteyi
+düşürür — insanların haftalarca veriyi suçlayabileceği kadar sessizce. Başka
+her şeyi doğru görünen bir fine-tuning'in beklenenin altında kalmasının sık
+rastlanan sebeplerinden biri budur.
 
-Çıkarım sırasında şablonu `add_generation_prompt=True` ile çağırın: bu, sona
-boş bir assistant başlığı ekler; modele sıranın artık kendisinde olduğunu
-söyleyen işaret de budur. Unutursanız iyi ayarlanmış bir sohbet modeli bile
-kullanıcının mesajını sürdürmeye kalkabilir.
+Çıkarımda, şablon ayrı bir assistant başlığı bekliyorsa onu
+`add_generation_prompt=True` ile çağırın: bu, sona boş bir assistant başlığı
+ekler; modele sıranın artık kendisinde olduğunu söyleyen işaret budur (eğitim
+örneklerinde eklenmez, çünkü cevap zaten oradadır). Unutursanız iyi
+ayarlanmış bir sohbet modeli bile kullanıcının mesajını sürdürmeye
+kalkabilir; üretilen diziyi kontrol edin.
 :::
 
 ### Kayıp maskeleme: koşuları sessizce bozan ayrıntı

@@ -205,34 +205,37 @@ it.
 ### One example, in full
 
 A [supervised fine-tuning](#gloss-supervised-fine-tuning){#term-supervised-fine-tuning .term-ref}
-example is a prompt and the response you wish the model had given.
-That is the whole idea. The difficulty is entirely in the details of how it is
-written down, and two of those details break runs silently.
+example is usually one or more user messages and the assistant response you
+wish the model had given; below we use a single-turn one. The idea is simple.
+Most of the difficulty is in the details of how it is written down, and two of
+those details can break runs silently.
 
 ::: {#gloss-supervised-fine-tuning .column-margin .term-gloss}
-**supervised fine-tuning** — training on prompt-and-answer pairs with the
-ordinary next-token loss, computed on the answer alone. The same objective as
-pretraining; a different choice of which text it is applied to.
+**supervised fine-tuning** — training on example messages and target
+responses with the ordinary next-token loss. In this chapter's setup the loss
+is computed on the assistant response alone; other setups target other
+positions too. The same objective as pretraining; a different choice of which
+text it is applied to.
 [↩](#term-supervised-fine-tuning){.term-back}
 :::
 
-Here is a single Turkish example as it exists in a JSONL file:
+Here is a single Turkish example as it exists in a JSONL file (in JSONL each example is one line):
 
 ```text
-{"messages": [
-  {"role": "user",      "content": "Bu yorum olumlu mu olumsuz mu? 'Kargo çok hızlı geldi, teşekkürler.'"},
-  {"role": "assistant", "content": "Olumlu."}
-]}
+{"messages": [{"role": "user", "content": "Bu yorum olumlu mu olumsuz mu? 'Kargo çok hızlı geldi, teşekkürler.'"}, {"role": "assistant", "content": "Olumlu."}]}
 ```
 
 Before the model sees it, that structure is flattened into a single token
 sequence by the model's [chat template](#gloss-chat-template){#term-chat-template .term-ref} — a
-string template shipped with the tokenizer, different for every model family:
+string template that in most distributions ships with the tokenizer
+configuration and differs between model families; training and serving should
+use the template that matches the model version:
 
 ::: {#gloss-chat-template .column-margin .term-gloss}
-**chat template** — the exact string format, including special marker tokens,
-that a chat model was fine-tuned on. It lives in the tokenizer, not the model,
-and using the wrong one degrades quality quietly rather than raising an error.
+**chat template** — the exact string format, with roles, message boundaries
+and special marker tokens, that turns a conversation into model input. In most
+distributions it ships with the tokenizer configuration, and using the wrong
+one usually degrades quality quietly rather than raising an error.
 [↩](#term-chat-template){.term-back}
 :::
 
@@ -244,23 +247,27 @@ Bu yorum olumlu mu olumsuz mu? 'Kargo çok hızlı geldi, teşekkürler.'<|eot_i
 Olumlu.<|eot_id|>
 ```
 
-Those `<|...|>` markers are real tokens with real embeddings. They are how the
-model knows where its turn begins — and therefore how it knows to *answer*
-rather than continue. The behaviour change we are after is, mechanically,
-mostly the model learning what follows the assistant header token.
+Those `<|...|>` markers are special tokens with their own embeddings in this
+model family's tokenizer, and they mark the boundary between the user's message
+and the assistant's turn. The behaviour of *answering* rather than continuing
+is learned from training on examples formatted with them: mechanically, the
+model learning what should follow the assistant header.
 
 ::: {.callout-important appearance="simple"}
-**Never hand-write the template.** Call
-`tokenizer.apply_chat_template(messages, tokenize=False)` and print the result
-once. Every model family uses different markers, and a template mismatch
-between training and serving quietly degrades quality with no error message
-anywhere — quietly enough that people spend weeks blaming the data. This is the single most common way an
-otherwise correct fine-tune underperforms.
+**Do not hand-write the template; check its output.** Call
+`tokenizer.apply_chat_template(messages, tokenize=False)` on a training example
+and print the result; check that the role markers and the response boundary are
+where you expect. Model families use different markers, and a template mismatch
+between training and serving usually degrades quality with no error message
+anywhere — quietly enough that people can spend weeks blaming the data. It is
+one of the common ways an otherwise correct-looking fine-tune underperforms.
 
-At inference, call it with `add_generation_prompt=True`: that appends the
-empty assistant header, which is the model's cue that it is now its turn to
-answer. Forget it and even a well-tuned chat model may simply continue the
-user's message.
+At inference, if the template expects a separate assistant header, call it
+with `add_generation_prompt=True`: that appends the empty assistant header,
+which is the model's cue that it is now its turn to answer (training examples
+do not get it, since the answer is already there). Forget it and even a
+well-tuned chat model may simply continue the user's message; check the
+sequence it produces.
 :::
 
 ### Loss masking: the detail that silently breaks runs
