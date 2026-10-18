@@ -999,9 +999,11 @@ Here are all three side by side on the Turkish word `çay` (tea):
 In this spelling `çay` is three letters and three code points, and takes four
 bytes when encoded in UTF-8. In Python `len("çay")` is 3 and
 `len("çay".encode("utf-8"))` is 4. Text that looks the same can also be written
-with a different sequence of code points: write `c` followed by a separate
-cedilla mark instead of `ç`, and the same word is four code points and five
-bytes. These numbers depend on the Unicode spelling and on the encoding.
+with a different sequence of code points: write `c` (U+0063) followed by the
+combining cedilla (U+0327, COMBINING CEDILLA) instead of `ç`, and the word looks
+the same but is four code points and five bytes. These numbers depend on the
+Unicode spelling and on the encoding; the token count can also change with
+whether the tokenizer applies Unicode normalization.
 
 Why does a tokenizer care? Because the symbols BPE starts merging from are
 either characters or bytes, and there are very different *numbers* of each:
@@ -1074,7 +1076,7 @@ a  U+0061  1 byte(s): 61
 ```
 
 A byte has only 256 possible values, so an alphabet of 256 bytes is closed:
-every string in every language is a sequence of them. Byte-level BPE runs
+any text encoded in UTF-8, in whatever language, is a sequence of them. Byte-level BPE runs
 exactly the same merge loop over byte sequences instead of characters
 [@radford2019language]. At each step the loop merges the most frequent
 adjacent pair of symbols. Some characters and word pieces can end up
@@ -1172,15 +1174,19 @@ unknown piece as it is spelled in the text. It does not mean the vocabulary has
 an entry for `ç`. When the ids are turned back into text, a `⁇` mark takes the
 letter's place.
 
-In the second line the vocabulary has grown from 20 to 276 with the 256 added
-byte tokens. `ç` is represented as `<0xC3>` and `<0xA7>`. Those are the two
+In the second line the vocabulary has grown from 20 to 276: in this experiment
+we raised the target vocabulary size by 256 when byte fallback was on, and the
+256 byte pieces filled that room (with other training settings, check the
+actual vocabulary size). `ç` is represented as `<0xC3>` and `<0xA7>`. Those are the two
 bytes from the table above: hexadecimal C3 is 195 and A7 is 167. Turned back
 into text from the ids, `çay` comes out intact. The leading `▁` is the mark
 SentencePiece uses to make a space visible. Here it stands for the space that
 the default setting adds in front of the text; the next section comes back to
 this notation.
 
-**Which one is used today.** Many GPT-type models use byte-level BPE or a
+**Which one is used today.** The practical rule first: use the tokenizer the
+model was trained with, and count tokens with it; the same algorithm name does
+not mean the same vocabulary in two models. Many GPT-type models use byte-level BPE or a
 variant of it. Other model families also use WordPiece and Unigram.
 SentencePiece is a library that can train a tokenizer with either BPE or
 Unigram. GPT-2 introduced byte-level BPE with a
@@ -1191,9 +1197,7 @@ added for non-English languages [@grattafiori2024llama3]. BERT and its close
 relatives such as DistilBERT and ELECTRA still ship WordPiece over characters
 [@devlin2019bert] (RoBERTa, although built on BERT, switched to GPT-2's
 byte-level BPE), and a later
-table (@sec-tokenizer-algorithms) shows which algorithm ships where. The
-practical rule does not depend on any of this: use the tokenizer the model was
-trained with, and count tokens with it.
+table (@sec-tokenizer-algorithms) shows which algorithm ships where.
 
 Coverage and token count have to be kept apart here. If the starting alphabet
 contains all 256 byte values, no unknown token is needed to represent the bytes
