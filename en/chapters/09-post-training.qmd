@@ -1234,12 +1234,14 @@ route: keep reinforcement learning, but delete the *value* model.
 The value model exists to supply a baseline. In policy-gradient methods you do
 not want the raw reward — you want to know whether an action was better
 **than expected**, because a reward of 8 means something different when your
-usual score is 2 than when it is 9. Learning a network to predict that
-expectation is the standard answer, and it is expensive: a second trained
-model, at the full 16 bytes per parameter.
+usual score is 2 than when it is 9. Training an estimator of that expectation
+is the standard answer, and it costs something: a separate model or a head
+sharing the policy's trunk, with a memory cost that depends on the training
+setup.
 
 GRPO's observation is that if you are going to sample from the policy anyway,
-you can get a baseline for free. Sample $G$ answers **to the same prompt**,
+you can get a baseline without training a separate value estimator — though
+generating and scoring several answers per prompt has its own compute cost. Sample $G$ answers **to the same prompt**,
 score them all, and use the group's own mean as the expectation:
 
 $$
@@ -1252,18 +1254,22 @@ makes it less likely. Dividing by the standard deviation puts every prompt on
 the same scale, so easy and hard prompts pull with comparable force. One
 consequence to remember: if all $G$ answers get the same reward — all right or
 all wrong — every $A_i$ is zero (implementations add a tiny constant to avoid
-dividing by zero), and that prompt teaches nothing.
+dividing by zero, or skip the group), and that prompt gives no signal from the
+reward comparison; other terms such as the KL can still act.
 
 The question stops being *how good is this answer in absolute terms* and
 becomes *was this attempt better than my other attempts at the same question*
-— which is both a more stable signal and a free one. GRPO still keeps the
+— a relative signal that needs no separate value model. How stable it is
+depends on $G$, the reward distribution and the normalisation; a small $G$ can
+bring high variance. GRPO still keeps the
 frozen reference and the KL leash, and it still needs *some* reward — a reward
 model or, as the next section shows, a checker. In the paper's words (*critic*
 is another name for the value model),
 GRPO "foregoes the critic model, instead estimating the baseline from group
 scores, significantly reducing training resources" [@shao2024deepseekmath].
 On DeepSeekMath-Instruct 7B it moved GSM8K from 82.9% to 88.2% and MATH from
-46.8% to 51.7%, using only instruction-tuning data already in hand.
+46.8% to 51.7%, using only instruction-tuning data already in hand — a result
+of that setup, not something to credit to the group mean alone.
 
 ### Where the reward comes from, and why that is the real question
 
