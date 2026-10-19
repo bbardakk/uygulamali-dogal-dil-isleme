@@ -1890,25 +1890,35 @@ folder.
 **Row 1 is the control, and it fails.** Freezing the encoder and training only
 the classification head — 1,538 parameters — produces a model whose macro-F1 is
 48.37 and whose accuracy is 93.68. Those are not new numbers. They are exactly
-@sec-bake-off's majority-class baseline. The model learned to answer *positive*
-every time, which on a corpus that is 93.68% positive is a locally sensible
-thing to do. [A frozen encoder with a trainable head is a linear probe rather
+@sec-bake-off's majority-class baseline. A negative-class F1 of zero is consistent with a model
+that has fallen back on the majority class, and in the re-run the prediction
+counts confirmed it: it answered *positive* for all 10,000 test reviews. On a
+corpus that is 93.68% positive that is a locally sensible thing to do. [A frozen encoder with a trainable head is a linear probe rather
 than an adapter-based method, and on an imbalanced task it can collapse]{.hl} —
 whether you file linear probes under "parameter-efficient fine-tuning" is a
 naming question; what matters is that they change no representation. The F1 on
 the negative class is 0.00. Discount this row by the learning-rate caveat
-above: it was run at the shared rate, and a probe tuned properly — its own
-learning rate, class weights in the loss — would do better than 48.37.
+above: it was run at the shared rate. In the re-run, class weights in the loss
+and a higher rate (1e-3 and 1e-2) lifted the probe to 63.85 and 64.90
+macro-F1: better than 48.37, but more than 15 points behind the LoRA rows.
 Exercise 1 is that experiment.
 
 That row is in the table because the difference between it and the LoRA rows is
-the entire argument. LoRA does not train *fewer* weights in the sense of
-training a smaller *part* of the model. It trains a small number of weights
-*throughout* the model, and that distinction is the one doing the work.
+the entire argument. The linear probe trains only the final classification
+head; LoRA here adds small adapters to the `query` and `value` projections of
+every encoder block, so the gradient passes through the encoder. LoRA does not
+train every weight or every module; it spreads its change inside the encoder,
+across all blocks.
 
-**Rank stops mattering almost immediately.** Going from $r=1$ to $r=8$ buys
-2.2 macro-F1 points. Going from $r=8$ to $r=64$ — eight times the parameters —
-*loses* 0.30.
+**In this run rank stops mattering quickly.** Going from $r=1$ to $r=8$ buys
+2.2 macro-F1 points; from $r=8$ to $r=64$ — eight times the parameters — the
+score goes from 82.69 to 82.39. That small difference comes from one run; it
+does not show that the higher rank hurt. The re-run did not repeat that last
+step either: over three seeds $r=1$ scored **80.55 ± 0.65** and $r=64$
+**84.05 ± 0.26** ($r=8$ 82.66 on one seed), so in our runs rank kept giving small
+gains at 2e-4. On the other hand, $r=8$ at its own validation-chosen rate
+(1e-3) reached 83.68 ± 0.40 — tuning the rate bought as much as an eightfold
+rank.
 
 One confound in that row is worth naming, because it is the thing the
 literature actually argues about. With $\alpha = 2r$ the effective scale
@@ -1917,15 +1927,18 @@ scale sweep it would have been under a fixed $\alpha$. But holding $\alpha/r$
 constant is itself a choice: @kalajdzievski2023rank shows that a
 $\Theta(1/r)$ scaling makes gradients shrink as rank grows, and that stable
 learning at high rank wants $\Theta(1/\sqrt{r})$ instead — with "higher rank
-does not help" as the predicted symptom. So the honest reading of the $r=64$
-row is *rank stops paying under this scaling rule*, which is the rule almost
-everyone uses. Whether it stops paying under rank-stabilised scaling is a
-different experiment, and this chapter did not run it.
+does not help" as the predicted symptom. But this single-seed curve does not
+show that the $r=64$ result comes from that scaling alone; the learning rate
+and the seed are confounders too. How much rank pays under the common
+$\alpha = 2r$ rule, and what changes under rank-stabilised scaling, needs a
+separate rate-and-scale sweep over several seeds; this chapter did not run it.
 
-The curve rises once and then flattens, and the flat part is
-where you should be standing. That is what the low-rank hypothesis in
-@sec-lora would lead you to expect — the parameter arithmetic alone could not
-have told you — and on this task rank is an afterthought.
+In the book's run the curve rises once and flattens; in the re-run it flattens
+more slowly. What both share is that after $r=1$ the gain from rank is the same
+size as, or smaller than, the effect of the learning rate. The low-rank
+hypothesis in @sec-lora leads you to expect good results at small ranks, but it
+does not by itself prove this task's curve; choose the rank over a few seeds on
+validation score, memory and cost.
 
 **The full fine-tune wins, and it wins on one class.** 83.90 against $r=8$'s
 82.69 is a 1.21-point difference in this run, and the minority class is where
@@ -1933,44 +1946,58 @@ it comes from: F1(neg) 70.16 against 67.23, worth +2.93 points on that class.
 It is not *all* of the story, though — back out the other half and the full
 fine-tune is slightly *behind* on the majority class, F1(pos) 97.64 against
 98.15. A 2.93-point gain on one class and a 0.51-point loss on the other
-average to the 1.21 you see. But look at the accuracy column — [every single LoRA run is *more*
-accurate overall than the full fine-tune]{.hl} (96.09–96.58 against 95.62).
-Full fine-tuning had enough freedom to move the decision boundary toward the
-negatives, which is what macro-F1 rewards and what plain accuracy punishes.
-Which of those you want is a product decision, not a training one, and the
-table cannot make it for you.
+average to the 1.21 you see. But look at the accuracy column — [in this table every single LoRA run is *more* accurate
+overall than the full fine-tune]{.hl} (96.09–96.58 against 95.62). On
+imbalanced data the two metrics reward different trade-offs; how the decision
+boundary moved, only per-class errors and the probability distribution can
+show. In the re-run this split *did not repeat*: full fine-tuning (2e-5) also
+led on accuracy — 96.83% against 96.60% for tuned LoRA $r=8$. The confusion
+matrices (seed 42) show full fine-tuning catching more of the negative class
+(415 against 382 of the 632 negatives) and making fewer errors overall (317
+against 331). So the accuracy-versus-macro-F1 split in this table may be a
+property of this setup rather than of LoRA in general. Which metric you want is
+still a product decision, not a training one.
 
 **Rank 1 is the result worth sitting with.** 38,402 trainable parameters —
 36,864 in the adapters plus the 1,538-parameter head, 0.035% of the model, a
 file you could email — take a frozen encoder from 48.37 to
 80.47 macro-F1, clearing @sec-bake-off's tf-idf baseline by more than four
-points. Whatever LoRA is doing, it is not doing it with capacity.
+points (80.55 ± 0.65 in the re-run). A small adaptation capacity spread across
+the layers can be enough for this task; that does not mean capacity plays no
+role.
 
-**The wall-clock column is the honest disappointment.** $r=8$ trains 373× fewer
-parameters than the full fine-tune and runs 1.19× faster. That is the whole
-speedup. LoRA saves optimizer work, and on a 110M model with a batch of 32
-there is not much optimizer work to save.
+**The wall-clock column.** On this device and settings $r=8$ took 10m 04s and
+the full fine-tune 11m 59s: about 1.19×. The 373× difference in trainable
+parameters did not carry over to time. In the re-run (M5 Max) the ratio was
+1.42× (6m 54s against 9m 47s), so the ratio depends on hardware and software.
+A profile would show which operations set the time.
 
-The head-only row explains why, by contrast. It finishes in 3m 35s — 3.3×
-faster than the full fine-tune — because with every encoder parameter frozen
-*and nothing trainable inside the encoder*, backpropagation stops at the last
-layer and never enters the network at all. LoRA's adapters sit inside every
-block, so the backward pass has to traverse the entire model to reach them.
-[LoRA buys you memory and portability. It does not buy you a shorter backward
-pass.]{.hl}
+The head-only row shows something by contrast. It finishes in 3m 35s (3m 14s
+in the re-run) — 3.3× faster than the full fine-tune — because with nothing
+trainable inside the encoder, backpropagation never enters it. LoRA's adapters
+sit inside the blocks; their gradients follow the computation path through the
+encoder. Gradients for the frozen main weights are not kept, but the backward
+pass does not go away. [In this setup LoRA bought memory and portability but
+did not markedly shorten the backward pass]{.hl}; measure the speed-up on your
+own model and implementation.
 
 **And the memory column is where the chapter's arithmetic meets the floor.**
-The 16-bytes-versus-2 table predicts LoRA should cut training memory roughly
-eightfold. Measured, it cuts it 1.40× — 6.07 GiB to 4.32 GiB. The missing
-saving is activations, which LoRA does not touch. Subtract the resident
-parameters — 0.41 GiB, measured before the first forward pass — from $r=8$'s
-4.32 GiB peak and 3.91 GiB is left over. [**About 90% of LoRA's peak memory
-here is activations**]{.hl}, and no choice of rank changes that. It is the same
-effect QLoRA's authors measured at 7B when they found 567 MB of input gradients
-against 26 MB of adapter parameters.
+The 16-bytes-versus-2 table compared only selected parameter state; it did not
+predict an eightfold cut in total peak memory. Measured, LoRA cuts it 1.40× —
+6.07 GiB to 4.32 GiB. Subtract the resident parameters — 0.41 GiB, measured
+before the first forward pass — from $r=8$'s 4.32 GiB peak and 3.91 GiB is left
+over. [**Most of that is activations**]{.hl}, but not all of it: gradients,
+workspace and temporary tensors are in there too, and without a detailed memory
+profile we cannot split it. The choice of rank barely changes it. QLoRA's
+authors measuring 567 MB of input gradients against 26 MB of adapter
+parameters at 7B points the same way. The re-run also showed that *when* the
+column is sampled matters: LoRA's 4.32 matches exactly a value taken at the
+first forward pass, before any optimizer state exists; for full fine-tuning the
+first forward pass held 3.82 GiB and later steps, with Adam state, 6.96 GiB (a
+ratio of 1.61×).
 
 Notice also that peak memory is essentially constant across ranks — 4.32 GiB at
-$r=1$ and 4.37 GiB at $r=64$ — for exactly the same reason. And notice the
+$r=1$ and 4.37 GiB at $r=64$ (4.40 in the re-run) — for the same reason. And notice the
 head-only row at 0.41 GiB: no backward pass through the encoder means no
 retained activations, an order of magnitude less memory, and a model that does
 not work.
