@@ -2164,17 +2164,17 @@ zihinsel modelin yanlış mühendislik kararı ürettiği bir nokta.
 İkisi de değil ve bu beklentilerle ölçümler arasındaki fark, bu bölümün en
 işe yarar şeyi.
 
-Bellek tarafında: bir parametreyi dondurmak, sekiz taksidinin yedisini ortadan
-kaldırır — optimizer durumu eğitim faturasının dörtte üçü, gradyan sekizde
-biri, ağırlığın kendisi sekizde biri. Yani LoRA *optimizer* belleğinin çoğunu
-kaldırır, ama küçük model boylarında baskın olan şey aktivasyonlardır ve
-hiçbir rank tercihi onlara dokunmaz.
+Bellek tarafında: bu bölümün seçilmiş 16 baytlık düzeninde donmuş bir
+parametrenin gradyanı, ana kopyası ve Adam momentleri kalkar; ağırlığın
+kendisi ve adaptöre geri yayılım için gereken ara tensörler kalır. Bu
+laboratuvarda tepe bellek 6,07'den 4,32 GiB'a, yalnızca 1,40 kat düştü
+(yeniden koşuda Adam durumu oluştuktan sonra 1,61 kat).
 
-Hız tarafında: $r = 8$, **373 kat daha az parametre** eğitiyor ve **1,19 kat
-hızlı** çalışıyor. Bütün hızlanma bu. LoRA optimizer işinden tasarruf eder ve
-32'lik batch'li 110M'lik bir modelde tasarruf edilecek pek optimizer işi yoktur.
-Teknik, küçük bir fine-tuning'in gerçek süresinde değil; büyük modellerde ve çok
-sayıda adaptörü servis etmede karşılığını verir.
+Hız tarafında: $r = 8$, **373 kat daha az parametre** eğitiyor ve bu
+laboratuvarda **1,19 kat hızlı** çalıştı (yeniden koşuda başka bir cihazda 1,42
+kat). Başka model ve donanım için süre ve bellek oranını ayrıca ölçün; LoRA'nın
+bellek ve dağıtım tarafındaki avantajı, küçük bir fine-tuning'in süresinden
+daha belirgin.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -2189,45 +2189,46 @@ probe tamamen tek sınıfa kilitleniyor.
 Donmuş bir encoder üzerinde 1.538 parametre eğitmek macro-F1 **48,37** ve
 doğruluk **93,68** üretti — birebir
 @sec-karsilastirma'ün çoğunluk sınıfı baseline'ı;
-olumsuz sınıftaki F1 ise **0,00**. Model her seferinde *olumlu*
-demeyi öğrendi.
+olumsuz sınıftaki F1 ise **0,00** (yeniden koşuda 10.000 tahminin hepsi
+*olumlu*; sınıf ağırlıklarıyla probe 64,90'a çıktı).
 
-LoRA modelin küçük bir *parçasını* eğitmez; modelin *her yerinde* az sayıda
-ağırlık eğitir ve bütün argüman bu ayrımdır. Rank 1 — 38.402 eğitilebilir
-parametre, modelin %0,035'i, e-postayla gönderebileceğiniz bir dosya — aynı donmuş
-encoder'ı 48,37'den **80,47**'ye taşıyor ve tf-idf baseline'ını dört puan
-geçiyor.
+Bu deneyde LoRA, her encoder bloğunun `query` ve `value` projeksiyonlarında
+küçük uyarlamalar eğitti; probe ise encoder'ı değiştirmedi. Rank 1 — 38.402
+eğitilebilir parametre, modelin %0,035'i — aynı donmuş encoder'ı 48,37'den
+**80,47**'ye taşıyor ve tf-idf baseline'ını dört puan geçiyor. (Kaydedilen
+adaptör dosyasının boyutu dtype'a ve biçime bağlı; ayrıca ölçün.)
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. Yüksek LoRA rankı daha çok kapasite demek. Karşılayabildiğiniz en yüksek rankı mı kullanmalısınız?
 
-Hayır — eğri neredeyse hemen düzleşiyor, sonra hafifçe geri gidiyor.
-
-Ölçülen: $r=1 \to r=8$ **2,2** macro-F1 puanı kazandırıyor. $r=8 \to r=64$,
-sekiz katı parametre, **0,30** *kaybettiriyor*. Düz kısımda durun.
-
-Bir çekince: 0,30, tek bir seed'in ayırt edemeyeceği büyüklükte
-bir fark; dolayısıyla bundan bir sıralama çıkarmayın. Önemli olan biçim — eğri bir
-kez yükseliyor, sonra duruyor. Rank bu görevde sonradan düşünülecek bir
-mesele; @sec-lora'teki düşük ranklılık hipotezi de sizi bunu beklemeye yöneltirdi.
+Doğrudan değil; ölçün. Bu laboratuvarın tek koşusunda $r=1 \to r=8$ **2,2**
+macro-F1 puanı kazandırdı, $r=8 \to r=64$ ise **0,30** puanlık bir düşüş
+gösterdi. İkinci farkın güvenilirliği bilinmiyor: yeniden koşuda üç tohumla
+$r=64$, $r=1$'den 3,5 puan önde kaldı (84,05 ± 0,26'ya karşı 80,55 ± 0,65) ve
+$r=8$ kendi ayarlanmış oranında 83,68 ± 0,40 aldı. Yani rankın getirisi küçük
+ve öğrenme oranıyla aynı büyüklükte. Rankı birkaç tohumda doğrulama puanı,
+bellek ve maliyetle seçin; @sec-lora'teki düşük ranklılık hipotezi bu görevin
+eğrisini tek başına kanıtlamaz.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Tam fine-tune edilmiş modeliniz macro-F1'de LoRA'yı yeniyor ama doğrulukta kaybediyor. Hangisi bozuk?
 
-Hiçbiri. Eğitim sonucu kılığına girmiş bir ürün kararına bakıyorsunuz.
+Büyük olasılıkla hiçbiri; iki metrik farklı şeyleri ödüllendiriyor.
 
 Tam fine-tuning, $r=8$'in 82,69'una karşı 83,90 macro-F1 aldı ve farkın geldiği
 yer azınlık sınıfı: F1(olumsuz) 67,23'e karşı 70,16, yani +2,93 puan; buna
 karşılık çoğunluk sınıfında 0,51 puanlık bir *kayıp* var (F1(olumlu) 98,15'e
 karşı 97,64). Ama her bir LoRA
-koşusu genel doğrulukta *daha* isabetli — 95,62'ye karşı 96,09–96,58.
+koşusu genel doğrulukta *daha* isabetli — 95,62'ye karşı 96,09–96,58. (Yeniden
+koşuda bu ayrım tekrarlanmadı; tam fine-tuning doğrulukta da öndeydi, %96,83'e
+karşı %96,60.)
 
-Tam fine-tuning'in karar sınırını olumsuzlara doğru kaydıracak kadar özgürlüğü
-vardı. Macro-F1 bunu ödüllendirir, düz doğruluk cezalandırır. Hangisini
-istediğiniz, kaçırılan bir şikâyetin yanlış alarma kıyasla neye mal olduğuna
-bağlıdır. Bu, eşiği bir maliyet matrisinden seçme kısmının
+Dengesiz veride macro-F1 azınlık sınıfındaki başarıyı, düz doğruluk toplam hata
+sayısını ödüllendirir; karar sınırının nasıl değiştiğini sınıf bazlı hatalar ve
+olasılık dağılımı gösterir. Hangisini istediğiniz, kaçırılan bir şikâyetin
+yanlış alarma kıyasla neye mal olduğuna bağlıdır. Bu, eşiği bir maliyet matrisinden seçme kısmının
 sorusudur (@sec-siniflandirma-maliyetler) ve hiçbir eğitim tablosu onu sizin
 yerinize cevaplayamaz.
 :::
@@ -2235,31 +2236,35 @@ yerinize cevaplayamaz.
 ::: {.callout-note collapse="true"}
 ## 5. 65B'lik bir modeli fine-tune etmek için "780 GB'tan fazla" gerekiyor. Bu sayı nereden geliyor?
 
-$65 \times 10^9$ parametre × **12 bayt**. Öğretici olan kısım şu: makale bu
-on iki baytın hangileri olduğunu söylemiyor ve iki farklı okuma da hesaba uyuyor.
+QLoRA makalesi 65B tam fine-tuning için **780 GB'tan fazla** GPU belleği
+bildiriyor. $65 \times 10^9$ parametre × **12 bayt** = 780 GB, büyüklüğü
+açıklayan *varsayımsal* bir parametre hesabı; makalenin kalem dökümü değil.
+Öğretici olan kısım şu: makale bu on iki baytın hangileri olduğunu söylemiyor
+ve iki farklı okuma da hesaba uyuyor.
 
 Birinci okuma: üç fp32 satırı — ana ağırlık, Adam'ın $m$'i, Adam'ın $v$'si.
-Bunlara bf16 ağırlık ve gradyan eklenince gerçek rakam $65 \times 16 = 1{.}040$
-GB'a çıkıyor; "fazla" ifadesi bu farkı karşılıyor. İkinci okuma: bf16 ağırlık,
+Bunlara bf16 ağırlık ve gradyan eklenince bu bölümün 16 baytlık düzeni
+$65 \times 16 = 1{.}040$ GB statik parametre durumu veriyor; "fazla" ifadesiyle
+tutarlı. İkinci okuma: bf16 ağırlık,
 bf16 gradyan, fp32 $m$, fp32 $v$, ana kopya yok; "fazla" bu kez aktivasyonları
 karşılıyor.
 
-İki ayrıştırma da aynı sonuca varıyor: manşet rakama, yalnızca parametre
-eğitildiği için var olan durum hâkim. Parametreyi dondurun, o durum ortadan
+Aktivasyonlar ve dağıtım düzeni ayrıca gelir; iki farklı hesabı tek bir gerçek
+kurulum gibi birleştirmeyin. Yine de iki ayrıştırma da aynı yöne işaret ediyor:
+manşet rakamın büyük kısmı, yalnızca parametre eğitildiği için var olan durum. Parametreyi dondurun, o durum ortadan
 kalkar — PEFT'in tek cümlelik gerekçesi de bu.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. Fine-tune ettiğiniz model, eskiden yaptığı şeylerde kötüleşti. Ne oldu ve önlenebilir mi?
 
-Yıkıcı unutma; ve bu, yamayla giderebileceğiniz bir hata değil, istediğiniz
-şeyin bir *sonucu*.
-
-Dar bir hedef üzerinde gradyan inişi, başka yeteneklerin dayandığı ağırlıkları
-oynatır. Hafifletmelerin hepsi *daha az oynat*'ın birer sürümü: daha düşük
-öğrenme oranı, daha az epoch, PEFT (taban ağırlıklar kayamaz; ama
-@sec-unutma'da ölçüldüğü gibi, kaynaştırılmış model yine de unutabilir) ya da
-fine-tuning kümesine bir miktar genel veri geri karıştırmak.
+Önce eski görevlerdeki düşüşün değerlendirme gürültüsü mü, gerçek bir
+gerileme mi olduğunu sınayın. Gerçek bir gerilemeyse olası bir açıklama yıkıcı
+unutma: dar bir hedef üzerinde gradyan inişi, başka yeteneklerin dayandığı
+ağırlıkları oynatabilir. Her fine-tuning'in zorunlu sonucu değil, ama sık
+görülen bir risk. Öğrenme oranını, epoch sayısını, veri karışımını (bir miktar
+genel veri geri katmak) ve uyarlamanın kapsamını karşılaştırın; LoRA da etkin
+adaptörle eski görev başarısını düşürebilir (@sec-unutma'da ölçüldüğü gibi).
 
 Bunun göründüğünden daha önemli olmasının sebebi şu: [unutma, değerlendirmeyi
 akıl ettiğiniz şeyler üzerinden ölçülür]{.hl}. Değerlendirme paketiniz

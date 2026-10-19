@@ -2093,17 +2093,16 @@ model of fine-tuning produces the wrong engineering decision.
 Neither, and the gap between those expectations and the measurements is the
 most useful thing in this chapter.
 
-On memory: freezing a parameter removes seven of its eight instalments —
-optimizer state is three quarters of the training bill, the gradient an eighth,
-the weight itself an eighth. So LoRA removes most of the *optimizer* memory,
-but [what dominates at small model sizes is activations]{.hl}, and no choice of
-rank touches those.
+On memory: in this chapter's chosen 16-byte setup a frozen parameter loses its
+gradient, master copy and Adam moments; the weight itself and the intermediate
+tensors needed to backpropagate to the adapters remain. In this lab peak memory
+fell from 6.07 to 4.32 GiB, only 1.40× ([1.61× in the re-run once Adam state
+exists]{.hl}).
 
-On speed: $r = 8$ trains **373× fewer parameters** and runs **1.19× faster**.
-That is the whole speedup. LoRA saves optimizer work, and on a 110M model with
-a batch of 32 there is not much optimizer work to save. The technique pays off
-on large models and on serving many adapters, not on wall-clock for a small
-fine-tune.
+On speed: $r = 8$ trains **373× fewer parameters** and in this lab ran **1.19×
+faster** (1.42× in the re-run, on another device). Measure the time and memory
+ratios separately for other models and hardware; LoRA's advantage on memory and
+deployment is clearer than on the wall-clock of a small fine-tune.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -2116,45 +2115,47 @@ task, at the shared learning rate this lab used, it collapses completely.
 
 Training 1,538 parameters on a frozen encoder produced macro-F1 **48.37** and
 accuracy **93.68** — exactly @sec-bake-off's majority-class baseline, with F1 on
-the negative class of **0.00**. The model learned to answer *positive* every
-time.
+the negative class of **0.00** (in the re-run all 10,000 predictions were
+*positive*; with class weights the probe reached 64.90).
 
-[LoRA does not train a small *part* of the model; it trains a small number of
-weights *throughout* it]{.hl}, and that distinction is the entire argument. Rank
-1 — 38,402 trainable parameters, 0.035% of the model, a file you could email —
+[In this experiment LoRA trained small adaptations in the `query` and `value`
+projections of every encoder block, while the probe left the encoder
+unchanged]{.hl}. Rank 1 — 38,402 trainable parameters, 0.035% of the model —
 takes the same frozen encoder from 48.37 to **80.47**, clearing the tf-idf
-baseline by four points.
+baseline by four points. (The saved adapter file's size depends on dtype and
+format; measure it.)
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. Higher LoRA rank means more capacity. Should you use the highest rank you can afford?
 
-No — the curve flattens almost immediately and then goes slightly backwards.
-
-Measured: $r=1 \to r=8$ buys **2.2** macro-F1 points. $r=8 \to r=64$, eight
-times the parameters, *loses* **0.30**. Stand on the flat part.
-
-The caveat that makes this honest: 0.30 is the size of gap a single seed cannot
-resolve, so do not read a ranking into it. What matters is the shape — [the
-curve rises once and then stops]{.hl}. Rank is an afterthought on this task,
-which is what the low-rank hypothesis in @sec-lora would lead you to expect.
+Not by default; measure. In this lab's single run $r=1 \to r=8$ bought **2.2**
+macro-F1 points and $r=8 \to r=64$ showed a **0.30**-point drop. The second gap
+is not reliable: in the re-run, over three seeds, $r=64$ stayed 3.5 points ahead
+of $r=1$ (84.05 ± 0.26 against 80.55 ± 0.65), and $r=8$ at its own tuned rate
+scored 83.68 ± 0.40. So [rank's payoff is small, and the same size as the
+learning rate's]{.hl}. Choose the rank over a few seeds on validation score,
+memory and cost; the low-rank hypothesis in @sec-lora does not by itself prove
+this task's curve.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Your full fine-tune beats LoRA on macro-F1 but loses on accuracy. Which is broken?
 
-Neither. You are looking at a product decision wearing the costume of a
-training result.
+Most likely neither; the two metrics reward different things.
 
 Full fine-tuning scored 83.90 macro-F1 against $r=8$'s 82.69, and the minority
 class is where the difference lives: F1(neg) 70.16 against 67.23, +2.93 points,
 against a 0.51-point *loss* on the majority class (F1(pos) 97.64 against
 98.15). But [every single LoRA
-run is *more* accurate overall]{.hl} — 96.09–96.58 against 95.62.
+run is *more* accurate overall]{.hl} — 96.09–96.58 against 95.62. (The re-run
+did not repeat this split; full fine-tuning led on accuracy too, 96.83% against
+96.60%.)
 
-Full fine-tuning had enough freedom to move the decision boundary toward the
-negatives. Macro-F1 rewards that; plain accuracy punishes it. Which you want
-depends on what a missed complaint costs relative to a false alarm, which is
+On imbalanced data macro-F1 rewards success on the minority class and plain
+accuracy the total number of errors; how the decision boundary moved, per-class
+errors and the probability distribution show. Which you want depends on what a
+missed complaint costs relative to a false alarm, which is
 @sec-classification-costs' question, and no training table can answer it for
 you.
 :::
@@ -2162,31 +2163,37 @@ you.
 ::: {.callout-note collapse="true"}
 ## 5. A 65B model needs "more than 780 GB" to fine-tune. Where does that number come from?
 
-$65 \times 10^9$ parameters × **12 bytes**. The instructive part is that the
-paper does not say which twelve, and two readings both fit.
+The QLoRA paper reports **more than 780 GB** of GPU memory for full fine-tuning
+at 65B. $65 \times 10^9$ parameters × **12 bytes** = 780 GB is a *hypothetical*
+parameter calculation that explains the size, not the paper's itemisation. The
+instructive part is that the paper does not say which twelve, and two readings
+both fit.
 
-Reading one: the three fp32 rows — master weight, Adam's $m$, Adam's $v$ — with
-the bf16 weight and gradient pushing the real figure to $65 \times 16 = 1{,}040$
-GB, which is what "more than" absorbs. Reading two: bf16 weight, bf16 gradient,
+Reading one: the three fp32 rows — master weight, Adam's $m$, Adam's $v$; adding
+the bf16 weight and gradient, this chapter's 16-byte setup gives
+$65 \times 16 = 1{,}040$ GB of static parameter state, consistent with "more
+than". Reading two: bf16 weight, bf16 gradient,
 fp32 $m$, fp32 $v$, no master copy, with "more than" absorbing activations
 instead.
 
-[Either decomposition lands on the same conclusion: the headline is dominated
-by state that exists only because the parameter is being trained.]{.hl} Freeze
+Activations and the distribution layout come on top; do not merge two
+different calculations into one real setup. Still, [both decompositions point
+the same way: most of the headline is state that exists only because the
+parameter is being trained.]{.hl} Freeze
 it and that state evaporates — which is the one-sentence case for PEFT.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. Your fine-tuned model got worse at things it used to do. What happened, and is it avoidable?
 
-Catastrophic forgetting, and it is a *consequence* of the thing you wanted
-rather than a bug you can patch out.
-
-Gradient descent on a narrow objective moves weights that other capabilities
-depended on. The mitigations are all versions of *move less*: lower learning
-rate, fewer epochs, PEFT (the base weights cannot drift, although the merged
-model can still forget, as @sec-forgetting measured), or mixing
-some general data back into the fine-tuning set.
+First test whether the drop on the old tasks is evaluation noise or a real
+regression. If it is real, one likely explanation is catastrophic forgetting:
+gradient descent on a narrow objective can move weights that other capabilities
+depended on. It is not an inevitable consequence of every fine-tune, but it is
+a common risk. Compare the learning rate, the number of epochs, the data mix
+(mixing some general data back in) and the scope of the adaptation; LoRA with
+an active adapter can also lower old-task performance (as @sec-forgetting
+measured).
 
 The reason this matters more than it sounds: [it is measured against whatever
 you thought to evaluate]{.hl}. If your eval suite only covers the new task, the
