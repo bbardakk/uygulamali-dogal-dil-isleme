@@ -3,7 +3,9 @@
 ::: {.callout-note appearance="simple" icon="false"}
 **Bölüm durumu: çevrildi.** Kaynak metin:
 [İngilizce 9. bölüm](../../en/chapters/09-post-training.html). Buradaki LoRA
-ölçümleri tek bir dizüstü GPU'sunda, yedi koşuda üretildi.
+ölçümleri tek bir dizüstü GPU'sunda, yedi koşuda üretildi; Ekim 2026'da lab ve
+unutma yoklaması metinden yeniden yazılıp tekrar çalıştırıldı (yeniden koşu
+sayıları metinde ayrıca etiketli).
 :::
 
 
@@ -1869,33 +1871,28 @@ ettiğiniz hatalarda iyi göstermek için seçilmiş bir benchmark'tır.
 
 ## Lab: Türkçe bir görevde LoRA, ölçülmüş hâliyle {#sec-lora-lab}
 
-Yukarıdaki her şey ya aritmetikti ya da başkasının sonucuydu. Bu kısım ikisi de
-değil: @sec-karsilastirma'teki aynı Türkçe ürün
-yorumu görevinin, tek bir dizüstü GPU'sunda yedi farklı şekilde çalıştırılmış
-ve sayıları çıktığı gibi raporlanmış hâli.
+Bu kısımda @sec-karsilastirma'teki aynı Türkçe ürün yorumu görevini, tek bir
+Apple M serisi GPU üzerinde yedi farklı şekilde çalıştırılmış koşuların
+raporlanan sonuçlarıyla inceliyoruz. Sayılar bu kurulumun gözlemleri; başka
+donanıma ya da veri bölünmesine doğrudan taşınmamalı.
 
 Kurulum bilinçli olarak mütevazı, çünkü mesele bunun ulaşılabilir olması.
 BERTurk base (`dbmdz/bert-base-turkish-cased`, 110,6M parametre),
 @sec-karsilastirma bölünmesi — 40.000 eğitim yorumu, 10.000 ayrılmış,
 seed (rastgelelik tohumu) 42 — iki epoch, dizi uzunluğu 128, batch boyu 32, bir Apple M serisi GPU üzerinde.
 LoRA adaptörleri yalnızca `query` ve `value` üzerinde, $\alpha = 2r$, dropout
-0,05.
+0,05. Özgün koşuların kodu, yazılım sürümleri ve öğrenme oranı kayda
+geçirilmemişti; aşağıdaki yeniden koşu, eksik ayrıntıları nasıl tamamladığımızı
+söylüyor.
 
 ::: {.callout-warning appearance="simple"}
-**Bu tablonun kontrol etmediği bir şey var; sonuçları buna göre doğru
-tartabilmeniz için açıkça belirtiyoruz.** Satırlar ortak tek bir öğrenme oranıyla
-çalıştırıldı; böyle yapılmamalıydı. LoRA'nın en iyi öğrenme oranı genellikle
-tam fine-tuning'deki en iyi orandan bir büyüklük mertebesi yüksektir; çünkü
-adaptör sıfırdan başlıyor ve oynatacak çok daha az parametresi var. Bu yüzden
-ortak tek bir oranla yapılan LoRA–tam fine-tuning karşılaştırması, iki yöntemi
-olduğu kadar iki öğrenme oranını da karşılaştırır. Tam fine-tuning ile $r=8$
-arasındaki 1,2 puanlık fark da, her yöntem için ayrı yapılacak bir oran
-taramasının makul olarak değiştirebileceği aralıkta kalıyor. LoRA satırlarının
-*kendi aralarındaki* rank karşılaştırması bundan etkilenmiyor — onlar hem
-yöntemi hem oranı paylaşıyor. Bunu düzgün biçimde yeniden yapmak, eğitim
-bölünmesinden ayrılmış bir doğrulama diliminde her satır için oranı ayrı ayrı
-ayarlamak demek. Bu sayıların üstüne bir şey kuracaksanız, düzeltmeniz gereken
-ilk şey de bu.
+**Karşılaştırmanın sınırı.** Bütün satırlar ortak tek bir öğrenme oranıyla
+çalıştırıldı; bu yüzden tam fine-tuning ile LoRA arasındaki fark, yöntemlerin
+ayrı ayrı ayarlanmış en iyi sonuçlarını göstermiyor. Rank satırları ortak oranla
+karşılaştırılabilir, ama rankın en iyi oranı da değişebilir. Güvenilir bir
+yöntem kıyası için eğitim verisinden ayrılmış bir doğrulama diliminde her
+yöntemin oranını arayın; test kümesini seçimde kullanmayın. Yeniden koşu bu
+sınırın ne kadar önemli olduğunu ölçtü (aşağıda).
 :::
 
 | neyi eğittik | eğitilebilir | pay | macro-F1 | F1(olumsuz) | doğruluk | gerçek süre | tepe GiB |
@@ -1914,11 +1911,42 @@ gramları üzerinde tf-idf, GPU yok — **76,21** macro-F1 ve **56,47** F1(olums
 almıştı.
 
 ::: {.column-margin}
-"Tepe GiB", ileri geçişin hesaplama çizgesi hâlâ bellekteyken gözlenen en
-büyük canlı bellek tahsisi; her satır için ayrı bir süreçte ölçüldü. İşletim
-sisteminin bildirdiği sayı değil: MPS sürücüsünün bildirdiği en yüksek bellek
-kullanımı her satırda yaklaşık 0,7 GiB daha yüksek çıkıyor; bu, sütunu kaydırır ama karşılaştırmaların hiçbirini
-değiştirmez.
+"Tepe GiB", bu çalışmada ölçülen en yüksek canlı MPS bellek tahsisi; her satır
+için ayrı bir süreçte ölçüldü. İşletim sisteminin bildirdiği toplam GPU ya da
+ortak bellek kullanımına eşit değil: MPS sürücüsünün bildirdiği ayrı tepe
+ölçümü satırlarda yaklaşık 0,7 GiB daha yüksek. Yeniden koşu, sütunun
+*ne zaman* ölçüldüğünün de önemli olduğunu gösterdi (aşağıda). Gerçek bir cihaz
+planı için aynı ölçüm yöntemini ve batch/dizi koşullarını kullanın.
+:::
+
+::: {.callout-note appearance="simple" icon="false"}
+**Yeniden koşu (Ekim 2026).** Labın kodu kaydedilmemişti; onu metinden yeniden
+yazdık ve aynı bölmede (birebir aynı 40.000/10.000, test %93,68 olumlu) bir
+Apple M5 Max üzerinde çalıştırdık. Metinde yazmayan ayrıntılar bizim seçimimiz:
+AdamW, weight decay 0, doğrusal azalan oran, ısınma yok.
+
+*Ortak oran.* LoRA $r=8$'i farklı oranlarla koşturduk; 2e-4'te **82,66 / 67,17 /
+%96,51** çıktı, tablodaki satır 82,69 / 67,23 / %96,50 — tablonun ortak oranı
+büyük olasılıkla buydu. Aynı 2e-4'te tam fine-tuning ise bizim kurulumumuzda
+*ıraksadı* ve çoğunluk sınıfına çöktü (%10 ısınma ya da 1,0'da gradyan kırpma da
+kurtarmadı); yani tablonun tam fine-tuning satırı bu kurulumla üretilemiyor.
+Ortak oranın ne kadar belirleyici olduğu da açık: LoRA $r=8$ 2e-5'te
+çoğunluk sınıfına çöktü (48,37), 5e-5'te 75,57, 1e-4'te 81,50 aldı; tam
+fine-tuning 2e-5'te 85,70, 5e-5'te 85,23, 1e-4'te 84,20.
+
+*Yöntem başına ayar.* Eğitim kümesinden ayrılmış 4.000 yorumluk doğrulama
+diliminde en iyi oran tam fine-tuning için 2e-5 (83,69), LoRA $r=8$ için 1e-3
+(82,64; 2e-3 ıraksadı) çıktı — yaklaşık elli kat. Bu oranlarla testte tam
+fine-tuning **85,37 ± 0,47** (dört koşu), LoRA $r=8$ **83,68 ± 0,40** (üç tohum)
+aldı. Ayar farkı ortak orandaki 2,7 puandan 1,7 puana indiriyor ama kapatmıyor;
+kalan fark tohum gürültüsünden büyük.
+
+*Diğer satırlar (2e-4, tohum 42).* Yalnızca head: 48,37 ve 10.000 tahminin
+*hepsi* olumlu. $r=1$ / 4 / 16 / 64: 80,03 / 82,52 / 83,23 / 83,86. Eğitilebilir
+parametre sayıları birebir aynı. MPS'te LoRA koşuları bit düzeyinde
+tekrarlanabilir çıktı; tam fine-tuning aynı ayarla iki kez koşunca 85,70 ve
+85,34 verdi. Kodlar ve bütün sayılar kitabın `Claude outputs/` klasöründe
+duruyor.
 :::
 
 ### Tabloyu okumak
