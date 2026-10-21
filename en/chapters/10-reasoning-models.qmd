@@ -1164,20 +1164,21 @@ buy?
 
 Asserting that majority voting saturates is easy. The curve is rarely plotted,
 so here it is. We take the first 120 of the same GSM8K problems, fix a 512-token
-thinking budget, and sample $k = 5$ independent traces per problem with different
+thinking budget, and generate $k = 5$ answers per problem with different random
 seeds. Because the sampler shuffles with a fixed seed and we take a prefix, these
 120 are a genuine subset of the 200 used elsewhere. Then we compute majority@$k$
-offline for every $k$ from 1 to 5, on the *same* samples — so the curve is a
-property of the aggregation, not of five separate experiments with different luck.
+offline for every $k$ from 1 to 5, on **prefixes of the same five samples**. The
+data and sample selection therefore do not change between arms; the curve is
+still the outcome of this one draw of five samples and of the tie-break rule.
 
 We planned eight samples and stopped at five, which is worth reporting because
 the reason is a cost this chapter had otherwise missed. **Wall-clock time did
 not scale the way the token count says it should.** The sequential sweep managed
 0.28 minutes per problem at a 512-token budget; this run averaged **1.43**
 minutes per problem per sample at the same budget, on the same machine, with the
-same decoding settings — five times the cost for nominally the same work, and
-none of it visible in the token *count*. Five passes over 120 problems took
-**14 hours**.[^slowdown]
+same decoding settings, and none of that difference is visible in the token
+*count*. Five passes over 120 problems took **14 hours**.[^slowdown] Since we
+could not measure the cause, we do not apply that ratio to other conditions.
 
 [^slowdown]: The range is honest rather than sloppy: the first three samples
     averaged 1.15 minutes per problem and the last two 1.85, on a laptop that had
@@ -1188,40 +1189,38 @@ none of it visible in the token *count*. Five passes over 120 problems took
     way, which is the only part the argument needs — and *"we measured it and
     cannot explain it"* is a better thing to publish than a plausible story.
 
-If you budget parallel compute by multiplying the single-trace cost by $k$, you
-will under-budget it — and the error compounds exactly when you are trying to
-decide whether parallel is cheaper than sequential.
+When planning multi-sample runs, record token counts and wall-clock time
+separately, and in a short pilot try to hold model load, device temperature,
+batch and prompt length fixed. Multiplying the single-trace time by $k$ would
+have underestimated the real time in this run.
 
 ::: {.callout-important appearance="simple"}
-**This is not an equal-token comparison, and you should not read it as one.**
-Each of the five samples runs at the full 512-token budget, which
-@sec-budgets measured at about 755 total tokens per problem. Five of those is
-roughly **3,800 tokens** — about $2.3\times$ what the 2,048-token sequential
-row spends. So if majority@5 beats the deepest sequential row here, that is
-*not* evidence that parallel beats sequential. It is a more expensive arm
-winning, which is the least interesting way to win.
+**This run does not compare serial and multi-sample decoding at equal cost.**
+Five 512-token attempts, at the roughly 755 total tokens per problem measured in
+@sec-budgets, come to about $5 \times 755 = 3{,}775$ output tokens; the single
+2,048-token run produced 1,637. So even if majority@5 beats the deepest
+sequential row here, that is *not* evidence that parallel beats sequential; it
+is a more expensive arm winning.
 
-The honest version is the one @sec-reasoning-lab asks you to run: hold the token
-budget fixed and split it both ways — `8 × 256` against `1 × 2048`. We report
-the saturation curve because the *shape* is the point, and the shape is a
-property of the aggregation at any budget. Where the two strategies cross at
-equal cost is a question this run was not designed to answer — and note how far
-from equal they are. Eight samples at a 256-token cap and one at 2,048 match on
-*thinking* tokens only. Carry the answer phase across from the table above and
-the eight-sample arm emits roughly $8 \times 516 = 4{,}128$ output tokens
-against the 2,048 row's 1,637: about 2.5× the cost, before the repeated prompt
-prefill and any verifier calls. That is arithmetic on the table, not a
-re-measurement, and it is why an equal-budget comparison has to be budgeted in
-total tokens or money rather than in caps.
+The lab's (@sec-reasoning-lab) `8 × 256` against `1 × 2048` comparison also
+equalises only the thinking **caps**: with the table's means, total output is
+roughly $8 \times 516 = 4{,}128$ tokens against 1,637 — about 2.5×, before the
+repeated prompt prefill and any verifier calls. That is arithmetic on the table,
+not a re-measurement. For a real equalisation, adjust the number of candidates
+and their caps until the **measured total tokens or money spent** match, and
+count the prefill of the reused prompt and the combining step separately. We
+report the saturation curve because the point here is the *shape* of the
+aggregation; where the two strategies cross at equal cost is a question this run
+was not designed to answer.
 
-**And one more thing it does not isolate.** At a 512-token budget, 96% of our
-traces are truncated (@sec-budgets) — so this curve is measured inside exactly
-the regime we just called "a different and worse operation". Truncation is also
-a *shared* cause of error across the five samples, which weakens the very
-assumption self-consistency rests on: that the errors are independent. The
-likely direction of that bias is towards *under*stating the gain, but we have
-not measured it. Re-run at 2,048 tokens, where only 28% of traces are cut,
-before quoting our $+3.3$ at anyone.
+**And one more thing it does not isolate.** At a 512-token budget 96% of our
+traces are truncated (@sec-budgets), so this multi-sample result does not
+generalise to completed traces. Truncation may also be a shared cause of error
+across the five samples; whether it raises or lowers the self-consistency gain
+cannot be determined from these data. When re-measuring at a higher budget,
+record the total cost and the problem-level shared errors too; even the 28%
+truncation rate of the 2,048 budget in @sec-budgets is not an "untruncated"
+condition.
 :::
 
 | samples $k$ | majority@$k$ | 95% CI | gain over $k=1$ | any-correct@$k$ | left on the table |
@@ -1249,20 +1248,24 @@ the three values we report would read 2.00, 15.36 and 11.66 instead of 1.12,
 14.20 and 10.78. None of the conclusions change, but you cannot reproduce the
 arithmetic without knowing which formula produced it.
 
-Eight discordant problems is all $n=120$ gave us to work with. The direction is
-right and matches the literature; the magnitude is not something we measured
-sharply, and the curve wobbling *down* at $k=4$ before coming back up is what
+On 120 problems majority@5 fixed six problems relative to the first sample and
+broke two ($b = 2$, $c = 6$): a point difference of $+3.3$. With only eight
+discordant problems the uncertainty is large, and the paired test does not
+separate the difference at the 5% level. The direction agrees with the original
+paper, but this small run does not on its own show a reliable positive effect,
+and the curve wobbling *down* at $k=4$ before coming back up is what
 noise looks like at this sample size. Self-consistency is a well-replicated
 result and nothing here contradicts it — but our own run is not the evidence.
 
-**Second, the $k=2$ row is not a fluke, and it teaches the mechanism.** Its gain
+**Second, the $k=2$ row is not a fluke; it teaches this implementation's tie rule.** Its gain
 is exactly $+0.0$, and we verified it is exactly $+0.0$ per problem: majority@2
-gave the same answer as majority@1 on **120 of 120**. That is structural, not
-luck. With two votes you either get agreement — in which case the winner is the
+gave the same answer as majority@1 on **120 of 120**. That is the result of
+**this tie-break rule**, not luck. With two votes you either get agreement — in which case the winner is the
 answer sample 1 already gave — or a $1\!-\!1$ tie, which any implementation must
 break somehow, and `collections.Counter` breaks it towards the first sample.
-Either way you paid for a second full generation and mathematically could not
-have changed the outcome.[^tie-break]
+Under this rule, either way you paid for a second full generation and could not
+have changed the outcome; random or verifier-assisted tie-breaking can give a
+different result.[^tie-break]
 
 [^tie-break]: The specific tie-break matters less than the parity. Break ties
     randomly and $k=2$ stops being a strict no-op, but it still buys you a coin
@@ -1278,34 +1281,37 @@ throws away.** By $k=5$ the correct answer was somewhere in the five samples
 difference: **9.2 points that the model had already computed and paid for, and
 that counting discarded.**
 
-Learn the field's names for those two columns, because you will not see ours
-anywhere else. `any-correct@`$k$ is **pass@$k$**, also called *coverage*: did
-any of the $k$ samples get it right. The majority column is **cons@$k$** (or
-maj@$k$): what you actually return. The gap between them is the standard way of
-asking how much your aggregation step is wasting, and reporting only one of the
-two is how a paper hides which half of its gain came from the model and which
-from the aggregator.
+In this table `any-correct@`$k$ is the rate at which at least one of exactly
+these $k$ answers is right; `majority@`$k$ is the accuracy of the answer the
+vote returns. The first is close to the idea of *coverage* reported as
+**pass@$k$** in code-generation work, but papers often report pass@$k$ with an
+unbiased estimator computed from $n > k$ samples rather than from exactly $k$,
+and sampling protocols differ [@chen2021evaluating]. Do not compare your own
+any-correct@$k$ with those numbers directly. Define the voting result under one
+name (elsewhere it may appear as cons@$k$ or maj@$k$) and use it consistently.
+Reporting only one of the two hides which part of the gain came from the model
+and which from the aggregator.
 
-That gap is the entire business case for the next section. It is an upper bound
-on what any re-ranking method could add on top of these same samples, it is
-nearly three times what majority voting itself won, and unlike the $+3.3$ it is
-not fighting for significance — on those problems the model demonstrably
-produced the right answer and the aggregation step lost it. Counting is simply a
-poor reader of its own evidence.
+At least one of the five candidates was right on 85.8% of problems; voting
+picked the right answer on 76.7%. The 9.2 points between them are the largest
+gap a perfect selector could close **for this candidate set and this scorer**,
+and that is the business case for the next section. How much of it a real
+verifier closes needs a separate experiment, and on 120 problems the gap itself
+carries sampling uncertainty.
 
 **Before you train anything, though, try weighting the votes you already have.**
-Majority voting treats five samples as five equal ballots, but the model hands
-you a confidence signal for nothing: the log-probability of the answer tokens,
-or the entropy of the trace's closing steps. Weighting each ballot by that
-signal is a variant @wang2023selfconsistency report in the original paper, and
-it costs no extra generation, no labels and no training — it attacks the same
-9.2 points from the cheap end. Temper the expectation, though: in their own
-experiments, weighting by the length-normalised probability of each path
-scored about the same as plain majority voting, so treat it as a cheap
-experiment to run, not a gain to bank. The label-free strong form is to hand the $k$
-candidates *back* to the model and ask it to pick, which also gives you a
-selector for free-form answers that have no equality test at all. The trained
-verifier below is the *third* thing to try, not the second.
+Majority voting treats five samples as five equal ballots. If the model exposes
+log-probabilities, you can try the log-probability of the answer tokens or of
+the trace as a weight; @wang2023selfconsistency report a variant of this kind in
+the original paper. That information is unavailable on some APIs, storing and
+computing it has a cost, and a high probability is not a calibrated estimate of
+correctness, so test it together with length effects. Temper the expectation:
+in their own experiments, weighting by the length-normalised probability of
+each path scored about the same as plain majority voting. Another label-free
+option is to hand the $k$ candidates *back* to the model and ask it to pick; it
+gives you a selector for free-form answers that have no equality test, but adds
+prompt and generation cost. The trained verifier below is the *third* thing to
+try, not the second. Compare the methods on held-out data.
 
 ### When you can score, do not vote
 
