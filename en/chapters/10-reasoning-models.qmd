@@ -239,22 +239,31 @@ the number right — and you can run that loop at a scale no human labelling
 budget reaches. The specific algorithm R1 uses for it is **GRPO**
 [@shao2024deepseekmath], which @sec-preference derives: it drops the value
 network and takes its baseline from the mean reward of a *group* of samples on
-the same prompt. That only makes sense when sampling many attempts per question
-is cheap — which is exactly the regime a verifiable reward puts you in.
+the same prompt. This lightens the human-labelling load, but generating,
+checking and diversifying many attempts per question still costs compute, and
+the method's value depends on the reward actually separating good attempts from
+bad ones.
 
 ::: {#gloss-verifiable-reward .column-margin .term-gloss}
 **verifiable reward** — a training signal computed by checking the answer
-automatically, rather than by asking a human or a learned reward model. It
-works only where correctness is cheap to check.
+automatically — a predefined condition such as the result or the format —
+rather than by asking a human or a learned reward model. Qualities the checker
+does not cover have to be evaluated separately.
 [↩](#term-verifiable-reward){.term-back}
 :::
 
-The published account to read is DeepSeek-R1 [@guo2025deepseekr1], because it
-is the one that shows its work. Their DeepSeek-R1-Zero was trained by
+A published account worth reading is DeepSeek-R1 [@guo2025deepseekr1], because
+it shows its method in detail. Their DeepSeek-R1-Zero was trained by
 reinforcement learning from a base model with **no supervised warm-up at all**,
 on a [verifiable reward](#gloss-verifiable-reward){#term-verifiable-reward .term-ref}. Over training, its
 average pass@1 on AIME 2024 rose **from 15.6% to 77.9%**; with self-consistency
-decoding — a technique @sec-parallel-compute returns to — it reached 86.7%.
+decoding — a technique @sec-parallel-compute returns to — it reached
+86.7%.[^r1-version] The two numbers are not at the same inference cost: the
+second needs many samples per problem and a vote.
+
+[^r1-version]: These figures are from the Nature version of the paper, which we
+cite. The first arXiv version (v1) gives the same measurement as 71.0%; the
+86.7% with majority voting is the same in both.
 (AIME is a hard American high-school mathematics competition whose answers are
 integers, so scoring is exact. *pass@1* is the share of problems solved by a
 single sampled answer, here averaged over several samples per problem.)
@@ -264,7 +273,20 @@ from*. Nobody demonstrated backtracking. The reward said only "the final answer
 was right", and the strategies that produce right answers were discovered.
 The paper reports an "aha moment" during training, and is refreshingly concrete
 about what that means empirically: it is "characterized by a sudden increase in
-the use of the word 'wait'". The model taught itself to stop and re-check.
+the use of the word 'wait'". That shows training changing the output behaviour,
+with more patterns that look like stopping to re-check; on its own it does not
+explain how any internal checking process works.
+
+**A second source of reasoning: distillation.** Not every reasoning model gets
+the behaviour from its own reinforcement learning. The same paper released
+small "R1-Distill" models, put through supervised fine-tuning on R1's traces;
+@muennighoff2025s1 made do with SFT on about 1,000 examples. This chapter's
+instrument, Qwen3-1.7B, also got its ability, according to its technical
+report, by strong-to-weak distillation from the large Qwen3 models rather than
+from its own RL [@yang2025qwen3]. The mechanism is the knowledge distillation of
+@sec-distillation; the student's performance depends on which teacher outputs
+were chosen, on its own capacity and on the task measured, and has no fixed
+ceiling.
 
 ::: {.callout-note appearance="simple" icon="false"}
 **The honest footnote on R1-Zero.** Pure RL from a base model did not produce a
@@ -283,20 +305,23 @@ drift — which is @sec-forgetting's point arriving from a new direction.
 OpenAI's o1 [@openai2024o1] had made the commercial case a few months earlier,
 in September 2024, with the figure caption that named the two dials: "o1 performance smoothly improves with
 both train-time and test-time compute". Be precise about what is public here,
-because a lot of writing is not: OpenAI published *results*, not a method. The
-only methodological statement is that a large-scale reinforcement learning
-algorithm teaches the model to use its chain of thought. No algorithm, no
-reward model, no data. They also chose not to show raw traces to users, citing
+because a lot of writing is not: the September 2024 announcement reports that
+performance improves with train-time and test-time compute; its methodological
+statement is that a large-scale reinforcement learning algorithm teaches the
+model to use its chain of thought. It does not give enough of the training
+algorithm, the data or the reward design to reproduce them. They also chose not to show raw traces to users, citing
 "user experience, competitive advantage, and the option to pursue the chain of
-thought monitoring" — so what a user sees in the product is a *summary* of the
-trace, not the trace.
+thought monitoring" — so in that product version what a user saw was
+a *summary* of the trace, not the trace. Check current API behaviour in the
+relevant documentation.
 
-What has changed since is the *shape of the dial*, not the secrecy. The
-per-request knob moved from a token count to a coarse effort level, and then to
-adaptive settings where the model decides how long to think and you declare an
-appetite rather than a number. Treat every version number in this chapter as an
-example with a short shelf life. The pattern is what to remember: **a hidden
-trace, billed as output, controlled by a coarse dial you do not fully own.**
+Since then, some hosted models have changed the *shape of the dial*: instead of
+a token count they offer an effort level, or adaptive settings where the model
+decides how long to think. Whether these settings exist, whether the trace is
+visible and how it is billed vary by model version; before equating this
+chapter's local token cap with a provider's API setting, check that version's
+documentation. Treat every version number in this chapter as an example with a
+short shelf life.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -356,9 +381,10 @@ trace, billed as output, controlled by a coarse dial you do not fully own.**
 ```
 ::: {.fig-cap}
 Both columns end in tokens that look alike, and that resemblance is what makes
-the distinction easy to miss. The difference shows up under pressure: prompted
-reasoning degrades when you reword the prompt, because the form was never in
-the weights.
+the distinction easy to miss. On the left the weights are fixed and the
+behaviour is elicited by prompt examples; on the right training changes the
+model's output distribution. Sensitivity to rewording the prompt has to be
+measured for both.
 :::
 ::::
 
