@@ -2478,41 +2478,42 @@ with intervals; it is one of the most useful numbers the exercise produces.
 
 ## Intuition checks {#sec-reasoning-intuition}
 
-Answer before expanding. Reasoning models are the area where the gap between
-what a demo shows and what a measurement shows is widest, and every check below
-is a place this chapter found the gap.
+Answer before expanding. Reasoning demos can look convincing; in the checks
+below, test every claim against task, cost and error measurements.
 
 ::: {.callout-note collapse="true"}
 ## 1. Why should writing more tokens make a model better at arithmetic?
 
-Because it is the only way to make a fixed-depth network deeper at run time.
+Because it is one way to give a fixed-weight network extra serial computation at
+run time.
 
-A transformer has a fixed number of layers. Every token gets exactly that much
-serial computation and no more, so a problem needing more sequential steps than
-the model has layers cannot be solved in one forward pass. Writing an
-intermediate result puts it in the context, where the *next* forward pass can
-read it — [length is the only dimension you can extend after training]{.hl}.
+A transformer has a fixed number of layers and makes another forward pass for
+every new token it generates. Writing an intermediate result puts it in the
+context, where *later* forward passes can read it; that helps on some multi-step
+tasks. But [not every extra token is useful serial depth]{.hl}, and test-time
+compute is not limited to lengthening the trace: multiple sampling, search and
+external tools are options too. Which route helps is measured on the task.
 
 This is why the mechanism is architectural rather than psychological. The model
-is not "thinking harder"; it is using its own output as a writable working
-memory, and each token buys another full pass through the network.
+is not "thinking harder"; it can use its own output as a writable working
+memory.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Your reasoning model's accuracy went up with a bigger budget. Should you raise it further?
 
-Not on that evidence. Accuracy nearly always argues for spending more, which is
-exactly why it is the wrong thing to watch.
+That evidence alone does not settle a decision to raise the budget.
 
-Watch **cost per correct answer** instead. It has a minimum; accuracy does not.
-And check whether the rise is real: in our sweep, **6.74× the tokens bought a
-point estimate that did not move at all — an identical *marginal*, not an
-identical set of answers**, and no budget
-was statistically separable from it at $n = 200$.
+At each budget, compare accuracy, total cost and **cost per correct answer**,
+with intervals. In our sweep, **the token count rose 6.74× while the end
+conditions' point accuracy stayed the same — but the problem-level answers
+differed**, and at $n = 200$ the differences could not be separated. The
+cheapest budget that meets the quality bar can be an interior point or an edge.
 
-[Costs separate long before accuracies do.]{.hl} Expect to be able to price a
-reasoning model long before you can prove it helps — and treat "we cannot tell
-yet, and here is the bill" as a complete result rather than a failed experiment.
+[Cost differences often become clear before accuracy differences do.]{.hl}
+Expect to be able to price a reasoning model before you can show it helps — and
+treat "we cannot tell yet, and here is the bill" as a complete result rather
+than a failed experiment.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -2520,9 +2521,11 @@ yet, and here is the bill" as a complete result rather than a failed experiment.
 
 Silent truncation, which produces no error and no latency spike.
 
-Hitting the cap does not cancel the request. It forces an answer out of an
-unfinished derivation — the model stops mid-reasoning and emits whatever it can.
-You get a well-formed, confident, wrong answer, at full price.
+If an answer phase is run separately after a request hits the thinking cap (as
+in this chapter), a fluent, confident, wrong answer can come out of the
+unfinished derivation. If there is no answer phase, or the answer hits its own
+cap, you may instead see empty or malformed output. Log truncation and parse
+success separately.
 
 @sec-classification-llm has the industrial-strength version of this: a 24-token
 cap consumed entirely by a reasoning block left the answer field empty on every
@@ -2534,12 +2537,11 @@ metric rather than a diagnostic you check after something looks wrong.
 ::: {.callout-note collapse="true"}
 ## 4. Five samples and a majority vote, or one sample with five times the budget?
 
-You cannot know without measuring. Try the five samples first, because they
-are cheap and add no latency, but decide on an equal-token comparison — and the
-more interesting finding is that voting wastes most of what you paid for.
+Do not choose without measuring. Compare five short samples with one long one
+while keeping realised total input/output cost, quality and p95 latency close.
+Batching can reduce latency; measure it on your own hardware and request load.
 
-Parallel sampling gives you equal tokens and the latency of a single trace if
-you can batch. Be careful with the word *independent*, because it is true in one
+Be careful with the word *independent*, because it is true in one
 sense and misleading in the other. For a fixed problem and model, samples drawn
 from independent randomness do have independent error indicators — that much is
 just probability. What that does not buy you is a vote that concentrates on the
@@ -2555,9 +2557,9 @@ measure the comparison.
 
 But measure the aggregation step. Across our five-sample run [the correct answer
 was somewhere in the set **85.8%** of the time; majority voting returned it
-**76.7%** of the time]{.hl}. Those 9.2 points were computed, paid for, and then
-discarded by the counting. That is the real argument for a verifier, and it is
-an argument about waste rather than about accuracy.
+**76.7%** of the time]{.hl}. The roughly 9.2-point gap shows the **potential
+room** for a better selector; a verifier's benefit is shown only once its own
+error rate, extra cost and latency are measured separately.
 
 Where parallel sampling fails: when the model is *systematically* rather than
 randomly wrong. Five samples of the same misconception vote unanimously.
@@ -2566,35 +2568,34 @@ randomly wrong. Five samples of the same misconception vote unanimously.
 ::: {.callout-note collapse="true"}
 ## 5. The model's reasoning trace explains its answer. Can you use it as an audit log?
 
-No. A trace is a plausible narrative generated *alongside* the answer, not a
-record of the computation that produced it.
+Not on its own. A reasoning trace is not a causal audit record; it is text
+generated *alongside* the answer.
 
-The rate at which it agrees with the real cause is a number you have to measure,
-not assume. We measured it by planting a wrong answer in the context and
-checking whether the trace disclosed the influence.
-
-The result that should change how you read traces: [when we planted a wrong
-answer, **71%** of the problems that flipped from right to wrong landed on a
-third number — *neither* the right one nor the planted one]{.hl}. (That is
-30 of 42 flips; the net accuracy loss is smaller, 26 problems, because 16 went
-the other way.) A detector that only asked "did the model repeat the injected
-answer?" would have missed most of the damage.
+In this chapter, when a wrong answer was added to the prompt, [30 of the 42
+problems that flipped from right to wrong (**71%**) went to a third number —
+*neither* the right one nor the planted one]{.hl}. (The net accuracy loss is
+smaller, 26 problems, because 16 went the other way.) That observation shows a
+detector asking only "did the model repeat the injected answer?" would miss most
+of the flips. Measuring the trace's faithfulness and separating the wrong
+number's effect needs a placebo and trace interventions.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. You built a keyword detector for whether traces disclose a hint. Do you trust its output?
 
-Not until you have measured it in both directions, and only one direction can be
-automated.
+Not until you have measured it in both directions.
 
-Run it on the arm with **no hint**. That arm has nothing to disclose, so every
-hit is a free false positive — this check caught `ta's` matching
-"Gre**ta's**". Then read a sample by hand, which is the only way to find the
-opposite error: our list missed a disclosing phrase entirely.
+Check the detector for false positives on the **no-hint** control arm and for
+false negatives on human-labelled hinted examples. The no-hint arm has nothing
+to disclose, so every hit there is a false positive — this check caught `ta's`
+matching "Gre**ta's**". A hand-read sample found the opposite error: our list
+missed a disclosing phrase entirely. Once a labelled validation set exists, both
+error directions can be computed automatically.
 
-[Measure your detector before you believe its output]{.hl} generalises well past
-this chapter. Any time you automate a judgement about model behaviour, you have
-added a second model whose error rate is now part of your result.
+[Measure your detector before you believe its output]{.hl}. Whether the
+criterion is a rule or a trained classifier, report its error rates alongside
+the result; the error rate of any automated judgement about model behaviour is
+now part of your result.
 :::
 
 ## Interview questions {#sec-reasoning-interview}
