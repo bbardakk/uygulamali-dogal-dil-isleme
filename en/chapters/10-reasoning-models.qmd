@@ -829,10 +829,11 @@ and it is the one most reasoning-model deployments actually deserve.
 
 ### Pricing it yourself
 
-Accuracy per token is a property of the model and the task. Cost per correct
-answer is a property of *your* prices and *your* hardware, so the last step has
-to be a calculator rather than a claim. The measured points below are ours; the
-two sliders are yours.
+Price per token depends on *your* contract or *your* hardware. Cost per correct
+answer depends on that and also on the model's task performance, the input and
+output lengths and your retry pattern, so the last step has to be a calculator
+rather than a claim. The tool below combines the measured GSM8K points with the
+output-token price you choose: the points are ours, the two sliders are yours.
 
 ```{ojs}
 //| echo: false
@@ -865,7 +866,7 @@ budgetCost = budgetRows.map(d => {
     ...d,
     label: d.budget === 0 ? "no thinking" : `${d.budget.toLocaleString()} tokens`,
     costPer1k,
-    perCorrect: solved1k > 0 ? costPer1k / solved1k : NaN,
+    perCorrect: solved1k > 0 ? costPer1k / solved1k : NaN, // point estimate; accuracy's ±7-point interval has to be read separately
     latency: d.total_tok / tps
   };
 })
@@ -927,21 +928,21 @@ html`<table style="width:100%; border-collapse:collapse; font-size:0.95rem">
   </tr>`)}
 </table>
 <p style="font-size:0.85rem; color:var(--fig-muted); margin-top:8px">
-The highlighted row is the cheapest correct answer at the current prices. Both
-the accuracy and the token counts are measured; only the price and the decode
-speed are yours to set. Note what the price slider cannot change: it scales
+The highlighted row is the lowest cost-per-correct ratio computed from these six
+points' <b>measured accuracy estimates</b> and the output-token price chosen. The
+token counts are measured; the accuracies are point estimates that each carry a
+confidence interval of roughly ±7 points, so the highlight is not a declaration
+of a statistical winner. Note what the price slider cannot change: it scales
 every row identically, so <b>the cheapest budget does not move as the price
-moves</b>. It depends on the shape of the accuracy curve. What the price changes
-is how much the wrong choice costs you.
+moves</b>. What the price changes is how much the wrong choice costs you.
 <br><br>
-That invariance is real but narrow, and it is worth knowing where it breaks.
-This model charges for output tokens only. Add anything that does <i>not</i>
-grow with the budget — input tokens, a per-request fee, a retrieval call — and
-the fixed part dilutes the variable part, which pushes the optimum towards
-longer budgets. Likewise the seconds column is decode time for one request in
-isolation: under batching, throughput per request falls while tokens per second
-across the fleet rises, so treat it as a lower bound on latency rather than a
-capacity estimate.</p>`
+That invariance is narrow. This calculator charges for output tokens only. Add
+input cost, a per-request fee or different tariffs and the ranking has to be
+recomputed; the direction of any shift is not guaranteed in advance and depends
+on the accuracy levels and the gaps between points. Likewise the seconds column
+approximates generation time at the fixed tokens-per-second rate chosen; it
+leaves out prefill, queueing, batching and varying decode speed, so do not read
+it as a capacity estimate.</p>`
 ```
 
 ::: {.callout-caution appearance="simple" icon="false"}
@@ -951,14 +952,14 @@ canonical picture — cheap early gains, a knee, then a flat tail — is what th
 literature reports for large models. Our small model instead spent its first two
 non-zero budgets *below* the baseline and its last one exactly on it.
 
-That is not a contradiction of the literature; it is the same finding from the
-other side of the scale threshold. Recall from @sec-cot-two-ways that
-chain-of-thought "actually hurts performance for most models smaller than 10B
-parameters" — and this is a 1.7B model. What our truncation column adds is a
-candidate mechanism for such harm: at the budgets where the point estimate
-fell, 97% of traces were being severed mid-derivation. Candidate, not proven —
-neither dip is statistically separable from the baseline, and the equally
-truncated 512 row did not dip.
+This curve does not directly contradict the 2022 experiments with
+prompt-elicited chain of thought (@sec-cot-two-ways), but Qwen3-1.7B has a
+different training and template regime, so that paper's parameter threshold
+cannot explain it either. The high truncation rate at the 128- and 256-token
+budgets is an explanation to be tested for the lower point accuracy observed
+there: at those budgets 97% of traces were being severed mid-derivation. But
+neither dip is statistically separable from the baseline, and the 512 row,
+truncated at a similar rate, coming out higher rules out a single-cause reading.
 
 So take two things from this table and leave the third. Take the *method*, and
 take the discovery that the honest answer can be "no detectable difference, at
@@ -969,15 +970,17 @@ your task and model you may well find that the curve genuinely climbs.
 
 ## Spending the budget sideways: self-consistency, verifiers, and search {#sec-parallel-compute}
 
-@sec-budgets bought computation in one direction only: a longer trace. But a
-token budget is just a quantity, and there is a second thing you can do with it.
-Instead of one 2,000-token attempt, take **eight 250-token attempts and combine
-them**. Same tokens, same bill, completely different failure profile.
+@sec-budgets bought computation in one direction only: a longer trace. A
+different option is to generate several independent candidates and combine
+their answers. **Eight 250-token attempts**, for example, equal one 2,000-token
+attempt only *in the thinking-token cap*; the eight answers' tokens, the
+repeated prefill of the input, the combining step and the latency can all
+differ. The failure profile is completely different.
 
 This is the axis many teams never try. Which one wins you cannot know without
 measuring, since the best strategy depends on how hard the question is
-[@snell2025scaling, below]; try parallel first because it is cheap
-and adds no latency, but make the call on an equal-token measurement.
+[@snell2025scaling, below]. Compare serial and parallel sampling on the tokens
+actually spent, price, latency and task performance.
 
 ### Why more attempts help at all
 
