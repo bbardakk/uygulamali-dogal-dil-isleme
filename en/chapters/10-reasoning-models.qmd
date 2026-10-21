@@ -984,28 +984,32 @@ actually spent, price, latency and task performance.
 
 ### Why more attempts help at all
 
-The reason is a property of *errors*, not of models, and it is worth stating
-precisely because it also tells you when the trick fails.
+The reason lies in how *errors* are distributed, not in the model, and it is
+worth stating precisely because it also tells you when the trick fails.
 
-Sample the same problem several times at a non-zero temperature and you get
-different reasoning paths. Now notice the asymmetry:
+Sample the same problem several times at a non-zero temperature and you may get
+different reasoning paths; how varied they are depends on the model and the
+temperature. Different paths sometimes reach the same correct result:
 
-- There is usually **one way to be right**. Every path that reasons correctly
-  lands on the same number.
-- There are **many ways to be wrong**. A dropped sign, a misread quantity, an
-  arithmetic slip in step four — each produces a *different* wrong number.
+- On a numerical problem **the right answer is usually a single value**; paths
+  that reason correctly land on the same number.
+- Wrong answers **can scatter**: a dropped sign, a misread quantity, an
+  arithmetic slip in step four can each produce a *different* wrong number. But
+  wrong answers can also pile up systematically on the same value.
 
-So correct answers pile up on one value while wrong answers scatter. Taking the
-majority is therefore not a vote about quality; it is exploiting the fact that
-**agreement is evidence and disagreement is noise**. @wang2023selfconsistency
-named this *self-consistency*, and it is the reason a model can be right more
-often than its single best guess.
+If the wrong answers are scattered, picking the most frequent answer can help;
+if they pile up on one value, the majority vote misleads. Agreement on its own
+is not evidence. @wang2023selfconsistency studied this strategy as
+*self-consistency*. Before voting, measure how answers are normalised and on
+which errors they converge.
 
-"The same answer" is a decision you have to implement, and this is where most
-self-consistency implementations quietly lose their gains: `72` and `72.5` are
-genuinely different votes, `72` and `72.0` and `$72` and `72 TL` should not be,
-and the normalisation layer that decides which is which is a piece of ordinary
-engineering with no glamour and a large effect on the number you report.
+"The same answer" is a rule you have to define before the task, and this is
+where most self-consistency implementations quietly lose their gains: `72` and
+`72.5` are different votes; `72` and `72.0` can denote the same number; `$72`
+and `72 TL` are not the same answer, because the currency differs. Build a
+normaliser that handles number format, unit, range and tolerance separately and
+measure its errors on a validation set; that unglamorous piece of engineering
+has a large effect on the number you report.
 
 A little binomial arithmetic shows how strong the effect is, and in which
 direction it runs. Take the simplest case: each sample is right with
@@ -1015,26 +1019,31 @@ that the majority is right is 60% for one sample, 68.3% for five and 73.3% for
 nine, and it keeps climbing towards 100% as you add samples. With $p = 0.4$ the
 same arithmetic runs backwards: 40%, 31.7%, 26.7%, falling towards zero.
 Voting does not make a model better. It makes the model's *most likely* answer
-more certain to be returned — which helps only when that answer is the right
-one. Scattered wrong answers make the contest easier, because the correct
-answer then only has to beat the largest single wrong answer, not all of them
-combined.
+more certain to be returned. With many different wrong answers the decision
+goes to the answer with the most votes: the correct answer only has to beat the
+largest single wrong answer, not all of them combined, and if it comes up more
+often than each wrong answer individually, more votes help. This arithmetic
+assumes independent samples; measure the real model's error distribution and
+sample diversity separately.
 
 Say that backwards, because the backwards form is the operational one: **if your
 task's wrong answers can agree with each other, self-consistency will confidently
 amplify the error.** A model with a systematic bias — a units convention it
 often misreads, a Turkish negation suffix it often misses — keeps voting for the
-same wrong answer. If that answer comes up on 60% of samples and the right one
-on 30%, eight votes elect the wrong answer about four times in five, and more
-often as $k$ grows: majority voting turns a mistake the model makes on most
-samples into one the system makes almost every time. You get no warning; a
-clear majority looks exactly like confidence.
+same wrong answer. If that answer comes up on 60% of samples, the right one on
+30% and others on 10%, then with eight independent votes the wrong answer takes
+the most votes outright about 75% of the time; break ties at random and it is
+chosen about 81% of the time (the exact figure depends on the tie rule), and
+more often as $k$ grows. Self-consistency does not fix the model's shared
+mistakes; it can turn a mistake made on most samples into one the system makes
+almost every time. You get no warning; a clear majority looks exactly like
+confidence.
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">Two ways to spend the same token budget</div>
 <svg viewBox="0 0 764 446" style="max-width:744px" role="img"
-     aria-label="A comparison of sequential and parallel test-time compute under an equal token budget of two thousand tokens. On the left, sequential: one question feeds a single long reasoning trace of two thousand tokens which produces one answer. Its properties are that depth accumulates so later steps can build on earlier ones, that an error early in the trace is inherited by everything after it, that latency is the full length of the trace, and that it needs no way of comparing answers. On the right, parallel: the same question is sampled eight independent times at a non-zero temperature, each trace two hundred and fifty tokens, producing eight candidate answers. Five of them agree on the value seventy-two, while three disagree with each other producing sixty-five, eighty-one and seventy-two point five. A majority vote selects seventy-two. Its properties are that the samples are drawn independently so a bad path is outvoted rather than inherited, that the traces can run at the same time so latency is one trace not eight, that it requires answers you can compare for equality, and that it fails silently when the model is systematically rather than randomly wrong. A closing bar states that sequential compute deepens one attempt while parallel compute de-risks many, and that most production systems should try the second before buying more of the first.">
+     aria-label="A comparison of sequential and parallel test-time compute under an equal token budget of two thousand tokens. On the left, sequential: one question feeds a single long reasoning trace of two thousand tokens which produces one answer. Its properties are that depth accumulates so later steps can build on earlier ones, that an error early in the trace is inherited by everything after it, that latency is the full length of the trace, and that it needs no way of comparing answers. On the right, parallel: the same question is sampled eight independent times at a non-zero temperature, each trace two hundred and fifty tokens, producing eight candidate answers. Five of them agree on the value seventy-two, while three disagree with each other producing sixty-five, eighty-one and seventy-two point five. A majority vote selects seventy-two. Its properties are that different samples can keep a shared model bias, that the latency of running them concurrently depends on server capacity, that comparing answers needs a task-aware equality rule, and that with systematic errors a majority can look confident and mislead. A closing bar states that one long attempt and many short ones carry different risks, and that the decision should be made on equal real cost and task performance.">
   <defs>
     <marker id="pc-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0.5 L7.5,4 L0,7.5 z" class="head"/>
@@ -1102,23 +1111,21 @@ clear majority looks exactly like confidence.
   <text x="571" y="260" class="t-xs t-mid t-b t-rose">majority vote → 72 (5 of 8 agree)</text>
   <text x="571" y="288" class="t-xs t-mid t-muted">one way to be right; many different ways to be wrong</text>
 
-  <text x="402" y="316" class="t-xs t-muted">· samples are independent — a bad path is outvoted, not inherited</text>
-  <text x="402" y="334" class="t-xs t-muted">· they run at the same time if the server has room: latency of one, cost of eight</text>
-  <text x="402" y="352" class="t-xs t-muted">· requires answers you can compare for equality — and 72 ≠ 72.5</text>
-  <text x="402" y="370" class="t-xs t-muted">· fails silently when the model is systematically wrong</text>
+  <text x="402" y="316" class="t-xs t-muted">· different samples can keep a shared model bias</text>
+  <text x="402" y="334" class="t-xs t-muted">· concurrent latency depends on server capacity</text>
+  <text x="402" y="352" class="t-xs t-muted">· comparing answers needs task-aware equality — 72 ≠ 72.5</text>
+  <text x="402" y="370" class="t-xs t-muted">· with systematic errors, a majority can look confident and mislead</text>
 
   <line x1="10" y1="394" x2="754" y2="394" class="ln-thin"/>
-  <text x="382" y="418" class="t-xs t-mid t-b">Sequential compute deepens one attempt. Parallel compute de-risks many.</text>
-  <text x="382" y="438" class="t-xs t-mid t-muted">If you are already paying for a long trace, try eight short ones before buying a longer one.</text>
+  <text x="382" y="418" class="t-xs t-mid t-b">One long attempt and many short ones carry different risks.</text>
+  <text x="382" y="438" class="t-xs t-mid t-muted">Decide on equal real cost and task performance.</text>
 </svg>
 ```
 ::: {.fig-cap}
-The two columns cost the same and are billed the same, so the choice between
-them is pure engineering rather than budgeting. Note the latency asymmetry in
-particular: the eight traces on the right are independent, so a server with
-spare capacity to batch them returns an answer in the time of *one* trace, not
-eight. Parallel compute is the only way in this chapter to buy accuracy without
-buying wait — as long as somebody else is not already using the room it needs.
+The two arms are equal only in the thinking-token cap shown. For the real cost,
+count every answer generated, the repeated prompts and the combining step.
+Multiple samples can be generated concurrently with enough hardware; measure the
+latency against your capacity and batching.
 :::
 ::::
 
