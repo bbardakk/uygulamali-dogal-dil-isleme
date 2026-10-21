@@ -1315,34 +1315,36 @@ try, not the second. Compare the methods on held-out data.
 
 ### When you can score, do not vote
 
-Majority voting throws information away. It looks only at the *final answers*
-and ignores everything the model wrote to get there. If you can build something
-that judges a candidate solution, you can do better than counting.
+Majority voting uses only the candidates' matched *final answers* and ignores
+everything the model wrote to get there. If you have a checker that scores a
+candidate's correctness **reliably**, that extra information can make for a
+better choice.
 
-That something is a [verifier](#gloss-verifier){#term-verifier .term-ref}: a
-model trained to score solutions rather than produce them. @cobbe2021training introduced the pattern together with GSM8K
-itself — sample many solutions, score each with a trained verifier, return the
-best. The recipe is now usually called **best-of-$N$**: $N$ samples, one
-scorer, keep the top one.
+A [verifier](#gloss-verifier){#term-verifier .term-ref} can be a learned model,
+an executable test or a rule. @cobbe2021training introduced GSM8K together with
+re-ranking many candidates by a learned verifier: sample many solutions, score
+each, return the best. The recipe is now usually called **best-of-$N$**: $N$
+samples, one scorer, keep the top one. A poor or off-task scorer can do worse
+than counting votes; compare the scorer and the vote on the same candidates.
 
 ::: {#gloss-verifier .column-margin .term-gloss}
-**verifier** — a model trained to score candidate solutions rather than to
-generate them. The distinction is in the *training label*: *outcome*-supervised
-verifiers (**ORMs**) are trained against final-answer correctness, though they
-may read the whole solution; *process*-supervised ones (**PRMs**) are trained
-against a label on each step. You will meet both
-acronyms in every paper on this topic.
+**verifier** — a rule, an executable test or a learned scorer that checks a
+candidate answer or solution. Among learned ones, an **ORM** (*outcome reward
+model*) is trained on the final result of a solution and a **PRM** (*process
+reward model*) on labels given to intermediate steps. The reliability of both
+has to be measured separately on training data and on out-of-task examples.
 [↩](#term-verifier){.term-back}
 :::
 
-Their claim about what this is *worth* is the one to remember, because it is
-denominated in a currency engineers already understand: a 6B model with
-verification "slightly outperforms a finetuned 175B model, thereby offering a
-boost approximately equivalent to a 30x model size increase". Sampling 100
-solutions and scoring them beat a model thirty times the size.
+@cobbe2021training report that a roughly 6B model generating many candidates
+and selecting with a verifier "slightly outperforms a finetuned 175B model" in
+their GSM8K setting, "a boost approximately equivalent to a 30x model size
+increase". The "about 30×" is only the ratio of parameter counts; it says
+nothing of the same ratio for the total inference compute, latency or serving
+cost of 100 candidates.
 
-@lightman2024verify then asked what the verifier should be trained to judge, and
-the answer generalises well past their setting. Scoring the *final answer* is
+@lightman2024verify then asked what the verifier should be trained to judge.
+Scoring the *final answer* is
 **outcome supervision**; scoring *each step* is **process supervision**. On a
 500-problem subset of MATH, selecting the best of 1,860 samples:
 
@@ -1352,35 +1354,42 @@ the answer generalises well past their setting. Scoring the *final answer* is
 | outcome-supervised verifier | 72.4% |
 | process-supervised verifier | **78.2%** |
 
-Read the first two rows together and the section title earns itself: a verifier
-that reads the work beats a vote that only counts conclusions, at identical
-sample cost. Read all three and you get the further point — *what* you supervise
-is worth more than the fact that you supervised at all. The paper's explanation
+On this MATH subset and the same candidate pool, the process-supervised selector
+beat the outcome-supervised one, and both beat majority voting
+[@lightman2024verify]. That ordering does not carry over to another task
+automatically; even at equal generation cost, the cost of process labels and of
+running the scorer at test time belongs in the total. The paper's explanation
 is that step-level labels "provide more precise feedback than outcome
 supervision", and that "the marginal value of a negative label from outcome
-supervision is low": knowing a 40-step solution ended wrong tells you almost
-nothing about which step to blame.
+supervision is low": knowing a 40-step solution ended wrong tells you little
+about which step to blame.
 
 The distinction that matters in practice is **what you supervise**:
 
 | | outcome supervision | process supervision |
 |:--|:--|:--|
-| the label says | the final answer was right | *this step* was right |
-| labels come from | an automatic check — cheap | human annotation of steps — expensive |
-| rewards | getting there | getting there *for the right reasons* |
-| known failure | credits a lucky guess after broken reasoning | none that is cheap; the cost is the problem |
+| what the label covers | correctness of the final result | local correctness of an intermediate step |
+| possible label source | a test, a rule or a person | a person, a rule or automatic rollouts |
+| benefit | can be cheap and tied directly to the result | can flag a faulty step earlier |
+| limit | can miss a right result reached by a wrong path | step labels can be wrong; local correctness does not guarantee the final solution |
+
+The labelling-cost argument is not absolute either: methods that produce step
+labels with rollouts instead of people — completing the solution several times
+after each step and checking how often it reaches the right answer (e.g.
+Math-Shepherd) — make process supervision much cheaper.
 
 Outcome supervision has a specific pathology that connects straight back to
 @sec-faithfulness: a solution that reasons wrongly and arrives at the right
-number receives full credit. Train on enough of those and you are actively
+number receives full credit. Train on enough of those and you risk
 selecting for reasoning that does not have to be sound.[^uesato]
 
-[^uesato]: @lightman2024verify is the result usually cited, but
-    @uesato2022solving ran the comparison first, on GSM8K, and found the two
-    forms of supervision roughly tied on final-answer accuracy while process
-    supervision produced markedly fewer *reasoning* errors. The two papers
-    together are the cleanest statement of the point: outcome supervision buys
-    you the answer, process supervision buys you the answer and the work.
+[^uesato]: @uesato2022solving compare outcome and process supervision on
+    GSM8K; they found the two roughly tied on final-answer accuracy, with process
+    supervision better on their *reasoning*-error measure. Read final accuracy
+    and the reasoning-error measure separately. @lightman2024verify report a PRM
+    advantage on a different maths set and candidate setup. Together the two
+    show that process supervision can help **in these experiments**; it does not
+    guarantee both the right answer and a faithful rationale on every task.
 
 ### Searching with the verifier, not just re-ranking with it
 
