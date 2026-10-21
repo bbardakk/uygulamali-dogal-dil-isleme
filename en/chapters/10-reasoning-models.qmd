@@ -27,35 +27,38 @@ training job.
 
 ## Why writing more tokens buys more computation {#sec-why-tokens-compute}
 
-Start with the mechanism, because everything else in the chapter is a
-consequence of it, and because the usual explanation — "the model thinks out
-loud" — explains nothing.
+Start with the mechanism, because everything else in the chapter rests on it.
+Rather than saying "the model thinks out loud", look at generation itself:
+producing more intermediate tokens lets the same network run again and later
+steps use the representations at earlier positions.
 
 A transformer has a fixed number of layers. @sec-transformers built one: an
 embedding, $L$ identical blocks, an output head. When the model produces a
-token, the computation that produced it is exactly $L$ blocks deep. Not
-adaptive, not conditional on difficulty. **A hard question gets the same number
-of layers as an easy one.**
+token, the computation that produced it is $L$ blocks deep, not conditional on
+difficulty. **A hard question gets the same number of layers as an easy one.**
 
 So consider a model that must answer `48 + 48/2` in a single token. Everything
-— parse, divide, add — has to happen inside those $L$ blocks, in one pass. If
-the problem needs more sequential steps than the model has layers, there is
-nowhere to put them.
+— parse, divide, add — has to happen inside those $L$ blocks, in one pass. That
+does not mean a model *cannot* solve in one pass a problem whose written-out
+steps outnumber its layers — a layer does a lot in parallel — but generating
+intermediate tokens opens an extra path of sequential computation for some
+multi-step tasks.
 
 Now let it write first. Each token it generates is appended to the context and
 fed back in, so producing the *next* token is another $L$ blocks — and those
 blocks can attend to the tokens just written. Two things change at once, and
 only the first is usually mentioned:
 
-1. **Serial depth.** $n$ generated tokens give roughly $n \times L$ blocks of
-   sequential computation instead of $L$.
-2. **Working memory.** Between one position and the next a transformer carries
-   forward exactly one thing: the per-position states of the tokens already
-   written, which later positions read back through attention. There is no
-   register file and no scratchpad off to the side. So writing `24` down does
-   two jobs at once — it fixes the value for later steps to read, and it buys
-   one more position's worth of state to compute in. Not written, not
-   available.[^filler]
+1. **Serial depth.** $n$ generated tokens mean roughly $n$ sequential
+   generation steps of $L$ blocks each; the total computation and the depth of
+   task that can be solved are not exactly $n \times L$, though.
+2. **Working memory.** What carries forward from one position to the next is
+   the per-position hidden states of the tokens already written (the keys and
+   values held in the KV cache), which later positions read back through
+   attention. There is no separate register file and no scratchpad off to the
+   side. So writing `24` down does two jobs — it fixes the value for later steps
+   to read, and it buys one more position's worth of state to compute in. Hidden
+   states can also carry information beyond the visible token text.[^filler]
 
 [^filler]: Strictly, what attention reads at an earlier position is that
 position's hidden state, not the characters `24`, and a hidden state can hold
@@ -67,11 +70,13 @@ correction. It does not arise from ordinary training — "standard
 chain-of-thought data is insufficient for models to learn to leverage filler
 tokens effectively", and commercial models "achieve the same performance with
 filler tokens as they do when responding directly". And it is bounded:
-"transformers remain in TC⁰ with even a polynomial number of filler tokens", so
-filler buys extra width *within* a complexity class where chain-of-thought buys
-serial depth *beyond* it. It earns its place here for a different reason
-entirely — see @sec-faithfulness — as a clean demonstration that the computation
-and the text describing it can come apart completely.
+"transformers remain in TC⁰ with even a polynomial number of filler tokens".
+These are results for specially supervised models, on synthetic tasks and under
+theoretical assumptions; do not generalise them into every model's complexity
+limit or into the necessary mechanism of natural-language chain-of-thought. The
+finding earns its place here for a different reason — see @sec-faithfulness —
+as a demonstration that the visible intermediate text need not record all of the
+computation.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -140,10 +145,9 @@ and the text describing it can come apart completely.
 </svg>
 ```
 ::: {.fig-cap}
-The bottom row is not a metaphor for thinking. It is the same network, run more
-times, with its own output as input. That is the whole of test-time compute —
-and it is why the rest of this chapter can talk about buying accuracy with
-tokens as if it were a purchase, because it is one.
+The bottom row shows the same transformer reused sequentially, keeping the
+generated tokens in context. Extra tokens cost computation and storage; the
+quality gain has to be measured per task and model.
 :::
 ::::
 
@@ -155,9 +159,9 @@ misdescribes the computation can still sit alongside a correct answer. Hold on
 to this; @sec-faithfulness is where it stops being a curiosity and becomes a
 governance problem.
 
-**More tokens cannot help a problem that was never depth-limited.** If the
-answer needed one pass, the extra passes have nothing to do. That is not a
-prediction; @sec-cot-limits measures it.
+**The value of extra tokens varies by task.** Where a direct answer suffices, a
+long trace can be pure cost; on some tasks it can still allow a check or a
+correction. Which effect dominates is what @sec-cot-limits measures.
 
 **What we will look at.** You have just seen the mechanism: why producing more
 tokens buys more computation, which is less obvious than it sounds. Next comes
