@@ -2354,12 +2354,15 @@ faz 1   prompt = chat_template(soru, enable_thinking=True)
         if "</think>" in çıktı:  model düşünmeyi bitirdi
         else:                    kesildi — bunu kaydedin!
 
-faz 2   prompt2 = prompt + iz + "\n</think>\n\n"
-        generate(max_new_tokens=320)      # cevap
+faz 2   iz = çıktı.split("</think>")[0]    # kapanışı bir kez, kendimiz ekleyeceğiz
+        prompt2 = prompt + iz + "\n</think>\n\n"
+        generate(max_new_tokens=320)       # cevap; sınıra çarpıp çarpmadığını da kaydedin
 ```
 
-Birinci fazın gerçek `transformers` karşılığı birkaç satır; öğrencilerin ilk
-takıldığı yer genellikle `enable_thinking`'in nereye verileceği:
+Birinci fazın ve ikinci faz girdisinin `transformers` karşılığı birkaç satır;
+öğrencilerin ilk takıldığı yer genellikle `enable_thinking`'in nereye
+verileceği. Bu bir taslak, tam bir üretici değil: batchleme, ikinci fazın
+üretimi ve token sayaçları sizde.
 
 ```python
 msgs = [{"role": "user", "content": soru}]
@@ -2369,6 +2372,12 @@ girdi = tokenizer(prompt, return_tensors="pt").to(model.device)
 cikti = model.generate(**girdi, max_new_tokens=BUTCE, do_sample=True,
                        temperature=0.6, top_p=0.95, top_k=20,
                        stop_strings=["</think>"], tokenizer=tokenizer)
+yeni = cikti[0, girdi["input_ids"].shape[-1]:]       # yalnızca üretilen kısım
+metin = tokenizer.decode(yeni, skip_special_tokens=False)
+kesildi = "</think>" not in metin
+iz = metin.split("</think>")[0]
+prompt2 = prompt + iz + "\n</think>\n\n"             # tek bir kapanış
+# cevabı ve her fazın token sayısını ayrıca kaydedin
 ```
 
 Tek bir sayıya güvenmeden önce kontrol edilecek iki tuzak:
@@ -2378,8 +2387,10 @@ Tek bir sayıya güvenmeden önce kontrol edilecek iki tuzak:
   doldurulmuş bir prompt, modelin bir dolgu token'ı dizisinin ortasından üretim
   yapmasına yol açar. Hata sessizdir: akıcı bir çıktı ve sessizce berbat bir
   doğruluk alırsınız.
-- **Kesilme oranı.** Üst sınıra çarpan izlerin oranını kaydedin. Labdaki en çok
-  bilgi veren tek teşhis budur ve hiçbir maliyeti yoktur.
+- **Kesilme oranı.** Düşünme fazında `</think>` üretilmeden token sınırına
+  çarpan izlerin oranını ve cevap fazının ayrıca kesilip kesilmediğini kaydedin.
+  Mevcut üretimden hesaplanır, ayrı bir model koşusu gerektirmez; labdaki en çok
+  bilgi veren teşhislerden biri.
 
 ### Adım 2 — tarayın ve puanlayın
 

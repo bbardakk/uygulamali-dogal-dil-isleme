@@ -2291,8 +2291,30 @@ phase 1   prompt = chat_template(question, enable_thinking=True)
           if "</think>" in output:  the model finished thinking
           else:                     it was cut off — record this!
 
-phase 2   prompt2 = prompt + trace + "\n</think>\n\n"
-          generate(max_new_tokens=320)      # the answer
+phase 2   trace = output.split("</think>")[0]   # we add the close ourselves, once
+          prompt2 = prompt + trace + "\n</think>\n\n"
+          generate(max_new_tokens=320)          # the answer; record whether it hit the cap
+```
+
+The `transformers` version of phase one and of the phase-two input is a few
+lines; where students first get stuck is usually where `enable_thinking` goes.
+This is a sketch, not a full generator: batching, phase-two generation and the
+token counters are up to you.
+
+```python
+msgs = [{"role": "user", "content": question}]
+prompt = tokenizer.apply_chat_template(
+    msgs, tokenize=False, add_generation_prompt=True, enable_thinking=True)
+inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+out = model.generate(**inputs, max_new_tokens=BUDGET, do_sample=True,
+                     temperature=0.6, top_p=0.95, top_k=20,
+                     stop_strings=["</think>"], tokenizer=tokenizer)
+new = out[0, inputs["input_ids"].shape[-1]:]          # generated part only
+text = tokenizer.decode(new, skip_special_tokens=False)
+truncated = "</think>" not in text
+trace = text.split("</think>")[0]
+prompt2 = prompt + trace + "\n</think>\n\n"           # a single close
+# record the answer and each phase's token count separately
 ```
 
 Two traps to check for before you trust a single number:
@@ -2301,8 +2323,11 @@ Two traps to check for before you trust a single number:
   Decoder-only generation continues from the last position, so a right-padded
   prompt makes the model generate from the middle of a run of pad tokens. The
   failure is silent: you get fluent output and quietly terrible accuracy.
-- **The truncation rate.** Log the fraction of traces that hit the cap. This is
-  the single most informative diagnostic in the lab and it costs nothing.
+- **The truncation rate.** Log the fraction of traces that hit the token cap in
+  the thinking phase without producing `</think>`, and whether the answer phase
+  was cut off separately. It is computed from the generation you already have
+  and needs no separate model run; it is one of the most informative diagnostics
+  in the lab.
 
 ### Step 2 — sweep and score
 
