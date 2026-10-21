@@ -1398,20 +1398,26 @@ $N$ complete solutions and picks one; voting does the same without a scorer.
 **Search** is the third option, and it is the one the section title promised:
 choose *while* you generate.
 
-The mechanism is a beam search over steps rather than over tokens. Generate the
-first step $M$ ways, score each partial solution with a process-supervised
-verifier, keep the best $b$, expand only those, repeat. *Lookahead* search is
+The mechanism is a beam search over steps rather than over tokens: expand
+partial solutions and select by a score. Generate the first step $M$ ways,
+score each partial solution (a process-supervised verifier is one option; a
+rule-based checker or the model's own judgement can also be used), keep the
+best $b$, expand only those, repeat. *Lookahead* search is
 the same loop with one extra rollout per candidate before scoring, trading
 compute for a less myopic score. @yao2023tree is the prompt-level cousin of
 this — a tree of candidate thoughts with the model itself asked to evaluate
-them — and it is what you reach for when you have no trained scorer at all.
+them. It is one thing to try when you have no trained scorer, but the model can
+score itself wrongly, so it is neither the only option nor a guaranteed
+improvement.
 
-Why it can beat re-ranking at the same budget: **a wrong step is pruned where it
-is born rather than forty steps later.** That is the search-side statement of
-@lightman2024verify's observation that the marginal value of a negative outcome
-label is low — a PRM is exactly the instrument that lets you spend the label
-early. And it is why search needs a *process* verifier: an outcome verifier has
-nothing to say about a half-finished solution.
+Why it can beat re-ranking at the same budget: a partial path can be dropped
+where it goes wrong rather than forty steps later, **if the scorer catches the
+error**, which saves the cost of generating the full solution. If the scorer
+misjudges, a correct path can be pruned too. That is the search-side statement
+of @lightman2024verify's observation that the marginal value of a negative
+outcome label is low. A PRM is a suitable tool for partial solutions; a checker
+that can only look at the final result does not give the same information
+directly without extra completions (rollouts).
 
 Why it does not always win, and the two costs to price before you build it.
 @snell2025scaling's central finding — the one the next subsection is about — is
@@ -1421,12 +1427,12 @@ over-optimised the verifier at larger budgets — it found steps the verifier
 scored highly that were not actually better — and plain best-of-$N$ did better;
 on the hardest problems neither made much progress. Easy questions also
 gained most from purely sequential revision. So committing to one strategy in
-advance leaves efficiency on the table. And a
-search is not $N$ independent generations: the steps depend on each other, so
-you lose the batching that made parallel sampling nearly free on latency, and
-you add a verifier forward pass per candidate per step. Best-of-$N$ is one
-request that fans out; search is a request that stops and thinks between every
-hop.
+advance leaves efficiency on the table; re-test the ordering with your own
+candidate pool and scorer. And in a search, successive **levels** depend on each
+other, which adds waiting and a scorer pass per candidate per step. Candidates
+on the same level can still be batched. Best-of-$N$ lends itself better to
+generating full answers concurrently, but its latency too depends on capacity
+and batch efficiency.
 
 ### How far this actually goes
 
