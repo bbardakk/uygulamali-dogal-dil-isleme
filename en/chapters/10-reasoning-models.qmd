@@ -526,37 +526,46 @@ and error rate alone will not show it.
 Three separate costs move together when the block gets longer, and they are
 charged to three different people.
 
-**Tokens.** The tokens inside the block are generated like any others. On a
-hosted API they land in your output-token count even though your user never
-reads them; on your own hardware they occupy your accelerator for the same
-duration. Hidden is not free — it is only *invisible*.
+**Tokens.** The tokens inside the block are generated like any others and need
+computation. On a hosted service, check that model's pricing documentation for
+how they enter the usage counter and the bill; often they count as output
+tokens even though your user never reads them. On your own hardware the cost
+depends on context length, batch and hardware as well as on the number of
+tokens. Hidden is not free.
 
-**Latency.** This is the one that surprises teams. No *answer* token exists
-until the block closes. At a serving throughput of $T$ tokens per second, a
-2,000-token trace is $2000/T$ seconds before the first word of the answer.
-Streaming does not fix this, because there is no answer to stream yet.
+**Latency.** This is the one that surprises teams. With a separate thinking
+block, no *answer* token exists until the block closes. Assuming a constant $T$
+tokens per second, a 2,000-token trace adds roughly $2000/T$ seconds of
+generation before the first word of the answer; real time varies with prefill,
+the growing context and server load. Measure time to first generated token
+(TTFT, @sec-serving-ttft) and **time to first visible answer token**
+separately. Streaming cannot speed up an answer that does not exist yet.
 
 Whether the user stares at a blank screen for that whole interval is a separate,
-product-level decision, and it varies by provider. Anthropic's streaming API
-emits the trace live as `thinking_delta` events; DeepSeek streams it in a
-separate `reasoning_content` field; OpenAI's o-series does not expose the raw
-trace at all, only an optional summary. So you may have the *option* of showing
-something — a scrolling trace, a summary, or a spinner. What no provider can
-give you is the answer sooner.
+product-level decision, and it varies by provider. Some services stream the
+thinking separately (Anthropic's `thinking_delta` events or DeepSeek's
+`reasoning_content` field, for instance), others do not expose the raw trace and
+return only the answer or a summary of it; field names and visibility depend on
+the model and API version, so check current documentation. The interface can
+show a waiting state — a scrolling trace, a summary, or a spinner — but that
+does not remove the time it takes to generate the final answer.
 
-**Context.** The trace competes for the same window as everything else. In a
-multi-turn agent that keeps its own traces, a reasoning model eats its context
-several times faster than a non-reasoning one.
+**Context.** The reasoning tokens generated take room in the current request's
+context budget. What carries over to later turns depends on how the service
+and the application keep history; a multi-turn agent that keeps its own traces
+can eat its context much faster. Measure context use in long conversations
+from real session logs.
 
 ::: {.callout-tip appearance="simple" icon="false"}
-**The metric to put on the dashboard is not accuracy.** It is **cost per
-correct answer** — tokens spent divided by problems solved. Accuracy is the
-metric that argues for spending more, either because it genuinely rises or
-because its noise band is wide enough that the largest number looks like
-progress. **It has no minimum to aim at. Cost per correct answer does**, and
-that minimum is the number you are actually looking for. (That accuracy is not
-even reliably *increasing* is a separate and stronger problem —
-@sec-cot-limits.)
+**The measures to track together.** At each budget, measure task performance,
+total cost per problem, **cost per correct answer** — tokens spent divided by
+problems solved — and latency. Accuracy alone tends to argue for spending more,
+either because it genuinely rises or because its noise band is wide enough that
+the largest number looks like progress. Cost per correct answer need not have
+an interior minimum; the best option can sit at the edge of the measured range.
+Fix the uncertainty of the success measure and the acceptable quality bar
+before deciding. (That accuracy is not even reliably *increasing* is a separate
+and stronger problem — @sec-cot-limits.)
 :::
 
 ### Measuring the curve
