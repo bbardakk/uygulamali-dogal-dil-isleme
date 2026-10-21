@@ -2600,77 +2600,73 @@ now part of your result.
 
 ## Interview questions {#sec-reasoning-interview}
 
-Test-time compute is new enough that interview answers still divide sharply into
-people repeating vendor framing and people who have priced it. The answers below
-have numbers.
+When assessing test-time compute, give the candidate a production scenario: a
+quality target, request volume, price and latency limit. Look at how the answer
+brings together mechanism, measurement design, truncation and cost arithmetic.
+A benchmark score or a single keyword is not the only measure of experience. The
+answers below have numbers.
 
 ::: {.column-margin}
-A useful tell: candidates who have deployed a reasoning model talk about
-*latency* and *the cap* unprompted, because both bite immediately in production.
-Candidates who have only read about it talk about benchmark scores.
+Ask the candidate for one failure example and for the log or problem-level
+measurement that would detect it.
 :::
 
-1. **What is test-time compute, and why did it become a thing?** Spending more
-   computation at inference instead of at training to get a better answer. It
-   became a thing because it is a second scaling axis: pretraining scale is
-   expensive, slow and fixed once shipped, while inference scale is a dial you
-   turn per request. Give the mechanism rather than the marketing — [a
-   transformer is a fixed number of layers deep, and generating tokens is the
-   only way to add serial depth at run time]{.hl} — and note the economic
-   consequence, which is that the cost of a hard query becomes variable and
-   therefore has to be budgeted per request rather than per model.
+1. **What is test-time compute, and why did it become a thing?** Spending extra
+   computation at inference on a single answer. Long traces, multiple sampling,
+   search and tool use are separate methods. It became a thing because it is a
+   second scaling axis: pretraining scale is expensive, slow and fixed once
+   shipped, while inference scale is a dial you turn per request. Give the
+   mechanism — [a fixed-depth transformer needs another forward pass for each new
+   token, but more tokens do not mean a better answer on every task]{.hl} — and
+   note the economic consequence: the cost of a hard query becomes variable, so
+   measure quality together with per-request cost and latency.
 
-2. **How do you decide the thinking budget for a production system?** Sweep it
-   and plot **cost per correct answer**, not accuracy. Do not claim accuracy is
-   monotone in budget — this chapter's own sweep goes 70.0, 61.0, 63.5, 71.5,
-   67.5, 70.0, and more budget may improve, plateau or deteriorate. The reason
-   to plot cost per correct answer is that it prices the tokens, which do rise
-   monotonically. Find the minimum,
-   then check three things: what fraction of traces hit the cap at your chosen
-   setting; whether the accuracy differences along the curve are statistically
-   separable at your sample size (in our sweep, at $n = 200$, none of them were);
-   and what the latency looks like at p95, since reasoning tokens arrive *before*
-   the first visible word rather than after it.
+2. **How do you decide the thinking budget for a production system?** First
+   define the acceptable quality, the critical subgroups and the latency limit
+   for the task. Sweep budgets on the same problem set and show accuracy,
+   truncation, total cost and **cost per correct answer** with their
+   uncertainty. Do not claim accuracy is monotone in budget — this chapter's own
+   sweep goes 70.0, 61.0, 63.5, 71.5, 67.5, 70.0, and at $n = 200$ the
+   differences could not be separated. Choose on cost among the acceptable
+   settings, and check p95 latency separately, since reasoning tokens arrive
+   *before* the first visible word.
 
-3. **Reasoning tokens are hidden from the user. Are they free?** No — they are
-   billed as **output**, which is the expensive side, and they are usually the
-   majority of the tokens generated. Two consequences worth naming: your bill
-   scales with a quantity your users never see and cannot self-limit, and your
-   time-to-first-visible-token is the entire thinking phase, which is why a
+3. **Reasoning tokens are hidden from the user. Are they free?** Check the
+   provider's current usage counters and tariff; on most services invisible
+   generated tokens cost money and add delay before the first visible answer.
+   Track input, visible output and thinking tokens separately where you can. A
    reasoning model can feel broken in a chat UI even when it is faster to a
-   correct answer. Streaming the thinking, or showing a progress affordance, is a
-   product fix for a systems property.
+   correct answer; show the waiting state honestly, and weigh separately the
+   safety and explanation consequences of showing the internal trace to users.
 
-4. **When does chain-of-thought *not* help?** When the task has no serial
-   structure to expose — retrieval, classification, sentiment, most extraction.
-   The tokens still get billed. Be able to state the distinction that matters:
-   prompted chain-of-thought and *trained* reasoning are different things that
-   produce similar-looking tokens, and only the trained one survives a change of
-   prompt, because only the trained one is in the weights. So "add *let's think
-   step by step*" and "use a reasoning model" are not two strengths of the same
-   intervention.
+4. **When does chain-of-thought *not* help?** On tasks whose answer can be found
+   briefly and directly, the extra trace cost can exceed the quality gain; but do
+   not treat the label "retrieval" or "classification" as sufficient reason on
+   its own, since such tasks sometimes need multi-step judgement too. Prompted
+   chain-of-thought and a model separately *trained* to reason are different
+   interventions that produce similar-looking tokens, and both can be sensitive
+   to prompt format. Measure short-answer, prompted-trace and trained-model
+   conditions on the same task.
 
-5. **How would you get more reliability out of a model without fine-tuning it?**
-   Sample $k$ times and aggregate — equal tokens to a long single trace,
-   independently drawn samples, and single-trace latency if you can batch. Then
-   immediately name the two limits, because they are where the interview is
-   going: aggregation is lossy (our correct answer was present 85.8% of the time
-   and returned 76.7% of the time, so a verifier beats counting), and the whole
-   family presupposes you can tell right from wrong cheaply. [Voting, verifiers
-   and search all need a checkable answer]{.hl}, which is a much smaller set of
-   tasks than the ones you get asked to build.
+5. **How would you test reliability without fine-tuning a model?** Compare
+   multiple sampling and voting with one long trace at real cost and latency. Use
+   "independent errors" with care: for voting to work, the correct answer has to
+   carry more mass than any single wrong one, and a systematic error can repeat
+   across samples. Fix the rule for merging equivalent answers before voting. In
+   this chapter the correct answer was among the candidates on 85.8% of
+   problems and the majority was right on 76.7%; that gap is not a guaranteed
+   gain a verifier will recover. Test a verifier, or human/rubric evaluation,
+   with its own error rates and costs.
 
-6. **Can you use the reasoning trace to explain a decision to a regulator?**
-   Not as a causal record. It is a narrative produced alongside the answer, and
-   its agreement with the actual cause is an empirical quantity you have to
-   measure — we measured it by planting information and checking disclosure.
-   The result to quote: of the 42 problems a planted wrong answer flipped from
-   right to wrong, 71% landed on a third number rather than the planted one — a
-   share of those flips, not of the net accuracy loss, which was 26 problems.
-   A naive disclosure check would have missed most of them. What a trace *is* good
-   for is debugging and triage. Treat it as a hypothesis about the model's
-   behaviour, and hold it to the same evidentiary standard as any other
-   hypothesis.
+6. **Can you use the reasoning trace to explain a decision?** A trace gives
+   clues for debugging and triage, but on its own it is not a complete record of
+   the internal causes. This chapter's observation — of the 42 problems a planted
+   wrong answer flipped from right to wrong, 30 went to a third number — shows
+   only the limit of a rule that searches for the planted answer; it does not
+   measure the trace's faithfulness. If a rationale for a decision is required,
+   weigh source evidence, version and prompt records, task fitness and
+   intervention tests together, and establish the concrete regulatory obligation
+   separately.
 
 ## Where to go deeper {#sec-reasoning-deeper}
 
