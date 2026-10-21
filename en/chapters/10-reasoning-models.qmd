@@ -573,24 +573,23 @@ MPS). The task is **GSM8K** [@cobbe2021training], grade-school word problems
 whose answers are single numbers — so scoring is exact, with no judge model in
 the loop. We sample 200 problems from the test split with a fixed seed.
 
-**Why this task, and what the choice costs us.** GSM8K is here because it is
-exactly scorable on a laptop, and that convenience buys three properties that
-all push this sweep towards a null. It is close to saturated for instruction-
-tuned models, so we are measuring in the flat part of somebody else's curve. It
-is old and entirely public, so some of what our baseline scores is recall rather
-than derivation — the test split has been in training mixtures since 2021. And
-its problems are two to eight steps deep, which is the *shallow* end of the
-regime @sec-why-tokens-compute says extra depth should pay in. A sweep on AIME
-or MATH-500 — where @guo2025deepseekr1 measures a 62-point swing from
-reinforcement learning alone — would be far more likely to show a **knee**: the
-point where accuracy stops rising steeply with budget and the curve flattens,
-so each further token buys much less. We did
-not run one, and not because the model is helpless there: the Qwen3 technical
-report puts Qwen3-1.7B at 13.4 on AIME'24 without thinking and 48.3 with it
-(73.0 and 93.4 on MATH-500) — exactly the curve we could not afford to draw.
-AIME traces run to tens of thousands of tokens, and 200 problems × 6 budgets of
-that is not a laptop job. So read what follows as **"no detectable gain on a shallow,
-near-saturated task"**, not as "no gain".
+**Why this task, and the limits of the choice.** GSM8K is here because its
+answers can be scored automatically and exactly. The curve seen on this task
+should not be carried over to other datasets. The task may have become easy for
+instruction-tuned models, and as an old, public test set it carries a risk of
+data leakage — we did not measure contamination at the item level. Its problems
+are two to eight steps deep, which is the *shallow* end of the regime
+@sec-why-tokens-compute says extra depth should pay in. A harder task such as
+AIME or MATH-500 may show a different budget curve — for instance a **knee**:
+the point where accuracy stops rising steeply with budget and the curve
+flattens, so each further token buys much less. @guo2025deepseekr1 report a
+62-point swing from reinforcement learning alone on tasks of that kind. We did
+not run such a sweep. The Qwen3 technical report [@yang2025qwen3] puts
+Qwen3-1.7B at 13.4 on AIME'24 without thinking and 48.3 with it (73.0 and 93.4
+on MATH-500), but two-mode scores like these do not by themselves show the shape
+of a budget curve. AIME traces run to tens of thousands of tokens, and 200
+problems × 6 budgets of that is not a laptop job. So read what follows as **"no
+detectable gain on this task at this sample size"**, not as "no gain".
 
 For each problem we sweep a
 [thinking budget](#gloss-thinking-budget){#term-thinking-budget .term-ref}
@@ -600,28 +599,32 @@ budget runs in two phases, and the mechanism matters for how you read the
 results:
 
 ```text
-phase 1   generate with stop_strings=["</think>"], max_new_tokens=budget
-          → if the model closed the block itself, it finished thinking
-          → if it hit the cap, we close the block for it
+phase 1   open thinking mode through the chat template; generate at most BUDGET tokens
+          if </think> appeared, mark a natural close
+          if it stopped at the cap, mark a truncation
 
-phase 2   feed prompt + trace + "\n</think>\n\n" back in, generate the answer
+phase 2   on a natural close keep the existing close; on a truncation add one
+          generate the answer from the resulting token sequence
           (capped at 320 tokens — see the caveat below)
 ```
 
-**Be precise about what this measures.** Phase 1 is a guillotine: at token $N$
-the trace stops, mid-sentence, and the block is closed on the model's behalf.
-That is the *harshest* possible reading of the word "budget", and it is
-deliberately not what the major hosted APIs do. Anthropic's docs say plainly
-that "the budget is a target rather than a strict cap"; Google's say the model
-"might overflow or underflow the token budget"; OpenAI's `reasoning_effort` is
-not a token count at all. What none of them document is the interesting half —
-what happens when a model *would* run past the number — so whether the ceiling
-is enforced by truncation, by training, or by something else is not a thing you
-can learn from the documentation. The open-weights literature does document it:
-@muennighoff2025s1 name the mechanism **budget forcing** and implement both
-directions — a forced `</think>` to cut a trace short, which is our guillotine,
-and a *suppressed* end-of-thinking with the word `Wait` appended to make the
-model keep going, which they measure recovering wrong answers.[^budget-api]
+In your own harness, check at the token level whether the stop string is kept
+in the generated text and that the second phase's input holds a single
+`</think>`.
+
+**Be precise about what this measures.** This chapter's local harness, if the
+thinking block has not ended, cuts the trace at the set point, mid-sentence,
+closes the block on the model's behalf and starts the answer phase. That is a
+harsh reading of the word "budget". Providers' budget settings do not guarantee
+the same semantics: some define the budget as a target rather than a strict
+cap, some take an effort level rather than a token count. Check the documented
+target or cap behaviour for the model version you use; whether the ceiling is
+enforced by truncation, by training or by something else does not always follow
+from the documentation. @muennighoff2025s1 study two interventions on an
+open-weights model under the name **budget forcing**: a forced `</think>` to
+cut a trace short (similar to our cut), and a *suppressed* end-of-thinking with
+`Wait` appended to make the model keep going. The results they report are the
+effects of those two interventions in that experiment.[^budget-api]
 
 So read the numbers below as a **deliberately harsh truncation baseline**, not
 as an estimate of what a production budget costs: this is what a naive cap does,
@@ -631,16 +634,12 @@ anything measured here supports. We record how often the cap was hit, because a 
 truncates 90% of traces and a budget that truncates 5% of them are different
 regimes wearing the same number.
 
-[^budget-api]: Two further reasons not to map our budgets onto an API call.
-First, the small end of our sweep is below what the hosted parameters would even
-accept — Anthropic enforces a 1,024-token minimum on `budget_tokens`, so our
-128 and 256 rows have no API equivalent. Second, the parameter itself is on its
-way out: `budget_tokens` is deprecated on the Claude 4.6 models and rejected
-outright by 4.7 and later in favour of `thinking: {type: "adaptive"}` with an
-`effort` setting, and Gemini's `thinkingBudget` has likewise been superseded by
-`thinkingLevel`. The industry is moving from *you pick the number* to *the model
-picks and you pick the appetite* — which makes the shape of the curve more
-useful to know than any particular vendor's spelling of it.
+[^budget-api]: The local 128- and 256-token cuts in this chapter may have no
+exact equivalent on hosted APIs. Which models support settings such as
+`budget_tokens`, adaptive thinking or `effort`, and the ranges they allow, change
+with the version; check the current, dated provider documentation for the model
+you use. Do not equate the local experiment's results with API behaviour; what
+carries over is the method for measuring the shape of the curve.
 
 One more caveat comes before the results, because it affects how you read them.
 If you would rather see the numbers first, skip the box below, read the table,
@@ -648,10 +647,12 @@ and come back.
 
 ::: {.callout-caution appearance="simple" icon="false"}
 **A limitation we found by checking our own instrument, and did not fix.**
-Scoring uses the GSM8K convention: the model's answer is the *last number it
-writes*. That rule is standard and mostly fine, but it has a failure mode —
-anything the model adds after its answer captures the score. "The answer is 72.
-Note this assumes 3 items" is read as **3**, and marked wrong.
+The answer parser can change the result. This experiment reads the model's
+answer as the *last number* in the text it produces. That is this chapter's
+parser choice, consistent with GSM8K's gold-answer format, but another number
+added after the answer can capture the score: "The answer is 72. Note this
+assumes 3 items" is read as **3**, and marked wrong. Report the extraction rule
+and the number of answers that failed to parse.
 
 Which makes the 320-token ceiling on the answer phase more interesting than it
 should be. Measured mean answer lengths come out between 243 and 276 tokens
@@ -709,16 +710,16 @@ budget the model scores **70.0%**. With thinking switched off entirely it scores
 That is the whole chapter in two rows — but before you read it as *thinking
 bought nothing*, look one column to the right on that first row.
 
-**The zero-budget row is not a zero-reasoning row.** With
-`enable_thinking=False` this model still writes **243 answer tokens** to a
-question whose answer is a single number. That is a chain of thought. It is
-simply not inside a `<think>` block. So the comparison this table makes is not
-*reasoning versus no reasoning*; it is **reasoning inside the thinking block
-versus reasoning inside the answer**, and the baseline has already bought most
-of the serial depth GSM8K needs. Hold that against the contrast in
-@sec-cot-limits, where the no-thinking baseline writes **3.4** tokens and the
-token multiplier jumps from 6.74× to 88.6×. A budget sweep only measures the
-price of thinking when the zero row is genuinely zero, and ours is not.
+**The zero-budget row may not be a zero-reasoning row.** At a 2,048 budget and
+with thinking off, point accuracy is the same, 70.0%; the mean total tokens
+generated are 1,637 against 243. Thinking-off mode, too, writes **243 answer
+tokens** on average to a question whose answer is a single number; how much of
+that is intermediate working has to be established by reading sample answers.
+This table is a cost/performance comparison between two **modes and decoding
+settings**, not a pure "reasoning versus no reasoning" experiment. Hold that
+against the contrast in @sec-cot-limits, where on a short label task the
+no-thinking baseline writes **3.4** tokens and the token multiplier jumps from
+6.74× to 88.6×.
 
 **Now the discipline.** It would be easy to narrate the middle of this table: a
 dip at 128, a recovery, a peak at 512, a wobble. Do not. Run the numbers against
@@ -747,47 +748,44 @@ reporting it as a finding. The 512 row is bolded because it is
 the largest number in the column, not because it is the best budget — at
 $z = +0.33$ that bolding is decoration, and you should read it with suspicion.[^paired-test]
 
-[^paired-test]: The $z$-test above is the *wrong* test, and most likely wrong in
-    the conservative direction. Every budget saw the same 200 problems in the same
-    order, so this is a paired design and McNemar's test — which conditions on
-    the problems the two conditions disagree about, and discards the concordant
-    pairs they both get right or both get wrong — would usually have more power. We report $z$ because
-    our result files saved only the per-budget mean, which throws the pairing
-    away. The lab at the end of this chapter records per-problem correctness at
-    every step, so you are not stuck with our mistake. Do not over-claim the
-    direction: a paired test uses the item-level disagreements directly, which
-    usually helps when the two conditions get the same problems right, but "same
-    two hundred problems" does not by itself guarantee it.
+[^paired-test]: Because the same 200 problems were used in every condition, a
+    paired comparison would have been more appropriate: McNemar's test looks only
+    at the problems the two conditions disagree about and discards the concordant
+    pairs they both get right or both get wrong. The two-proportion $z$-test above
+    is an approximate analysis that ignores the pairing across problems; which
+    way its sensitivity differs depends on the problem-level disagreements. Our
+    result files saved only the per-budget mean, so McNemar's test could not be
+    computed here. The lab at the end of this chapter records per-problem
+    correctness at every step; in your next experiment, keep the right/wrong
+    outcome of every problem under every condition.
 
-    Two consequences we owe you. First, the sensitivity figures in the callout
-    below are computed for the *unpaired* test, so they overstate how blind this
-    experiment was: at the ~22% discordance rate we measure on the
-    classification sweep in @sec-cot-limits, the smallest difference that
-    would reach significance at $n = 200$ falls from about 9 points (unpaired)
-    to about **6.5 points** (McNemar). Both are gaps you would detect only about
-    half the time; at 80% power the same comparison runs from about 12 points
-    to about 9. Second, "no significant difference" is not
-    "no difference", and *exactly zero* here means the two **marginals** are
-    equal — 140 correct out of 200 in both arms is compatible with dozens of
-    problems flipping in each direction. The test that would let us claim
-    equivalence rather than merely fail to reject is a **TOST**: two one-sided
-    tests against a margin you declare in advance, for which ±5 points would
-    have been a defensible business choice here. We cannot run one on saved
-    means. Declaring that margin *before* the sweep is the one line of planning
-    we would add if we ran this again.
+    Two notes follow. First, the sensitivity figures in the callout below are
+    computed for the *unpaired* test. The discordance rate on GSM8K is unknown;
+    if the ~22% rate we measure on the classification sweep in @sec-cot-limits
+    held here, the smallest difference that would reach significance at
+    $n = 200$ would fall from about 9 points (unpaired) to about **6.5 points**
+    (McNemar), and the difference caught at 80% power from about 12 points to
+    about 9. That is an illustrative scenario, not a measurement. Second, "no
+    significant difference" is not "no difference", and *exactly zero* here
+    means only that the two **marginals** are equal — 140 correct out of 200 in
+    both arms is compatible with dozens of problems flipping in each direction.
+    Claiming equivalence needs a **TOST** (two one-sided tests against a margin
+    declared in advance): a margin such as ±5 points chosen as a business
+    decision *before* the sweep, and a confidence interval on the paired
+    difference. Without problem-level records that claim cannot be tested here.
 
-**What *is* solidly measured is the cost, and the truncation.** Those columns
-are not proportions of 200 coin flips; they are means of a quantity that varies
-far less across problems than a right-or-wrong outcome does. Be precise about
-why that helps: the unit of observation is still the problem, $n$ is still 200,
-and an interval on mean tokens per problem would need a problem-level bootstrap
-— which we did not run. What makes these columns safe to read is the *size* of
-the differences, not a large token count:
+**What these 200 problems observe directly is the cost and the truncation.** The
+token means and truncation rates in the table were observed directly for these
+problems. The truncation rate is itself a proportion computed from 200 problems;
+for new traffic it needs a proportion interval, and mean tokens per problem
+need a problem-level bootstrap interval — we ran neither. What makes these
+columns safe to read is the *size* of the differences:
 
 - **Tokens grow monotonically and steeply:** 1.00×, 1.65×, 2.12×, 3.11×, 4.91×,
-  6.74×. There is nothing ambiguous about the bill.
+  6.74×. The difference on these 200 problems is large, but do not read it as a
+  guarantee about a future bill or peak latency.
 - **The truncation rate collapses in exactly the right place:** 97%, 97%, 96%,
-  67%, 28%. Below 512 tokens this model is essentially *never* allowed to finish
+  67%, 28%. Below 512 tokens this model is almost *never* allowed to finish
   a thought. At 2,048 most traces close on their own.
 
 Put those two together and the accuracy column has a plausible reading — a
@@ -804,22 +802,25 @@ it to commit.
 
 ::: {.callout-note appearance="simple"}
 **Why this is not a failure of the experiment.** A reader hoping for a tidy
-rising curve will find this table disappointing, and that reaction is worth
-examining, because the result is not weak — it is *precise about the right
-thing*. We can state with confidence that on this task, with this model, at this
-sample size, buying up to 6.74× more tokens purchased **no detectable accuracy at
-all**, and we can say how sensitive the experiment was.
+rising curve will find this table disappointing, but the result is not weak —
+it is *clear about what it can and cannot say*. On these 200 problems the token
+count rose up to 6.74× with the budget, and in the unpaired test reported no
+budget separated from thinking-off mode at the 5% level. That does not rule out
+a small benefit or harm.
 
 Sensitivity is a curve, not a threshold, so quote it as one. Against a 70%
 baseline at $n = 200$ per arm, $\alpha = .05$ two-sided, unpaired: this design
 has **80% power to detect a 12-point gain and 90% power to detect a 14-point
 one**. A genuine 9-point gain it would catch about half the time; a 5-point gain
 one time in five. (A *drop* of the same size is caught slightly less often,
-because the variance of a proportion grows as it moves towards 50%.) The honest statement is therefore not "there is no effect" but
-*any effect much larger than twelve points is unlikely to be hiding here, and
-anything under five points this experiment simply cannot see*. Turning a failure
-to reject into a positive claim of equivalence needs a different test
-again — see the footnote above.
+because the variance of a proportion grows as it moves towards 50%.) These
+figures are **a planning calculation under the assumption of two independent
+proportions**; the real power of the paired design cannot be set without the
+problem-level results we did not save. The honest statement is therefore not
+"there is no effect" but *this design would probably miss a five-point effect
+and would usually catch a twelve-point one*. Turning a failure to reject into a
+positive claim of equivalence needs a different test again — see the footnote
+above.
 
 That is a genuinely useful finding to carry into a procurement conversation. "It
 might help a little, we cannot tell, and here is the bill" is the honest answer,

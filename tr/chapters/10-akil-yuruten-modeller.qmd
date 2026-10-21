@@ -599,24 +599,23 @@ sayı olan ilkokul-ortaokul düzeyinde sözel problemler. Yani puanlama birebir
 yapılabiliyor, döngüde hakem model yok. Test kümesinden sabit bir seed'le (tohum)
 200 problem örnekliyoruz.
 
-**Neden bu görev ve bu seçim bize neye mal oluyor.** GSM8K burada, bir dizüstünde
-birebir puanlanabildiği için. Ama bu kolaylık, taramayı "etki yok" sonucuna
-doğru iten üç özelliği de beraberinde getiriyor. Görev, talimatlar üzerinde fine-tuning'den geçmiş modeller
-için doygunluğa yakın — yani başkasının eğrisinin düz kısmında ölçüm yapıyoruz.
-Eski ve tamamen açık; test kümesi 2021'den beri eğitim karışımlarında, dolayısıyla
-baseline'ımızın aldığı puanın bir kısmı türetme değil hatırlamadır. Ve
-problemleri iki ila sekiz adım derinliğinde, yani @sec-neden-token-hesap'in "ek
-derinlik burada işe yarar" dediği rejimin **sığ** ucunda. AIME ya da MATH-500
-üzerinde bir tarama, bir **dirsek noktası** (knee) göstermeye çok daha yatkın
-olurdu: doğruluğun bütçeyle hızla artmayı bırakıp eğrinin düzleştiği, her ek
-token'ın çok daha az kazandırdığı nokta. @guo2025deepseekr1 orada yalnızca
-pekiştirmeli öğrenmenin getirdiği 62 puanlık bir sıçrama ölçüyor. Böyle bir
-taramayı çalıştırmadık; ama sebep, modelin orada çaresiz olması değil. Qwen3
-teknik raporu Qwen3-1.7B'ye AIME'24'te düşünmeden 13,4, düşünerek 48,3 puan
-veriyor (MATH-500'de 73,0 ve 93,4); bu tam da bizim çizemediğimiz eğri. AIME
-izleri on binlerce token'a uzanıyor ve 200 problem × 6 bütçe bir dizüstünde
-pratik değil. Yani aşağıdakini
-**"sığ ve doygunluğa yakın bir görevde saptanabilir kazanç yok"** diye okuyun,
+**Neden bu görev ve bu seçimin sınırları.** GSM8K burada, cevapları otomatik ve
+birebir puanlanabildiği için. Bu görevde gözlenen eğri başka veri kümelerine
+taşınmamalı. Görev, talimatlar üzerinde fine-tuning'den geçmiş modeller için
+kolaylaşmış olabilir; açık ve eski bir test kümesi olduğu için veri sızıntısı
+olasılığı da var — bu çalışmada örnek düzeyinde kirlenmeyi ölçmedik. Problemleri
+iki ila sekiz adım derinliğinde, yani @sec-neden-token-hesap'in "ek derinlik
+burada işe yarar" dediği rejimin **sığ** ucunda. AIME ya da MATH-500 gibi daha
+zor bir görevde farklı bir bütçe eğrisi görülebilir; örneğin bir **dirsek
+noktası** (knee): doğruluğun bütçeyle hızla artmayı bırakıp eğrinin düzleştiği,
+her ek token'ın çok daha az kazandırdığı nokta. @guo2025deepseekr1 bu tür
+görevlerde yalnızca pekiştirmeli öğrenmenin getirdiği 62 puanlık bir sıçrama
+raporluyor. Böyle bir taramayı çalıştırmadık. Qwen3 teknik raporu
+[@yang2025qwen3] Qwen3-1.7B'ye AIME'24'te düşünmeden 13,4, düşünerek 48,3 puan
+veriyor (MATH-500'de 73,0 ve 93,4); ama iki mod arasındaki bu puanlar, bir bütçe
+eğrisinin biçimini tek başına göstermez. AIME izleri on binlerce token'a uzanıyor
+ve 200 problem × 6 bütçe bir dizüstünde pratik değil. Yani aşağıdakini **"bu
+görevde ve bu örneklem büyüklüğünde saptanabilir kazanç yok"** diye okuyun,
 "kazanç yok" diye değil.
 
 Her problem için bir
@@ -626,30 +625,31 @@ Her problem için bir
 fazda çalışıyor ve mekanizma, sonuçları nasıl okuyacağınız açısından önemli:
 
 ```text
-faz 1   stop_strings=["</think>"], max_new_tokens=bütçe ile üret
-        → model bloğu kendisi kapattıysa düşünmeyi bitirmiştir
-        → sınıra çarptıysa bloğu onun yerine biz kapatırız
+faz 1   sohbet şablonuyla düşünme modunu aç; en çok BÜTÇE token üret
+        </think> görüldüyse doğal kapanış olarak işaretle
+        sınırda durduysa kesilme olarak işaretle
 
-faz 2   prompt + iz + "\n</think>\n\n" tekrar girdi verilir, cevap üretilir
+faz 2   doğal kapanışta mevcut kapanışı koru; kesilmede tek kapanış ekle
+        oluşan token dizisinden cevap üret
         (320 token'la sınırlı — aşağıdaki çekinceye bakın)
 ```
 
-**Bunun neyi ölçtüğünü netleştirelim.** Faz 1 sert bir kesme
-uyguluyor: $N$'inci token'da iz cümlenin ortasında duruyor ve blok, modelin
-adına kapatılıyor. Bu, "bütçe" kelimesinin mümkün olan *en sert* yorumu; büyük
-barındırılan API'ler bilinçli olarak bunu yapmıyor. Anthropic'in dokümanları açıkça "bütçe,
-kesin bir sınır değil bir hedeftir" diyor; Google'ınkiler modelin "token
-bütçesini aşabileceğini ya da altında kalabileceğini" söylüyor; OpenAI'nin
-`reasoning_effort`'u ise hiç token sayısı değil. Hiçbirinin belgelemediği kısım
-ise işin ilginç yarısı: bir model sayıyı aşacak *olsa* ne oluyor? Dolayısıyla
-tavanın kesmeyle mi, eğitimle mi, yoksa başka bir yolla mı dayatıldığını
-dokümantasyondan öğrenemezsiniz. Açık ağırlıklı modeller üzerine literatür ise
-bunu belgeliyor:
-@muennighoff2025s1 mekanizmaya **budget forcing** (bütçe zorlama) adını veriyor ve
-iki yönü de uyguluyor. Birincisi, izi kısa kesmek için zorla eklenen bir
-`</think>`; bizim sert kesmemiz de budur. İkincisi, düşünmenin bitişini
-*bastırıp* sona `Wait` kelimesini ekleyerek modeli devam ettirmek; yazarlar
-bunun yanlış cevapları kurtardığını ölçüyor.[^budget-api]
+Kendi düzeneğinizde durma dizesinin üretilen metne dahil olup olmadığını ve
+ikinci fazın girdisinde tek bir `</think>` kaldığını token düzeyinde kontrol edin.
+
+**Bunun neyi ölçtüğünü netleştirelim.** Bu çalışmanın yerel düzeneği, düşünme
+bloğu bitmezse belirlenen noktada izi cümlenin ortasında keser, bloğu modelin
+adına kapatır ve cevap fazını başlatır. Bu, "bütçe" kelimesinin sert bir yorumu.
+Sağlayıcıların bütçe ayarları aynı semantiği garanti etmez: bazıları bütçeyi
+kesin bir sınır değil bir hedef olarak tanımlar, bazıları token sayısı yerine
+bir çaba düzeyi alır. Belgelerin belirttiği hedef ya da sınır davranışını
+kullandığınız model sürümü için kontrol edin; tavanın kesmeyle mi, eğitimle mi,
+yoksa başka bir yolla mı uygulandığı belgelerden her zaman çıkmaz.
+@muennighoff2025s1, açık ağırlıklı bir modelde **budget forcing** (bütçe
+zorlama) adı altında iki müdahaleyi inceliyor: izi kısa kesmek için zorla
+eklenen bir `</think>` (bizim kesmemize benzer) ve düşünmenin bitişini
+*bastırıp* sona `Wait` ekleyerek modeli devam ettirmek. Yazarların raporladığı
+sonuçlar, bu iki müdahalenin o deneydeki etkileri.[^budget-api]
 
 Bu yüzden aşağıdaki sayıları, bir üretim bütçesinin maliyetinin kestirimi olarak
 değil, **kasten sert kurulmuş bir kesme baseline'ı** olarak okuyun: bu, naif bir
@@ -660,18 +660,12 @@ olurdu. Sınıra ne sıklıkta çarpıldığını kaydediyoruz; çünkü izlerin
 kesen bir bütçeyle %5'ini kesen bir bütçe, aynı sayıyı taşıyan iki farklı
 rejimdir.
 
-[^budget-api]: Bütçelerimizi bir API çağrısına eşlememek için iki sebep daha var.
-Birincisi, taramamızın küçük ucu, barındırılan parametrelerin kabul edeceği
-değerlerin bile altında — Anthropic `budget_tokens` için 1.024 token'lık bir
-alt sınır dayatıyor, dolayısıyla 128 ve 256 satırlarımızın API karşılığı yok.
-İkincisi, parametrenin kendisi tedavülden kalkıyor: `budget_tokens`, Claude 4.6
-modellerinde artık önerilmiyor (deprecated), 4.7 ve sonrasında ise doğrudan
-reddediliyor;
-yerini bir `effort` ayarıyla birlikte `thinking: {type: "adaptive"}` alıyor.
-Gemini'nin `thinkingBudget`'ı da benzer şekilde `thinkingLevel` tarafından
-değiştirildi. Sektör, *sayıyı siz seçin* anlayışından *model seçsin, siz
-maliyet ve gecikme toleransını seçin* anlayışına kayıyor — bu da eğrinin biçimini bilmeyi, herhangi bir sağlayıcının onu nasıl
-adlandırdığından daha yararlı kılıyor.
+[^budget-api]: Bu bölümdeki 128 ve 256 token'lık yerel kesmelerin barındırılan
+API'lerde birebir karşılığı olmayabilir. `budget_tokens`, uyarlamalı düşünme ve
+`effort` gibi ayarların desteklendiği modeller ile izin verilen aralıklar sürüme
+göre değişiyor; kullandığınız model için sağlayıcı belgelerinin güncel ve tarihli
+sürümüne bakın. Yerel deneyin sonuçlarını API davranışıyla eşitlemeyin; taşınabilir
+olan, eğrinin biçimini ölçme yöntemidir.
 
 Sonuçlardan önce bir çekince daha var, çünkü onları nasıl okuyacağınızı
 etkiliyor. Önce sayıları görmek isterseniz aşağıdaki kutuyu atlayın, tabloyu
@@ -679,10 +673,12 @@ okuyun, sonra geri dönün.
 
 ::: {.callout-caution appearance="simple" icon="false"}
 **Kendi ölçüm düzeneğimizi kontrol ederken bulduğumuz ve düzeltmediğimiz bir
-kısıt.** Puanlama GSM8K'nın yerleşik kuralını kullanıyor: modelin cevabı, *yazdığı son sayı*. Bu kural
-standart ve çoğunlukla sorunsuz, ama bir başarısızlık biçimi var: modelin
-cevabından sonra eklediği her şey, puanlanan cevabın yerine geçiyor. "Cevap 72. Bunun 3 kalem
-varsaydığına dikkat edin" ifadesi **3** diye okunuyor ve yanlış işaretleniyor.
+kısıt.** Cevap ayrıştırıcısı sonucu etkileyebilir. Bu deney, modelin cevabını
+ürettiği metindeki *son sayı* olarak okuyor. Bu, bu bölümün ayrıştırıcı seçimi;
+GSM8K'nın altın cevap biçimiyle uyumlu bir tercih, ama cevaptan sonra eklenen
+başka bir sayı puanın yerine geçebiliyor: "Cevap 72. Bunun 3 kalem varsaydığına
+dikkat edin" ifadesi **3** diye okunuyor ve yanlış işaretleniyor. Cevap çıkarma
+kuralını ve ayrıştırılamayan cevap sayısını ayrıca raporlayın.
 
 Bu da cevap fazındaki 320 token'lık tavanı olması gerekenden daha ilginç hâle
 getiriyor. Ölçülen ortalama cevap uzunlukları o tavana karşı 243 ile 276 token
@@ -740,17 +736,15 @@ sıfır fark için **6,74 kat token**.
 Bölümün tamamı bu iki satırda — ama bunu *düşünmek hiçbir şey kazandırmadı* diye
 okumadan önce, o ilk satırda bir sütun sağa bakın.
 
-**Sıfır bütçe satırı, sıfır akıl yürütme satırı değil.** `enable_thinking=False`
-ile bu model, cevabı tek bir sayı olan bir soruya yine de **243 cevap token'ı**
-yazıyor.
-Bu bir düşünce zinciridir. Sadece bir `<think>` bloğunun içinde değildir. Yani bu
-tablonun kurduğu karşılaştırma *akıl yürütme ile akıl yürütmeme* karşılaştırması
-değil; **düşünme bloğunun içindeki akıl yürütme ile cevabın içindeki akıl
-yürütme** karşılaştırmasıdır ve baseline, GSM8K'nın ihtiyaç duyduğu seri
-derinliğin çoğunu zaten elde etmiştir. Karşıt durumu ileride,
-@sec-cot-sinirlari'te göreceğiz: orada düşünmeyen baseline yalnızca **3,4**
-token yazıyor ve token çarpanı 6,74 kattan 88,6 kata sıçrıyor. Bir bütçe taraması, düşünmenin fiyatını ancak
-sıfır satırı gerçekten sıfırsa ölçer; bizimki değil.
+**Sıfır bütçe satırı, sıfır akıl yürütme satırı olmayabilir.** 2.048 bütçesinde
+ve düşünme kapalı modda nokta doğruluğu aynı, %70,0; üretilen toplam token
+ortalaması ise 1.637'ye karşı 243. Düşünme kapalı mod da, cevabı tek bir sayı
+olan bir soruya ortalama **243 cevap token'ı** yazıyor; bunun ne kadarının ara
+çözüm olduğu örnek cevaplar okunarak belirlenmeli. Bu tablo, iki **mod ve
+çözümleme ayarı** arasındaki maliyet/başarım karşılaştırması; saf bir "akıl
+yürütme var/yok" deneyi değil. Karşıt durumu ileride, @sec-cot-sinirlari'te
+göreceğiz: oradaki kısa etiket görevinde düşünmeyen baseline yalnızca **3,4**
+token yazıyor ve token çarpanı 6,74 kattan 88,6 kata sıçrıyor.
 
 **Şimdi disiplin kısmı.** Bu tablonun ortasını hikâyeleştirmek kolay olurdu:
 128'de bir düşüş, bir toparlanma, 512'de bir tepe, bir salınım. Yapmayın. Sayıları
@@ -779,50 +773,45 @@ raporlamıyor. 512 satırı, en iyi bütçe olduğu
 için değil sütundaki en büyük sayı olduğu için kalın; $z = +0{,}33$'te o kalınlık süstür ve ona
 şüpheyle bakmalısınız.[^paired-test]
 
-[^paired-test]: Yukarıdaki $z$ testi *yanlış* testtir ve büyük olasılıkla
-    muhafazakâr yönde yanlıştır. Her bütçe aynı 200 problemi aynı sırayla gördü;
-    yani bu eşleştirilmiş bir tasarım ve McNemar testi — yalnızca iki koşulun
-    uyuşmadığı problemlere bakıp aynı sonucu verdikleri çiftleri (ikisinin de
-    doğru ya da ikisinin de yanlış bildiklerini) atan test — genellikle daha güçlü
-    olurdu. $z$
-    raporluyoruz; çünkü sonuç dosyalarımız yalnızca bütçe başına ortalamayı
-    kaydetmişti, bu da eşleştirmeyi çöpe atıyor. Bölümün sonundaki lab her adımda
-    problem başına doğruluğu kaydediyor; böylece bizim hatamıza mahkûm
-    kalmıyorsunuz. Yön konusunda fazla iddialı olmayın: eşleştirilmiş
-    bir test madde düzeyindeki uyuşmazlıkları doğrudan kullanır. Bu, iki koşul
-    aynı problemleri doğru bildiğinde genellikle işe yarar; ama "aynı iki yüz
-    problem" tek başına bunu garanti etmez.
+[^paired-test]: Aynı 200 problem bütün koşullarda kullanıldığı için eşleştirilmiş
+    bir karşılaştırma daha uygun olurdu: McNemar testi yalnızca iki koşulun
+    uyuşmadığı problemlere bakar, aynı sonucu verdikleri çiftleri (ikisinin de
+    doğru ya da ikisinin de yanlış bildiklerini) atar. Yukarıdaki iki oranlı $z$
+    testi, problemler arası eşleşmeyi kullanmayan yaklaşık bir analiz; duyarlılık
+    farkının yönü problem düzeyindeki uyuşmazlıklara bağlı. Sonuç dosyalarımız
+    yalnızca bütçe başına ortalamayı kaydettiği için McNemar testini burada
+    hesaplayamadık. Bölümün sonundaki lab her adımda problem başına doğruluğu
+    kaydediyor; bir sonraki deneyde her problem için her koşuldaki doğru/yanlış
+    sonucunu saklayın.
 
-    Size borçlu olduğumuz iki sonuç var. Birincisi: aşağıdaki kutudaki
-    duyarlılık sayıları *eşleştirilmemiş* test için hesaplandı, yani bu deneyin ne
-    kadar kör olduğunu abartıyor. @sec-cot-sinirlari'teki sınıflandırma
-    taramasında ölçtüğümüz ~%22'lik uyuşmazlık oranında, $n = 200$'de anlamlılığa
-    ulaşabilecek en küçük fark, eşleştirilmemiş testteki yaklaşık 9 puandan
-    McNemar'la yaklaşık **6,5 puana** iniyor. İkisi de ancak yarı yarıya
-    yakalanacak farklardır; %80 güçte aynı karşılaştırma yaklaşık 12 puandan
-    yaklaşık 9 puana iner. İkincisi: "anlamlı fark yok", "fark yok"
-    demek değildir ve buradaki *tam sıfır* iki **marjinalin** eşitliğidir — iki
-    kolda da 200'de 140 doğru olması, onlarca problemin her iki yönde de
-    dönmesiyle uyumludur. Yalnızca reddedememekle kalmayıp
-    eşdeğerlik iddia etmemizi sağlayacak test bir **TOST**'tur: önceden ilan
-    ettiğiniz bir marja karşı iki tek taraflı test. Burada ±5 puanlık bir marj
-    savunulabilir bir iş kararı olurdu. Kaydedilmiş ortalamalar
-    üzerinde bunu çalıştıramayız. Bu marjı taramadan *önce* ilan etmek, deneyi
-    tekrarlasak ekleyeceğimiz tek planlama satırıdır.
+    Bundan çıkan iki not var. Birincisi: aşağıdaki kutudaki duyarlılık sayıları
+    *eşleştirilmemiş* test için hesaplandı. GSM8K'daki uyuşmazlık oranını
+    bilmiyoruz; @sec-cot-sinirlari'teki sınıflandırma taramasında ölçtüğümüz
+    ~%22'lik oran burada da geçerli olsaydı, $n = 200$'de anlamlılığa
+    ulaşabilecek en küçük fark eşleştirilmemiş testteki yaklaşık 9 puandan
+    McNemar'la yaklaşık **6,5 puana**, %80 güçte yakalanan fark da yaklaşık 12
+    puandan yaklaşık 9 puana inerdi. Bu bir ölçüm değil, örnek bir senaryo.
+    İkincisi: "anlamlı fark yok", "fark yok" demek değildir ve buradaki *tam
+    sıfır* yalnızca iki **marjinalin** eşitliği — iki kolda da 200'de 140 doğru
+    olması, onlarca problemin her iki yönde de dönmesiyle uyumlu. Eşdeğerlik
+    iddiası için bir **TOST** (önceden ilan edilmiş bir marja karşı iki tek
+    taraflı test) gerekir: taramadan *önce* iş kararı olarak seçilmiş ±5 puan
+    gibi bir marj ve eşleştirilmiş farkın güven aralığı. Problem düzeyi kayıtlar
+    olmadığı için bu iddia burada test edilemiyor.
 
-**Sağlam biçimde ölçülen *asıl* şey maliyet ve kesilme.** O sütunlar 200 yazı-tura
-atışının oranları değil; problemler arasında doğru-yanlış sonucundan çok daha az
-değişen bir niceliğin ortalamaları. Bunun neden işe yaradığını açıkça
-söyleyelim: gözlem birimi hâlâ problem, $n$ hâlâ 200 ve problem başına ortalama token
-üzerine bir aralık, problem düzeyinde bir bootstrap ister — onu koşturmadık. Bu
-sütunları güvenle okumamızı sağlayan şey büyük bir token sayısı değil, farkların
-*büyüklüğü*:
+**Bu 200 problemde doğrudan gözlenen şey maliyet ve kesilme.** Tablodaki token
+ortalamaları ve kesilme oranları bu problemler için doğrudan gözlendi. Kesilme
+oranı da 200 problemden hesaplanmış bir oran; yeni trafik için onun da bir oran
+aralığı, problem başına ortalama token için de problem düzeyinde bir bootstrap
+aralığı gerekir — ikisini de koşturmadık. Bu sütunları okumayı güvenli kılan şey
+farkların *büyüklüğü*:
 
 - **Token'lar monoton ve dik biçimde büyüyor:** 1,00×, 1,65×, 2,12×, 3,11×, 4,91×,
-  6,74×. Faturada belirsiz hiçbir şey yok.
+  6,74×. Bu 200 problemdeki fark büyük; ama bunu gelecekteki fatura ya da tepe
+  gecikme için bir garanti olarak okumayın.
 - **Kesilme oranı tam da olması gereken yerde sert biçimde düşüyor:** %97, %97,
   %96, %67, %28. 512
-  token'ın altında bu modelin bir düşünceyi bitirmesine esasen *hiç* izin
+  token'ın altında bu modelin bir düşünceyi bitirmesine neredeyse *hiç* izin
   verilmiyor. 2.048'de izlerin çoğu kendiliğinden kapanıyor.
 
 Bu ikisini yan yana koyun, doğruluk sütunu için makul bir okuma ortaya çıkar —
@@ -839,21 +828,24 @@ ondan bir sonuca bağlamasını ister.
 
 ::: {.callout-note appearance="simple"}
 **Bu neden başarısız bir deney değil.** Düzgün yükselen bir eğri uman bir
-okur bu tabloyu hayal kırıcı bulacaktır ve bu tepki incelemeye değer; çünkü
-sonuç zayıf değil — *doğru şey hakkında kesin*. Bu görevde, bu modelle, bu örneklem
-büyüklüğünde 6,74 kata kadar daha fazla token satın almanın **saptanabilir hiçbir
-doğruluk artışı** getirmediğini güvenle söyleyebiliyoruz ve deneyin ne kadar duyarlı
-olduğunu da söyleyebiliyoruz.
+okur bu tabloyu hayal kırıcı bulacaktır; ama sonuç zayıf değil, *neyi söyleyip
+neyi söyleyemediği belli*. Bu 200 problemde bütçe arttıkça token sayısı 6,74 kata
+kadar yükseldi; raporlanan eşleştirilmemiş testte ise hiçbir bütçe, düşünme
+kapalı moddan %5 düzeyinde ayrışmadı. Bu sonuç küçük bir yararı ya da zararı
+dışlamaz.
 
 Duyarlılık bir eşik değil, bir eğridir; öyle de aktarın. %70'lik bir baseline'a
 karşı, kol başına $n = 200$, $\alpha = 0{,}05$ çift taraflı, eşleştirilmemiş: bu
 tasarımın **12 puanlık bir artışı yakalama gücü %80, 14 puanlık bir artışı
 yakalama gücü %90**. Gerçek 9 puanlık bir artışı ancak yarı yarıya yakalardı; 5
 puanlığı beşte bir. (Aynı büyüklükteki bir *düşüş* biraz daha seyrek yakalanır,
-çünkü bir oranın varyansı %50'ye yaklaştıkça büyür.) Doğru ifade "etki yok" değil, şudur: *on iki puandan belirgin biçimde
-büyük bir etkinin burada saklanma ihtimali düşük, beş puanın altındaki bir etkiyi
-ise bu deney görmüyor.* Reddedememeyi olumlu bir eşdeğerlik iddiasına çevirmek
-için başka bir test gerekiyor — yukarıdaki dipnota bakın.
+çünkü bir oranın varyansı %50'ye yaklaştıkça büyür.) Bu sayılar **bağımsız iki
+oran varsayımıyla yapılmış bir planlama hesabı**; eşleştirilmiş tasarımın gerçek
+gücü, kaydetmediğimiz problem düzeyi sonuçlar olmadan belirlenemez. Doğru ifade
+"etki yok" değil: *bu tasarım beş puanlık bir etkiyi büyük olasılıkla
+kaçırırdı, on iki puanlık bir etkiyi ise çoğu zaman yakalardı.* Reddedememeyi
+olumlu bir eşdeğerlik iddiasına çevirmek için başka bir test gerekiyor —
+yukarıdaki dipnota bakın.
 
 Bu, bir satın alma görüşmesine taşınacak gerçekten yararlı bir bulgu. "Biraz işe
 yarayabilir, emin olamıyoruz, işte fatura" dürüst cevaptır ve akıl yürüten model
