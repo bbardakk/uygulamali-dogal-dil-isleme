@@ -1658,17 +1658,20 @@ free-form tasks with no such tool, measure CoT's benefit separately.
 
 ### Our measurement: the same sweep on a task with no chain in it
 
-The cleanest way to see this is to run the *identical* experiment on a task from
-the left column. So we repeat @sec-budgets — same model, same two-phase harness,
-same budget ladder up to 1,024 tokens — on Turkish sentiment classification,
-using the labelled review split from @sec-bake-off. (We stop at 1,024 rather
-than 2,048 here. If a one-word label is not decided after a thousand tokens of
-deliberation, another thousand is not the missing ingredient.)
+We apply the two-phase generation set-up of @sec-budgets, this time to Turkish
+sentiment classification. The model and harness are the same; the task, prompt
+and answer format differ, and the sweep ends at 1,024 tokens. The data are the
+labelled review split from @sec-bake-off. So we do not attribute the difference
+between the two tables to task type alone, and we do not rule out the result of
+a higher cap without measuring it.
 
 One design note that matters. The natural split is about 94% positive, and on an
 unbalanced set a model that answers `olumlu` to everything scores 94% and looks
 like a genius. So we sample a **balanced** 200 examples, 100 of each class, and
-report macro-F1 alongside accuracy. The prompt asks for one word:
+report macro-F1 alongside accuracy. That makes the minority class visible, but
+these numbers on a **balanced test set** do not directly give the accuracy,
+precision or cost to expect on natural traffic. For a production decision,
+report the natural distribution separately too. The prompt asks for one word:
 
 ```text
 Aşağıdaki ürün yorumunun duygusu olumlu mu, olumsuz mu?
@@ -1686,17 +1689,21 @@ Yorum: "..."
 | 1,024 tokens | 73.5% | 67.0–79.1 | 72.7 | 297 | 302 | 3.5% | 2 |
 
 **Look at the token column first, because it is the one that is not ambiguous.**
-Answering directly costs **3.4 tokens per review** — the model writes `olumlu`
-and stops. The 1,024-token budget costs **302**. That is **88.6× the tokens** to
-put one word on the screen. It is also the contrast @sec-budgets could not make:
-*here* the zero row really is a zero row, which is why the multiplier is 88.6×
-rather than the 6.74× a baseline that reasons in the answer channel produced.
+With thinking off the model produces **3.4 output tokens per review** on
+average — it writes `olumlu` and stops. The 1,024-token budget produces **302**;
+computed from the unrounded means, the ratio is **88.6×**. "Zero budget" here
+means a **zero thinking block**; output tokens are not zero. The multiplier
+shows the difference in output length between the two modes on these data and
+this answer format, not the billing ratio of a whole workload. The contrast with
+the 6.74× of @sec-budgets comes from the same place: there, thinking-off mode
+wrote long answers in the answer channel.
 
 Now the accuracy column, and here we have to be careful, because a fast reading
 gets it exactly backwards. The top budget scores 73.5% against the baseline's
-69.5%. That looks like thinking helping by four points — the opposite of what
-this section set out to show. It is not, and this is a good place to practise
-not believing your own table:
+69.5%. That looks like thinking helping by four points. Let us not read that
+$+4$-point difference as evidence of benefit or of zero effect before examining
+its uncertainty with a paired test; this is a good place to practise not
+believing your own table straight away:
 
 ```text
 vs no-thinking baseline (n=200, paired: same reviews, same seed)
@@ -1726,29 +1733,31 @@ effect is zero.[^classify-mcnemar]
     conditions score identically and concentrates on the 44 they disagree
     about. That is the power @sec-budgets lost by saving only means.
 
-**The truncation column explains the shape once again**, and this time it also
-explains why the curve stops moving. The fraction cut off falls 96%, 51%, 8.5%,
-3.5% — but look at the thinking-token column beside it: 124, 229, 279, 297. The
-model asks for roughly 300 tokens and then stops on its own.
-Raising the ceiling from 512 to 1,024 bought 18 extra tokens of thinking and
-changed nothing, which is the empirical version of the note above about not
-bothering with a 2,048 row.
+**The truncation column gives a clue to the shape of the curve.** The fraction
+cut off falls 96%, 51%, 8.5%, 3.5%; the thinking-token column beside it reads
+124, 229, 279, 297. The model uses roughly 300 tokens and then stops on its own.
+At the 128-token cap the accuracy drop and a very high truncation rate occur
+together, but this sweep alone does not show that the cut is the **cause** of
+the drop; that would need a different truncation policy at the same budget.
+Going from 512 to 1,024 moves mean thinking length from 279 to 297 and point
+accuracy from 72.5% to 73.5%; the difference is not significant.
 
-So the honest summary of this task is not "thinking hurts". It is sharper:
+So the summary of this task is not "thinking hurts":
 
-> Thinking **never significantly helped** on this task at any budget. Truncated
-> thinking **significantly hurt** it. And the budgets that stopped hurting cost
-> roughly 70–90× the tokens of not thinking at all.
+> On this balanced Turkish classification set the 128-token cap gave a
+> **significant harm signal**, and the higher caps **gave no clear evidence of
+> benefit**. At every budget the cost gap is large: roughly 70–90× the tokens of
+> thinking-off mode.
 
 ::: {.callout-tip appearance="simple" icon="false"}
-**One artefact we do not have here.** @sec-budgets had to publish a caveat about
-the 320-token answer cap distorting its GSM8K numbers. On this task that worry
-is measurable and it is absent: mean answer length is **3 to 5 tokens** and
-**0.0%** of answers hit the ceiling at any budget. The instrument is clean, so
-the comparison between the two sweeps is a comparison of tasks rather than of
-measurement noise. This is why the answer-cap diagnostic was worth adding even
-though it arrived late — it is what lets us say the GSM8K table is suspect and
-this one is not.
+**Checking the answer cap.** @sec-budgets had to publish a caveat that the
+320-token answer cap may have distorted its GSM8K numbers. In this
+classification run answers averaged **3 to 5 tokens** and no budget saw an
+answer hit the ceiling (**0.0%**). That removes the **answer truncation** risk
+discussed for GSM8K here; it does not make all measurement conditions of the two
+experiments equal or the classification result free of bias. Label parsing,
+data selection, sampling and thinking truncation remain sources of measurement
+error to examine separately.
 :::
 
 ### Longer is not monotone
