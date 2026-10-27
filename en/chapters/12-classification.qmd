@@ -2323,9 +2323,13 @@ gemma3:27b  zero-shot, one at a time       1.7           592.5
 Read the right-hand column as a ratio and the argument stops being close.
 [Classifying a million documents costs 14 seconds with the vectoriser, 35
 minutes with the fine-tuned encoder, and three and a half days with the best
-prompted model.]{.hl} The encoder is **142× cheaper per document** than the
-prompted model it ties with at 2,000 labels; the vectoriser is roughly
-**22,000× cheaper**.
+prompted model.]{.hl} For the prompted model these are optimistic linear
+extrapolations of a typical document's median latency; real total time needs the
+whole run's wall clock, mean, p95/p99 and parallelism. In this local set-up, on
+measured median per-document times, the encoder is about **142×** faster than
+the prompted model it could not be distinguished from at 2,000 labels, and the
+vectoriser roughly **22,000×**; for production cost, re-measure under the same
+hardware, concurrency, batching and queueing conditions.
 
 Two things that ratio is and is not. It is a batched encoder against a
 single-stream local server, which is the comparison most small teams actually
@@ -2360,25 +2364,26 @@ at different times is not something to build an argument on.
 Every LLM figure is a **median**, and that choice is not cosmetic. The `qwen3.5:9b`
 zero-shot run has a mean of 3.371 seconds per document against a median of
 0.365 — a 9× discrepancy produced by 18 documents that stalled, the worst for
-980 seconds. Those stalls are a property of a laptop that decided to do
-something else for a while, not of the model. Quoting the mean would have
-inflated this model's cost by an order of magnitude. That would have made the
-comparison above meaningless, and it would have been unfair *to* this model,
-not in its favour.
+980 seconds. The median shows the typical request, but we did not profile the
+cause of the stalls. Until it is examined, include those tails in the real
+serving cost and report the median, mean and high percentiles together.
 
 ::: {.column-margin}
 Note where the mixture-of-experts model lands. `qwen3.6:35b-a3b` has 36B
 parameters but activates about 3B per token, and it serves a document in 0.353s
 — *faster* than the dense 9.7B model at 0.365s and 1.7× faster than the dense
-27.4B at 0.592s, while scoring higher than both. This is
-@sec-moe's argument arriving as a serving bill: [what you pay for
-at inference is active parameters, not total ones]{.hl}.
+27.4B at 0.592s, while scoring higher than both. Active parameters alone do not
+explain that: total weight memory, memory transfer and routing enter the serving
+cost too (@sec-moe).
 :::
 
 There is a second asymmetry, and it runs the other way. The prompted models pay
 per document forever, while the encoder pays once: the 2,000-label model that
 ties with the best prompt is 1,260 optimiser steps, about **6.5 minutes** of
-corrected GPU time, repaid after roughly **1,300 documents**.
+corrected GPU time; a rough break-even that counts only compute time is about
+**1,300 documents**. For the real break-even volume, add the cost of producing
+and checking the 2,000 labels, hardware fees, total latency and maintenance
+time.
 
 But 6.5 minutes is the *GPU* bill, and it is the smaller half. The encoder also
 needs 2,000 labelled documents; the 8-shot prompt needs eight. This chapter
