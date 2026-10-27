@@ -1584,23 +1584,25 @@ same documents.
 The chain is short and every link is checkable in a REPL:
 
 ``` text
->>> "TAVSİYE".lower()
-'t a v s i ̇ y e'                     # spaced out here: 8 codepoints, not 7
+>>> len("TAVSİYE"), len("TAVSİYE".lower())
+(7, 8)
 >>> [f"U+{ord(c):04X}" for c in "TAVSİYE".lower()]
 ['U+0074','U+0061','U+0076','U+0073','U+0069','U+0307','U+0079','U+0065']
 ```
 
 `İ` is U+0130, LATIN CAPITAL LETTER I WITH DOT ABOVE — a normal letter in
-Turkish, where dotted and dotless `i` are different letters. Python's
-`str.lower()` is not locale-aware. It lowercases U+0130 to `i` (U+0069) followed
-by **U+0307, COMBINING DOT ABOVE**, because a plain `i` already carries a dot and
-Unicode has no precomposed "i with an extra dot above" to fold into.
+Turkish, where dotted and dotless `i` are different letters. Unicode's default
+(SpecialCasing) lowercase mapping for U+0130 is the sequence `i` (U+0069)
+followed by **U+0307, COMBINING DOT ABOVE**. Python's `str.lower()` is not
+locale-aware, applies no Turkish rule, and uses that mapping. A Turkish-locale
+conversion should give `İ` → `i` and `I` → `ı`.
 
 One fact about *this* corpus changes where the chain starts. As @sec-bake-off
 found, the reviews ship already lowercased: there is no uppercase letter left
 in them, so our own `str.lower()` call creates nothing here. The combining dots
-were already in the text when it reached us — most likely left by exactly this
-default lowercasing somewhere upstream. The REPL lines above show how such a
+were already in the text when it reached us. Default lowercasing can produce the
+same mark, but the data cannot tell us at which earlier step it arose; if the
+source text and preprocessing records exist, verify the origin with them. The REPL lines above show how such a
 mark is born; the steps below show why nothing downstream removes it.
 
 Now the second link. Normalisation does not save you:
@@ -1610,9 +1612,9 @@ Now the second link. Normalisation does not save you:
 >>> "\u0307" in unicodedata.normalize("NFKC", "TAVSİYE".lower())    # True
 ```
 
-Both NFC and NFKC leave the sequence intact, for the reason above: there is no
-composed form to normalise *to*. The habit of "just NFKC everything" is exactly
-what lets this survive to production.
+In this example neither NFC nor NFKC removes U+0307: there is no composed form
+to normalise *to*. Unicode normalisation can be a useful step, but it does not
+replace Turkish-aware case mapping or a rule for repairing an existing mark.
 
 The third link is the tokenizer. scikit-learn's default token pattern is
 `(?u)\b\w\w+\b`, and a combining mark is not a word character, so:
@@ -1626,8 +1628,9 @@ The third link is the tokenizer. scikit-learn's default token pattern is
 
 *Tavsiye*, "recommendation" — a word that appears in 19.8% of the documents in
 this corpus, the single most frequent review-specific word in it — silently
-splits in two, but only in the documents whose text carries the stray mark —
-presumably those where somebody once typed it with a capital `İ`.
+splits in two, but only in the documents whose text carries the stray mark.
+Whether the mark came from a capital `İ` or from some other conversion is not
+known document by document.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -1694,28 +1697,27 @@ success.
 ::::
 
 ::: {.callout-note appearance="simple"}
-**The one-line fix, and why neither `.lower()` nor `.casefold()` is it.**
-Deleting the combining mark after lowercasing — `s.replace("\u0307", "")`,
-written as an escape because the character is invisible in print — restores
-`['tavsiye']`. Note that `str.casefold()` does **not** help. It is not
-locale-aware either and produces the identical eight codepoints, which is worth
-knowing because "use `casefold` instead of `lower`" is the usual folk fix and it
-is wrong here. Python's standard library has no Turkish casing at all; for real
-locale-aware casing you need ICU (`PyICU`:
-`icu.UnicodeString(s).toLower(icu.Locale("tr"))`). For most pipelines the
-cheaper and fully sufficient answer is to map the two Turkish letters yourself
-*before* lowercasing — which is exactly what @sec-bake-off's `tr_lower` does.
-Keep the two jobs apart, though. `tr_lower` stops *your* code from creating the
-mark; it cannot remove a mark that is already in the text, as it is in this
-corpus. Only the `replace` above repairs text you were given.
-Whatever you choose, the test to keep in your suite is
+**Two separate fixes — and why neither `.lower()` nor `.casefold()` is it.** For
+new Turkish text, map `İ` and `I` by the locale rule *before* lowercasing (which
+is what @sec-bake-off's `tr_lower` does) or use ICU (`PyICU`:
+`icu.UnicodeString(s).toLower(icu.Locale("tr"))`); Python's standard library has
+no Turkish casing. `str.casefold()` is not locale-aware either and produces the
+identical eight codepoints, so "use `casefold` instead of `lower`" does not help
+here. A pre-existing `i` + U+0307 sequence, by contrast, should be turned into
+`i` only in a suitable Turkish context, by a targeted and tested repair step;
+deleting every U+0307 regardless of context (`s.replace("̇", "")`, written
+as an escape because the character is invisible in print) can lose meaning in
+other languages or marks. Test `TAVSİYE`/`tavsiye`, `IŞIK`/`ışık` and
+already-marked input separately; for example
 `assert tokenize("TAVSİYE") == tokenize("tavsiye")`.
 
-A second guard catches the same class of failure without knowing any Turkish:
-flag any topic whose top-10 list is more than half short tokens —
+A **warning** for the same class of failure can be set up without knowing any
+Turkish: the share of short forms in the top ten terms — for example
 `sum(len(w) <= 3 for w in top10) > 5`. Topic 7 scores 8 out of 10 on that test.
-It will raise occasional false alarms on languages with genuinely short content
-words, and looking at them costs one line.
+Validate the threshold on samples from your language and domain and report the
+false alarms; the warning tells you which document samples to read first, it
+does not prove the defect on its own. For Turkish-specific conversions in full,
+see @sec-turkish-nlp.
 :::
 
 ### What it cost

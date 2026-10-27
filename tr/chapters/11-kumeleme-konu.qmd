@@ -1628,25 +1628,26 @@ Zincir kısa ve her halkası bir REPL'de (Python'un etkileşimli komut satırın
 kontrol edilebilir:
 
 ``` text
->>> "TAVSİYE".lower()
-'t a v s i ̇ y e'                     # burada aralıklı yazıldı: 7 değil, 8 kod noktası
+>>> len("TAVSİYE"), len("TAVSİYE".lower())
+(7, 8)
 >>> [f"U+{ord(c):04X}" for c in "TAVSİYE".lower()]
 ['U+0074','U+0061','U+0076','U+0073','U+0069','U+0307','U+0079','U+0065']
 ```
 
 `İ`, U+0130 — LATIN CAPITAL LETTER I WITH DOT ABOVE; noktalı ve noktasız `i`'nin
-farklı harfler olduğu Türkçede gayet normal bir harf. Python'un `str.lower()`
-metodu dile özgü (locale-aware) değil. U+0130'u `i`'ye (U+0069) ve ardından gelen
-**U+0307, COMBINING DOT ABOVE**'a küçültüyor; çünkü düz bir `i` zaten bir nokta
-taşıyor ve Unicode'da içine katlanacak "üstünde fazladan nokta olan i" diye
-önceden birleştirilmiş bir karakter yok.
+farklı harfler olduğu Türkçede gayet normal bir harf. Unicode'un U+0130 için
+varsayılan (SpecialCasing'deki) küçük harf eşlemesi, `i` (U+0069) ve ardından
+gelen **U+0307, COMBINING DOT ABOVE** dizisi. Python'un `str.lower()` metodu dile
+özgü (locale-aware) değil, Türkçe yerel ayarı uygulamıyor ve bu eşlemeyi
+kullanıyor. Türkçe yerel ayarlı bir dönüşümde ise `İ` → `i`, `I` → `ı` olmalı.
 
 *Bu* derlemle ilgili bir gerçek, zincirin nerede başladığını değiştiriyor.
 @sec-karsilastirma'ün bulduğu gibi yorumlar zaten küçük harfle geliyor: içlerinde
 tek bir büyük harf kalmamış, dolayısıyla bizim `str.lower()` çağrımız burada
 hiçbir şey üretmiyor. Birleştirici noktalar metin bize ulaştığında zaten
-oradaydı — büyük olasılıkla veri kaynağındaki önceki bir işleme adımında, tam da
-bu varsayılan küçük harfe çevirme yüzünden. Yukarıdaki REPL satırları böyle bir işaretin nasıl doğduğunu
+oradaydı. Varsayılan küçük harfe çevirme aynı işareti üretebilir, ama mevcut
+veriden işaretin hangi önceki adımda oluştuğu belirlenemez; kaynak metin ve ön
+işleme kayıtları varsa kökeni onlarla doğrulayın. Yukarıdaki REPL satırları böyle bir işaretin nasıl doğduğunu
 gösteriyor; aşağıdaki halkalar ise ardından gelen hiçbir işlemin onu neden silmediğini.
 
 Şimdi ikinci halka. Normalleştirme sizi kurtarmıyor:
@@ -1656,10 +1657,10 @@ gösteriyor; aşağıdaki halkalar ise ardından gelen hiçbir işlemin onu nede
 >>> "\u0307" in unicodedata.normalize("NFKC", "TAVSİYE".lower())    # True
 ```
 
-Yukarıdaki nedenle hem NFC hem NFKC diziyi olduğu gibi bırakıyor:
-normalleştirilecek bir birleşik biçim yok. "Her şeyi NFKC'ye çevirelim gitsin"
-alışkanlığı, bu hatanın fark edilmeden üretime kadar ulaşmasını sağlayan şeyin ta
-kendisi.
+Bu örnekte hem NFC hem NFKC U+0307 işaretini kaldırmıyor: normalleştirilecek bir
+birleşik biçim yok. Unicode normalleştirmesi yararlı bir adım olabilir, ama
+Türkçeye duyarlı harf dönüşümü ve mevcut işareti onarma kuralının yerini
+tutmaz.
 
 Üçüncü halka tokenizer. scikit-learn'ün varsayılan token deseni
 `(?u)\b\w\w+\b` ve birleştirici işaret bir kelime karakteri değil, dolayısıyla:
@@ -1673,8 +1674,8 @@ kendisi.
 
 *Tavsiye* — bu derlemdeki belgelerin %19,8'inde geçen, yorumlara özgü en sık
 kelime — sessizce ikiye bölünüyor; ama yalnızca metninde bu başıboş işaret bulunan
-belgelerde — muhtemelen birinin onu bir zamanlar büyük `İ` ile yazdığı
-belgelerde.
+belgelerde. İşaretin büyük bir `İ`'den mi, başka bir dönüşümden mi geldiği belge
+düzeyinde bilinmiyor.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -1741,28 +1742,25 @@ yapacak bir işi yok ve yine de başarılı olduğunu bildiriyor.
 ::::
 
 ::: {.callout-note appearance="simple"}
-**Tek satırlık düzeltme ve çözümün neden `.lower()` da `.casefold()` da olmadığı.**
-Küçültmeden sonra birleştirici işareti silmek — `s.replace("\u0307", "")`, karakter
-baskıda görünmez olduğu için kaçış dizisiyle yazıldı — `['tavsiye']`'yi geri
-getiriyor. `str.casefold()`'un yardımcı **olmadığına** dikkat edin. O da locale
-duyarlı değil ve aynı sekiz kod noktasını üretiyor; bunu bilmek önemli, çünkü
-"`lower` yerine `casefold` kullan" en yaygın önerilen çözüm ve burada yanlış.
-Python'un standart kütüphanesinde Türkçe büyük-küçük harf dönüşümü hiç yok;
-gerçek locale duyarlı dönüşüm için ICU gerekiyor (`PyICU`:
-`icu.UnicodeString(s).toLower(icu.Locale("tr"))`). Çoğu hat için daha ucuz ve
-tamamen yeterli cevap, iki Türkçe harfi küçültmeden *önce* kendiniz
-eşlemektir — @sec-karsilastirma'teki `tr_lower` da bunu yapıyor.
-Yine de iki işi birbirinden ayırın. `tr_lower` *sizin* kodunuzun bu işareti
-üretmesini engeller; metinde zaten bulunan bir işareti ise silemez — bu derlemde
-olduğu gibi. Size verilmiş bir metni yalnızca yukarıdaki `replace` onarır.
-Hangisini seçerseniz seçin, test paketinizde tutmanız gereken test şu:
-`assert tokenize("TAVSİYE") == tokenize("tavsiye")`.
+**İki ayrı düzeltme — ve çözümün neden `.lower()` da `.casefold()` da olmadığı.**
+Yeni Türkçe metinde `İ` ve `I` harflerini küçültmeden *önce* yerel kurala göre
+eşleyin (@sec-karsilastirma'teki `tr_lower` bunu yapıyor) ya da ICU kullanın
+(`PyICU`: `icu.UnicodeString(s).toLower(icu.Locale("tr"))`); Python'un standart
+kütüphanesinde Türkçe büyük-küçük harf dönüşümü yok. `str.casefold()` da locale
+duyarlı değil ve aynı sekiz kod noktasını üretiyor; "`lower` yerine `casefold`
+kullan" önerisi burada işe yaramaz. Metinde zaten bulunan `i` + U+0307 dizisini
+ise yalnızca uygun Türkçe bağlamda, hedefli ve test edilmiş bir onarım adımıyla
+`i` yapın; bütün U+0307 işaretlerini bağlamdan bağımsız silmek
+(`s.replace("̇", "")`, karakter baskıda görünmez olduğu için kaçış
+dizisiyle yazıldı) başka dillerde ya da işaretlerde anlam kaybına yol açabilir.
+Testte `TAVSİYE`/`tavsiye`, `IŞIK`/`ışık` ve zaten işaretli girdiyi ayrı sınayın;
+örneğin `assert tokenize("TAVSİYE") == tokenize("tavsiye")`.
 
-Aynı hata sınıfını hiç Türkçe bilmeden yakalayan ikinci bir koruma daha var:
-ilk 10 kelimesinin yarısından fazlası kısa token olan her konuyu işaretleyin —
-`sum(len(w) <= 3 for w in top10) > 5`. 7 numaralı konu bu testten 10 üzerinden 8
-alıyor. Gerçekten kısa içerik kelimeleri olan dillerde arada bir yanlış alarm
-verecektir; onlara bakmak da tek satıra mal olur. Türkçeye özgü dönüşümlerin
+Aynı hata sınıfı için Türkçe bilmeden kurulabilecek bir **uyarı** da var: ilk on
+terimdeki kısa biçimlerin oranı — örneğin `sum(len(w) <= 3 for w in top10) > 5`.
+7 numaralı konu bu testten 10 üzerinden 8 alıyor. Eşiği dil ve alan örneklerinde
+doğrulayın ve yanlış alarm sayısını bildirin; uyarı, belge örneklerini okuma
+önceliği verir, kusuru tek başına kanıtlamaz. Türkçeye özgü dönüşümlerin
 tamamı için bkz. @sec-turkce-nlp.
 :::
 
