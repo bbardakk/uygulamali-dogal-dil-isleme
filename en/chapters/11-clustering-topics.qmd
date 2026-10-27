@@ -1027,9 +1027,10 @@ is about telling that apart from "I have not looked hard enough".
 
 ### What the indices actually measure
 
-All three indices claim to say in one number how "good" a clustering is
-(higher is better for silhouette and CH, lower for DB), which is exactly the
-kind of claim worth opening up. What is each one actually rewarding?
+Silhouette, Calinski-Harabasz and Davies-Bouldin each summarise a different
+geometric property of a partition in one number (higher is better for
+silhouette and CH, lower for DB), and their optima need not agree. What does
+each one reward?
 
 $$
 s(i) = \frac{b(i) - a(i)}{\max\{a(i),\, b(i)\}}
@@ -1039,17 +1040,19 @@ The [**silhouette**](#gloss-silhouette){#term-silhouette .term-ref} of point $i$
 compares $a(i)$, its mean distance to points in its own cluster, against $b(i)$, its mean distance to points in the nearest
 *other* cluster [@rousseeuw1987silhouettes]. It runs from $-1$ to $1$, and the
 score for a clustering is the mean over all points. Two implementation details
-that change the number and are almost never reported: it is $O(n^2)$, so on
-49,849 documents we computed it on a fixed random sample of 10,000 (seed 42),
-which makes every silhouette here an estimate with its own error bar; and
-"distance" is `metric="cosine"` throughout, matching the geometry the
-clustering was actually done in. A silhouette quoted without its metric and its
+that change the number and are almost never reported: computed from pairwise
+distances it is typically $O(n^2)$, so on 49,849 documents we computed it on a
+fixed random sample of 10,000 (seed 42), which allows comparing $k$ on the same
+sample but makes every silhouette here an estimate with its own error bar; and
+"distance" is `metric="cosine"` throughout, which is not the same geometry as
+k-means' Euclidean objective. A silhouette quoted without its metric and its
 sample size is not a reproducible number.
 
 ::: {#gloss-silhouette .column-margin .term-gloss}
-**silhouette** — for each point, how much closer it is to its own cluster than
-to the next-nearest one, scaled to $[-1, 1]$. Near 0 means the point sits on a
-boundary; a whole corpus near 0 means there are no boundaries.
+**silhouette** — compares a point's mean distance within its own cluster with
+its mean distance to the nearest other cluster; in $[-1, 1]$. A value near 0
+means weak separation under the distance and partition used; it does not prove
+there is no structure in another representation.
 [↩](#term-silhouette){.term-back}
 :::
 
@@ -1070,13 +1073,13 @@ $$
 \mathrm{DB} = \frac{1}{k}\sum_{i=1}^{k} \max_{j \neq i} \frac{s_i + s_j}{d(\mu_i, \mu_j)}
 $$
 
-with $s_i$ the mean spread inside cluster $i$; lower is better. Because it is a
-max over pairs, it tends to improve as $k$ rises and clusters get individually
-tighter — the mirror image of CH's bias, which is exactly why the two disagree
-in our sweep. Both are cheap, both are
-$O(n)$ in the number of points, and — as the sweep shows — both are close to
-monotone in $k$ on data without real cluster structure, which makes their
-"optimum" an artefact of the range you happened to search.
+with $s_i$ the mean spread inside cluster $i$; lower is better. As $k$ rises
+both the spreads and the centre distances change, so the direction of the score
+is not guaranteed in general. In our sweep it falls toward large $k$ in some
+representations and disagrees with CH. Both cost roughly linear time in the
+number of points (plus terms in the number of clusters and dimensions); because
+both behaved close to monotone in $k$ in this sweep, their "optimum" is
+sensitive to the range searched.
 
 **One caveat the sweep table hides, and it is our own rule being bent.**
 `silhouette_score` takes a `metric` argument and ours was `"cosine"`;
@@ -1085,8 +1088,11 @@ on squared Euclidean dispersion around raw centroids, and scikit-learn ships no
 cosine variant of either. On $\ell_2$-normalised vectors that is less damaging
 than it sounds for *points*, since $d^2 = 2 - 2\cos$ makes the two an affine
 reparametrisation of each other; it is not harmless for *centroids*, which are
-means of unit vectors and so are not themselves unit vectors. So read the CH and
-DB columns as Euclidean measurements of a cosine clustering. That is exactly the
+means of unit vectors and so are not themselves unit vectors. In this sweep
+`KMeans` minimised the **Euclidean** objective on normalised inputs; CH and DB
+give Euclidean summaries of those assignments, while the silhouette was computed
+separately with cosine. Do not compare the three indices as scores computed in
+one metric; a Euclidean silhouette could be added as a sensitivity check. That is exactly the
 mismatch @sec-clustering-interview warns you about, and the honest reason we
 tolerated it is that the alternative was implementing both indices ourselves.
 Part of "the indices disagree" may be the metric disagreeing rather than the
@@ -1109,14 +1115,13 @@ a partition into $k$ groups does not capture. Read the silhouette as a
 within-representation comparison across $k$. Treat any cross-representation
 comparison with suspicion, and never give it an absolute meaning.
 
-We also owe you the error bar we promised. We did not compute one: every
-silhouette here is a single estimate from a single 10,000-document sample, so
-the third decimal is not a quantity anyone should act on, and the gap between
-MiniLM's "optimum" at $k=4$ (0.1042) and its neighbour at $k=3$ (0.1018) is not
-a gap we can defend. Five disjoint samples would give a standard deviation in an
-afternoon. Until they do, what survives is only the statement that every value
-in the table sits far below 0.2 — which happens to be the only part of the
-column the argument needs.
+We also owe you the error bar; we did not compute one. Every value was
+computed on the same fixed 10,000 documents. For sampling uncertainty, draw new
+subsamples and score **the same assignments**; for start/algorithm uncertainty,
+refit k-means with new seeds. Without separating the two sources of variance, do
+not pick $k$ on the gap between MiniLM's 0.1042 at $k=4$ and 0.1018 at $k=3$.
+Nor should the result be reduced to "below 0.2"; look at task-relevant examples
+and cluster stability.
 
 ### The elbow method deserves its reputation
 

@@ -1056,7 +1056,9 @@ aramadım"dan nasıl ayırt edeceğinizle ilgili.
 
 ### İndeksler aslında neyi ölçüyor
 
-Üç indeks de bir kümelemenin ne kadar "iyi" olduğunu tek bir sayıyla söylediğini iddia ediyor (silhouette ve CH'de yüksek, DB'de düşük değer iyidir). Bu iddiayı açıp bakalım: her biri gerçekte neyi ödüllendiriyor?
+Silhouette, Calinski-Harabasz ve Davies-Bouldin bir bölümlemenin farklı geometrik
+özelliklerini tek bir sayıyla özetler (silhouette ve CH'de yüksek, DB'de düşük
+değer iyidir); optimumlarının uyuşması gerekmez. Her biri neyi ödüllendiriyor?
 
 $$
 s(i) = \frac{b(i) - a(i)}{\max\{a(i),\, b(i)\}}
@@ -1067,19 +1069,20 @@ değeri, $a(i)$ ile $b(i)$'yi karşılaştırıyor: $a(i)$ noktanın kendi küme
 noktalara ortalama uzaklığı, $b(i)$ ise en yakın *diğer* kümedeki noktalara
 ortalama uzaklığı [@rousseeuw1987silhouettes]. $-1$ ile $1$ arasında değişiyor
 ve bir kümelemenin puanı, tüm noktalar üzerindeki ortalama. Sayıyı değiştiren
-ama neredeyse hiç raporlanmayan iki uygulama ayrıntısı var. Birincisi, hesap
-$O(n^2)$; bu yüzden 49.849 belgelik derlemde silhouette'i sabit, rastgele bir
-10.000'lik örneklem üzerinde hesapladık (seed 42). Bu da buradaki her
+ama neredeyse hiç raporlanmayan iki uygulama ayrıntısı var. Birincisi, ikili
+uzaklıklarla hesap tipik olarak $O(n^2)$; bu yüzden 49.849 belgelik derlemde
+silhouette'i sabit, rastgele bir 10.000'lik örneklem üzerinde hesapladık (seed
+42). Bu, aynı örneklem üzerinde $k$ karşılaştırmasını sağlıyor, ama her
 silhouette'i kendi hata payı olan bir kestirime dönüştürüyor. İkincisi,
-"uzaklık" baştan sona `metric="cosine"`; yani kümelemenin fiilen yapıldığı
-geometriyle aynı. Metriği ve örneklem büyüklüğü belirtilmemiş
+"uzaklık" baştan sona `metric="cosine"`; bu, k-means'in Öklit amaç
+fonksiyonuyla aynı geometri değil. Metriği ve örneklem büyüklüğü belirtilmemiş
 bir silhouette, yeniden üretilebilir bir sayı değil.
 
 ::: {#gloss-silhouette .column-margin .term-gloss}
-**silhouette** — her nokta için, kendi kümesine bir sonraki en yakın kümeye
-kıyasla ne kadar daha yakın olduğu; $[-1, 1]$ aralığına ölçeklenmiş hâli.
-0'a yakın olması noktanın bir sınırda oturduğu anlamına geliyor; derlemin
-tamamının 0'a yakın olması ise ortada sınır olmadığı anlamına geliyor.
+**silhouette** (siluet katsayısı) — bir noktanın kendi kümesindeki ortalama
+uzaklığını en yakın diğer kümedeki ortalama uzaklıkla karşılaştırır; $[-1, 1]$
+aralığında. Sıfıra yakın bir değer, kullanılan uzaklık ve bölümleme altında
+zayıf ayrım demektir; başka bir temsilde yapı olmadığını kanıtlamaz.
 [↩](#term-silhouette){.term-back}
 :::
 
@@ -1100,12 +1103,12 @@ $$
 $$
 
 Burada $s_i$, $i$ kümesinin içindeki ortalama yayılım; DB'de düşük değer daha
-iyi. Çiftler üzerinde bir maksimum olduğu için $k$ büyüyüp kümeler tek tek
-sıkılaştıkça iyileşme eğiliminde. Bu, CH'nin yanlılığının tam ayna görüntüsü;
-taramamızda ikisinin uyuşmamasının sebebi de bu. İkisi de ucuz, ikisi de nokta sayısında $O(n)$ ve —
-taramanın gösterdiği gibi — gerçek küme yapısı olmayan veride ikisi de $k$'ye
-göre neredeyse monoton. Bu da onların "optimum"unu, tesadüfen taradığınız
-aralığın bir yan ürünü hâline getiriyor.
+iyi. $k$ arttığında hem yayılımlar hem merkez uzaklıkları değişir; bu yüzden
+skorun yönü genel olarak garanti edilmez. Bizim taramamızda bazı temsillerde
+büyük $k$'ye doğru düşüyor ve CH'yle uyuşmuyor. İkisinin hesabı da nokta
+sayısına yaklaşık doğrusal (küme sayısına ve boyuta bağlı ek maliyetle); bu
+taramada ikisi de $k$'ye göre neredeyse monoton davrandığı için "optimum"ları
+taranan aralığa duyarlı.
 
 **Tarama tablosunun sakladığı bir çekince var ve bu kez esnettiğimiz kural
 kendi kuralımız.** `silhouette_score` bir `metric` argümanı alıyor ve bizimki
@@ -1115,8 +1118,11 @@ tanımlı ve scikit-learn ikisinin de kosinüs varyantını sunmuyor.
 $\ell_2$-normalleştirilmiş vektörlerde bu, *noktalar* için kulağa geldiği kadar
 zararlı değil — $d^2 = 2 - 2\cos$ ikisini birbirinin afin yeniden
 parametrelendirmesi yapıyor. Ama *merkezler* için zararsız değil: merkezler birim
-vektörlerin ortalaması ve kendileri birim vektör değil. Yani CH ile DB
-sütunlarını, kosinüsle yapılmış bir kümelemenin Öklit ölçümleri diye okuyun. Bu,
+vektörlerin ortalaması ve kendileri birim vektör değil. Bu taramada `KMeans`
+normalleştirilmiş girdilerde **Öklit** amaç fonksiyonunu en aza indirdi; CH ve DB
+bu atamalara Öklit temelli özetler veriyor, silhouette ise ayrıca kosinüsle
+hesaplandı. Üç indeksi tek metrikte hesaplanmış puanlar gibi karşılaştırmayın;
+istenirse Öklit silhouette'i bir duyarlılık deneyi olarak verilebilir. Bu,
 @sec-kumeleme-mulakat'ün sizi uyardığı uyuşmazlığın ta kendisi; tolere etmemizin
 gerçek sebebi de alternatifin iki indeksi kendimiz yazmak olması. "İndeksler uyuşmuyor"
 sonucunun bir kısmı, indekslerin değil metriklerin uyuşmaması olabilir.
@@ -1138,13 +1144,13 @@ tek bir temsil içinde $k$'ler arası bir karşılaştırma olarak okuyun. Temsi
 arası her karşılaştırmaya şüpheyle yaklaşın ve ona asla mutlak bir anlam
 yüklemeyin.
 
-Silhouette'lerin hata payını da vermemiz gerekirdi. Hesaplamadık: buradaki her
-silhouette tek bir 10.000 belgelik örneklemden gelen tek bir kestirim; yani
-üçüncü ondalık, kimsenin ona göre hareket etmesi gereken bir nicelik değil ve
-MiniLM'in $k=4$'teki "optimum"u (0,1042) ile komşusu $k=3$ (0,1018) arasındaki
-fark savunabileceğimiz bir fark değil. Beş ayrık örneklem bir öğleden sonrada bir
-standart sapma verirdi. Verene kadar ayakta kalan tek şey, tablodaki her değerin
-0,2'nin epey altında olduğu — ki argümanın ihtiyaç duyduğu tek kısım da o.
+Silhouette'lerin hata payını da vermemiz gerekirdi; hesaplamadık. Bütün değerler
+aynı sabit 10.000 belge üzerinde hesaplandı. Örneklem belirsizliği için yeni
+altörneklemler çekip **aynı atamaları** puanlayın; başlangıç/algoritma
+belirsizliği için k-means'i yeni seed'lerle yeniden eğitin. İki varyans kaynağını
+ayırmadan MiniLM'in $k=4$'teki 0,1042'si ile $k=3$'teki 0,1018'i arasındaki farka
+göre $k$ seçmeyin. Sonuçları yalnızca "0,2'nin altında" eşiğine de indirgemeyin;
+görevle ilgili örnekleri ve küme kararlılığını inceleyin.
 
 ### Dirsek yöntemi kötü ününü hak ediyor
 
