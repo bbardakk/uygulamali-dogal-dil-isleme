@@ -1786,10 +1786,7 @@ which direction, or by how much, the crossover would move.
 
 ### The run that scored 93.75% by being completely broken
 
-Before any results, the failure that nearly got published, because it is the
-most useful thing in this section.
-
-The first pass of this matrix scored `qwen3.5:9b` at 93.75% accuracy and 48.39
+Before any results, an evaluation failure. The first pass of this matrix scored `qwen3.5:9b` at 93.75% accuracy and 48.39
 macro-F1 over the 400 documents it got through before it was killed. Read those
 two numbers against the table above: 93.70 and 48.37. The model was predicting
 "satisfied" on every single document, and the score it earned for that is the
@@ -1808,10 +1805,11 @@ Here is one archived record from that run, verbatim, and all 400 look like it:
 
 `qwen3.5` is a reasoning model. `ollama` returns its chain of thought in a
 separate `thinking` field, and the `response` field stays empty until the
-thinking finishes. With `num_predict` capped at 24 tokens the budget was spent
-entirely inside the reasoning block, `response` was never written, every answer
-failed to parse, and [every document fell through to the fallback
-label]{.hl} — which is the majority class, which is why the result looked
+thinking finishes. All 400 answers failed to parse and [every document fell
+through to the fallback label]{.hl}. Later queries showed that with
+`num_predict` capped at 24 tokens the budget may have been used up inside the
+reasoning block; but since the archive holds no `thinking` field or stop reason,
+we cannot assign a definite cause to every answer in that run — which is the majority class, which is why the result looked
 plausible instead of looking like a crash.
 
 Note what the archived record does *not* contain: any sign of the thinking
@@ -1826,8 +1824,11 @@ this matrix would have carried the same defect.
 
 Three changes fixed it, and only the first is about the bug:
 
-1. Send `think: false`, with a fallback that retries without the field for models
-   that reject it. Parse rate went from 0.0% to 100.0%, and the output on
+1. Send `think: false` to models that support it and check the reply's
+   `response`, `thinking` and `done_reason` fields; the flag's effect depends on
+   model support and server version. For models that reject the field, retrying
+   without it is not enough on its own; smoke-test for a parseable final answer
+   and output length. Parse rate went from 0.0% to 100.0%, and the output on
    `llama3.2:3b` — which has no thinking mode — was byte-identical, confirming
    the flag is a no-op where it should be.
 2. Abort a run whose first 40 answers parse below 50%, rather than spending nine
@@ -1841,8 +1842,10 @@ to this incident: one is a bug fix, two are sentries. The general rule is
 simpler and it is the one to carry away — **an unparseable answer is not a
 prediction.** Never let it fall through to a label: not to the majority class,
 not to a random class, not to the previous document's answer. Emit a third
-outcome, `unparseable`, and carry it into every metric you report: accuracy over
-the documents that parsed, and the parse rate, side by side. A model that
+outcome, `unparseable`, and in every run report the parse rate, classification
+performance on the parsed documents only, and an end-to-end success rate that
+counts failed calls as errors over all documents, together; they answer
+different product questions. A model that
 answers 60% of the time at 95% accuracy is a different product from one that
 answers every time at 57%. Score both over all documents with non-answers
 counted as wrong and they look identical, 57% each; give the first a
