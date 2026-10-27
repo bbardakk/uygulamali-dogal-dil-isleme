@@ -2517,14 +2517,20 @@ at 57.38% and 72.32% precision.
 
 At these two operating points the aggregate delta is 7.35 macro-F1 points —
 85.02 for BERTurk against 77.66 for the re-thresholded vectoriser — and that
-single number hides a trade. The only way to see the trade is to cross-tabulate
-the two models document by document.
+single number hides a trade. Nor is it a pure architecture difference: tf-idf
+was trained on the 32,000-document `fit` slice and re-thresholded on `cal`,
+while BERTurk was trained on all 40,000 and is read at 0.5. BERTurk fine-tuned
+on the same 32,000 documents scores 84.45 (@sec-classification-calibration), so
+roughly 0.6 points of the gap come from the label count; the rest is model
+family and threshold choice together, and this comparison cannot separate the
+two. The only way to see the trade is to cross-tabulate the two models document
+by document.
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">Replacing a model is a trade, not an upgrade</div>
 <svg viewBox="0 0 764 300" style="max-width:744px" role="img"
-     aria-label="A two-by-two grid cross-tabulating which of the two models is correct on each of the 10,000 test documents. Columns are BERTurk right and BERTurk wrong; rows are tf-idf right and tf-idf wrong. Top left, both right: 9,315 documents, 93.15 percent, of which 330 are complaints. Top right, only tf-idf right: 149 documents, 1.49 percent, of which 43 are complaints; these are the documents lost by switching. Bottom left, only BERTurk right: 332 documents, 3.32 percent, of which 122 are complaints; these are the documents gained. Bottom right, both wrong: 204 documents, 2.04 percent, of which 137 are complaints; neither model can reach these. A footer records that the net gain is 332 minus 149 equals 183 documents, which is 1.83 accuracy points and 7.35 macro-F1 points, that the 137 complaints in the both-wrong cell are 21.7 percent of every complaint in the test set, and that tf-idf is read at a threshold of 0.166 on the complaint side while the 40,000-label BERTurk model is read at 0.5.">
+     aria-label="A two-by-two grid cross-tabulating which of the two models is correct on each of the 10,000 test documents. Columns are BERTurk right and BERTurk wrong; rows are tf-idf right and tf-idf wrong. Top left, both right: 9,315 documents, 93.15 percent, of which 330 are complaints. Top right, only tf-idf right: 149 documents, 1.49 percent, of which 43 are complaints; these are the documents lost by switching. Bottom left, only BERTurk right: 332 documents, 3.32 percent, of which 122 are complaints; these are the documents gained. Bottom right, both wrong: 204 documents, 2.04 percent, of which 137 are complaints; these are the errors the two models share. A footer records that the net gain is 332 minus 149 equals 183 documents, which is 1.83 accuracy points while the macro-F1 gap is 7.35, that the 137 complaints in the both-wrong cell are 21.7 percent of every complaint in the test set, and that the 32,000-label tf-idf is read at a threshold of 0.166 on the complaint side while the 40,000-label BERTurk model is read at 0.5.">
   <text x="284" y="22" class="t-sm t-b t-mid">BERTurk right</text>
   <text x="592" y="22" class="t-sm t-b t-mid">BERTurk wrong</text>
 
@@ -2548,20 +2554,23 @@ the two models document by document.
   <text x="284" y="206" class="t-xs t-mid t-muted">3.32% &#183; 122 of them complaints</text>
 
   <rect x="448" y="132" width="296" height="86" rx="6" class="box-warm"/>
-  <text x="592" y="164" class="t-mid t-b t-warm">neither model reaches</text>
+  <text x="592" y="164" class="t-mid t-b t-warm">both wrong</text>
   <text x="592" y="188" class="t-mid t-b t-mono t-warm">204</text>
   <text x="592" y="206" class="t-xs t-mid t-muted">2.04% &#183; 137 of them complaints</text>
 
   <line x1="136" y1="238" x2="744" y2="238" class="ln-thin"/>
-  <text x="136" y="258" class="t-sm">net <tspan class="t-b t-mono">332 &#8722; 149 = 183</tspan> documents &#8212; 1.83 accuracy points, 7.35 macro-F1 points</text>
+  <text x="136" y="258" class="t-sm">net <tspan class="t-b t-mono">332 &#8722; 149 = 183</tspan> documents = 1.83 accuracy points; macro-F1 gap 7.35</text>
   <text x="136" y="278" class="t-sm t-muted">the 137 complaints in the bottom-right cell are <tspan class="t-b">21.7% of every complaint on the test set</tspan></text>
-  <text x="136" y="294" class="t-xs t-muted">tf-idf read at t = 0.166 on the complaint side; BERTurk (40,000 labels) read at 0.5</text>
+  <text x="136" y="294" class="t-xs t-muted">tf-idf (32,000 labels) read at t = 0.166 on the complaint side; BERTurk (40,000 labels) read at 0.5</text>
 </svg>
 ```
 ::: {.fig-cap}
 The 7.35-point headline is a net figure. Switching models fixes 332 documents
 and breaks 149 — a real gain, but 45% of the gross gain is handed back
-(149/332), leaving a net 183. If those 149
+(149/332), leaving a net 183 documents, or 1.83 accuracy points. The 7.35
+macro-F1 points are not that count: they come from the precision and recall of
+each class, and a net 79 documents gained in the small complaint class
+(122 − 43) moves that class's F1 far more than it moves accuracy. If those 149
 happen to be your highest-value cases, the aggregate number is lying to you.
 :::
 ::::
@@ -2575,12 +2584,15 @@ improvement is lying, but nobody who reports it is telling you that they broke
 them were the ones that queue was tuned around, the "upgrade" is a regression
 for that team.
 
-**There is a hard floor, and it is high.** 204 documents defeat both models, and
-137 of them are complaints — [21.7% of every complaint in the test set is missed
-by a sparse linear model and a fine-tuned transformer alike]{.hl}. That is not a
-capacity problem you fix with a bigger encoder. It is either genuinely
-ambiguous text or a broken label, and the next two subsections argue it is
-mostly the second.
+**The shared errors are many, and concentrated in complaints.** 204 documents
+defeat both models, and 137 of them are complaints — [21.7% of every complaint
+in the test set is missed by this sparse linear model and this fine-tuned
+transformer alike]{.hl}. That is not a floor, only the count of errors these two
+models share: the table does not say whether a bigger or different model would
+fix some of them. How many of those documents are genuinely ambiguous text and
+how many carry a broken label can only be measured by blind re-labelling; the
+next two subsections show broken labels turning up often among the examples we
+read, but they do not give a rate.
 
 **The two models fail on different things.** 685 documents are missed by at
 least one of the two models, and only 204 of those are missed by both; on the
