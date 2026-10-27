@@ -530,9 +530,11 @@ were never compared with each other.
 
 ### The count depends on the threshold, and not gently
 
-One number decides how much you delete, and it is a number nobody can hand
-you: at what Jaccard similarity are two reviews "the same review"? Move it and
-watch the answer move with it.
+How many documents you **flag** as near-duplicates depends on the Jaccard
+threshold, on LSH's candidate recall and on how connected pairs are grouped: at
+what Jaccard similarity are two reviews "the same review"? Move the threshold
+and watch the answer move with it. For a deletion decision, check the product,
+source and event context separately.
 
 | Jaccard threshold | groups | redundant docs | share of corpus | largest group | time |
 |--:|--:|--:|--:|--:|--:|
@@ -561,18 +563,19 @@ group 3   "herkese tavsiye ederim"
           "herkese tavsiye ederim :)"
 ```
 
-Group 1 is boilerplate and should go. Group 2 is three *different* people
-saying a generic thing about three different products, and deleting two of them
-throws away real data. [At a low enough threshold, "near-duplicate" and "short
+Group 1 looks like boilerplate. The short, generic phrases in group 2 may come
+from different experiences; from the text alone we cannot tell whether they are
+copies of one review or belong to different products. Make the deletion
+decision by checking product and user IDs. [At a low enough threshold, "near-duplicate" and "short
 and generic" become the same category]{.hl}, which is why the largest group
 jumps to 61 at $J \ge 0.7$.
 
 ::: {.callout-tip appearance="simple"}
-**A defensible default.** Deduplicate at $J \ge 0.8$, then *read* the largest
-five groups before accepting the result. If the largest group is short generic
-text rather than boilerplate, raise the threshold. This chapter kept
-$J \ge 0.8$, leaving **49,849** documents, and every number after this point is
-computed on that set.
+**Check the threshold against samples.** $J \ge 0.8$ is a starting candidate for
+this corpus. Read random samples from large and small groups, check the "same
+review / separate event" decision, and report the false-merge and miss rates.
+This chapter's choice removed 151 redundant documents, leaving **49,849**, and
+every number after this point is computed on that set.
 :::
 
 @sec-pretraining-data treats deduplication as a measured quality lever for
@@ -581,10 +584,12 @@ pretraining corpora, where the stakes are much higher and where
 that the most aggressive deduplication made the data *worse*. The same tension
 appears here in miniature at a corpus five orders of magnitude smaller.
 
-SimHash [@charikar2002similarity] solves the same problem with a different
-sketch: it produces one bit-vector per document and measures Hamming distance,
-which makes it cheaper to store and a natural fit when you need to check a new
-document against a large existing index. @manku2007detecting is the account of
+SimHash [@charikar2002similarity] represents a text with a fixed-length bit
+signature and supports candidate search by Hamming distance; MinHash here
+approximates the Jaccard similarity of character-5-gram sets, so the two
+approximate different similarities. Advantages in memory, insertion and recall
+have to be measured for the data and index settings; documents arriving as a
+stream do not by themselves make SimHash necessary. @manku2007detecting is the account of
 running it at web scale. For a one-off corpus audit, MinHash with LSH is easier
 to reason about and `datasketch` implements it in a dozen lines.
 
