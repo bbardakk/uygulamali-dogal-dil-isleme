@@ -2589,59 +2589,56 @@ documents. Stability is one basis for interpreting topics, not the only one.
 
 ## What to remember {#sec-clustering-summary}
 
-- **Clustering is what you do when you cannot read the corpus and do not have
-  labels.** It is not a weaker form of classification; it answers a different
-  question, and the metrics that judge classifiers judge it badly.
-- **Similarity is a property of the geometry, not of the documents.** A cosine
-  of 0.98 means nothing until you know what two random documents score. In our
-  four spaces the random-pair mean ranged from 0.018 to 0.855, so the same
-  number means "near-duplicate" in one space and "unremarkable" in another.
-  Always compute the background.
-- **Deduplicate before you do anything else.** It is cheap, it is the highest
-  return per line of code in the chapter, and the count you get is a diagnostic
-  of your collection pipeline. At $J \geq 0.8$ we removed 151 documents in 27
-  seconds without comparing all 1.25 billion pairs.
-- **k-means makes four assumptions on your behalf** — spherical clusters,
-  similar extent, no outliers, and a known $k$ — and on text corpora it is
-  numbers 2 and 3 that hurt, not the one everybody worries about.
-- **A flat silhouette curve is a finding.** Ours never exceeded 0.1042 across
-  42 runs, and HDBSCAN independently called 53–100% of the same corpus noise
-  depending on `min_cluster_size`, never returning more than three clusters at
-  any setting — and even at its lowest noise rate (53–55% on LSA and MiniLM) it
-  put the rest in one lump holding roughly 45% of the corpus. Two methods with different assumptions agreeing
-  that there are no boundaries is stronger evidence than either alone.
-- **Do not use the elbow method.** A monotone curve is not a promise of a
-  usable bend, where you read one depends on your axis limits, and
-  @schubert2023stop sets out the case at length.
-- **Short documents break LDA.** On 19-word reviews it was 133× slower than NMF
-  and less coherent. If you have inherited an LDA pipeline on short text, run
-  NMF beside it before defending the incumbent.
-- **Cluster-then-describe is the modern default.** c-TF-IDF costs nothing once
-  you have clusters, it inherits all of the embedding's semantics, and it
-  inherits all of the clustering's mistakes.
-- **Topic coherence can be maximised by garbage.** Our highest-scoring topic in
-  the whole chapter, at +0.5075, was ten tokenizer fragments. Removing it moved
-  its method from first place to last. That an automated metric can diverge
-  from human judgement was shown by @chang2009reading for likelihood and by
-  @hoyle2021automated for coherence; ours is an extreme case.
-- **Unsupervised methods find what is actually in your data, including the parts
-  you did not put there.** k-means assembled a cluster that was 94.7% affected
-  by a Unicode defect against a 6.0% background, having been told nothing about
-  Unicode. @sec-bake-off knew about that defect because a Turkish speaker did;
-  the clustering found it without one.
-- **`str.lower()` is not Turkish-aware, and NFKC will not save you.**
-  `"TAVSİYE".lower()` tokenises to `['tavsi', 'ye']`. Pin the cases you care
-  about — `assert tokenize("TAVSİYE") == tokenize("tavsiye")` — rather than
-  asserting a general round-trip. `tokenize(s.upper()) == tokenize(s)` looks
-  tidier and fails on correct code, because Python's `str.upper()` is not
-  Turkish-aware either: it sends `i` to `I` instead of `İ`, so `iyi` comes back
-  as `ıyı` no matter how good your lowercaser is.
-- **Measure the decision, not the partition.** ARI could not distinguish our
-  three representations; the triage curve ranked them cleanly and in the
-  expected order. Under an ordering chosen from the full set of gold labels,
-  reading 13.3% of the corpus found 56.0% of its complaints — a 4.2× return on a
-  fixed budget from a clustering that scored zero on every external index. A
-  policy you can deploy still needs that ordering chosen on one sample and
-  measured on another.
-- **"The clustering failed" is almost always premature.** Write down the
-  decision it was supposed to support, measure that, and only then decide.
+- **Clustering helps find structure and candidates for inspection in unlabelled
+  data.** It can be used when labels exist too, for data quality and unexpected
+  patterns; it does not measure the same target as classification.
+- **A cosine depends on the representation and the corpus.** The same score is
+  read against the model's random-pair distribution and verified similar and
+  dissimilar pairs. In this chapter the random-pair mean ranged from 0.018 to
+  0.855 across four spaces.
+- **Detect near-duplicates early; choose deletion by purpose.** On this corpus
+  the $J \geq 0.8$ LSH pass found **at least** 151 redundant documents in 27
+  seconds. Candidate generation can miss some genuine pairs; where repeats carry
+  independent event value, keep their counts.
+- **k-means imposes or prefers four decisions:** $k$ is given in advance, every
+  point is assigned, squared Euclidean distance to centres is used, and large
+  spread is penalised heavily. So it may separate some shapes and densities
+  poorly; groups being truly spherical or equally sized is not a mathematical
+  precondition.
+- **Low silhouette and high noise show weak separation under these settings.**
+  Across 42 k-means runs the best silhouette was 0.1042; under the HDBSCAN
+  settings tried, noise was 53–100% and no setting selected more than three
+  clusters. These results do not prove the data hold no useful structure; test
+  stability under other preprocessing, metrics and parameters.
+- **Do not leave the choice of $k$ to an elbow plot.** Test candidates by
+  stability, sample documents and a task measure [@schubert2023stop].
+- **On short text, compare LDA, NMF and describing clusters.** In this run
+  scikit-learn's default LDA was slower than NMF and lower on NPMI; with other
+  settings and data the order can change. c-TF-IDF adds a usually small
+  description cost on existing clusters; topic quality depends on the clustering
+  and the tokenizer.
+- **High topic coherence does not guarantee semantic quality.** The topic made of
+  U+0307-linked fragments scored +0.5075 NPMI; dropping it left LSA's nine-topic
+  mean at +0.0925. For a new ranking across methods, apply the same filtering
+  rule to each [@chang2009reading; @hoyle2021automated].
+- **Clustering made a data defect investigable.** In one LSA cluster the share of
+  documents containing U+0307 was 94.7%, against 6.0% outside it (8.39% across
+  the corpus). We identified the cause by reading the top terms and documents;
+  @sec-bake-off had already documented the defect.
+- **`str.lower()` is not Turkish-aware, and Unicode normalisation does not
+  replace that.** `"TAVSİYE".lower()` tokenises to `['tavsi', 'ye']`. Pin the
+  cases you care about — `assert tokenize("TAVSİYE") == tokenize("tavsiye")` —
+  rather than asserting a general round-trip. `tokenize(s.upper()) ==
+  tokenize(s)` can fail on correct code, because Python's `str.upper()` is not
+  Turkish-aware either: it sends `i` to `I` instead of `İ`.
+- **Measure the partition against the business goal too.** In this run ARI was
+  near zero; the first 13.25% of E5 clusters sorted after the fact with all the
+  reference labels held 56.03% of the negatives. That is an oracle description,
+  not a production return; build a usable ordering on a development sample and
+  measure it on a disjoint test at the target reading budget.
+- **Judge a clustering by its purpose.** Not recovering the target labels does
+  not mean it is useless for data quality or triage. Write the decision to
+  support and the acceptance bar first; if the relevant measure shows no
+  benefit, say so plainly. When the classes are known and you can afford to
+  label, supervised classification is a separate option; the next chapter,
+  @sec-classification, picks up from there.
