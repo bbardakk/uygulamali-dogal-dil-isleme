@@ -1187,11 +1187,11 @@ default fix either.
 
 ## Is that number a probability? {#sec-classification-calibration}
 
-Moving the threshold works. But it raises a question the previous section
-quietly skipped: 0.166 came from a sweep on held-out data. If you wanted to
-*derive* a threshold instead — from a cost matrix, say — you would need the
-model's output to mean something. So: when the classifier says a review is 0.834
-likely to be satisfied, is that a probability?
+The 0.166 threshold was chosen by a sweep on held-out data. Deriving a threshold
+directly from a cost matrix instead needs the model's score to match the real
+complaint frequency, that is, to be a calibrated probability: when the
+classifier says a review is 0.834 likely to be satisfied, is that a
+probability?
 
 Everything here is fitted on the 8,000-document `cal` slice, which no model in
 this section was trained on, and scored on `test`. That separation is the whole
@@ -1235,16 +1235,16 @@ BERTurk, class-weighted — raw       2.53  49.84   0.0318    0.1442    0.933
   — isotonic                        0.56  45.84   0.0265    0.0984    0.936
 ```
 
-**Every ECE in that table carries an estimator floor, and several of the
-differences are below it.** ECE compares an observed frequency against a mean
-prediction inside each bin, and an observed frequency is a binomial draw: even
-with perfect calibration the two differ by chance. With our bin occupancies that
-noise alone produces an expected $|\text{ECE}|$ of about **half a point**. So
-Platt's 0.94 against isotonic's 0.69 — a gap of 0.25 — is not a measurement of a
-difference between the two methods, and neither is BERTurk's 0.56, which is not
-distinguishable from perfect. What *does* survive the floor is the raw-versus-
-calibrated gap (3.96 → 0.9) and the class-weighting penalty (3.96 → 14.18), both
-several times the floor. Estimating ECE without bias is its own small
+**ECE can be biased by finite samples and binning.** The observed frequency in
+each bin is a binomial draw, so even with perfect calibration it differs from
+the mean prediction by chance. A rough calculation with our bin occupancies
+suggests that noise alone puts the expected ECE at around half a point, but we
+did not report a simulation or paired bootstrap interval for that floor. So
+reading the 0.25 gap between Platt's 0.94 and isotonic's 0.69, or BERTurk's
+0.56, needs a simulation based on the 15 bins' occupancies or a bootstrap
+interval; the table alone does not show whether those differences are real.
+The raw-versus-calibrated gap (3.96 → 0.9) and the effect of class weighting
+(3.96 → 14.18) are much larger. Estimating ECE without bias is its own small
 literature [@kumar2019verified; @roelofs2022mitigating]; the practical rule is
 to distrust any calibration difference smaller than about a point unless you
 have bootstrapped it.
@@ -1399,25 +1399,27 @@ of every probability, and it is what the next few paragraphs are about.
 The true base rate on test is 0.9368. Five findings, in order of how surprising
 they are.
 
-**Class weighting destroys calibration.** ECE goes from 3.96 to 14.18, a 3.6×
-increase, and the model's mean predicted probability drops to 0.795 against a
-true rate of 0.9368. The reweighted model is *better* by macro-F1 (76.09 vs
-58.24) and its probabilities are far worse. [If your model's output is going to
-be shown to a human, or multiplied by a cost, or thresholded by a rule somebody
-else writes, class weighting silently breaks all three.]{.hl} This is
-van den Goorbergh et al.'s result, reproduced on text.
+**In this experiment class weighting broke the calibration of the raw
+probabilities.** ECE goes from 3.96 to 14.18, and the model's mean predicted
+probability drops to 0.795 against a true rate of 0.9368. The reweighted model
+is *better* by macro-F1 (76.09 vs 58.24) and its probabilities are far worse.
+[Do not use these scores directly to multiply by a decision cost or to show
+users as probabilities; calibrate them on held-out data.]{.hl} This is
+consistent with van den Goorbergh et al.'s finding on clinical models.
 
 **Temperature scaling gets halfway at best**, and that is structural rather than
 bad luck. Temperature has one parameter and it preserves the ranking and the
 argmax; in a binary problem it can only push probabilities toward 0.5 or toward
 the extremes, symmetrically about the 0.5 cut. What is wrong with the
 class-weighted model is a *shifted prior* — it thinks complaints are commoner
-than they are — and that needs every logit moved by the same amount, not
-stretched. Temperature can move the mean only as a side effect of sharpening:
+than they are. In an ideal prior-shift scenario (a well-specified model,
+unchanged class-conditional distributions) moving every logit by the same
+amount, rather than stretching it, could be enough. Temperature can move the mean only as a side effect of sharpening:
 here it lifts the mean prediction from 0.795 to 0.859 and ECE falls from 14.18
 to 7.80, and then it has no parameter left. Platt scaling has two parameters, a slope and an intercept
-[@platt1999probabilistic], and the intercept is exactly the knob that fixes a
-prior shift. It takes ECE from 14.18 to 0.93.
+[@platt1999probabilistic]; the intercept is the knob that corresponds to a prior
+shift, and in practice learning both slope and intercept on `cal` corrects the
+distortion more flexibly. It takes ECE from 14.18 to 0.93.
 
 ::: {.column-margin}
 Guo et al. popularised temperature scaling and found it to be a strong baseline
@@ -1427,7 +1429,7 @@ is the failure temperature is designed for. Reaching for temperature scaling
 here is reaching for a one-parameter fix to a two-parameter problem.
 :::
 
-**ECE and MCE disagree, and neither is enough on its own.**
+**ECE and MCE summarise different things, and neither is enough on its own.**
 [Isotonic regression](#gloss-isotonic-regression){#term-isotonic-regression .term-ref}
 on the class-weighted model gets the best ECE of its group (0.88) and the
 *worst* MCE in the table (72.20). ECE is an $n$-weighted average, so a single
@@ -1435,9 +1437,9 @@ sparse bin with a large gap barely moves it. MCE ignores bin size, so a single
 sparse bin decides it — and here that bin holds **one document**, which the
 isotonic map put at 0.278 and which happened to be satisfied. The next-worst
 gap for the same model is also a one-document bin (46.2 points); leaving
-single-document bins aside, it is 9.0 points, in a bin of 40. So 72.20 describes one
-review, not the tail: the binomial noise that puts a floor under ECE puts a far
-higher one under MCE. If your decisions live in the tail — and cost-sensitive
+single-document bins aside, it is 9.0 points, in a bin of 40. ECE gives a small
+bin little weight while MCE ignores the sample count, so read the two values
+together with the bin occupancies. If your decisions live in the tail — and cost-sensitive
 decisions usually do — the average is the wrong summary, and the maximum is a
 noisy one. Look at the reliability diagram *with its bin counts*, which is what
 the dot sizes in the widget above are for.
@@ -1453,10 +1455,10 @@ cannot, which is why it wins with enough held-out data and overfits without it.
 "isotonic fitted on TRAIN" is the mistake this section exists to warn about: we
 fitted the isotonic map on the same 32,000 documents the classifier was trained
 on. It scores ECE 2.39. That is 1.7 points worse than fitting it properly on held-out
-data (0.69) — and still *better than doing nothing* (3.96). [The leak does not
-produce an obviously wrong number. It produces a plausible number that is
-silently and clearly worse than the one you could have had]{.hl}, which is why
-it survives code review.
+data (0.69) — and still *better than doing nothing* (3.96). This run shows that
+calibrating on training data can hurt generalisation; [the number it produces is
+not obviously wrong but plausible]{.hl}, and it can survive code review. For a
+reliable estimate use separate calibration data or cross-fitting.
 
 **The transformer is better calibrated on average and worse in the tail.**
 BERTurk's raw ECE is 2.53 against the linear model's 3.96, its Brier score is
@@ -1471,9 +1473,11 @@ Calibrating fixes the average (isotonic takes ECE to 0.56 — indistinguishable
 from perfect at this bin structure, and with the best Brier and log loss in the
 chapter, which are the statistics that *are* sharp here). Its MCE stays at
 45.84, but after calibration that figure comes from a bin holding a single
-document, so it says little. The raw model's tail is the real finding: its
-three worst bins, holding 11, 13 and 20 documents, are between 44.7 and 49.8
-points off.
+document, so it says little. The raw model's three worst bins, holding 11, 13
+and 20 documents, are between 44.7 and 49.8 points off; but do not settle the
+tail behaviour without confidence intervals for those bins and accounting for
+choosing among many bins. For costly decisions, check calibration separately in
+the relevant probability range.
 
 ::: {.column-margin}
 This BERTurk was fine-tuned on the 32,000-document `fit` slice, not the 40,000
