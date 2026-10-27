@@ -2267,72 +2267,55 @@ Be wary of pages that list "the questions company X asks" without a
 source; attributing a question to a company takes a source you can check.
 :::
 
-1. **How do you choose the number of clusters?** The answer interviewers are
-   listening for begins by refusing the premise. Internal indices disagree —
-   ours put the optimum at 50, 2 and 50 on one representation and 2, 2 and 4 on
-   another — and in two of three cases the "optimum" was a 1–7% wobble on a flat
-   line. Say what you would do instead: cluster at three or four values of $k$,
-   read 20 documents per cluster, and keep the $k$ whose clusters you can each
-   describe in one line. Then mention the elbow method only to say you do not
-   use it, and why — optimal inertia falls monotonically by construction, which
-   guarantees nothing about a usable bend, and where you read one depends on your
-   axis limits [@schubert2023stop].
+1. **How do you choose the number of clusters?** Define the purpose, the number
+   of groups people can act on, and an acceptance criterion. At a few values of
+   $k$, look at the internal indices, cluster sizes, sample documents and
+   stability across starts. Our internal indices disagreed — 50, 2 and 50 on one
+   representation and 2, 2 and 4 on another. An elbow plot does not choose on
+   its own; if there is a clear candidate, confirm it with a task measure
+   [@schubert2023stop].
 
-2. **k-means or HDBSCAN?** k-means assumes spherical clusters of similar extent,
-   no outliers, and a known $k$; on text it is assumptions 2 and 3 that hurt, not
-   the one everybody names. HDBSCAN drops all four and adds a noise class, which
-   is the right shape for a corpus where most documents belong to nothing in
-   particular. The catch is that it can decline to answer, and on this corpus it
-   did: 53–100% noise depending on `min_cluster_size`, never more than three
-   clusters at any setting, and even at its lowest noise rate (53–55% on LSA and
-   MiniLM) it put nearly all of the rest in a single lump holding 45–47% of
-   everything. A strong answer says "run both,
-   because they disagree in informative ways" — two methods with different
-   assumptions both reporting no structure is much stronger evidence than either
-   alone.
+2. **k-means or HDBSCAN?** k-means needs $k$ in advance and assigns every point;
+   density-based HDBSCAN can leave some points as noise. They prefer different
+   structures, but HDBSCAN too is sensitive to `min_samples`, the metric and the
+   selection settings. The 53–100% noise in this experiment holds only for the
+   conditions tried: no setting selected more than three clusters, and even at
+   the lowest noise (53–55% on LSA and MiniLM) nearly all of the rest sat in one
+   lump. Compare the methods by cluster stability and business value; where they
+   disagree is informative too.
 
-3. **Why cosine and not Euclidean on text?** Because raw length carries document
-   length rather than topic, and you almost never want to cluster by length. The
-   part worth knowing beyond that: on $\ell_2$-normalised vectors the two are
-   monotonically related, $d^2 = 2 - 2\cos$, so they induce the same nearest
-   neighbours — but *not* the same k-means, because the arithmetic mean of unit
-   vectors is not a unit vector, so from the second iteration the two procedures
-   diverge. The practical rule is to normalise, then keep the metric consistent
-   between the algorithm and every score you report. A silhouette computed with
-   Euclidean distance on a clustering fitted with cosine is not measuring your
-   clustering.
+3. **Why cosine on text?** Cosine can help when you want to reduce the effect of
+   length. For unit **pairs of points** $d^2 = 2 - 2\cos$ holds, so they give
+   the same nearest neighbours; but Lloyd's centres are not unit-norm, so
+   Euclidean k-means and spherical k-means (which re-normalises the centres) are
+   not the same procedure. In this experiment k-means was Euclidean, the
+   silhouette cosine, CH/DB Euclidean; report the metric with the result.
 
-4. **Find the near-duplicates in a billion documents.** Shingle, MinHash, band,
-   bucket, verify — and then say what the approximation actually costs, which is
-   where most answers stop short. LSH produces no false positives that survive
-   exact verification, but it does produce false negatives: with 128 hashes in 9
-   bands of 13 at a 0.8 threshold, a pair at $J = 0.9$ is examined with
-   probability 0.93, one at $J = 0.8$ with probability 0.40, and one at $J = 0.7$
-   with probability 0.08. That is the deliberate design point, not a defect, and
-   it is why duplicate counts are reported as lower bounds. Mention SimHash
-   [@charikar2002similarity] as the alternative when you need to check new
-   documents against a standing index rather than audit a fixed corpus.
+4. **Find the near-duplicates in a billion documents.** Character shingles →
+   MinHash → LSH bands/index → exact Jaccard verification. The final filter
+   removes false-positive candidates; LSH can miss pairs above the threshold:
+   with 128 hashes in 9 bands of 13 at a 0.8 threshold, a pair at $J = 0.9$ is
+   examined with probability 0.93, one at $J = 0.8$ with 0.40, and one at
+   $J = 0.7$ with 0.08, which is why duplicate counts are lower bounds. At a
+   billion documents, measure index memory, insert/query time, candidate counts
+   and recall on labelled pairs. For streaming data SimHash
+   [@charikar2002similarity] is a separate candidate; compare its fit on a
+   sample.
 
-5. **How do you evaluate a clustering when you have no labels?** Start with the
-   internal indices and their limits, then get to the real answer: evaluate the
-   decision, not the partition. Sample and read; check that a human can name each
-   cluster; and where a downstream use exists, measure it directly. Our own
-   numbers are the argument — ARI could not separate three representations, all
-   ≈ 0, while lift in the worst cluster ranked them 1.67× / 2.79× / 4.23× from
-   the identical assignments. If you have any labelled subset at all, however
-   small, it buys you more than every internal index combined.
+5. **How do you evaluate a clustering when you have no labels?** Use internal
+   indices, stability and samples a person reads, together. If there is a
+   business goal, learn a candidate ordering on a small labelled development
+   sample suited to it and measure lift and recall on a disjoint test. This
+   chapter's 1.67× / 2.79× / 4.23× are descriptive results chosen with all the
+   labels, and a small sample's intervals can be wide.
 
-6. **LDA, or something newer?** State the assumption that decides it: LDA is a
-   bag-of-words mixture model that needs enough words per document to estimate a
-   mixture from. On our 19-word median reviews it was **133× slower than NMF and
-   less coherent** (+0.0737 against +0.1183). For short text, NMF on tf-idf is
-   the better classical default, and the modern default is cluster-then-describe
-   — embed, cluster, and label with c-TF-IDF [@grootendorst2022bertopic], which
-   costs nothing once the clustering exists. The trade to name out loud: c-TF-IDF
-   inherits all of the embedding's semantics and all of the clustering's
-   mistakes, and it is a labelling procedure rather than a topic model. LDA is
-   still the right answer when documents are long and you genuinely need a
-   per-document mixture rather than an assignment.
+6. **LDA, NMF, or topic names on top of clusters?** LDA gives a per-document
+   probability mixture; NMF gives matrix factors, and c-TF-IDF word scores for
+   existing clusters [@grootendorst2022bertopic]. In this run, on reviews with a
+   19-word median, scikit-learn's default LDA was 133× slower than NMF and lower
+   on NPMI (+0.0737 against +0.1183); that is not a general ranking. Choose with
+   short text, the need for per-document mixtures, whole-pipeline cost and
+   human-judged topic quality in view.
 
 ## The 2026 toolbox {#sec-clustering-tools}
 
