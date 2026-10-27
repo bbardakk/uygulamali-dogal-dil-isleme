@@ -2265,43 +2265,49 @@ later number should be read.
 ## What to remember {#sec-sequence-labeling-summary}
 
 - **Compute the floor.** Everything-is-`O` scores **61.36% token accuracy**
-  and **0.00 span F1** on this corpus, and higher on a realistic one where
-  most sentences contain no entity. Every token-accuracy number in sequence
+  and **0.00 span F1** on this corpus; on one where most sentences contain no
+  entity, the token-accuracy floor can be higher still. Every token-accuracy number in sequence
   labelling should be read as a distance from that floor, and the distance is
   usually smaller than the headline suggests.
 
 - **Report span-level F1.** Token accuracy 94.41, token-level F1 88.73,
-  span-level F1 85.45 — the same predictions, three answers. Only the last
-  one asks whether the record came out right.
+  span-level F1 85.45 — the same predictions, three answers. For this NER task
+  the main measure is exact-match span F1; the other two are supporting
+  diagnostics. For token-output tasks such as POS the right main metric
+  changes.
 
 - **Audit the corpus before you trust the score.** WikiANN Turkish has
-  **13.06% of its test set verbatim in training**, and the raw leakage
-  bonus falls as a system's tendency to memorise falls: **+26.50** for a
-  gazetteer, **+16.25** for the CRF (99.81 leaked against 83.56 clean),
-  **+7.65** for the fine-tuned encoder. Normalised by the headroom above the
+  **13.06% of its test set verbatim in training**, and all three systems show
+  large F1 gaps between duplicated and duplicate-free test sentences: **+26.50**
+  for a gazetteer, **+16.25** for the CRF (99.81 leaked against 83.56 clean),
+  **+7.65** for the fine-tuned encoder. Those gaps are a warning about test
+  independence; mixed with subset difficulty, they are not a direct share of
+  memorisation. Normalised by the headroom above the
   clean half, the order changes (the CRF tops it at 99%). That gap is a
-  diagnostic, not a measurement of memorisation: a large one means look harder. Hash your test
-  inputs — it is four lines.
+  diagnostic, not a measurement of memorisation: a large one means look harder.
+  Hash your test inputs and score the duplicates separately.
 
 - **The classical baseline is not a formality.** A gazetteer built from 20,000
   sentences scores **55.26** from a Python dictionary; a CRF with hand features scores **85.45** in
-  **18.5 seconds on a CPU**. Fine-tuned BERTurk needs 2,000 to 5,000 labelled
-  sentences to match the CRF trained on 20,000, and reaches **91.92** on the
-  full budget — a real saving, and a real threshold below which the
+  **18.5 seconds on this laptop's CPU**. With this training recipe, fine-tuned
+  BERTurk did not pass the CRF trained on 20,000 sentences at 2,000 labels, did
+  at 5,000, and reaches **91.92** on the full budget — a real saving, and a real threshold below which the
   transformer is worse than the 20,000-sentence CRF. A CRF trained
   at the same small budget was not measured.
 
 - **With the default recipe, 200 labelled sentences bought single-digit span
-  F1** — 3.14 in our single run of three epochs (39 updates), a schedule that
-  starves small budgets, so read the order of magnitude rather than the
-  decimals. At that budget the fine-tuned encoder learned to say `O`, and a
+  F1** — 3.14 in our single run of three epochs (39 updates) with one seed, a
+  schedule that starves small budgets, so read the order of magnitude rather
+  than the decimals, and keep in mind that a longer-schedule encoder and a
+  matched-budget CRF still need testing. At that budget the fine-tuned encoder learned to say `O`, and a
   list memorised from 20,000 sentences beat it by fifty points (one built from
   200 would lead by less, if at all; we did not measure it). "Just fine-tune a transformer" is
   advice with a budget — and a training schedule — attached; ask what they are.
 
 - **Decoding is a decision you are making whether or not you know it.** A
   softmax tagger at full budget emitted **139 illegal BIO transitions**
-  across 10,000 sentences — and 3,739 at the 500-sentence budget. The 20,000-sentence
+  across 10,000 sentences — and 3,739 at the 500-sentence budget. Those are
+  counts of transitions, not of affected sentences or spans. The 20,000-sentence
   CRF emitted zero, because Viterbi scores whole sequences and a
   forbidden transition with no supporting features did not make the winning
   path. That is an empirical zero, not a guarantee; remove the transitions from
@@ -2310,25 +2316,33 @@ later number should be read.
 
 - **Alignment is where the silent bugs live.** Entity words fragment into
   **1.98 subwords each in BERTurk against 1.45 for ordinary words** — names
-  are rare, so tokenizers break them. Get `word_ids()` wrong and the model
-  still trains, the loss still falls, and the labels are attached to the
-  wrong tokens.
+  are probably broken up because they are rare. Get the alignment wrong and some
+  pipelines stop at once on a length error; pad the labels with `-100` to equal
+  length and the model still trains, the loss still falls, and the labels are
+  attached to the wrong tokens. Either way, check a few examples by hand.
 
-- **A schema guarantees shape, never truth.** `ollama` 0.24.0 silently
-  ignored a JSON schema on `/api/chat` while enforcing it on `/api/generate`,
-  and the enforced call happily returned `{"answer": 1}` for the capital of
-  France. Send one request the model would otherwise fail, and check.
+- **Schema conformance checks structure, not truth.** In this local `ollama`
+  0.24.0 run the `/api/chat` reply did not follow the JSON schema while
+  `/api/generate` enforced it — Ollama's docs demonstrate `format` on `/api/chat`
+  too, so this is something observed in this set-up, not an endpoint defect —
+  and the enforced call returned `{"answer": 1}` for the capital of France. On
+  real calls, validate both schema conformance and faithfulness to the source.
 
 - **Zero-shot extraction is where you start, not where you stop.** On the
-  same 1,000 sentences: LLM **60.57** span F1 with no labels at all,
-  gazetteer 54.90, CRF **84.16**, fine-tuned encoder **91.44** — and the LLM
-  is about **1,200× slower per sentence**. It beats the dictionary and loses
-  to eighteen seconds of CRF by 24 points. Its worst class is `ORG` recall at
-  40.10, because a prompt cannot encode the boundary convention that 20,000
-  annotated examples teach.
+  same 1,000 sentences: LLM **60.57** span F1 with no task-specific labels at all
+  (naive aligner; 60.29 with the corrected one, unalignable mentions left out
+  of the denominator), gazetteer 54.90, CRF **84.16**, fine-tuned encoder
+  **91.44** — and in this local set-up the LLM is about **1,200× slower per
+  sentence**. It beats the dictionary and loses to 18.5 seconds of CRF by 24
+  points. Its worst class is `ORG` recall at 40.10; without a detailed error
+  audit we cannot pin down why.
 
 - **An LLM returns strings; a metric wants offsets.** Every mention has to be
   aligned back onto the source, and that step is where you can quietly
   misattribute your own bugs: 27 of 31 alignment failures here were the
   aligner's, not the model's. Fixing it moved F1 by 0.28 — so check it, and
   do not expect it to explain a bad number.
+
+The next chapter (@sec-summarization) moves the output from a record to text:
+there is no single gold span to compare a summary against, and that is what
+makes the measurement question harder.
