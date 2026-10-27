@@ -405,14 +405,17 @@ The standard escape has three steps [@broder1997resemblance]:
    agglutination means two near-identical reviews can differ in several word
    forms while sharing nearly every character run.
 2. [**MinHash.**](#gloss-minhash){#term-minhash .term-ref} Hash the set 128
-   times and keep the minimum under each hash.
-   The probability that two documents share a given minimum equals their
-   Jaccard similarity, so 128 numbers estimate $J$ without storing the sets.
+   times and keep the minimum under each hash. With a suitable random hash
+   family, the probability that two signatures match in a position equals the
+   sets' Jaccard similarity; the share of matching positions is an approximate
+   estimate of $J$. Keep the original sets available for exact verification
+   later.
 3. **Band and bucket (LSH)** [@indyk1998approximate]**.** Split the 128 values
    into bands, hash each band,
-   and only compare documents that collide in at least one band. Pairs below
-   the threshold almost never collide, so almost all of the $10^9$ comparisons
-   never happen.
+   and compare with the exact Jaccard only documents that collide in at least
+   one band. The candidate probability does not switch at the threshold; it
+   depends on the chosen bands and rows. This filtering removes most of the
+   $10^9$ comparisons but can also miss some genuine near-duplicates.
 
 ::: {#gloss-minhash .column-margin .term-gloss}
 **MinHash** — a fixed-length sketch of a set, built so that the chance two
@@ -480,7 +483,7 @@ sets. Lets you estimate overlap without keeping the sets.
   <rect x="140" y="242" width="7" height="20" rx="3" class="box-accent"/>
   <text x="160" y="257" class="t-xs t-b t-accent">a sliver of that — 27.4 seconds, single core</text>
 
-  <text x="14" y="296" class="t-xs t-muted">The bands are the whole trick: pairs below the threshold almost never collide, so they are never scored.</text>
+  <text x="14" y="296" class="t-xs t-muted">The trick is in the bands: low-similarity pairs rarely collide, so most are never scored.</text>
 </svg>
 ```
 ::: {.fig-cap}
@@ -492,10 +495,10 @@ changes *which pairs it hands you*.
 ::::
 
 ::: {.callout-warning appearance="simple"}
-**Where the approximation actually lives, and it is not where you would guess.**
-Stage 4 produces no false positives that survive stage 5, but it does produce
-**false negatives**: a genuinely similar pair can fail to collide in every band
-and is then never scored at all. How often? `datasketch` splits our 128 hashes
+**Candidate errors and final errors are different.** Stage 4 can put forward
+pairs below the threshold; the exact Jaccard check in stage 5 removes them. The
+real gap is **false negatives**: a pair above the threshold can fail to collide
+in every band and is then never scored at all. How often? `datasketch` splits our 128 hashes
 into $b$ bands of $r$ rows to balance the two error types at the threshold you
 asked for, subject to $b \cdot r \le 128$, and a pair of Jaccard similarity $J$
 collides with probability $1 - (1 - J^{r})^{b}$. At `threshold=0.8` it picks
@@ -510,11 +513,12 @@ remaining eleven, worth knowing if you are counting your hash budget:
 ```
 
 A pair sitting *exactly* at the threshold has a 40% chance of being found. That
-is not a bug — it is the deliberate design point, the steepest part of the
-S-curve, where the method trades recall for the speed that makes it possible at
+is not a bug — it is the deliberate design point near the steep part of the
+S-curve (for these $b$ and $r$ the steepest point is at $J \approx 0.84$), where the method trades recall for the speed that makes it possible at
 all. But it means the counts in the next table are **lower bounds**, and they
 are loosest precisely at the boundary you nominated. Report near-duplicate
-counts as "at least", never as "exactly".
+counts as "at least", never as "exactly": the count is what this candidate
+generation and threshold **found**, and an exhaustive search could find more.
 :::
 
 We then ran union-find over the surviving candidate pairs, so a chain of near
