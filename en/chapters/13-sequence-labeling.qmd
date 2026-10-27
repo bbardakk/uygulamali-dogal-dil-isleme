@@ -1439,6 +1439,14 @@ def align_span(tokens, text):
     return None                                       # not in the sentence
 ```
 
+This sketch summarises the order of operations; with its `...` lines it is not a
+runnable routine. Because it returns the first exact match, a name that occurs
+twice in a sentence can have two outputs placed on the same position. In
+practice, find every candidate position for a string, assign mentions to
+non-overlapping token ranges, implement Unicode and punctuation normalisation and
+suffix variants as explicit routines, and always return the original token start
+and end; count mentions that align nowhere or in several places separately.
+
 Three things can come back:
 
 - **A mention that is there** — align it, score it.
@@ -1446,8 +1454,10 @@ Three things can come back:
   the token is `Samsun'a`. The guidelines asked for an exact copy and it
   helpfully normalised. Fallback 3 exists for this and it is doing real work.
 - **A mention that is not in the sentence at all.** A paraphrase, an
-  expansion, an inference. There is no honest way to score it, and counting
-  it as a hit would be scoring the model on a claim about text it invented.
+  expansion, an inference. With no position in the source it cannot be a
+  span-level true positive; depending on the protocol it counts as a false
+  positive or is reported separately in an invalid-output rate. Fix which one
+  before comparing models.
 
 It is tempting to call every unalignable mention a hallucination and move on.
 That turns out to be mostly wrong, and finding out why is worth the section.
@@ -1484,13 +1494,16 @@ counting unalignable mentions as false positives, back-calculating from these
 numbers gives roughly 59.9 F1 for the naive aligner and 60.2 for the corrected
 one. The difference stays under a point, but its direction flips: the recovered
 mentions were already counted as false positives there, and four of them become
-true positives.
+true positives. For a fair model comparison, give this end-to-end F1, which
+counts invalid output as false positives, alongside the headline result.
 
-The four genuinely unalignable mentions are all suffix-boundary confusions
-rather than invention: the model returned `Çin Halk Cumhuriyeti` where the
+The four remaining mentions do not align to the source verbatim; in each the
+model wrote the canonical name or a differently inflected form: it returned `Çin Halk Cumhuriyeti` where the
 text has `Çin Halk Cumhuriyetini` with the accusative fused on and no
 apostrophe to split at, and `Niksar'ın` where the text has `Niksar'da` — the
-right name, the wrong case.
+right name, the wrong case. For source-grounded extraction these are invalid
+outputs: they are not faithful to the text. Without a check of their causes we do
+not call them "invented" either.
 
 ### The results
 
