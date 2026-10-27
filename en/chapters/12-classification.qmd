@@ -2962,12 +2962,14 @@ source; attributing a question to a company takes a source you can check.
    77.66 macro-F1 against 76.09 for class weights, 77.63 for oversampling, 74.72
    for SMOTE and 62.98 for undersampling — with no refit and no extra rows. Then
    give the caveat, because it is the part that shows you understand the design:
-   only the threshold arm was tuned, and average precision says a tuned
-   oversampling arm would probably edge ahead. The finding is that the threshold
+   only the threshold arm was tuned. Oversampling has the higher average
+   precision (61.46 against 60.30), but that does not mean it would lead on
+   macro-F1 once its threshold was tuned; a fair comparison picks every arm's
+   threshold on `cal` and measures them on the same test set. The finding is that the threshold
    is *free*, not that it is best. Then note that SMOTE was
    evaluated on nine low-dimensional dense numeric datasets and that its authors
-   listed text as future work [@chawla2002smote] — that is the sentence that
-   shows you read the paper rather than the blog post about it.
+   listed text as future work [@chawla2002smote]; it shows you know what kind
+   of data the method was validated on.
 
 2. **Precision, recall, F1, ROC-AUC, PR-AUC — when do you use which?** Say what
    each divides by. FPR divides by the majority count; precision divides by what
@@ -2989,15 +2991,19 @@ source; attributing a question to a company takes a source you can check.
 
 4. **Platt scaling or isotonic regression?** Isotonic is non-parametric and can
    fit any monotone distortion; Platt is a two-parameter sigmoid and cannot
-   [@platt1999probabilistic; @zadrozny2002transforming]. The decision is about
-   how much held-out data you have: Niculescu-Mizil and Caruana found Platt ahead
-   below roughly 200–1,000 calibration points and isotonic level or better above
-   that [@niculescu2005predicting]. Name the size of your calibration set. Ours
-   is 8,000, and isotonic came out at 0.69 against Platt's 0.94 — a gap inside
-   our own estimator's noise, so what we can say is that **both are adequate at
-   this calibration-set size**, which is what their result predicts. Saying
-   "isotonic won" would be reading a quarter of a point off a statistic whose
-   floor is half a point.
+   [@platt1999probabilistic; @zadrozny2002transforming]. One of the main
+   factors is how much held-out data you have: in Niculescu-Mizil and Caruana's
+   experiments Platt was ahead below roughly 200–1,000 calibration points and
+   isotonic level or better above that [@niculescu2005predicting]. That is a
+   pattern for their datasets and models, not a universal threshold; the score
+   distribution and the model matter too, so make the choice on your own
+   held-out data. Name the size of your calibration set. Ours is 8,000, and
+   isotonic came out at 0.69 against Platt's 0.94. A rough calculation puts the
+   noise-only part of ECE at around half a point, but we did not report a
+   simulation or bootstrap interval for it. So what we can say is that **both
+   look adequate at this calibration-set size**; saying "isotonic won" would be
+   drawing a conclusion from a gap that, by that rough estimate, sits at noise
+   level.
 
 5. **How would you pick the decision threshold for a production classifier?**
    Never 0.5 by default. Get a cost ratio from whoever owns the consequences,
@@ -3008,21 +3014,25 @@ source; attributing a question to a company takes a source you can check.
    stayed within two percentage points of the calibrate-then-derive route. Calibration earns its keep
    when the costs might change or the number gets shown to a person.
 
-6. **When would you *not* use an LLM for classification?** When you have labels,
-   when you have volume, and when you need a number rather than a word. Give the
-   curve, not a verdict: on our task a prompted 36B mixture-of-experts beat a
-   fine-tuned BERTurk by **8.79 macro-F1 at 1,000 labels**, tied it to **0.08
-   points at 2,000** ($p = 0.97$), and lost by **4.73 at 40,000** — all paired-
-   bootstrapped on the same 2,000 documents. Then price the tie: the encoder
-   classifies a document **142× cheaper**, so a dead heat on quality is not a
-   dead heat. Say which arrangement that number belongs to: a batched encoder
+6. **When would you *not* use an LLM for classification?** In this experiment
+   three conditions put the encoder ahead: there were labels, there was volume,
+   and a number was needed rather than a word. If the data type, the retraining
+   frequency, the quality target or the interface you get scores from changes,
+   measure the decision again. Give the curve, not a verdict: on our task a
+   prompted 36B mixture-of-experts beat a fine-tuned BERTurk by **8.79 macro-F1
+   at 1,000 labels**; at **2,000** the gap was not distinguishable (**0.08
+   points**, $p = 0.97$ — not evidence of equivalence); and it lost by **4.73 at
+   40,000** — all paired-bootstrapped on the same 2,000 documents. Then price the
+   2,000-label case: the encoder classifies a document **142× cheaper**, so a gap
+   you cannot tell apart on quality is not one you cannot tell apart on cost. Say which arrangement that number belongs to: a batched encoder
    against a single-stream 4-bit local server, which is the comparison a small
    team actually faces. A properly batched hosted API narrows the gap without
    changing the per-token arithmetic underneath. The part most candidates miss
-   is the third axis. A zero-shot model
+   is the third axis. A zero-shot set-up that asks for labels only
    returns the *word* `ŞİKAYET`, so you give up the ROC curve, the calibration
    map, the cost-derived threshold and the sweep — every instrument in this
-   chapter. Our best prompted run sat at 56.98% precision and 80.95% recall and
+   chapter; an interface that exposes token log-probabilities can bring some of
+   them back, but those scores need testing too. Our best prompted run sat at 56.98% precision and 80.95% recall and
    there was nothing to turn. Close by naming the literature and its limits:
    @edwards2024incontext found fine-tuning ahead by 0.119 micro-F1 with full data
    across 16 datasets but prompting ahead in the one-shot regime, and
@@ -3036,8 +3046,13 @@ source; attributing a question to a company takes a source you can check.
    Debug it.** Almost always the threshold, the base rate, or a distribution
    shift, in that order of likelihood. Check the confusion matrix, not the
    scalar: ours at 94.28% accuracy was catching 69 of 632 complaints. Then check
-   whether the offline base rate matches production — a model calibrated on 6.32%
-   complaints will systematically under-flag on a stream that runs at 15%. Then
+   whether the offline base rate matches production. A model calibrated on 6.32%
+   complaints can lose its calibration on a stream that runs at 15%; if only the
+   prior moved and the class-conditional distributions stayed the same, it
+   underestimates the complaint probability and under-flags at a fixed threshold.
+   But the direction and size cannot be read off the two base rates alone: first
+   confirm whether there is input or label shift, then re-check the reliability
+   diagram and the threshold on a fresh, labelled production sample. Then
    check for leakage into the offline number, and specifically whether any
    threshold or calibrator was fitted on the evaluation set.
 
