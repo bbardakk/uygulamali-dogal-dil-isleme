@@ -2151,117 +2151,108 @@ can check.
 ::: {.callout-note collapse="true"}
 ## 1. Two documents score a cosine of 0.91. Are they near-duplicates?
 
-Nobody can tell you yet, including you, until the random-pair background is on
-the table. Under tf-idf two *unrelated* reviews in this corpus average 0.0182
-and the 99th percentile of 4.5 million random pairs is 0.1300 — so 0.91 is far
-off the end of the scale and "near-duplicate" is the right reading. Under E5 the
-same corpus has a random-pair mean of **0.8547** with a standard deviation of
-0.0278 and a 99th percentile of 0.9155. There, 0.91 sits about two standard
-deviations above the mean of documents that have nothing to do with each other,
-and a duplicate detector thresholded at 0.90 would flag more than 1% of all
-random pairs (the 99th percentile is above it) — more than ten million pairs in
-a corpus of 49,849 documents.
+That depends on the representation. Under tf-idf two random reviews in this
+corpus average 0.0182 and the 99th percentile of 4.5 million random pairs is
+0.1300 — so 0.91 is an extreme score and a **candidate** worth inspecting. To
+call it a near-duplicate, check the text or the character-shingle Jaccard; word
+order or a negation suffix may differ. Under E5 the same corpus has a
+random-pair mean of **0.8547** with a standard deviation of 0.0278 and a 99th
+percentile of 0.9155; there, 0.91 is near the upper tail of random pairs, and a
+duplicate detector thresholded at 0.90 would flag more than 1% of all random
+pairs — more than ten million pairs in a corpus of 49,849 documents. On its own
+it settles no duplicate decision.
 
-Same number, opposite conclusions. The only thing separating them is four lines
-of code, run once, before you look at a single similarity.
+Same number, different meanings. Look at the random-pair background first, then
+check against labelled pairs.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Your silhouette never exceeds 0.10 and your ARI is zero. Did the clustering fail?
 
-Those two numbers say the partition is not well separated and is not the label
-partition. Neither of them says it is worthless, and treating them as if they
-did is the most common way people talk themselves out of a usable result.
+A low silhouette and a near-zero ARI show weak geometric separation in this
+representation and metric, and low agreement with the label partition; they do
+not say the partition is worthless.
 
-The same $k=10$ E5 clustering that scored ARI **+0.0075** has a cluster that is
-26.8% negative against a 6.34% base rate — a **4.23× lift** — and reading 13.3%
-of the corpus in oracle cluster order finds 56.0% of its complaints. The clustering did
-not change between those two sentences; the question did.
+In the same $k=10$ E5 clustering that scored ARI **+0.0075**, a cluster picked
+after the fact with all the labels has an observed lift of **4.23×** (26.8%
+negative against a 6.34% base rate), and on the oracle curve reading 13.25% of
+the corpus finds 56.03% of the negatives. That is not the test result of a
+usable triage policy; learn the order on a separate development set and confirm
+it on a test set.
 
-So the honest diagnosis is rarely "the clustering failed". It is "I scored it
-against a question nobody was asking". Write down the decision the clustering
-was supposed to support, measure *that*, and only then decide.
+Write down the decision the clustering was supposed to support, measure *that*,
+and only then decide.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. Why deduplicate before clustering rather than after?
 
-Because k-means moves each centre to the **mean** of its members, so sixty
-copies of one sentence cast sixty votes on where that centre lands. A duplicate
-group is a weight, not a row. The same argument applies to every idf you fit and
-every topic model you run downstream.
+**Detect** near-duplicates before clustering: k-means moves each centre to the
+**mean** of its members, so sixty copies of one sentence cast sixty votes on
+where that centre lands, and the same goes for every idf you fit. But if the
+repeat count stands for user events or complaint frequency, do not delete them
+all; keep the weight alongside a representative text.
 
-The second reason is that the count is a free diagnostic of your collection
-pipeline. Ours came back at 151 redundant documents at $J \geq 0.8$, in 27
-seconds, without performing any meaningful share of the $1.25 \times 10^9$
-pairwise comparisons. Had it come back at 20% you would have stopped and gone to
-read the scraper, and that would have been a better use of the afternoon than
-any clustering.
+The count is also a cheap diagnostic of your collection pipeline: ours came back
+in 27 seconds at $J \geq 0.8$. Had it come back at 20% you would have stopped
+and gone to read the scraper.
 
-One caveat to state whenever you report the number: it is a lower bound. At
-`threshold=0.8`, `datasketch` bands the 128 hashes so that a pair sitting
-*exactly* at 0.8 is examined with probability 0.40. "At least 151", never
-"exactly 151".
+This LSH run found **at least** 151 redundant documents: at `threshold=0.8`,
+`datasketch` bands the 128 hashes so that a pair sitting *exactly* at 0.8 is
+examined with probability 0.40. Measure the missed pairs with a sample audit.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. HDBSCAN calls 97% of your corpus noise. A colleague proposes running UMAP to five dimensions first, "because then it finds clusters." What do you say?
 
-That the sentence is true and that it is not evidence. UMAP optimises a
-low-dimensional layout to preserve a $k$-nearest-neighbour graph, and squeezing
-a corpus into five dimensions manufactures density contrast whether or not the
-original space had any. Clusters appearing after UMAP is the expected outcome of
-running UMAP, not a discovery about your data.
+UMAP roughly preserves neighbourhoods while it can change how density and
+separation look. A cluster appearing after UMAP does not by itself prove it
+exists in the same form in the original space, but it is not automatically
+spurious either.
 
-What would turn it into a finding is a check UMAP never saw: do the groups
-predict something held out, do they survive a change of `n_neighbors` and
-`random_state`, do they survive on a random half of the corpus. Our own evidence
-points the other way — HDBSCAN found no region of the original E5 space that
-was clearly denser than its surroundings, and k-means found no boundaries
-either, so there is little density variation for UMAP to *reveal*; what appears
-after it was mostly made by it.
+What would turn it into a finding is a check UMAP never saw: is it stable across
+seeds, `n_neighbors`, dimension and the original-space neighbours, does it
+survive on a random half of the corpus, does it help on a held-out task. The
+HDBSCAN settings we tried selected no stable clusters in the original E5 space;
+that is not proof the original space has no structure, but it is a reminder
+that post-UMAP structure needs independent validation.
 
-None of which forbids shipping the UMAP pipeline. Ship it on the strength of the
+Shipping the UMAP pipeline is not forbidden; ship it on the strength of the
 downstream number, not on the strength of the picture.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Your best topic scores three times the coherence of the next best. What do you do first?
 
-Read it. Ours was `bi ye fi tavsi çi ederi si ni li yi` — ten tokenizer
-fragments, all manufactured by the same Unicode defect in the same documents,
-which is precisely why they co-occur almost perfectly and why NPMI scored them
-**+0.5075**, the highest per-topic coherence anywhere in the chapter. Coherence
-rewards co-occurrence, and a systematic bug is the most reliable co-occurrence
-in any corpus.
+Read its words and document samples. Ours was
+`bi ye fi tavsi çi ederi si ni li yi`, and it brought forward fragments linked to
+U+0307; that is why they co-occur almost perfectly and why NPMI scored them
+**+0.5075**. Coherence rewards co-occurrence, and a systematic bug can produce
+strong co-occurrence.
 
-The damage was not confined to that one topic either. Dropping it takes LSA's
-mean from +0.1340 to +0.0925 — from first place to last among the three c-TF-IDF
-rows. One topic in ten, of a kind a human rejects in two seconds, was carrying
-the ranking. @chang2009reading showed in 2009 that an automated metric
-(likelihood) can diverge from human judgement; @hoyle2021automated reported the
-same for coherence measures. Our case is an extreme instance.
+Dropping that topic takes the LSA method's nine-topic mean from +0.1340 to
++0.0925. For a new ranking against the other methods, apply the same filtering
+rule to them too. @chang2009reading showed that an automated metric
+(likelihood) can diverge from human judgement; @hoyle2021automated reported a
+similar result for coherence measures.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. You could label 500 documents and train a classifier. When is clustering still the right tool?
 
-When you do not yet know what the classes are. That is the core of it: a
-classifier needs a label set, and clustering is one of the few honest ways to
-discover what that set should be. "Run k-means, read 20 documents per cluster,
-draft the guidelines from what you read" is a real and cheap way to open an
-annotation project — @sec-data-annotation is the chapter that then tells you how
-to check the guidelines hold up.
+If the classes are not yet clear, clustering is a tool for organising document
+sampling and a candidate annotation guideline: "run k-means, read documents per
+cluster, draft the guidelines from what you read" is a cheap way to open an
+annotation project. Compare it with active learning and random or qualitative
+sampling; @sec-data-annotation tells you how to check the guidelines hold up.
 
-Three other cases: you have far more documents than anyone will ever read and
-must choose which to read (@sec-clustering-payoff); you must describe a corpus to
-somebody who will not read it either (@sec-topic-models); or you want to know
-what is actually in your data, including the parts nobody put there on purpose
-(@sec-dotted-i).
+Other uses: choosing which documents to read (@sec-clustering-payoff),
+describing a corpus to somebody who will not read it (@sec-topic-models), and
+making data-quality problems visible (@sec-dotted-i).
 
-And the converse, which matters just as much: if you already know the classes
-and can afford to label, label. Clustering is not a cheaper classifier and it
-will not become one.
+If the classes are already known and you can afford to label, supervised
+classification is the direct starting point for the target task; clustering can
+still help with data quality and spotting new patterns.
 :::
 
 ## Interview questions {#sec-clustering-interview}
