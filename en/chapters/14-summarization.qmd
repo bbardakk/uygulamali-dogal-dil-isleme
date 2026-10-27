@@ -757,35 +757,41 @@ confirmed with a measurement.
 
 ## Long documents {#sec-summarization-long}
 
-The articles above are 300 words. Real summarization requests arrive as
-80-page contracts, quarterly filings and year-long ticket histories, and at
-that point the architecture stops being a model choice and becomes a pipeline
-design.
+The articles above are about 300 words. When inputs such as contracts,
+quarterly filings or long ticket histories exceed the model's effective context,
+the architecture stops being a model choice and becomes a pipeline design with
+decisions about selecting and combining chunks.
 
 Three patterns, in increasing order of what they cost and what they preserve:
 
 **Truncate.** Feed the first *n* tokens and ignore the rest. Honest when lead
-bias is strong; on this corpus, where 28.8% of summaries are best matched by
-sentence 9 or later, it throws away most of the evidence. The cheapest option
-and the one most often chosen by accident.
+bias is strong, but it excludes everything later. On this corpus 28.8% of
+summaries are best matched by sentence 9 or later; how much evidence a given cut
+loses we did not measure. The cheapest option and the one most often chosen by
+accident.
 
 **Map-reduce.** Chunk, summarize each chunk, then summarize the summaries.
-Cost is linear in document length, it parallelises perfectly, and it is the
-default in every framework. What it puts at risk is **anything that spans a chunk
+At a fixed chunk size the number of map calls grows roughly linearly with
+document length and the calls can run in parallel; the reduce stage, the
+intermediate-summary length and service limits set the total time. It is the
+default in many frameworks. What it puts at risk is **anything that spans a chunk
 boundary**: a contract clause qualified twelve pages later, a retraction, a
 narrative arc. Each chunk summarizer sees a window with little idea what came
 before, so it cannot reliably tell which of its details will matter globally,
 and the reduce step can only work with what the map step happened to keep.
 Partial remedies exist and cost tokens: overlap the chunks, carry a running
 summary into each map call, or run a second pass once the reduce step has told
-you what the document is about. None of them recovers a dependency the map step
-threw away.
+you what the document is about. A step that sees only the intermediate
+summaries cannot recover a dependency the map step threw away; a second pass that
+rescans the original chunks, or evidence selection, can reduce that loss.
 
-**Refine, or hierarchical rollup.** Carry a running summary forward, updating
-it with each chunk. Preserves cross-chunk continuity, and is strictly
-sequential — no parallelism — with the running summary drifting as it is
-repeatedly rewritten. Late chunks get more influence than early ones, which
-is the opposite failure to truncation.
+**Refine.** Carry a running summary forward, updating it with each chunk in
+turn. Preserves cross-chunk continuity, and is strictly sequential — no
+parallelism — with the running summary liable to drift as it is repeatedly
+rewritten; late chunks can get more influence than early ones, the opposite
+failure to truncation. (*Hierarchical rollup* is different: it merges
+intermediate summaries as a tree, runs some stages in parallel, and can still
+lose links between separate branches.)
 
 The three differ in one thing only, and it is not the model. It is **what the
 pipeline can possibly know at the moment it writes**. Take a document whose
@@ -863,7 +869,7 @@ document has and no chunk boundary respects:
   <path d="M75 260 L 75 270 M198 260 L 198 270 M321 260 L 321 270 M444 260 L 444 270 M567 260 L 567 270 M690 260 L 690 270 M75 270 L 690 270 M383 270 L 383 280" class="ln-thin"/>
   <rect x="283" y="280" width="200" height="22" rx="4" class="box-warm"/>
   <text x="383" y="295" class="t-sm t-mid">one final summary</text>
-  <text x="16" y="320" class="t-xs">Nothing is dropped, and the loss is still total: s1 and s5 were written independently, neither knows the other exists,</text>
+  <text x="16" y="320" class="t-xs">Every section is read, but detail is cut in each summary: s1 and s5 were written independently, neither knows the other,</text>
   <text x="16" y="333" class="t-xs">and the reduce step joins two locally correct sentences into one that is jointly wrong.</text>
 
   <path d="M14 349 L 750 349" class="ln-thin"/>
@@ -910,9 +916,11 @@ to §1; refine connects them and pays for it in drift and in serial time.
 ::::
 
 ::: {.column-margin}
-The arithmetic behind this is @sec-transformers'. Attention is quadratic in
-sequence length, so on hardware you run yourself one pass over 100k tokens
-costs more than ten times a pass over 10k. Map-reduce trades that quadratic
+The arithmetic behind this is @sec-transformers'. Full self-attention has a
+component quadratic in sequence length during prefill, so the attention share of
+a 100k-token pass grows by more than ten times that of a 10k-token one. Real
+latency and cost depend on the architecture, the implementation and the
+hardware; time the two calls in the same environment. Map-reduce trades that quadratic
 for a linear number of small quadratic passes, which can make it cheaper in
 compute even where a long-context model would fit the document. Under
 per-token API pricing the sum runs the other way — map-reduce pays for the
@@ -922,11 +930,13 @@ is one question, and whether the model actually uses the middle of a very
 long input is another.
 :::
 
-The rule that survives contact with production: [chunk on structure, never on
-character count.]{.hl} Sections, clauses, chapters, speaker turns, dates.
-A boundary drawn mid-argument produces two summaries that are each locally
-plausible and jointly wrong, and that failure is invisible in every automatic
-metric — it needs a reader who knows the document.
+The rule that survives contact with production: [chunk on structure rather than
+character count where you can.]{.hl} Sections, clauses, chapters, speaker turns, dates.
+These are usually more meaningful chunks than a character count. A boundary
+drawn mid-argument can produce two summaries that are each locally plausible
+and jointly wrong. Chunking on structure is no guarantee either — provisions
+that refer to each other can still land in separate chunks — so test those
+links with cross-section checks and with readers who know the document.
 
 ## Faithfulness {#sec-summarization-faithfulness}
 
