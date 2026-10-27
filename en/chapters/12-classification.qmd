@@ -3220,9 +3220,32 @@ the interesting range is the one where accuracy looks flat.)
 
 Bin the predicted scores, plot observed frequency against mean predicted
 probability, and compute ECE and MCE. State which ECE you computed. Then fit
-Platt and isotonic on `cal` and re-measure. If your ECE is already under about 1
-you can stop; if it is over 5, anything downstream that treats the score as a
-probability is wrong by a margin you can now quantify.
+Platt and isotonic on `cal` and re-measure. Report ECE with its definition and
+bin count, and with a bootstrap interval if you can. Whether calibration is good
+enough is decided not by a universal ECE cut-off but by how the probability
+will be used: if the score only ranks documents or feeds one swept threshold, a
+small ECE difference does not matter; if it will be multiplied by a cost or
+shown to a person, work out how much cost deviation the calibration error causes
+in that decision (step 6).
+
+The core of steps 4 and 5 is a few lines, with `clf` the model fitted on `fit`.
+A threshold chosen on raw scores in step 4 does not give the same decision
+boundary after calibration:
+
+``` python
+# Step 4: pick the threshold on cal (p_cal = raw minority-class score)
+p_cal = clf.predict_proba(X_cal)[:, 1]
+ts = np.arange(0.01, 1.0, 0.01)
+t_best = max(ts, key=lambda t: f1_score(y_cal, p_cal >= t, average="macro"))
+
+# Step 5: freeze the fitted model and fit an isotonic calibrator on cal
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.frozen import FrozenEstimator
+iso = CalibratedClassifierCV(FrozenEstimator(clf), method="isotonic").fit(X_cal, y_cal)
+
+# t_best holds for raw scores only. On calibrated probabilities, re-derive the
+# threshold (step 6) or re-select it on a separate slice.
+```
 
 ### Step 6 — turn a cost into a threshold
 
