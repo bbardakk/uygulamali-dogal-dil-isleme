@@ -561,8 +561,9 @@ from rouge_score import rouge_scorer
 class TurkishTokenizer:
     def tokenize(self, text):
         # Turkish-aware lowercasing first, then Unicode letters and digits
+        # ([^\W_] leaves out the underscore)
         text = text.replace("I", "ı").replace("İ", "i").lower()
-        return re.findall(r"\w+", text, flags=re.UNICODE)
+        return re.findall(r"[^\W_]+", text, flags=re.UNICODE)
 
 scorer = rouge_scorer.RougeScorer(
     ["rouge1", "rouge2", "rougeLsum"],
@@ -570,13 +571,14 @@ scorer = rouge_scorer.RougeScorer(
     tokenizer=TurkishTokenizer())
 ```
 
-Be exact about `use_stemmer` too, because it is the next trap. Its default is
+This simple example is a starting point: combining marks and special Unicode
+forms need extra testing. Be exact about `use_stemmer` too, because it is the next trap. Its default is
 already `False`, and setting it to `True` applies a *Porter* stemmer, which is
 English. Once you pass your own `tokenizer=`, the flag is ignored altogether:
-`use_stemmer` only configures the default tokenizer. So for Turkish the right
-answer is not "leave it off" but "replace it", and the replacement goes
-*inside* your `tokenize` method — a Turkish stemmer applied to each token
-before it is returned. The next subsection shows how much that choice moves
+`use_stemmer` only configures the default tokenizer. If you want Turkish
+stemming, put it *inside* your `tokenize` method — a Turkish stemmer applied to
+each token before it is returned. Not stemming is also a valid reporting
+choice, as long as you say which you did. The next subsection shows how much that choice moves
 the score. HuggingFace's `evaluate` wrapper accepts the same fix: its `rouge`
 metric takes a `tokenizer=` argument (a function from string to tokens) and
 passes it through.
@@ -584,10 +586,10 @@ passes it through.
 Two further options: XL-Sum's own fork of `rouge-score`, which removes only
 Unicode punctuation for all its 44 languages and adds stemmers for eighteen
 of them, Turkish included; and a variant that scores subword tokens from a BPE
-tokenizer, which sidesteps the language question entirely at the cost of
-scoring pieces of words. One tool that looks like a fix is not: `sacrerouge`
-gives many summarization metrics a common Python interface, but for ROUGE it
-wraps the original Perl ROUGE-1.5.5, whose tokenizer also throws away every
+tokenizer, which avoids losing non-ASCII letters but makes the score depend on
+the chosen subword model and not comparable with word-level ROUGE. One tool that looks like a fix is not: `sacrerouge`
+gives many summarization metrics a common Python interface, but at the time of
+writing its ROUGE wrapped the original Perl ROUGE-1.5.5 (check your version), whose tokenizer also throws away every
 character outside `A–Z`, `a–z`, `0–9` and the hyphen — the same defect. If you publish a
 Turkish ROUGE number, name the tokenizer beside it. That one sentence in a
 paper is worth more than any of the tooling.
