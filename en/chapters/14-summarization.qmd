@@ -1377,8 +1377,9 @@ with a measurement rather than an argument.
 ::: {.callout-note collapse="true"}
 ## 1. A vendor reports ROUGE-1 of 41 on Turkish news. Are you impressed?
 
-You cannot be, until you know three things they almost certainly did not
-state: the tokenizer, the normalizer, and the reference set.
+You cannot read it until you know the test set, which ROUGE-1 component
+(precision, recall, F1), the summary length, the aggregation, the tokenizer and
+the normalizer.
 
 On this corpus the same predictions score **14.03** with a Turkish-correct
 tokenizer and **22.03** with `rouge-score`'s default, which treats `ç`, `ğ`,
@@ -1387,15 +1388,15 @@ into fragments.
 Stemming or prefix-truncation moves it another three to five points. So "41" could be a strong system, or a
 weak system measured generously, and the number alone cannot tell you.
 
-Ask what tokenizer produced it. If the answer is "the standard one", the
-number is not comparable to anything computed correctly.
+Ask what tokenizer produced it. If the answer is "the standard one", compare it
+only with results computed under the same protocol.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Before training anything, how do you know whether extraction can work?
 
-Compute the oracle. For each document, take the single sentence with the
-highest ROUGE against the reference, and average. That is what *perfect
+For a hint, compute the oracle. For each document, take the single sentence
+with the highest ROUGE-1 F1 against the reference, and average. That is what *perfect
 one-sentence* selection achieves, so no single-sentence extractive system can
 beat it — say "single-sentence" out loud, because a multi-sentence selector is
 bounded by a different oracle.
@@ -1410,16 +1411,17 @@ same two numbers are 25.05 and 13.24, and mixing a figure from each is how
 gaps get invented.) On CNN / DailyMail the same measurement gives 40.58, which is why
 extractive systems were respectable there for a decade.
 
-Two lines of code, and it decides your architecture before you spend a GPU
-hour.
+A few lines of code; it shows the ceiling on reference-like sentence selection,
+but decide whether selection suits your product together with faithfulness and
+reader-value measurements.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. Your faithfulness metric says human journalists hallucinate in 56% of summaries. What do you do?
 
-Not publish it. A number that surprising is far more likely to be a bug in
-your measurement than a discovery, and the way to find out is a **control
-whose answer you already know**.
+Not publish it. First check what the measurement flags — here only names and
+numbers absent from the source in the same form — and run a **control whose
+answer you already know**.
 
 Here the control is free: lead-2 is copied verbatim from the article, so it
 introduces no wording that is not in the source, and any flag a *lexical*
@@ -1430,21 +1432,26 @@ exposed two bugs in two successive versions of the proxy — both the same
 mistake, tokenising the two sides of the comparison differently.
 
 Only after the control returned exactly zero was the reference's rate worth
-reporting. It was still high (57.3%), for a real reason: the corpus's
-summaries are BBC intro lines that supply background the article body does
-not contain.
+reporting. It was still high (57.3%), for what looked like a real reason: the
+corpus's summaries are BBC intro lines that supply background the article body
+does not contain. But a zero control does not rule out false alarms on rewritten
+summaries; do not publish the rate as a hallucination frequency until a random
+subset of the flagged examples has been reviewed by people. Nor does the number
+landing close to the first version's 56% change the lesson: until the control
+returned zero, you could not trust it.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Your model scores below the fine-tuned baseline on ROUGE. Is it worse?
 
-Maybe the opposite. On this corpus the reference summaries assert unsupported
-content in 33–57% of cases depending on how you measure, so ROUGE against
-them rewards a model for reproducing that. Our prompt told the model to use
-only what is in the text; it complied, and the metric charged it for the
-compliance.
+You cannot tell on that alone; lower ROUGE does not mean a worse summary. On
+this corpus the two automatic checks flag 33–57% of the reference summaries, so
+ROUGE against them can reward a model for reproducing that content. Our model's
+flag rates came out low (3.3% and 7.3%), but we did not measure the prompt
+instruction's effect directly. Have people judge faithfulness and usefulness on
+the same examples, and check whether the references carry outside information.
 
-@goyal2022news found the same pattern in a human study — people preferring zero-shot
+@goyal2022news found a similar pattern in a human study in a different set-up — people preferring zero-shot
 GPT-3 summaries that ROUGE ranked below fine-tuned models. When ROUGE and a
 faithfulness measurement disagree, the reference is a hypothesis about
 quality, not the definition of it.
@@ -1459,8 +1466,9 @@ matter globally; the reduce step can only work with what survived. A clause
 qualified twelve pages later produces two locally-correct summaries that are
 jointly wrong.
 
-No automatic metric catches this — both summaries are fluent, both are
-grounded in their own chunk. The mitigations are to chunk on *structure*
+A check that scores only the local chunk summaries can miss this — both
+summaries are fluent, both are grounded in their own chunk. Cross-section checks
+that read the linked clauses together, and human review, can test for it. The mitigations are to chunk on *structure*
 rather than character count, and to carry a running summary forward (refine)
 when continuity matters more than parallelism.
 :::
@@ -1470,9 +1478,10 @@ when continuity matters more than parallelism.
 
 When being wrong is expensive and being clumsy is not. An extractive summary is quoted text: it invents no wording, though a sentence quoted away from its context can still mislead — which in a regulated or legal setting is worth more than fluency.
 
-Also when the oracle says the answer *is* in the document — a high oracle
-score means selection is viable — and when you need determinism, auditability,
-or a per-document cost of approximately zero. Lead-2 on this corpus takes
+Show the condition, exception and attribution context of the selected sentence
+too. Also when the oracle is high — reference-like selection is viable on that
+corpus — and when you need determinism, auditability, or a very low
+per-document cost (not zero, but far below an LLM's). Lead-2 on this corpus takes
 0.2 seconds for all 3,397 articles; the LLM took 20 minutes for 500 of them,
 about 2.4 seconds each.
 :::
