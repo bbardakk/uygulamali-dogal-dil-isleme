@@ -1178,7 +1178,7 @@ fall without ever reaching the zero the CRF reached here.</p>`
 ```
 :::
 
-## Token accuracy is the wrong metric {#sec-sequence-labeling-metrics}
+## For NER, token accuracy is not enough {#sec-sequence-labeling-metrics}
 
 Three numbers, all computed on the same CRF predictions over the same 10,000
 test sentences:
@@ -1189,20 +1189,24 @@ token-level micro-F1          88.73      (entity tags only, O excluded)
 span-level F1                 85.45      (exact match on type, start and end)
 ```
 
-They differ because they ask different questions, and only the last one asks
-the question you care about.
+They differ because they ask different questions. If your goal is to extract
+the whole record, the last one asks the question you care about. (Where the
+per-token label is itself the output, as in POS tagging, accuracy can be a fine
+measure; see the end of this section.)
 
 **Token accuracy** counts every token, including the 61% that are `O`.
 Predicting `O` everywhere already scores 61.36, so the informative range of
 this metric is the thirty-five or so points between 61 and the high 90s — and it gets
 worse, not better, on realistic corpora where most sentences contain no
-entity at all. It is the metric that makes a model look finished when it is
-not.
+entity at all. On span tasks it is the metric that can make a model look
+finished when it is not.
 
 **Token-level F1 over entity tags** drops the `O` class, which fixes the
 floor. But it still gives partial credit: get three tokens of a four-token
-organisation right and you score three quarters of a hit. No downstream
-system can use three quarters of an organisation name.
+organisation right and you score three quarters of a hit. A system that
+extracts whole records cannot use three quarters of an organisation name; for
+human review or candidate search, partial matches can still be worth something
+(see the box below).
 
 **[Span-level F1](#gloss-span-level-f1){#term-span-level-f1 .term-ref}**
 requires the type, the start and the end to all be right. It is the only one
@@ -1222,25 +1226,34 @@ convention** — `seqeval`'s default, and `conlleval`'s.
 The scorer used throughout this chapter is written out rather than imported,
 so that the decoding it assumes is visible. It was checked against `seqeval`
 on deliberately corrupted predictions and agrees to four decimal places —
-P 46.2332, R 75.2042, F1 57.2629 from both. If you write your own, run that
-comparison; the disagreements are always in the malformed sequences.
+P 46.2332, R 75.2042, F1 57.2629 from both. That check was on constructed
+corrupted examples, not a guarantee of identity on all data. If you write your
+own, run that comparison — the disagreements are usually in the malformed
+sequences — and state the `seqeval` version (1.2.2 here), its mode and the IOB2
+scheme.
 :::
 
 ::: {#gloss-span-level-f1 .column-margin .term-gloss}
 **span-level F1** — a prediction counts as correct only if its type, its
 first token and its last token all match a gold span. Partial overlaps score
-zero, which is the point: half an entity is not half useful.
+nothing under this metric; the choice represents the goal of extracting whole
+records.
 [↩](#term-span-level-f1){.term-back}
 :::
 
-Most of the gap between token-level 88.73 and span-level 85.45 is boundary errors — spans where the type was right and an edge was wrong. (The two metrics also weight spans differently, so the gap is not a pure error count.)
-Those errors concentrate in long names built from ordinary words, which is
-`ORG`, as the next subsection shows.
+The gap between token-level 88.73 and span-level 85.45 comes from partial
+boundary matches — spans where the type was right and an edge was wrong — and
+from the two metrics weighting spans differently, so it is not a pure error
+count. We did not count the boundary errors directly; that takes classifying
+each prediction as exact, boundary-only, type-only or missed. As the next
+subsection shows, the type with the lowest recall is `ORG`, the type of long
+names built from ordinary words.
 
-Turkish adds a subtler boundary problem that these scores cannot see: the true
-end of the entity in *Samsun'a* is *inside* the word, before the case suffix.
-WikiANN labels whole whitespace tokens, so the suffix is simply counted as part
-of the name, and neither metric penalises it. It comes back later, when the
+Turkish adds a subtler boundary question that these scores cannot see: if you
+want the canonical name, the name in *Samsun'a* ends *inside* the word, before
+the case suffix. WikiANN labels whole whitespace tokens, so *Samsun'a* counts as
+one `LOC` token and neither metric penalises it; splitting off the suffix is a
+linking and normalisation decision, not a NER gold boundary. It comes back later, when the
 extracted strings have to be counted or linked (@sec-sequence-labeling-linking).
 
 ::: {.callout-note collapse="true"}
