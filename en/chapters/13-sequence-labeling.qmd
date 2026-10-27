@@ -681,8 +681,11 @@ rather than a prediction about F1.
 
 ### The alignment itself
 
-The convention is to label the **first** subword of each word and mask the
-rest with `-100`, the index PyTorch's cross-entropy ignores. Here is that
+The common convention, and the one this chapter uses, is to label the **first**
+subword of each word and mask the rest with `-100`, the index PyTorch's
+cross-entropy ignores. It is not the only correct alignment — spreading `I-`
+labels over the continuations is another option (item 2 below) — but whichever
+you pick, keep the same map back to words in training and in evaluation. Here is that
 convention on three of the entity words above — and, underneath it, what
 happens when you skip the alignment and zip the labels on by position.
 
@@ -690,7 +693,7 @@ happens when you skip the alignment and zip the labels on by position.
 ```{=html}
 <div class="fig-title">One label per word, many subwords per word — and the off-by-a-word that still trains</div>
 <svg viewBox="0 0 764 288" style="max-width:744px" role="img"
-     aria-label="A diagram of subword label alignment. The top row holds three Turkish entity words with one gold label each: İstanbul labelled B-LOC, Erdemir labelled B-ORG, and Mississippi'de labelled B-LOC. The middle row shows what BERTurk's tokenizer produces for the same three words, eleven positions in total: an opening CLS token, then İstanbul as a single subword, then Erdem and ##ir for Erdemir, then Miss, ##iss, ##ip, ##pi, an apostrophe and de for Mississippi'de, and a closing SEP token. Each word sits directly above the subwords it was split into. The third row shows the correct alignment: the first subword of each word carries the word's label and every other position carries minus one hundred, the index the loss ignores, so B-LOC sits on İstanbul, B-ORG sits on Erdem, B-LOC sits on Miss, and the other eight positions are masked. The bottom row shows the bug: zipping the three labels onto the first three token positions instead. B-LOC lands on the CLS token, B-ORG lands on İstanbul, B-LOC lands on Erdem, and the remaining eight positions including all of Mississippi'de get no label at all. A note says the loss still falls and the run still finishes.">
+     aria-label="A diagram of subword label alignment. The top row holds three Turkish entity words with one gold label each: İstanbul labelled B-LOC, Erdemir labelled B-ORG, and Mississippi'de labelled B-LOC. The middle row shows what BERTurk's tokenizer produces for the same three words, eleven positions in total: an opening CLS token, then İstanbul as a single subword, then Erdem and ##ir for Erdemir, then Miss, ##iss, ##ip, ##pi, an apostrophe and de for Mississippi'de, and a closing SEP token. Each word sits directly above the subwords it was split into. The third row shows the correct alignment: the first subword of each word carries the word's label and every other position carries minus one hundred, the index the loss ignores, so B-LOC sits on İstanbul, B-ORG sits on Erdem, B-LOC sits on Miss, and the other eight positions are masked. The bottom row shows the bug: zipping the three labels onto the first three token positions instead. B-LOC lands on the CLS token, B-ORG lands on İstanbul, B-LOC lands on Erdem, and the remaining eight positions including all of Mississippi'de are padded with minus one hundred, so the lengths match and the loss is computed on wrong targets. A note says the loss still falls and the run still finishes.">
 
   <text x="10" y="14" class="t-xs t-b t-muted">WHAT YOU HAVE — ONE GOLD LABEL PER WORD</text>
 
@@ -754,17 +757,17 @@ happens when you skip the alignment and zip the labels on by position.
   <text x="125" y="236" class="t-xs t-mid t-b t-mono t-rose">B-ORG</text>
   <rect x="178" y="220" width="60" height="24" rx="5" class="box-rose"/>
   <text x="208" y="236" class="t-xs t-mid t-b t-mono t-rose">B-LOC</text>
-  <text x="275" y="236" class="t-xs t-mid t-mono t-muted">—</text>
-  <text x="339" y="236" class="t-xs t-mid t-mono t-muted">—</text>
-  <text x="407" y="236" class="t-xs t-mid t-mono t-muted">—</text>
-  <text x="473" y="236" class="t-xs t-mid t-mono t-muted">—</text>
-  <text x="535" y="236" class="t-xs t-mid t-mono t-muted">—</text>
-  <text x="588" y="236" class="t-xs t-mid t-mono t-muted">—</text>
-  <text x="635" y="236" class="t-xs t-mid t-mono t-muted">—</text>
-  <text x="695" y="236" class="t-xs t-mid t-mono t-muted">—</text>
+  <text x="275" y="236" class="t-xs t-mid t-mono t-muted">-100</text>
+  <text x="339" y="236" class="t-xs t-mid t-mono t-muted">-100</text>
+  <text x="407" y="236" class="t-xs t-mid t-mono t-muted">-100</text>
+  <text x="473" y="236" class="t-xs t-mid t-mono t-muted">-100</text>
+  <text x="535" y="236" class="t-xs t-mid t-mono t-muted">-100</text>
+  <text x="588" y="236" class="t-xs t-mid t-mono t-muted">-100</text>
+  <text x="635" y="236" class="t-xs t-mid t-mono t-muted">-100</text>
+  <text x="695" y="236" class="t-xs t-mid t-mono t-muted">-100</text>
 
   <text x="10" y="264" class="t-xs t-rose">Every label lands one word early. B-LOC trains on [CLS], and Mississippi'de is never labelled at all.</text>
-  <text x="10" y="278" class="t-xs t-muted">Nothing raises an error. The loss falls, the run finishes, and the score is merely worse than it should be.</text>
+  <text x="10" y="278" class="t-xs t-muted">Padded with -100, so no error. The loss falls, the run finishes; the score is merely worse than it should be.</text>
 
 </svg>
 ```
@@ -773,7 +776,9 @@ happens when you skip the alignment and zip the labels on by position.
 The three tokenizations are BERTurk's, printed verbatim above. Nothing
 connects the rows except the columns: each word sits over exactly the subwords
 it was split into, which is what `word_ids()` gives you and what a positional
-zip throws away.
+zip throws away. The bottom row's bug stays silent only when the remaining
+positions are padded with `-100` so the lengths match; without that, most
+training pipelines raise a shape-mismatch error.
 :::
 ::::
 
@@ -797,13 +802,24 @@ for i, tags in enumerate(batch["ner_tags"]):
     labels.append(row)
 ```
 
-Three ways this goes wrong, all of which still run:
+`word_ids()` is provided by the "fast" tokenizers built on the Rust `tokenizers`
+library; `AutoTokenizer` loads one for BERTurk. At inference, use the same map
+in reverse: each word's prediction is its first subword's prediction, and the
+other subwords' predictions are dropped. The alignment covers only the subwords
+left in the input: `truncation=True` leaves cut-off words unlabelled. Truncation
+is not expected on this corpus's short records, but on long documents count
+which words and entities fall out of evaluation.
+
+Three ways this goes wrong, all of which can run without an error once the
+lengths match:
 
 1. **Forgetting `word_ids()` and zipping labels to subwords positionally.**
    The moment any word splits, every subsequent label is attached to the
    wrong token. With 53.8% of entity words splitting, the labels are
-   scrambled almost immediately. Training proceeds; F1 lands somewhere near
-   noise.
+   scrambled almost immediately. If the label sequence is shorter than the
+   subword sequence, most training APIs raise a length error outright; padded
+   with `-100` to equal length, training carries on silently with wrong targets
+   and F1 drops sharply.
 2. **Propagating the word's label to every subword.** Defensible, and
    sometimes done — but if you propagate `B-PER` rather than converting
    continuations to `I-PER`, you have taught the model that a person's name
@@ -812,9 +828,10 @@ Three ways this goes wrong, all of which still run:
    every label by one position.
 
 [If a sequence-labelling model scores far below expectation, check the
-alignment before you touch the model.]{.hl} Print one tokenized sentence
-beside its aligned labels and read it. It takes a minute and it is the
-highest-yield minute in this chapter.
+alignment before you touch the model.]{.hl} Before training, print a few
+sentences with the source words, the `word_ids()` values, the subwords and the
+aligned labels side by side, and check by eye that special tokens get `-100` and
+each word's first piece gets the right label.
 
 ## Baselines before transformers {#sec-sequence-labeling-baselines}
 
