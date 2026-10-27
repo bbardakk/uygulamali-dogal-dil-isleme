@@ -386,10 +386,11 @@ should worry you.
 
 ### Complaint one: the standard implementation destroys Turkish
 
-Google's `rouge-score` is the reference implementation. HuggingFace's
-`evaluate` wraps it, and a large share of papers reporting ROUGE since 2019
-have used one or the other.
-Its tokenizer, reproducing the original Perl script's behaviour, is one line:
+Google's `rouge-score` is a widely used reference implementation.
+HuggingFace's `evaluate` wraps it, and papers reporting ROUGE use one or the
+other widely. The core of its tokenizer, reproducing the original Perl script's
+behaviour, is two lines (the real function also filters whitespace and invalid
+tokens):
 
 ```python
 # rouge_score/tokenize.py
@@ -427,7 +428,7 @@ viewof rougeTokInput = Inputs.textarea({
 
 ```{ojs}
 //| echo: false
-// the two lines from rouge_score/tokenize.py, transliterated
+// an approximate JavaScript transliteration of the two lines from rouge_score/tokenize.py
 rougeTokenize = t => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(x => x)
 ```
 
@@ -465,7 +466,10 @@ md`**${rougeTokRows.filter(r => !r.intact).length} of ${rougeTokRows.length}**
 words did not survive — ${(rougeTokRows.filter(r => !r.intact).length /
 Math.max(rougeTokRows.length, 1) * 100).toFixed(1)}%, against the 44.4% measured
 across 300 reference summaries below. Every fragment is still counted as a
-token, and fragments match other fragments.`
+token, and fragments match other fragments. This is an approximate browser
+simulation of how the ASCII class splits Turkish letters; the "intact" column
+compares the piece with the word lowercased by Turkish rules. Compute exact
+scores with \`rouge-score\` in Python.`
 ```
 :::
 
@@ -480,7 +484,7 @@ average pieces per affected word              2.00
 ```
 
 [Forty-four percent of Turkish words do not survive the tokenizer, and the
-debris inflates every score.]{.hl} Single-letter fragments such as `g`, `r`,
+debris inflated the score of all six systems below.]{.hl} Single-letter fragments such as `g`, `r`,
 `t`, `i` turn up in almost any Turkish text, so a candidate and a reference
 share them by chance, and overlap goes up. ROUGE-1 on the
 same 3,397 summaries, under two tokenizers:
@@ -496,24 +500,28 @@ oracle sentence                   24.89                  30.28        +21.7%
 ```
 
 Be precise about the damage, because overstating it would be its own error:
-**the ranking is unchanged.** lead-2 > lead-3 > TextRank > lead-1 under both
-tokenizers.
+**in this table the order of the six methods is unchanged.** Oracle > lead-2 >
+lead-3 > TextRank > lead-1 > random sentence under both tokenizers. This
+experiment does not show that the order holds for other models or corpora.
 
-What is destroyed is *comparability*. Every Turkish ROUGE number computed with
-the stock `rouge-score` or `evaluate` default — which is most of them — is
-roughly 60% larger than the quantity its readers think it is, by an amount that
-varies with a system's genuine overlap with the reference: the absolute gain
-from fragments is similar for every system (5.4 to 8.5 points), so the random
+What is destroyed is *comparability*. For these six systems, ROUGE-1 computed
+with the stock `rouge-score` default came out 22% to 80% larger than with the
+correct tokenizer; for other systems and sets the direction and size need
+re-measuring. The amount varies with a system's genuine overlap with the reference: the absolute gain
+from fragments is similar across these six systems (5.39 points for the oracle
+to 8.47 for lead-2), so the random
 sentence, with the least real overlap, gains 80% and the oracle gains 22%.
 
 Not all of them, and the exceptions are worth knowing because they are the fix.
 XL-Sum's own authors shipped a fork of `rouge-score` with Unicode-aware
 tokenization and per-language stemmers, Turkish among them, and their published
-Turkish numbers were produced with it; the same gap has been an open issue on
-HuggingFace's libraries since 2020 (first on `datasets`, now on `evaluate`). So the defect is documented, and the thing that is
+Turkish numbers were produced with it; the same gap was raised as an issue on
+HuggingFace's libraries in 2020 (first on `datasets`, now on `evaluate`; its
+status can change between versions). So the defect is documented, and the thing that is
 actually missing is the habit of saying *which implementation* produced a
-number. Report the tokenizer beside the score, the way you would report a
-random seed. [The inflation is a function of the system, so the gaps
+number. When comparing Turkish ROUGE values, report the library and version, the
+tokenizer, the stemmer and the summary-splitting settings beside the score, the
+way you would report a random seed. [The inflation is a function of the system, so the gaps
 between systems are wrong even though the order survives.]{.hl}
 
 ::: {.column-margin}
@@ -533,7 +541,11 @@ random ASCII-only pairs, where both tokenizers agree:
 max absolute difference vs rouge-score, 900 comparisons:  0.0000000000
 ```
 
-The implementations are identical. The entire Turkish gap is tokenization.
+That shows our n-gram and LCS arithmetic agrees with `rouge-score` on these
+examples. Attributing the whole Turkish gap in the table to the tokenizer also
+needs the two scorers' other settings (stemming, aggregation) documented as
+identical; this page does not show that separately, though the tokenizer is
+clearly the main source.
 
 ### The fix, which is one argument
 
