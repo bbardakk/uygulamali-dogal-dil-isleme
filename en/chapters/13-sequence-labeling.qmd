@@ -1380,7 +1380,10 @@ ignored]{.hl} and the model returned prose. No error, no warning, no field in
 the response saying the constraint had been dropped.
 
 Be careful which variable you blame, though, because we did not isolate it.
-This is a known *class* of bug rather than a property of `/api/chat`: the
+Ollama's own structured-output documentation demonstrates `format` on
+`/api/chat`, so this is not the endpoint's general behaviour but something
+observed on this device, model and version. It looks like a known *class* of
+bug: the
 upstream tracker carries several reports of `format` being dropped without
 warning, and they point at the runner and the flags rather than at the
 endpoint — one backend dropping the constraint while a different build of the
@@ -1392,23 +1395,28 @@ the constraint is off until a request has proved it is on.
 Run that inside an extraction pipeline with a `try/except json.JSONDecodeError`
 around the parse, and you get an extractor that returns zero entities for every
 document and a metrics table full of zeros you will spend an afternoon
-blaming on your prompt.
+blaming on your prompt. Turning an unparseable reply into `[]` turns it into a
+"no entities" prediction. Emit a separate `invalid_output` state instead, and
+report the valid-reply rate, span F1 on the valid replies and an end-to-end
+metric that counts failures as errors, together.
 
 ::: {.column-margin}
 Note also *what* the constrained call returned: `{"answer": 1}`. Paris is not
 an integer, so grammar-constrained decoding produced something schema-valid
 and semantically worthless. Nor did the schema offer a legal way to say "this
 question has no integer answer" (a nullable field, say); the model was forced
-to produce a number. [A schema guarantees shape, never
-truth.]{.hl} @sec-decoding is where the machinery behind this lives — how
+to produce a number. Adding one would not by itself have produced a correct
+answer either. [Schema conformance checks structure only; validate the output
+value against the task's reference separately.]{.hl} @sec-decoding is where the machinery behind this lives — how
 grammars constrain sampling, and what they cost.
 :::
 
 The general rule this stands for: **verify that your structured-output
 constraint is actually being applied, by sending one request whose schema the
-model would otherwise violate.** A schema you believe is enforced and is not
-is worse than no schema, because it removes the malformed output that would
-have told you.
+model would otherwise violate,** and validate every real reply against the
+schema too. A schema you believe is enforced and is not is particularly risky:
+the constraint dropping silently produces unexpected parse failures, and the
+code that catches them can hide them.
 
 ### Getting the answer back onto the text
 
