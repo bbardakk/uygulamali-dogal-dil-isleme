@@ -191,12 +191,14 @@ chapter); check what your software returns in that case.
 ### A cosine of 0.98 does not mean what you think
 
 Here is the trap that costs the most time in practice. [The raw value of a
-cosine similarity is not interpretable on its own]{.hl}. It is only
-interpretable against the distribution of similarities that the *same model*
-produces for *unrelated* documents.
+cosine similarity is not interpretable on its own]{.hl}. You first need the
+distribution the *same model* produces for random pairs — the scale's
+background.
 
 We took 3,000 random reviews and scored all 4,498,500 pairs among them, in
-each of four spaces:
+each of four spaces. This is a **random-pair background**: we did not verify
+that the pairs are individually unrelated in meaning, and pairs about the same
+product, with stock phrases or near-duplicates are in the distribution too.
 
 | space | dims | mean cosine | sd | 1st–99th percentile |
 |:--|--:|--:|--:|:--:|
@@ -205,7 +207,7 @@ each of four spaces:
 | MiniLM | 384 | 0.3051 | 0.1503 | −0.009 – 0.669 |
 | multilingual-E5 | 768 | [0.8547]{.con} | 0.0278 | [0.783 – 0.916]{.con} |
 
-: Two *unrelated* Turkish reviews, scored by four representations
+: Cosine distribution of randomly chosen Turkish review pairs in four representations
 {tbl-colwidths="[28,12,15,15,30]"}
 
 :::: {.anlp-fig}
@@ -255,39 +257,42 @@ each of four spaces:
 </svg>
 ```
 ::: {.fig-cap}
-Read the dashed line. A dashboard that flags document pairs above 0.8 as
-"similar" flags **almost nothing** under tf-idf, LSA or MiniLM, and **almost the entire
-corpus** under E5 — where two unrelated reviews already score 0.855. The
-threshold did not change. The geometry did.
+The dashed 0.8 line falls in very different places in the four random-**pair**
+distributions: under tf-idf, LSA and MiniLM almost no random pairs lie to its
+right, under E5 almost all of them do. So the same pair threshold yields very
+different candidate counts per representation. The share of documents flagged,
+and the real near-duplicate accuracy, have to be measured separately.
 :::
 ::::
 
-Two reviews with nothing in common score **0.855** on average under E5, and 98% of all
-random pairs land between 0.78 and 0.92. A dashboard that flags "similar
-documents" above 0.8 would flag almost the entire corpus. The absolute number
-is a property of how the encoder was trained — its
-*anisotropy*, the tendency of all its vectors to point in roughly the same
-direction, so that even unrelated texts share a large common component. This is
-the same geometry that @sec-embeddings measured on word vectors and reported to
-be even stronger in contextual models. It is not a property of your documents at
-all.
+Random pairs score **0.855** on average under E5, and 98% of them land between
+0.78 and 0.92, so a raw cosine cannot be carried over as a threshold from one
+representation to another. The reason cannot be settled from this table alone.
+One possibility is *anisotropy*, the tendency of all vectors to point in roughly
+the same direction, so that even unrelated texts share a large common component
+— the geometry @sec-embeddings measured on word vectors and reported to be
+stronger in contextual models. E5's model card, for its part, attributes the
+high cosine range to the low temperature (InfoNCE, 0.01) used in contrastive
+training. Test the common-direction hypothesis separately with centring and a
+spectrum measurement.
 
 Notice also that the *usable range* is not the same as the nominal range. Both
 E5 and tf-idf put 98% of their random pairs inside a window about 0.13 wide —
 but E5's window is nominally an interval of length 2, of which it uses 6.6%,
-and it sits bunched up at the far right. tf-idf's window starts at zero, so a
-score of 0.13 really is near the top of what that space produces. Same width,
-completely different meaning, and only one of them behaves like the fraction it
-resembles.
+and it sits bunched up at the far right. tf-idf's window starts at zero, so in
+this sample a score of 0.13 is in that space's upper tail. But in neither space
+is a cosine a fraction like "13% of the text is shared"; a threshold decision
+has to be checked against labelled near and far pairs.
 
 ::: {.callout-important appearance="simple"}
-**Calibrate before you threshold.** Before choosing any similarity cutoff,
-score a few thousand *random* pairs from your own corpus with your own encoder
-and look at the distribution. If you skip this, you are picking a threshold
-against a scale you have not measured. @steck2024cosine makes the stronger
-version of this argument: for some models the cosine similarity does not
-correspond to any meaningful notion of similarity at all, and the fact that it
-is bounded in $[-1, 1]$ lends it a false air of being a percentage.
+**Calibrate the threshold with two distributions.** Score a few thousand
+*random* pairs from your own corpus with your own encoder to see the scale's
+background. Then compute recall and the false-positive rate on hand-verified
+similar and dissimilar pairs. No single cosine value is a universal percentage
+of document meaning. @steck2024cosine makes the stronger version of this
+argument: for some models the cosine similarity does not correspond to any
+meaningful notion of similarity, and the fact that it is bounded in $[-1, 1]$
+lends it a false air of being a percentage.
 :::
 
 ### The pair that has now defeated three chapters
