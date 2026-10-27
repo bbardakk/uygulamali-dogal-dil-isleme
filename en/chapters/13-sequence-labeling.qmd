@@ -1828,26 +1828,28 @@ Coverage is a ceiling nothing downstream can raise.
 
 ## Intuition checks {#sec-sequence-labeling-intuition}
 
-Answer these before reading the answers.
+Answer these before reading the answers. The numbers in the answers belong to
+the Turkish WikiANN data and evaluation set-up used in this chapter.
 
 ::: {.callout-note collapse="true"}
 ## 1. Your tagger reports 96% token accuracy. Is it good?
 
-You cannot tell, and the number is designed to stop you asking. On this
-corpus a model that outputs `O` for every token scores **61.36%**, so 96%
-represents 35 points above the floor, not 96 points of competence. On a realistic
-corpus where most sentences contain no entity at all, the floor is higher
-still — 97% or more is routine — and a model can reach it while finding
-nothing.
+You cannot tell from that number alone. On this corpus a model that outputs `O`
+for every token scores **61.36%**, so here 96% is 35 points above the floor, not
+96 points of competence. On a corpus where most sentences contain no entity at
+all, the `O` share — and so the floor — can be higher still, and a model that
+finds nothing can come close to 96%.
 
-Ask for span-level F1. If the answer is "we don't have that number", the
-model has not been evaluated.
+Ask first for the same test's `O` share, then span precision, recall and F1 by
+entity type, and the false-positive rate on entity-free sentences. Without a
+span-level number, the model has been evaluated incompletely for a NER goal.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Token-level F1 is 88.73 and span-level F1 is 85.45. Where did three points go?
 
-Boundaries. Token-level F1 gives partial credit: three correct tokens out of
+To partial overlaps, type and boundary errors, and different counting units;
+boundary errors are the most visible part. Token-level F1 gives partial credit: three correct tokens out of
 a four-token organisation score three quarters. Span-level requires the type,
 the first token and the last token all to match, so that same prediction
 scores zero.
@@ -1859,23 +1861,24 @@ mistake weighs four times a one-token one. It is a signal that boundary errors
 are present, not a measurement of how many. If you want the number, count the
 error types directly — exact, boundary-only, type-only, spurious, missed —
 which is a twenty-line script and a far more actionable table. Report
-span-level either way, because no downstream consumer can use three quarters of
-a company name.
+span-level either way, because a system that extracts whole records cannot use
+three quarters of a company name.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. Your transformer emits `O I-ORG I-ORG`. Whose bug is it?
 
-Nobody's — it is the expected behaviour of a softmax tagger, which picks the
-best label at each position independently with nothing coupling position 4 to
-position 5. The best fine-tuned BERTurk in this chapter emits 139 such
+It is a question of system contract more than of the model. The output comes
+from the expected behaviour of a softmax tagger, which picks the best label at
+each position independently, with nothing coupling position 4 to position 5 to
+guarantee IOB2 transitions. The best fine-tuned BERTurk in this chapter emits 139 such
 transitions across 10,000 sentences, and one trained on only 500 sentences emits 3,739.
 
 What *is* your decision is what happens next. `seqeval` will silently recover
 an `ORG` span; a strict decoder will drop it; a repair pass will rewrite the
 first `I-` to `B-`. All three are defensible and they give different F1. The
-bug is not the illegal transition, it is not knowing which of the three your
-evaluation is doing.
+bug is not the illegal transition; it is a pipeline that does not choose one of
+the three explicitly and report F1 under that same rule.
 
 Worth knowing how the count moves: it peaks at 3,739 at the 500-sentence
 budget, falls to 139 at the full budget, and never reaches zero.
@@ -1902,43 +1905,50 @@ against a CRF trained on the full 20,000 sentences arrives somewhere between
 **2,000 and 5,000** labelled sentences: at 2,000 the encoder is still a point
 behind (84.23 against 85.45) and by 5,000 it is nearly three ahead.
 
-So: gazetteer first if you have a ready-made list, and fine-tune once you are
-past a few thousand labelled sentences. In between, a CRF is cheap and the first
-thing to try, but this chapter did not measure a CRF trained on a small budget;
-check that ordering on your own data. The general lesson is that "just fine-tune a transformer"
+So this table does not say which method wins at 200 labelled sentences. If you
+have a ready-made list, set it up as a quick baseline; compare a CRF and an
+encoder with a better-suited schedule on the same 200 sentences against an
+independent evaluation. Past a few thousand labelled sentences, fine-tuning came
+out ahead on this corpus. The general lesson is that "just fine-tune a transformer"
 is advice with a budget attached, and the budget is rarely stated.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Your NER F1 jumped six points when you switched corpora. Did the model improve?
 
-Check for leakage before you celebrate. In WikiANN Turkish, **13.06% of test
+To know, compare the two corpora: label scheme, entity-type shares, text
+domain, tokenisation and train/test overlap. A six-point gap can come from any
+of them. Overlap is the easiest to miss: in WikiANN Turkish, **13.06% of test
 sentences appear verbatim in the training set**, 1,305 of them with identical
 gold labels. A memorising model gets those free.
 
-The diagnostic takes four lines: hash your test inputs, intersect with your
-training inputs, and score the leaked and clean halves separately. In this
+That check is short: hash your test inputs, intersect with your training
+inputs, and score the duplicated and duplicate-free slices separately. In this
 chapter the CRF scored 99.81 on the leaked half against 83.56 on the clean
-half. If your gap looks like that, you measured your dataset, not your model.
+half. If your gap looks like that, you may have measured your dataset as much
+as your model.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. Your LLM extractor returns a company that is not in the document. What is the F1 contribution?
 
-It counts as a **false positive**, and the important part is that it must
-count as something. Span metrics are defined over token offsets, and a string
+It cannot count as a hit; depending on the protocol you fixed in advance, it
+counts as a **false positive** or is shown outside F1 in a separate
+invalid-output rate. The important part is that it must count as something. Span metrics are defined over token offsets, and a string
 with no offsets has nothing to compare against a gold span — which makes it
 tempting to drop the row from the evaluation entirely. Do not: silently
 discarding unalignable output prices invention at zero and flatters the
 extractor. Either score it as a false positive against precision, or report an
-explicit invalid-output rate alongside F1. Say in the protocol which you did.
+explicit invalid-output rate alongside F1. Say in the protocol which you did
+and how it affects end-to-end success; this chapter did the second and reported
+the F1 under both protocols (@sec-sequence-labeling-llm).
 
 But before you write "hallucination" in the report, check whose bug it is.
 Measured here: of 1,419 returned mentions, 31 would not align — and 27 of
 those were the *aligner's* fault, 20 from wiki markup in the corpus and 7
 from a curly apostrophe normalised to a straight one. Only 4 in 1,419
-(0.28%) were genuinely not in the text, and even those were case-suffix
-confusions rather than invention.
+(0.28%) were not in the text verbatim, and those were canonical or re-inflected
+forms.
 
 So: count them, report the count, and split it by cause. It is a failure mode
 a tagger structurally cannot have — a tagger can only label tokens that
