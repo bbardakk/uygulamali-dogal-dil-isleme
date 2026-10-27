@@ -3397,17 +3397,20 @@ data (@sec-classification-calibration).
   satisfied, so a model with no features, no parameters and no training scores
   **93.68% accuracy and 48.37 macro-F1**. Every accuracy figure in a classification
   paper should be read as a distance from that number, and on imbalanced data
-  the distance is usually small enough to be embarrassing.
-- **A threshold is a free 19 points.** The identical fitted model — the same
-  coefficients, byte for byte — goes from **58.24 to 77.66 macro-F1** because we
-  flagged at 0.166 instead of 0.5. Average precision stayed at
+  that distance is often small. Report every accuracy figure with the
+  majority-class floor and the minority-class metrics.
+- **A threshold can be 19 points without retraining.** The identical fitted
+  model — the same coefficients, byte for byte — goes from **58.24 to 77.66
+  macro-F1** on test because we flagged at 0.166, picked on `cal`, instead of
+  0.5. It is not free: picking the threshold takes a labelled validation slice. Average precision stayed at
   60.30 and AUC at 93.24 through the change, which is the proof that nothing
   about the model moved.
 - **Try the threshold before you touch the data.** Across five imbalance
   treatments, moving the cut reached 77.66 against oversampling's 77.63, class
-  weighting's 76.09 and SMOTE's 74.72 — at zero training cost, and with only the
-  threshold arm tuned, so read it as *the same operating point for free* rather
-  than as a win. Undersampling actively destroyed the model (62.98, average precision down from 60.30 to 52.49
+  weighting's 76.09 and SMOTE's 74.72 — with no extra training, and with only
+  the threshold arm tuned (the other treatments were not compared with their
+  thresholds tuned), so read it as *the same operating point without retraining*
+  rather than as a win. Undersampling actively destroyed the model (62.98, average precision down from 60.30 to 52.49
   because 87.4% of the training rows were thrown away). @elkan2001foundations,
   who is routinely cited *in support of* rebalancing, argues the opposite: learn
   from the data as given, then compute the decision.
@@ -3417,10 +3420,13 @@ data (@sec-classification-calibration).
   **3.96 to 14.18** while gaining nothing a threshold could not have given.
 - **The number your classifier prints is not a probability until you check.**
   Fit the calibrator on data the model has never seen. With 8,000 held-out
-  documents isotonic regression and Platt scaling came out level (ECE **0.69**
-  against 0.94 — a gap inside the noise floor computed above), which is what
-  @niculescu2005predicting predicts above roughly 1,000 calibration points:
-  there, isotonic is safe. Below that, Platt scaling is the safer choice. Fitting isotonic on
+  documents isotonic regression scored ECE **0.69** and Platt scaling 0.94. A
+  rough calculation puts the noise-only part of ECE at around half a point, but
+  we did not report an interval for the gap or its effect on decision cost, so
+  neither equivalence nor an isotonic win can be claimed. In
+  @niculescu2005predicting's experiments isotonic matched or beat Platt above
+  roughly 200–1,000 calibration points and Platt led below; that is a pattern
+  for their data, not a universal threshold. Fitting isotonic on
   the training scores instead gave 2.39: worse, but not obviously wrong, which
   is precisely what makes the mistake dangerous.
 - **There are two ECEs and they are not comparable.** @guo2017calibration bin on
@@ -3438,34 +3444,41 @@ data (@sec-classification-calibration).
   scores 79.61 — beating tf-idf trained on the full **40,000** (76.21). Twenty
   times fewer labels for a better model. At equal budget the gap is 8.81
   macro-F1 and 15.45 complaint-F1.
-- **Price that gap honestly.** The encoder costs roughly **970× more to train**
-  for those 8.81 points (1,162 GPU-seconds against the vectoriser's 1.2), and
+- **Price that gap honestly.** On this hardware the 40,000-label BERTurk run
+  took 6,303 GPU seconds; the speed of the stable runs projects 1,162. The
+  **roughly 970×** ratio against the vectoriser's 1.2 CPU seconds belongs to
+  that projection and is a time ratio: CPU and GPU seconds are not the same unit,
+  and it is not a ratio of money. The encoder
   serves about 470 documents per second against the vectoriser's tens of
   thousands. Whether that is
   worth it is a budget question, not a modelling one, and you cannot answer it
   without both numbers.
-- **The prompted-versus-trained crossover is a curve, and on this task it sits
-  at ~2,000 labels.** At 1,000 labels the prompted model wins by 8.79 macro-F1
-  points (and by more below that); at 2,000 the two are a dead heat (0.08 points, $p = 0.97$); at 40,000
-  the encoder wins by 4.73. Measure it on your own pair rather than citing
+- **The prompted-versus-trained crossover is a curve.** In this comparison the
+  prompted model leads by 8.79 macro-F1 points at 1,000 labels (and by more
+  below that); at 2,000 the gap is not distinguishable (0.08 points,
+  $p = 0.97$; the interval includes zero, which is not evidence of
+  equivalence); at 40,000 the encoder leads by 4.73. Measure it on your own pair rather than citing
   anyone's number, because the crossover is a property of *which two models* you
   put on the axis.
 - **Compare two models with a paired test, not by eyeballing two intervals.**
   Models scored on the same documents share most of their sampling noise, so
   overlapping marginal intervals prove nothing. Every comparison above is 10,000
   paired bootstrap resamples of the *difference*.
-- **LLM folklore is true for weak models and small at best for strong ones.** Writing
+- **In this experiment LLM folklore had a large effect on weak models and a small one on strong ones.** Writing
   the instruction in English was worth **+16.90** macro-F1 on a 3B model and
   **+0.54 (95% interval up to +2.25)** on a 9B one; eight examples were worth
   **+7.17** on `gemma3:27b` and **+0.51 (up to +2.48)** on `qwen3.6:35b-a3b`.
   Quote the intervals rather than the p-values: what the strong-model runs
-  establish is a ceiling of two-and-a-half points, not a zero. Both rules were
-  real once. Re-measure them on the model you are shipping.
+  establish is a ceiling of two-and-a-half points, not a zero — and that ceiling
+  is bounded by one prompt, one task and this test set. Re-measure both on each
+  new task, on the model you are shipping, with a paired comparison.
 - **Prompting costs you the threshold.** Every prompted run here was
   recall-biased on the minority class — the best reached 56.98% precision at
-  80.95% recall against BERTurk's 74.42/76.19 — and none of it is fixable,
-  because a zero-shot model returns a *word*. No ROC, no isotonic map, no $q^*$,
-  no sweep. That is a larger loss than the macro-F1 gap.
+  80.95% recall against BERTurk's 74.42/76.19 — and in this experiment's
+  label-only set-up none of it could be fixed afterwards, because the model
+  returned a *word*. No ROC, no isotonic map, no $q^*$, no sweep. Set-ups that
+  expose token log-probabilities or a confidence score can bring part of that
+  back; they need testing separately.
 - **A stated confidence can be right on average and still separate nothing.**
   `qwen3.5:9b` averaged 93.53% stated against 92.95% actual — a +0.58 gap, and
   an ECE of 1.80 over its nine self-chosen bins — while putting **1,549 of the
@@ -3473,10 +3486,12 @@ data (@sec-classification-calibration).
   against the encoder's own 0.843, and the ≥95 routing cut that looks useful was
   read off the evaluation set, so treat it as an oracle until you re-pick it on
   held-out data.
-- **The ensemble opportunity is real and usually unaffordable.** The best LLM
-  and BERTurk disagree on 94 of 2,000 documents, and an oracle picking the winner
-  each time would gain 5.81 macro-F1 points. Collecting them means paying 142×
-  more per document in the arrangement we measured. Cross-tabulate to find the opportunity; price it before you
+- **The ensemble ceiling is real, but it is not an achievable gain.** The best
+  LLM and BERTurk disagree on 94 of 2,000 documents, and an oracle picking the
+  winner each time would gain 5.81 macro-F1 points. That is an upper bound: a
+  real routing rule collects less, and in the arrangement we measured the LLM
+  costs 142× more per document. Do not reach an economic verdict before the
+  routing rule and the real total serving cost are measured. Cross-tabulate to find the opportunity; price it before you
   believe in it.
 - **Replacing a model is a trade.** BERTurk fixes 332 test documents and breaks
   149 that tf-idf handled — a net 183, or 1.83 accuracy points. Build the
@@ -3485,28 +3500,37 @@ data (@sec-classification-calibration).
 - **The encoder's advantage is concentrated where you would expect.** tf-idf's
   error rate is flat across document length (4.86%–5.82%, no trend); BERTurk's
   falls from 4.50% on the shortest reviews to 3.10% on 200–399 characters. It is
-  not uniformly better — it is better at long documents, because that is where
-  negation, concession and scope live.
+  not uniformly better; its advantage grows with length. Whether that comes from
+  linguistic structure such as negation, concession and scope or from other
+  differences that change with length, we did not test.
 - **Sort your errors by confidence, not at random.** The top of that list is
-  where label errors concentrate. Ours includes a review that says the product
+  where you find label-error candidates. Ours includes a review that says the product
   broke in two months *and explains that it is giving five stars so the
-  complaint appears at the top of the listing* — labelled satisfied, because the
-  labels evidently come from star ratings. When the model looks more right than the label,
+  complaint appears at the top of the listing* — labelled satisfied, an example
+  that strongly suggests, without proving, that the labels come from star
+  ratings. When the model looks more right than the label,
   stop tuning and go re-read @sec-audit; @frenay2014classification is the survey.
-- **Some of your test set is unlabelable.** 204 documents defeat both models and
-  137 of them are complaints — 21.7% of every complaint in the test set. One of
-  them is a review whose entire text is the word "downside" followed by a colon.
-  No architecture reaches those, and their existence caps the score you can
-  honestly chase.
+- **The errors two models share are a review list, not a ceiling.** 204
+  documents defeat both models and 137 of them are complaints — 21.7% of every
+  complaint in the test set. One of them is a review whose entire text is the
+  word "downside" followed by a colon; some reviews may not be classifiable from
+  the text alone. But do not treat those 204 as an unbeatable error floor
+  without a blind label audit and comparisons with other models.
 - **Suspect your harness before your model — especially when the number is
   good.** In our timing sweep one inference run came back 27× slower than the
   other seven and one training epoch was 14× slower than its two siblings.
   Neither was a property of the model. But the expensive failure ran the other
   way: an LLM scored 93.75% accuracy and 48.39 macro-F1, which *is* the
-  majority-class baseline, because a reasoning model spent its 24-token budget
-  inside a `thinking` field the parser never read, and every unparseable answer
-  fell through to the majority label. A bad number gets investigated; a good one
+  majority-class baseline, because every unparseable answer fell through to the
+  majority label. Later tests showed the likely mechanism — a reasoning model
+  spending its 24-token budget inside a `thinking` field the parser never read —
+  but the archive kept no `thinking` field or stop reason for the original
+  calls, so the cause of that run is not settled. A bad number gets investigated; a good one
   gets published. Design against that asymmetry — never impute a label on a parse
   failure, abort on a low parse rate, smoke-test before the overnight queue —
   because your own scepticism will not fire when the result is what you hoped
   for.
+
+This chapter gave each document one label. @sec-sequence-labeling carries the
+same three-way comparison — classical model, fine-tuned encoder, prompted LLM —
+to tasks where the label goes on every token instead of the document.
