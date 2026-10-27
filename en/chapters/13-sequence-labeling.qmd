@@ -912,8 +912,9 @@ The name for what the conditioning buys is worth having. A hidden Markov model
 label generates its word and each label generates the next label. It
 is **generative**: it models the joint $p(x, y)$, so it has to describe how the
 *words* were produced, and that forces strong independence assumptions on
-them — you cannot casually add "the previous word is title-cased" and "this
-word ends in *-nin*" as overlapping evidence without the model double-counting.
+them — in a basic HMM you cannot casually add "the previous word is
+title-cased" and "this word ends in *-nin*" as overlapping evidence, because its
+assumptions treat that evidence as independent and can count it more than once.
 A CRF is **discriminative**: it models $p(y \mid x)$ directly and never has to
 explain where $x$ came from, so the feature dictionary below can contain
 whatever correlated, hand-designed, overlapping signals you like. That freedom
@@ -955,6 +956,12 @@ def features(tokens, i):
     return f
 ```
 
+Two notes. `w.lower()` uses Python's Unicode default, not Turkish locale rules:
+`I` becomes `i` and `İ` becomes `i` + U+0307 (@sec-turkish-nlp). This run used
+it as shown; in your own set-up pick a consistent normalisation for `I/İ` and
+apply the same one in training and test. `shape(w)` is a small helper not
+defined here; it returns a word shape like the examples in the comment.
+
 ```text
 CRF (sklearn-crfsuite, lbfgs, c1=0.1, c2=0.1, 200 iterations)
   fit 18.5s        predict 0.2s for 10,000 sentences
@@ -967,16 +974,19 @@ CRF (sklearn-crfsuite, lbfgs, c1=0.1, c2=0.1, 200 iterations)
      ORG   P 86.34   R 78.70   F1 82.34    (n=4,154)
 ```
 
-**85.45 span F1 in eighteen seconds on a CPU.** No GPU, no pre-training, no
-downloads. This is the number the rest of the chapter has to beat, and it is
+**85.45 span F1 from 18.5 seconds of training on this laptop's CPU.** No GPU,
+no pre-training, no downloads; prediction on the 10,000 test sentences took 0.2
+seconds. The times depend on the CPU and on what the measurement covers. This is the number the rest of the chapter has to beat, and it is
 a genuinely hard target.
 
 Two things in that table are worth reading rather than skimming. `ORG` recall
 is 78.70, ten points below `PER` and seven below `LOC` — organisations are
-long, compositional and open-ended (*Slovenya Millî Basketbol Takımı*), so the
-five-token window around a long name's first word may not reach its last word,
-which is often the one that says "organisation" (*Takımı*, "team"). And the
-`w.hasapos` feature is doing real work: in Turkish orthography an apostrophe
+long, compositional and open-ended (*Slovenya Millî Basketbol Takımı*); one
+plausible explanation is that the five-token window around a long name's first
+word may not reach its last word, which is often the one that says
+"organisation" (*Takımı*, "team"). We did not ablate the context window, so that
+is a hypothesis. And the `w.hasapos` feature should help — again, we did not
+ablate it: in Turkish orthography an apostrophe
 separates a suffix from a proper noun (or from a number or abbreviation, as
 in *1919'da*), so it is a strong signal that the preceding characters are a
 name — a piece of orthographic luck few languages offer so regularly.
