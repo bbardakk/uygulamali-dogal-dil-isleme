@@ -34,20 +34,22 @@ diagnostic example, not a benchmark.
 
 ## The corpus you cannot read {#sec-clustering-setup}
 
-@sec-bake-off competed seven representations on 40,000 labelled Turkish
-reviews and produced a leaderboard. @sec-data-annotation then asked where
-those labels came from and found that a 2% wobble in the test labels is enough
-to push the winner's score below a rival's measured on clean labels. Both chapters had labels. This one asks the question that comes
-*before* both: [you have the documents, you have no labels at all, and
-somebody has to decide what is worth labelling]{.hl}.
+@sec-bake-off classified 40,000 labelled Turkish reviews; @sec-data-annotation
+examined how label quality affects the result. This chapter takes the step
+before labels are used: [you have the documents, you have no labels at all, and
+somebody has to decide what is worth labelling]{.hl}. Finding the duplicates,
+clusters and subgroups worth inspecting in a large corpus gives a starting point
+for which documents to label and which error types to track.
 
-That is the ordinary situation. A support inbox, a year of survey free-text, a
-scrape of product reviews — the documents arrive without a `sentiment` column,
-and the budget conversation from @sec-data-annotation ("1,000 clean labels tie with
-40,000 at 10% noise") cannot even begin until somebody knows what is in there.
+A support inbox, a year of survey free-text, a scrape of product reviews — the
+documents often arrive without a `sentiment` column, and the budget
+conversation from @sec-data-annotation cannot begin until somebody knows what
+is in there.
 
-So the setup is deliberately the same corpus, the same seed, and the labels
-locked in a drawer:
+The source and seed are deliberately the same. The labels were held back and
+not used to choose representations or the number of clusters; the label
+distribution below is reported for evaluation context after the experiment — it
+is not something an unlabelled practitioner would see at the start:
 
 ```text
 rows as downloaded   235,165
@@ -62,22 +64,24 @@ distinct word forms   86,245
 ```
 
 ::: {.column-margin}
-Same source, same seed, same deduplication as @sec-bake-off — and, we
-discovered while setting up @sec-classification, **not** the same 50,000 rows.
-@sec-bake-off drew its subsample with one stratified `train_test_split`; this
-chapter drew it group by group. Both are stratified, both use seed 42, both give exactly
-46,839 positive and 3,161 negative — and they share 23,819 documents, 47.6%.
-"Same seed" is not the same thing as "same sample", and the only way to find
-that out is to intersect the two and count.
+Same source, seed 42 and the same deduplication as @sec-bake-off — but
+different sampling procedures: @sec-bake-off drew its subsample with one
+stratified `train_test_split`, this chapter drew it group by group. Both give
+46,839 positive and 3,161 negative, and they share 23,819 documents (47.6%)
+(we noticed this while setting up @sec-classification). For reproducibility,
+keep the row IDs and the sampling procedure; a seed alone does not define a
+sample.
 :::
 
 ::: {.column-margin}
 The tokenizer differs too, this time on purpose. @sec-bake-off used a
 Turkish-aware `tr_lower` and the pattern `[a-zçğıöşü]+`; this chapter
 deliberately uses stock `str.lower()` and a bare `\w+`, which is what you get if
-you do not think about it. The lowercasing half changes nothing on this corpus,
-which ships already lowercased; the pattern half does, because `\w+` also keeps
-digits, `_` and letters outside the Turkish alphabet. That difference is one of
+you do not think about it. With no visible capitals in this corpus the
+lowercasing half has little effect (though it does not remove U+0307s that are
+already there); the pattern half matters, because in Python `\w` covers Unicode
+alphanumerics and `_` — it keeps digits and letters outside the Turkish
+alphabet too. That difference is one of
 two reasons the form counts here (86,245) and there (74,317) are not comparable;
 the other is that 52.4% of the rows are different documents. Two confounded
 causes, and we can name both only because we went and intersected the samples.
@@ -91,9 +95,11 @@ still be too tidy, so here is the exact position. The labels appear in two
 places. First, they are the answer key for the adjusted Rand index reported
 across the whole $k$-sweep below. Second, @sec-clustering-payoff scores the
 triage curve against them — and there they also decide something: the *order*
-the clusters are read in. That makes the second result an *oracle* one, meaning
-it used information a real user would not have. @sec-clustering-payoff says so where
-it reports the number. That discipline is the whole experiment: it is very easy
+the clusters are read in. That makes the second result an *oracle* one: the
+cluster order was chosen with **all** the reference labels and the yield was
+computed on the same documents. It is a descriptive upper bound with label
+information leaked into the choice, not the expected test performance of a
+usable policy. @sec-clustering-payoff says so where it reports the number. That discipline is the whole experiment: it is very easy
 to tune an "unsupervised" pipeline until it reproduces a label you have been
 peeking at, and the result is a number that will not survive contact with a
 corpus that has no labels.
@@ -103,29 +109,23 @@ knowing where it goes:
 
 | what we asked | what came back |
 |:--|:--|
-| How many near-duplicates survive exact deduplication? | 0.30% of documents, but 1.06% if you move the threshold by 0.1 |
+| How many redundant documents did LSH find after exact deduplication? | at least 0.30% at $J \ge 0.8$; at least 1.06% at $J \ge 0.7$ |
 | Does clustering recover the sentiment labels? | [No. Best ARI anywhere: 0.0083]{.con} |
 | Do the internal validity indices agree on how many clusters there are? | [No. Three representations gave 50, 4 and 2]{.con} |
 | Does a density-based method find clusters? | [No. Never more than 3, on 53–100% noise]{.con} |
 | Does the best topic-coherence score mark the best topic? | [No. The top-scoring topic was tokenizer debris]{.con} |
 | So the clustering was worthless? | [No — and that is the interesting part]{.pro} |
-| What did it actually find? | [A shipping Unicode bug, and 56% of the complaints for 13% of the reading]{.pro} |
+| What did it actually find? | [A shipping Unicode bug, and (with an oracle ordering) 56% of the complaints for 13% of the reading]{.pro} |
 
 : What this chapter measured {tbl-colwidths="[52,48]"}
 
-The last two rows are not a rhetorical trick. Four of the seven headline
-answers above are a flat negative, and the chapter still ends with a
-clustering pipeline that does real work. Getting from one to the other requires
-changing the question, and learning to notice when the question is wrong is
-more transferable than any of the algorithms below.
-
-**What we will look at.** First the question every clustering method answers
-badly if you skip it: what "similar" means for your documents. Then the
-cheapest win in the chapter — removing the near-duplicates — before any
-clustering runs. Then k-means and its four assumptions, an honest sweep that
-does not go the way the tutorials suggest, and what to do when the shape is
-wrong. Then topic models, and finally the thing this chapter is really about:
-what a *failed* clustering is still worth.
+Four of the seven headline answers are negative; the last two rows show that a
+clustering can be useful for data quality and complaint triage without
+reproducing the sentiment labels. We look first at the similarity scale and at
+near-duplicates. Then we compare k-means, density-based clustering and topic
+extraction over three representations. The last section measures whether
+clusters that do not reproduce the sentiment labels are still useful for data
+quality and complaint triage.
 
 ## What "similar" has to mean before you can cluster {#sec-what-similar-means}
 
