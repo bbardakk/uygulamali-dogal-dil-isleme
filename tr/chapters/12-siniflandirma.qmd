@@ -67,9 +67,10 @@ Bu beklenenden zor çıktı ve zorluğun kendisi ilk ders.
 
 @sec-karsilastirma altörneklemini "50.000 satır, tabakalandırılmış, seed 42"
 diye kaydetmişti; seed (tohum), rastgele sayı üretecinin başlangıç değeri. @sec-kumeleme-konu da altörneklemini aynı şekilde kaydetti.
-İkisi de doğru. Ama bunlar iki farklı örneklem, çünkü "seed 42 ile
-tabakalandırılmış" tek bir yordamı adlandırmıyor — birbirinden farklı sonuçlar
-veren bir yordam ailesini adlandırıyor.
+İkisi de doğru. Ama bunlar iki farklı örneklem: "seed 42 ile tabakalandırılmış"
+tek başına satır listesini belirlemiyor. Aynı kaynak sırası, filtreler,
+örnekleme çağrısı ve kütüphane sürümü de kaydedilmeli; yoksa aynı seed farklı
+50.000 belge verebilir.
 
 Bölmeyi yeniden kurmaya yönelik ilk deneme, altörneklemi @sec-kumeleme-konu'in
 yaptığı gibi grup grup çekti ve şunu üretti:
@@ -81,11 +82,12 @@ groupby.sample            100,350    92.21     74.65   53.55
 ```
 
 Öne çıkan istatistiklerin hepsi yakın ve hepsi yanlış. Bir okur bunu fark etmezdi;
-74,65 de 76,21 de "yaklaşık 75"e yuvarlanıyor. Ama `vectorizer`'ın
-(vektörleştirici) boyut sayısı bir istatistik değil, bir *parmak izi*:
-filtreden geçen 101.659 farklı n-gram, eğitim yarısında hangi
-belgelerin bulunduğuna dair bir olgu.
-50.000 satırlık iki farklı örneklem bu sayıyı tesadüfen paylaşmaz.
+74,65 de 76,21 de "yaklaşık 75"e yuvarlanıyor. `vectorizer`'ın (vektörleştirici)
+101.659 boyutu ise eğitim belgelerine duyarlı bir **kontrol istatistiği**:
+filtreden geçen farklı n-gram sayısı, eğitim yarısında hangi belgelerin
+bulunduğuna bağlı. Yine de farklı örneklemlerin aynı boyuta ulaşması imkânsız
+değil; satırların birebir aynı olduğunu kanıtlamak için belge kimliklerini ya da
+kararlı içerik karmalarını doğrudan karşılaştırmak gerekir.
 
 Bu yüzden örneklemi oluşturmanın dört yolunu denedik ve her birini o parmak
 iziyle karşılaştırdık:
@@ -99,24 +101,23 @@ train_test_split + shuffle 102,221   92.26     75.20   54.63
 plain sample 50k          101,539    91.68     74.40   53.36
 ```
 
-Biri, dört sayının dördünü birden tutturdu. @sec-karsilastirma 50.000'liğini tek
-bir tabakalı `train_test_split` ile çekmiş ve aşağıdaki bütün deneyler o
-geri kazanılmış bölme üzerinde koşuyor.
+Denenen dört yordam içinde tabakalı `train_test_split`, hedefteki boyutu ve üç
+puanın hepsini yeniden üretti. Bu, özgün bölme için güçlü bir aday ve aşağıdaki
+deneyler bu bölme üzerinde koşuyor; satır düzeyinde aynı bölme olduğunu
+kaydedilmiş belge kimlikleriyle ya da içerik karmasıyla ayrıca doğrulamak
+gerekir.
 
 ::: {.column-margin}
 Kıl payı ıskalayan satıra dikkat edin. "plain sample 50k", hedefe 120 boyut ve bir
 doğruluk puanından az (92,57'ye karşı 91,68) uzaklıkta — dikkatsiz bir kontrolün
-kabul edeceği kadar yakın. Ama eşleşmenin *neden* ikna ettiğine dikkat edin: bunlar birbirinden
-bağımsız dört tanık değil. `dims`, hangi belgelerin eğitim yarısına düştüğünün
-deterministik bir fonksiyonu; üç puan ise tek bir eğitilmiş modelin tek bir test kümesi üzerindeki üç okuması, yani birlikte hareket ediyorlar. Argüman *dört
-uyuşma* değil, **tek bir çok keskin uyuşma**: 101.659, iki farklı 50.000 satırlık
-örneklemin paylaşması için hiçbir sebebi olmayan altı haneli bir sayı. Kıl payı
-ıskalayan satır da daha kaba istatistiklerin bu iki örneklemi ayıramayacağını
-gösteriyor.
-Tek çözümün bu olduğunu da kanıtlamadık — akla yatkın dört kurulumu sıraladık ve
-biri birebir tuttu. Bir gün birinin deney kurulumunu geri kazanmanız gerekirse,
-elinizde yazılı olan niceliği değil, tespit etmeye çalıştığınız şeye en duyarlı
-niceliği seçin.
+kabul edeceği kadar yakın. 101.659 boyut ile üç test puanının birlikte
+eşleşmesi aday bölmeyi güçlendiriyor; ama bunlar birbirinden bağımsız tanıklar
+değil — `dims`, hangi belgelerin eğitim yarısına düştüğünün deterministik bir
+fonksiyonu, üç puan da tek bir modelin tek bir test kümesindeki üç okuması — ve
+farklı belge listelerinde çakışmaları dışlanamaz. Tek çözümün bu olduğunu da
+kanıtlamadık: akla yatkın dört kurulumu sıraladık ve biri birebir tuttu. Yeniden
+üretim kontrolünün son adımı, veri sürümüyle birlikte satır kimliklerini ya da
+içerik karmalarını karşılaştırmak olmalı.
 :::
 
 Yan ürün, *başka* bir bölüme yapılan bir düzeltme oldu. İki altörneklemi
@@ -124,12 +125,15 @@ kesiştirmek, @sec-kumeleme-konu ile @sec-karsilastirma'ün 50.000'er belgeden
 23.819'unu paylaştığını gösterdi — %47,6. İkisi de tabakalı, ikisi de
 seed 42 kullanıyor, ikisi de tam olarak 46.839 olumlu ve 3.161 olumsuz yorum
 içeriyor; yine de ortak kısımları yarıdan az. @sec-kumeleme-konu'in kenar
-notu artık bunu söylüyor. Hiçbir doğrulayıcı bunu yakalayamazdı; yalnızca iki
-kümeyi kesiştirip saymak yakalardı.
+notu artık bunu söylüyor. Aynı seed ve aynı sınıf sayıları aynı satırları
+garanti etmedi; satır kimliklerini ya da içerik karmalarını kaydeden bir kontrol
+bu farkı en başta gösterebilirdi.
 
 **Ve bu geriye dönük iz sürme aslında gereksizdi; hikâyenin söylemediği ders de bu.**
 @sec-karsilastirma'ün kaydettiği şey düzyazıydı — "tabakalandırılmış, seed 42".
-Kaydetmesi gereken şey, çağrının kendisi ve sonucun bir parmak izi:
+Kaydetmesi gereken şey; örnekleme ve eğitim/test ayırma çağrıları, veri sürümü,
+kütüphane sürümleri ve sonucun bir parmak izi. Aşağıdaki çağrı yalnızca 50.000'lik
+örnekleme adımını gösteriyor:
 
 ``` python
 train_df, test_df = train_test_split(
@@ -138,9 +142,11 @@ print(hashlib.sha256(
     ",".join(map(str, sorted(train_df.index))).encode()).hexdigest()[:12])
 ```
 
-@sec-karsilastirma artık ikisini de basıyor. Üç bölüm bu tek çağrıya dayanıyor ve biri kimse fark etmeden farklı bir örneklem
-çekti. Çağrıyı basın, hash'i basın; parmak izi bir dedektiflik hikâyesi olmaktan
-çıksın.
+@sec-karsilastirma artık ikisini de basıyor. Üç bölüm bu tek çağrıya dayanıyor ve
+biri kimse fark etmeden farklı bir örneklem çekti. Her satır için değişmez bir
+belge kimliği ya da içerik karması oluşturup **hem eğitim hem test** kimlik
+listesinin tam SHA-256 özetini yayımlayın; ilk 12 hane yalnızca kısa bir
+görüntüleme için.
 
 ### Bölme ve bu bölümün eklediği dilim
 

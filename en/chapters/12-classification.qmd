@@ -63,8 +63,10 @@ lesson.
 
 @sec-bake-off recorded its subsample as "50,000 rows, stratified, seed 42".
 @sec-clustering recorded its subsample the same way. Both are true. They are
-also different samples, because "stratified with seed 42" does not name a
-procedure — it names a family of procedures that disagree.
+also different samples: "stratified with seed 42" does not by itself determine
+the row list. The source order, filters, sampling call and library version have
+to be recorded too; otherwise the same seed can give a different 50,000
+documents.
 
 The first attempt to rebuild the split drew the subsample group by group, the
 way @sec-clustering does, and produced this:
@@ -76,10 +78,12 @@ groupby.sample            100,350    92.21     74.65   53.55
 ```
 
 Every headline statistic is close and every one is wrong. A reader would not
-notice; 74.65 and 76.21 both round to "about 75". But the vectoriser dimension
-is not a statistic, it is a *fingerprint*: 101,659 distinct surviving n-grams is
-a fact about which exact documents were in the training half. Two different
-50,000-row samples will not agree on it by accident.
+notice; 74.65 and 76.21 both round to "about 75". The vectoriser's 101,659
+dimensions are a **check statistic** sensitive to the training documents: the
+number of distinct surviving n-grams depends on which documents were in the
+training half. It is still not impossible for different samples to reach the
+same dimension; proving the rows identical needs document IDs or stable content
+hashes compared directly.
 
 So we tried four constructions against that fingerprint:
 
@@ -92,36 +96,38 @@ train_test_split + shuffle 102,221   92.26     75.20   54.63
 plain sample 50k          101,539    91.68     74.40   53.36
 ```
 
-One matched on all four numbers at once. @sec-bake-off drew its 50,000 with a
-single stratified `train_test_split`, and every experiment below runs on that
-recovered split.
+Of the four procedures tried, the stratified `train_test_split` reproduced the
+target dimension and all three scores. That makes it a strong candidate for the
+original split, and the experiments below run on it; that it is the same split
+row by row has to be verified separately with recorded document IDs or content
+hashes.
 
 ::: {.column-margin}
 Note the near-miss. "plain sample 50k" lands within 120 dimensions of the target
 and within one accuracy point (91.68 against 92.57) — close enough that a
-careless check would accept it. Be careful about *why* the match convinces, though: these are not four
-independent witnesses. `dims` is a deterministic function of which documents
-landed in the training half, and the three scores are three readings of one
-fitted model on one test set, so they move together. The argument is not *four
-agreements* but **one very sharp agreement**: 101,659 is a six-digit count two
-different 50,000-row samples have no reason to share, and the near-miss row
-shows the coarser statistics would not have separated them. Nor did we prove
-uniqueness — we enumerated four plausible constructions and one matched exactly.
-If you ever have to recover somebody's experimental setup, pick the quantity
-that is most sensitive to the thing you are trying to pin down, not the quantity
-you happen to have written down.
+careless check would accept it. The joint match of 101,659 dimensions and three
+test scores strengthens the candidate split, but they are not independent
+witnesses — `dims` is a deterministic function of which documents landed in the
+training half, and the three scores are three readings of one model on one test
+set — and coincidences on different document lists cannot be ruled out. Nor did
+we prove uniqueness: we enumerated four plausible constructions and one matched
+exactly. The last step of a reproduction check should be comparing row IDs or
+content hashes together with the data version.
 :::
 
 The by-product was a correction to a *different* chapter. Intersecting the two
 subsamples showed that @sec-clustering and @sec-bake-off share 23,819 of their
 50,000 documents — 47.6%. Both are stratified, both use seed 42, both contain
 exactly 46,839 positive and 3,161 negative reviews, and they are less than half
-the same corpus. @sec-clustering's margin note now says so. No validator would
-have caught that; only intersecting the two sets and counting would.
+the same corpus. @sec-clustering's margin note now says so. The same seed and
+class counts did not guarantee the same rows; a check that recorded row IDs or
+content hashes could have shown the difference from the start.
 
 **And the forensics were avoidable, which is the lesson the story does not
 state.** What @sec-bake-off recorded was prose — "stratified, seed 42". What it
-should have recorded is the call itself and a fingerprint of the result:
+should have recorded is the sampling and train/test calls, the data version,
+the library versions and a fingerprint of the result. The call below shows only
+the 50,000 sampling step:
 
 ``` python
 train_df, test_df = train_test_split(
@@ -130,9 +136,11 @@ print(hashlib.sha256(
     ",".join(map(str, sorted(train_df.index))).encode()).hexdigest()[:12])
 ```
 
-@sec-bake-off now prints both. Three chapters depend on that one call, and one of them drew a different sample
-without anybody noticing. Print the call, print the hash, and the fingerprint
-stops being a detective story.
+@sec-bake-off now prints both. Three chapters depend on that one call, and one
+of them drew a different sample without anybody noticing. Build an immutable
+document ID or content hash for every row and publish the full SHA-256 digest of
+**both the training and the test** ID lists; the first 12 hex digits are only a
+short display.
 
 ### The split, and the slice this chapter adds
 
