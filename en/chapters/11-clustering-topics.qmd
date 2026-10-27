@@ -1464,9 +1464,11 @@ answer changes the numbers substantially, so state it: **co-occurrence here is
 at the document level.** $P(w_i)$ is the fraction of the 49,849 reviews
 containing $w_i$ at least once, and $P(w_i, w_j)$ the fraction containing both
 — a review is one context, and repeats inside it do not count twice. The
-alternative convention, a sliding window of 10 or 20 tokens, is standard for
-long documents and makes no sense on a 19-word review. Pairs that never
-co-occur are $\varepsilon$-smoothed to $-1$ rather than allowed to diverge. All
+alternative convention, a sliding window of 10 or 20 tokens, is defined for short
+texts too, but it measures a different proximity question. The formula cannot
+be computed directly when $P(w_i, w_j) = 0$; we $\varepsilon$-smoothed pairs
+that never co-occur to $-1$ — report the $\varepsilon$ rule and value you choose
+in your own computation. All
 probabilities come from the corpus itself over a fixed 8,651-term vocabulary
 with a hand-written Turkish stop-word list, so the five methods are scored on
 exactly the same footing.
@@ -1476,11 +1478,11 @@ One note on *which* coherence, because you will meet a different one.
 tutorials — is **C_v**, not NPMI. C_v wraps NPMI in an indirect cosine
 confirmation step over context vectors, which made it correlate slightly better
 with human ratings in the original evaluation [@roder2015exploring] and made it
-considerably harder to reason about: its values are not comparable across
-vocabularies, it is known to be unstable, and the documentation of Palmetto — the tool from
-the team that defined C_v — itself came to advise against using it. We use NPMI because we can write down what
-it computes in one line, which is the only thing that makes the next table
-checkable.
+harder to reason about. C_v and NPMI use different co-occurrence and
+confirmation set-ups; do not compare their values directly. We use
+document-level NPMI because we can define its computation explicitly; that
+choice does not replace human judgement of topic quality — @sec-dotted-i shows a
+counter-example.
 
 | method | NPMI | fit time | what it needs |
 |:--|--:|--:|:--|
@@ -1490,12 +1492,15 @@ checkable.
 | c-TF-IDF on MiniLM $k$=10 | +0.1002 | 0.02s | an existing clustering |
 | c-TF-IDF on E5 $k$=10 | +0.1064 | 0.02s | an existing clustering |
 
-: Ten topics, one corpus, one coherence measure. LDA is both the slowest and
-the least coherent {tbl-colwidths="[34,14,14,38]"}
+: NPMI of ten topics and the time of the step measured in the table. The
+c-TF-IDF rows exclude embedding, reduction and clustering time; do not compare
+them with the LDA/NMF fit times as whole-pipeline cost {tbl-colwidths="[34,14,14,38]"}
 
-The headline is uncomfortable for the classical method. **LDA is 133× slower
-than NMF and scores lower on coherence** — with the implementation named, because
-at this margin the implementation is half the story.
+In this run scikit-learn's default LDA took 133.1 s to fit and NMF 1.0 s, with
+NPMI of +0.0737 and +0.1183. The roughly 133× time gap holds for this software,
+data, hardware and these hyperparameters; preprocessing and whole-pipeline cost
+need stating too. The implementation is named because at this margin it is half
+the story.
 `sklearn.decomposition.LatentDirichletAllocation` by default fits by batch
 variational Bayes (`learning_method="batch"`) and stops after `max_iter=10`
 passes, and we left `doc_topic_prior` and
@@ -1507,16 +1512,13 @@ diagnosed below. So read the row as *scikit-learn's default LDA loses to
 scikit-learn's default NMF on 19-word reviews* — which is the comparison a
 practitioner actually faces, but not a verdict on the model family.
 
-The direction is what the short-text literature reports, and that literature
-exists for a reason: if your documents are short, the Dirichlet mixture has
-almost nothing to estimate a per-document topic distribution from. Models built
-for this regime — the biterm topic model [@yan2013biterm], which models word
+On short documents there are few observations for estimating a document-specific
+topic mixture. Models built for this regime — the biterm topic model [@yan2013biterm], which models word
 *pairs* pooled across the corpus rather than documents, and the Dirichlet
 multinomial mixture [@yin2014dirichlet], which assigns one topic per document
-instead of a mixture — are the principled answer; a plain matrix factorisation
-on tf-idf is the cheap one.
-If you have inherited an LDA pipeline on short text, running NMF beside it takes
-an afternoon and will probably end the argument.
+instead of a mixture — approach it with different assumptions. NMF on tf-idf
+is a quick comparison to run alongside LDA; check topic quality with human
+examples and task value as well.
 
 The three c-TF-IDF rows cost effectively nothing, because the clustering was
 already paid for. And they produce recognisably different word lists. Here is
@@ -1528,13 +1530,14 @@ topic 3  kitap kitabı  tavsiye  güzel  ederim  sürükleyici  okudum  akıcı
 topic 9  telefon  iyi  şarj  yok  güzel  telefonu  gayet  ürün  var
 ```
 
-Perfume, books, phones. Nobody told the model these categories exist. This is
-the thing clustering is genuinely good at, and note that it is a *product
-category* structure — not the sentiment structure we were secretly hoping for
-in @sec-kmeans, which is why the ARI was zero.
+In these three clusters perfume, books and phones stand out; nobody told the
+model these categories exist. The examples suggest some clusters may relate to
+product categories. Without reading sample documents for all ten clusters and
+measuring category concentration, do not attribute the low sentiment ARI
+(@sec-kmeans) to this alone.
 
 ::: {.callout-warning appearance="simple"}
-**Coherence is a proxy, and it is a weak one.** @chang2009reading ran the
+**Complement coherence with human evaluation.** @chang2009reading ran the
 experiment everybody should have run first: they asked humans to spot the
 intruder word in a topic's word list, and found that the models with the best
 held-out likelihood produced the *least* interpretable topics — an automated
@@ -1544,10 +1547,10 @@ recent meta-evaluation, @hoyle2021automated, shows that
 automated coherence measures do not reliably track human judgements of topic
 quality, and that evaluation practice in the field is inconsistent enough that
 published comparisons often are not comparable to each other;
-@doogan2021topic reaches the same conclusion from the applied side. Automatic
-topic metrics are convenient, not trustworthy. The next section is a case where
-our own coherence number was not merely imprecise but pointed in exactly the
-wrong direction.
+@doogan2021topic reaches a similar conclusion from the applied side. Here NPMI
+can also reward co-occurrences produced by the same tokenisation flaw; read
+document samples for high-scoring topics separately. The next section is a case
+where our own coherence number pointed in the wrong direction.
 :::
 
 ## The bug the clustering found {#sec-dotted-i}
