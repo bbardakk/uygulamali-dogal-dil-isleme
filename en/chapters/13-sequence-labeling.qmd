@@ -553,7 +553,8 @@ realistic score range; it does not make it mathematically impossible. If you
 want the true constraint, remove the invalid transitions and start states
 from the search space rather than pricing them. The code below is the
 finite-penalty version; for the true constraint at inference, set
-`NEG = float("-inf")` and the rest runs unchanged. In practice the two agree:
+`NEG = float("-inf")`. In IOB2 the all-`O` path is always legal, so every
+non-empty sentence has at least one legal path; handle empty input separately. In practice the two agree:
 with log-probability scores, any illegal path can be turned into a legal one by
 rewriting the offending `I-X` as `B-X`, at the cost of one token's
 log-probability gap — tens in realistic models, not $10^4$.
@@ -561,8 +562,10 @@ log-probability gap — tens in realistic models, not $10^4$.
 ``` python
 import torch
 
+labels = ["O", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC"]
+L = len(labels)                             # L = number of labels
 NEG = -1e4
-mask = torch.zeros(L, L)                    # L = number of labels
+mask = torch.zeros(L, L)
 for a, la in enumerate(labels):
     for b, lb in enumerate(labels):
         if lb.startswith("I-"):             # I-X may only follow B-X or I-X
@@ -570,7 +573,11 @@ for a, la in enumerate(labels):
                 mask[a, b] = NEG
 start = torch.tensor([NEG if l.startswith("I-") else 0.0 for l in labels])
 
-def viterbi(logits, mask, start):           # logits: (T, L) log-probabilities
+def viterbi(logits, mask, start):
+    # logits: (T, L) log-probabilities for one sentence (log_softmax output);
+    # mask and start must be on the same device with a compatible dtype.
+    if logits.shape[0] == 0:                # empty sentence: no path
+        return []
     dp, bp = logits[0] + start, []          # no sentence may open with I-
     for t in range(1, logits.shape[0]):
         score = dp[:, None] + mask + logits[t][None, :]
@@ -591,7 +598,7 @@ gives these probabilities:
 | *Merkez* | **0.6** | 0.3 | 0.1 |
 | *Bankası* | 0.2 | 0.2 | **0.6** |
 
-: A toy softmax output; the greedy choice at each position is in bold {tbl-colwidths="[31,23,23,23]"}
+: A hand-built softmax output; the greedy choice at each position is in bold {tbl-colwidths="[31,23,23,23]"}
 
 Taking the best label at each position gives `O I-ORG`, an illegal sequence.
 The lenient decoder turns it into a one-token `ORG` on *Bankası* alone (a
@@ -601,7 +608,10 @@ and a sentence-initial `I-ORG` ruled out, the legal candidates include
 `O O` $= 0.6 \times 0.2 = 0.12$, `O B-ORG` $= 0.12$ and
 `B-ORG I-ORG` $= 0.3 \times 0.6 = 0.18$. The last one wins: the decoder revises
 the *first* token's label because of evidence at the second, and returns the
-full two-token organisation. A per-token argmax can never do that.
+full two-token organisation. A per-token argmax can never do that. Do not read
+that score as a joint sequence probability: no transition probabilities were
+learned, and Viterbi only maximises the sum of per-token log-probabilities over
+the legal paths.
 
 That took the 139 illegal transitions to 0 in this run, for the price of a
 matrix and a dynamic program. Not by construction: a finite penalty is still a
@@ -611,8 +621,9 @@ guarantee is real. Whether it *helps* is a separate
 question and one you should measure on your own schema rather than assume: it
 converts malformed spans into well-formed ones, and the lenient decoder was
 already recovering some of them. We did not run that comparison, which is the
-gap this subsection leaves open — but the mask is what to reach for before an
-extra trained layer.
+gap this subsection leaves open. Being cheap, the mask can be the first thing to
+try; but until its effect on span F1, per-type errors and latency is measured,
+it cannot be called a better option than a CRF layer. Compare those three.
 
 ## The subword alignment trap {#sec-sequence-labeling-alignment}
 

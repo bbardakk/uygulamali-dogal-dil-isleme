@@ -567,8 +567,9 @@ yollar dışlandığında) $-\infty$'u `nan`'a çevirebilir. Bu sonlu ceza, geç
 aralığında kaybettirir; ama onu matematiksel olarak imkânsız kılmaz. Gerçek
 kısıtı istiyorsanız geçersiz geçişleri ve başlangıç durumlarını fiyatlandırmak
 yerine arama uzayından çıkarın. Aşağıdaki kod sonlu ceza sürümüdür; çıkarımda
-gerçek kısıt için `NEG = float("-inf")` yazmanız yeterli, kodun geri kalanı
-aynen çalışır. Pratikte ikisi aynı sonucu verir: puanlar log-olasılık
+gerçek kısıt için `NEG = float("-inf")` yazabilirsiniz. IOB2'de yalnızca
+`O`'lardan oluşan yol her zaman geçerli olduğundan boş olmayan her cümlede en az
+bir geçerli yol vardır; boş girdiyi ise ayrıca ele alın. Pratikte ikisi aynı sonucu verir: puanlar log-olasılık
 olduğunda her geçersiz yol, sorunlu `I-X`'i `B-X`'e çeviren geçerli bir yola
 dönüştürülebilir ve bunun bedeli tek bir token'daki log-olasılık farkıdır.
 Bu fark gerçekçi modellerde onlarla ölçülür, $10^4$ ile değil.
@@ -576,8 +577,10 @@ Bu fark gerçekçi modellerde onlarla ölçülür, $10^4$ ile değil.
 ``` python
 import torch
 
+labels = ["O", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC"]
+L = len(labels)                             # L = etiket sayısı
 NEG = -1e4
-mask = torch.zeros(L, L)                    # L = etiket sayısı
+mask = torch.zeros(L, L)
 for a, la in enumerate(labels):
     for b, lb in enumerate(labels):
         if lb.startswith("I-"):             # I-X yalnızca B-X veya I-X'i izleyebilir
@@ -585,7 +588,11 @@ for a, la in enumerate(labels):
                 mask[a, b] = NEG
 start = torch.tensor([NEG if l.startswith("I-") else 0.0 for l in labels])
 
-def viterbi(logits, mask, start):           # logits: (T, L) log-olasılıklar
+def viterbi(logits, mask, start):
+    # logits: tek cümle için (T, L) log-olasılıklar (log_softmax çıktısı);
+    # mask ve start aynı aygıtta ve uyumlu dtype'ta olmalı.
+    if logits.shape[0] == 0:                # boş cümle: yol yok
+        return []
     dp, bp = logits[0] + start, []          # hiçbir cümle I- ile açılamaz
     for t in range(1, logits.shape[0]):
         score = dp[:, None] + mask + logits[t][None, :]
@@ -606,7 +613,7 @@ olasılıkları verdiğini varsayalım:
 | *Merkez* | **0,6** | 0,3 | 0,1 |
 | *Bankası* | 0,2 | 0,2 | **0,6** |
 
-: Oyuncak bir softmax çıktısı; her konumdaki greedy (açgözlü) seçim kalın {tbl-colwidths="[31,23,23,23]"}
+: Elle kurulmuş bir softmax çıktısı; her konumdaki greedy (açgözlü) seçim kalın {tbl-colwidths="[31,23,23,23]"}
 
 Her konumda en iyi etiketi almak `O I-ORG` verir: geçersiz bir dizi. Hoşgörülü
 kod çözücü bunu yalnızca *Bankası* üzerinde tek token'lık bir `ORG`'a çevirir
@@ -616,7 +623,10 @@ cümle başında `I-ORG` dışlandığında geçerli adaylar arasında `O O`
 $= 0{,}6 \times 0{,}2 = 0{,}12$, `O B-ORG` $= 0{,}12$ ve `B-ORG I-ORG`
 $= 0{,}3 \times 0{,}6 = 0{,}18$ var. Sonuncusu kazanır: kod çözücü, ikinci
 token'daki kanıt yüzünden *ilk* token'ın etiketini değiştirir ve iki token'lık
-kurumun tamamını döndürür. Token başına argmax bunu asla yapamaz.
+kurumun tamamını döndürür. Token başına argmax bunu asla yapamaz. Bu puanın bir
+ortak dizi olasılığı olmadığını unutmayın: geçiş olasılığı öğrenilmedi, Viterbi
+yalnızca geçerli yollar arasında token başına log-olasılık toplamını en yükseğe
+çıkarıyor.
 
 Maske, 139 geçersiz geçişi bu koşuda 0'a indirdi — bir matris ve bir dinamik
 programlama karşılığında. Bu sonuç yapısı gereği bir garanti değil: sonlu bir
@@ -626,8 +636,10 @@ uzayından çıkarırsanız garanti gerçek olur. Maskenin *işe yarayıp yarama
 ise ayrı bir soru; bunu varsaymak yerine kendi şemanız üzerinde ölçmelisiniz.
 Maske bozuk span'leri iyi biçimli olanlara çeviriyor; hoşgörülü kod çözücü ise
 bunların bir kısmını zaten kurtarıyordu. Biz o karşılaştırmayı çalıştırmadık;
-bu alt bölümün açık bıraktığı boşluk da bu. Yine de fazladan eğitilen bir
-katmandan önce başvurulacak şey maskedir.
+bu alt bölümün açık bıraktığı boşluk da bu. Maske ucuz olduğu için ilk
+denenecek şey olabilir; ama span F1'e, tür bazındaki hatalara ve gecikmeye etkisi
+ölçülmeden onun bir CRF katmanından daha iyi bir seçenek olduğu söylenemez. Bu
+üçünü karşılaştırın.
 
 ## Alt kelime hizalama tuzağı {#sec-dizi-etiketleme-hizalama}
 
