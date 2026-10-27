@@ -618,21 +618,22 @@ yelpazeyi kapsayacak biçimde seçildi.
 
 | temsil | boyut | kurma süresi | notlar |
 |:--|--:|--:|:--|
-| tf-idf → LSA | 256 | 2,6sn | kelime tf-idf, SVD ile 256'ya; GPU yok, tamamen deterministik |
+| tf-idf → LSA | 256 | 2,6sn | kelime tf-idf, kesilmiş SVD ile 256'ya; GPU yok; `TruncatedSVD` varsayılan olarak rastgeleleştirilmiş çözücü kullanır, `random_state` ve çözücü kaydedilmeli |
 | MiniLM | 384 | 40sn | `paraphrase-multilingual-MiniLM-L12-v2`, 117,7M parametre, 1.246 belge/sn |
 | multilingual-E5 | 768 | 104sn | `intfloat/multilingual-e5-base`, 278,0M parametre, 478 belge/sn |
 
-: Üç geometri, tek bir dizüstü GPU'sunda {tbl-colwidths="[26,10,14,50]"}
+: Üç geometri, tek bir dizüstü GPU'sunda (süreler tek bir koşudan) {tbl-colwidths="[26,10,14,50]"}
 
 İki ayrıntıyı özellikle belirtelim, çünkü ikisi de sonuçları değiştiriyor ve
 ikisi de kolayca atlanıyor.
 
-**SVD isteğe bağlı değil.** Buradaki ham tf-idf, belge başına 19,3 sıfır olmayan
-girdiyle 23.971 boyutlu. Önemli olan teşhis ölçütü *göreli kontrast*: belirli
+**SVD burada seçilmiş bir temsil adımı.** Buradaki ham tf-idf, belge başına 19,3
+sıfır olmayan girdiyle 23.971 boyutlu; seyrek kosinüs, k-means ya da başka boyut
+indirgeme yolları da kullanılabilirdi. Önemli olan teşhis ölçütü *göreli kontrast*: belirli
 bir belge için, en uzak komşusunun en yakın komşusundan ne kadar daha uzakta olduğu,
-$(d_{\max} - d_{\min}) / d_{\min}$. Bu sayı sıfıra yakınsa "en yakın", "en
-uzak"tan anlamlı biçimde farklı değildir ve uzaklık tabanlı her yöntem gürültü
-üzerinde çalışıyordur. 300 sorgu belgesi üzerinde ölçülen medyan göreli kontrast
+$(d_{\max} - d_{\min}) / d_{\min}$. Bu sayının düşük olması, bu uzaklık ve
+örneklem altında yakın/uzak ayrımının zayıf olduğuna işaret eder; bütün seyrek
+yöntemlerin başarısız olduğunu kanıtlamaz. 300 sorgu belgesi üzerinde ölçülen medyan göreli kontrast
 (çıktıdaki `median relative contrast`):
 
 ```text
@@ -648,9 +649,11 @@ E5                       3.009
 belgeden 51'inin içerdiği bütün token'ları sildi; bu yüzden onların LSA satırları
 tam olarak sıfır ve $\ell_2$-normalleştirilemiyorlar. Orijinde — bileşenlerinin
 tamamı sıfır olan noktada — duruyorlar; oraya en yakın küme hangisiyse ona
-atanıyorlar ve bu bölümdeki her LSA tablosunda sayılıyorlar. Elli bin içinden elli bir tane hiçbir sayıyı oynatmaz,
-ama "bütün vektörlerim birim uzunlukta" cümlesi yine de yanlıştı ve bunu yalnızca
-kontrol ettiğimiz için biliyoruz.
+atanıyorlar ve bu bölümdeki her LSA tablosunda sayılıyorlar. Toplam payları küçük,
+ama nadir alt grupların ölçüsünü etkileyebilirler; sayılarını, atandıkları
+kümeleri ve sıfır satırları dışarıda bırakan bir duyarlılık hesabını raporlayın.
+"Bütün vektörlerim birim uzunlukta" cümlesi yanlıştı ve bunu kontrol ettiğimiz
+için biliyoruz.
 :::
 
 tf-idf sorgularının %0,6'sında *başka* bir belge tam olarak 0 kosinüs
@@ -659,13 +662,16 @@ uzaklık, kosinüs benzerliğinin *bir* olması demektir; yani tf-idf vektörler
 birbiriyle orantılı iki yorum. 19 kelimelik yorumlarda bu, iki kişi aynı kısa
 cümleyi yazdığında hep oluyor. (Ters durum, yani hiç ortak terim bulunmaması —
 ki burada olağan — kosinüs benzerliği 0, uzaklık 1 verir ve zararsızdır:
-$d_{\max}$ tarafına düşer.) Oranı sonsuz çıkan bu sorgular bir epsilon ile
-yamanmak yerine medyandan çıkarıldı, çünkü uzayın gerçek bir özelliğini
-yansıtıyorlar.
-Kesilmiş SVD ile 256 boyuta indirmek varyansın %29,9'unu koruyor ve
-kontrastı dört katına çıkarıyor. (Kesilmiş SVD, ortalamayı çıkarma adımı
-atlanmış bir PCA'dır, yani temel bileşenler analizidir: varyansı en çok açıklayan yönleri tutar; ortalamayı
-çıkarmamak da seyrek matrisin seyrek kalmasını sağlar.) Bu indirgeme kendi başına bir konu modeli ve
+$d_{\max}$ tarafına düşer.) Bu sorguları bir epsilon ile yamamak yerine medyan
+hesabından çıkardık; dolayısıyla tf-idf için bildirilen 0,539, yalnızca oranın
+tanımlı olduğu sorguların medyanı. Dışlanan payı (%0,6) ve bu sorgulardaki en
+yakın/en uzak uzaklık dağılımını yanında vermek gerekir.
+Kesilmiş SVD ile 256 boyuta indirmek kontrastı dört katına çıkarıyor; 256
+bileşenin `explained_variance_ratio_` toplamı %29,9 (bu yazılımın oranı; başka
+veri ve ön işlemlere taşınmamalı). Kesilmiş SVD, seyrek tf-idf matrisini
+merkezlemeden düşük rütbeli bileşenlere yansıtır; bu yönüyle PCA'ya (temel
+bileşenler analizi) benzer, ama merkezleme yapılmadığı için aynı bileşenleri
+vermez — merkezlememek de seyrek matrisin seyrek kalmasını sağlar. Bu indirgeme kendi başına bir konu modeli ve
 bir adı da var — latent semantic analysis (örtük anlamsal analiz)
 [@deerwester1990indexing] — bu yüzden @sec-konu-modelleri onu ek bir maliyet
 olmadan yeniden kullanabiliyor.
@@ -687,24 +693,21 @@ için model kartı iki tarafa da `query: ` konmasını öngörüyor; biz de öyl
 yaptık. Bunu unutmak, embedding hatlarındaki en yaygın sessiz hatalardan biri:
 hiçbir şey çökmez, sayılar sadece daha kötü olur.
 
-**E5 için yapılması gereken ama yapmadığımız ablasyon.** Ablasyon, bir adımı
-çıkarıp (ya da ekleyip) sonucun nasıl değiştiğini ölçen kontrol deneyi.
-0,8547'lik bir rastgele
-çift ortalaması, bu embedding'lerin tek bir baskın yön paylaştığını söyler. Onu
-kaldırmak tek satır — @sec-gommeler'te gördüğümüz ortalama çıkarma: derlem
-ortalamasını çıkarın, sonra yeniden normalleştirin:
-`X -= X.mean(0); X /= np.linalg.norm(X, axis=1, keepdims=True)` — ve aşağıdaki
-her olumsuz sonuç için bariz kontrol budur. @sec-kac-kume'daki düz silhouette
-eğrisi ve @sec-yogunluk'deki %99,5'lik HDBSCAN gürültü oranı merkezlemeden sonra
-da ayakta kalıyorsa, bunlar derlemin özellikleridir. Kalmıyorsa, bunlar encoder'ın
-anizotropisinden kaynaklanıyordu ve biz ölçüm aracının ürettiği yapay bir
-örüntüyü veri hakkında bir bulgu diye raporlamış olurduk. Aynı kontrolün daha
-güçlü biçimleri de var: ilk birkaç temel bileşeni de kaldırmak
-("all-but-the-top", @mu2018allbutthetop) ya da beyazlatma (whitening:
-vektörleri kovaryans birim matris olacak biçimde döndürüp yeniden ölçeklemek).
-Hiçbirini çalıştırmadık; aşağıdaki her olumsuz
-sonucu bu eksikliği akılda tutarak okuyun. Herhangi birini alıntılamadan önce
-çalıştırılacak ilk şey budur.
+**E5 için yapılmamış bir duyarlılık deneyi.** Ablasyon, bir adımı çıkarıp (ya da
+ekleyip) sonucun nasıl değiştiğini ölçen kontrol deneyi. 0,8547'lik bir rastgele
+çift ortalaması, bu embedding'lerin ortak bir yön paylaşıyor olabileceğini
+düşündürür. Bunu incelemek için eğitim/geliştirme bölmesinde hesaplanan ortalamayı
+çıkarıp vektörleri yeniden normalleştirin (sıfır normlu satırları ayrıca ele
+alarak; @sec-gommeler'te gördüğümüz ortalama çıkarma), sonra aynı kümeleme ve
+triyaj ölçülerini yeniden hesaplayın. @sec-kac-kume'daki düz silhouette eğrisi ve
+@sec-yogunluk'deki %99,5'lik HDBSCAN gürültü oranı için bariz kontrol bu. Sonucun
+değişmesi ön işlemin önemli olduğunu gösterir; ama değişimi tek başına
+anizotropinin nedensel kanıtı, değişmeyen bir sonucu da derlemin değişmez bir
+özelliği saymayın. Bileşen kaldırma ("all-but-the-top", @mu2018allbutthetop) ya
+da beyazlatma (whitening: vektörleri kovaryans birim matris olacak biçimde
+döndürüp yeniden ölçeklemek) ayrı deney kolları olarak değerlendirilebilir.
+Hiçbirini çalıştırmadık; aşağıdaki olumsuz sonuçları bu eksikliği akılda tutarak
+okuyun.
 
 ## k-means ve sizin adınıza yaptığı dört varsayım {#sec-kmeans}
 

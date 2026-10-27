@@ -600,20 +600,21 @@ chosen to span what a practitioner actually picks between in 2026.
 
 | representation | dims | build time | notes |
 |:--|--:|--:|:--|
-| tf-idf → LSA | 256 | 2.6s | word tf-idf, SVD to 256; no GPU, fully deterministic |
+| tf-idf → LSA | 256 | 2.6s | word tf-idf, truncated SVD to 256; no GPU; `TruncatedSVD` uses a randomised solver by default, so record `random_state` and the solver |
 | MiniLM | 384 | 40s | `paraphrase-multilingual-MiniLM-L12-v2`, 117.7M params, 1,246 docs/s |
 | multilingual-E5 | 768 | 104s | `intfloat/multilingual-e5-base`, 278.0M params, 478 docs/s |
 
-: The three geometries, on one laptop GPU {tbl-colwidths="[26,10,14,50]"}
+: The three geometries, on one laptop GPU (times from a single run) {tbl-colwidths="[26,10,14,50]"}
 
 Two details worth stating because they change results and are easy to skip.
 
-**The SVD is not optional.** Raw tf-idf here is 23,971 dimensions with 19.3
-non-zero entries per document. The diagnostic that matters is *relative
+**The SVD is a representation step chosen here.** Raw tf-idf here is 23,971
+dimensions with 19.3 non-zero entries per document; sparse cosine, k-means or
+other reductions could also have been used. The diagnostic that matters is *relative
 contrast* — for a given document, how much further away its farthest neighbour
-is than its nearest one, $(d_{\max} - d_{\min}) / d_{\min}$. If that number is
-near zero, "nearest" is not meaningfully different from "farthest" and every
-distance-based method is running on noise. Measured over 300 query documents:
+is than its nearest one, $(d_{\max} - d_{\min}) / d_{\min}$. A low value points
+to a weak near/far distinction under this distance and sample; it does not prove
+that every sparse method fails. Measured over 300 query documents:
 
 ```text
                  median relative contrast
@@ -628,8 +629,10 @@ E5                       3.009
 token that 51 of the 49,849 documents contained, so their LSA rows are exactly
 zero and cannot be $\ell_2$-normalised. They sit at the origin, get swept into
 whichever cluster is nearest it, and are counted in every LSA table in this
-chapter. Fifty-one out of fifty thousand does not move a number, but "my vectors
-are all unit length" was still false, and we only knew that because we checked.
+chapter. Their share is small, but they can affect measurements of rare
+subgroups; report their count, the clusters they land in, and a sensitivity
+check that leaves the zero rows out. "My vectors are all unit length" was false,
+and we knew because we checked.
 :::
 
 For 0.6% of tf-idf queries some *other* document sits at cosine distance
@@ -638,12 +641,16 @@ cosine similarity *one*: two reviews whose tf-idf vectors are proportional,
 which on 19-word reviews happens whenever two people write the same short
 sentence. (The opposite case — no shared terms at all, which is common here —
 gives cosine similarity 0 and distance 1, and is harmless: it lands in
-$d_{\max}$.) Those are excluded from the median rather than
-patched with an epsilon, because they are a real property of the space.
-Reducing to 256 dimensions with truncated SVD recovers 29.9% of the variance
-and multiplies the contrast by four. (Truncated SVD is PCA without the
-mean-centring step: it keeps the directions that explain the most variance, and
-skipping the centring keeps the sparse matrix sparse.) That reduction is itself a topic model,
+$d_{\max}$.) We excluded those queries from the median rather than patching
+them with an epsilon, so the 0.539 reported for tf-idf is the median over
+queries where the ratio is defined only. The excluded share (0.6%) and the
+near/far distance distribution of those queries belong next to it.
+Reducing to 256 dimensions with truncated SVD multiplies the contrast by four;
+the 256 components' `explained_variance_ratio_` sums to 29.9% (this software's
+ratio; do not carry it to other data or preprocessing). Truncated SVD projects
+the sparse tf-idf matrix onto low-rank components without centring it; in that
+respect it resembles PCA, but without the centring it does not give the same
+components — and not centring keeps the sparse matrix sparse. That reduction is itself a topic model,
 and it has a name — latent semantic analysis [@deerwester1990indexing] — which
 is why @sec-topic-models can reuse it for free.
 
@@ -663,19 +670,18 @@ prescribes `query: ` on both sides, which is what we used. Forgetting this is
 one of the most common silent errors in embedding pipelines: nothing crashes,
 the numbers are simply worse.
 
-**The ablation this chapter owes E5, and did not run.** A random-pair mean of
-0.8547 says these embeddings share one dominant direction. Removing it is one
-line — subtract the corpus mean, then re-normalise:
-`X -= X.mean(0); X /= np.linalg.norm(X, axis=1, keepdims=True)` — and it is the
-obvious control for every negative result that follows. If the flat silhouette
-curve in @sec-how-many-clusters and the 99.5% HDBSCAN noise rate in @sec-density
-survive centring, they are properties of the corpus. If they do not, they were
-properties of the encoder's anisotropy and we would have been reporting an
-artefact of the instrument as a finding about the data. Stronger versions of the same
-control exist: removing the top few principal components as well
-("all-but-the-top", @mu2018allbutthetop), or whitening (rotating and rescaling
-so the covariance becomes the identity). We ran none of them, and every negative result below should be read with
-that gap in view; it is the first thing to run before quoting any of them.
+**A sensitivity experiment not run for E5.** A random-pair mean of 0.8547
+suggests these embeddings may share a common direction. To examine it, subtract
+the mean computed on a training/development split and re-normalise the vectors
+(handling zero-norm rows separately), then recompute the same clustering and
+triage measures. That is the obvious control for the flat silhouette curve in
+@sec-how-many-clusters and the 99.5% HDBSCAN noise rate in @sec-density. A
+changed result shows that preprocessing matters; do not take the change alone as
+causal evidence of anisotropy, or an unchanged result as an invariant property
+of the corpus. Removing the top principal components ("all-but-the-top",
+@mu2018allbutthetop) or whitening (rotating and rescaling so the covariance
+becomes the identity) can be treated as separate experimental arms. We ran none
+of them; read the negative results below with that gap in view.
 
 ## k-means, and the four assumptions it makes for you {#sec-kmeans}
 
