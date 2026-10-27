@@ -1016,9 +1016,13 @@ initialised head escapes the all-`O` solution at all can depend on the seed,
 so read 3.14 as *single digits* rather than as a number with two decimals behind
 it. There is also a floor under every comparison in this table: span F1 near 85%
 over the test set's 13,587 gold spans has a standard error of about 0.3 points
-from test-set sampling alone, a 95% interval of roughly $\pm 0.6$. The
-84.23-against-85.45 gap that fixes the crossover is 1.22 points, about four
-such standard errors, so the test set is not what makes it uncertain. The
+from test-set sampling alone by a rough binomial approximation
+($\sqrt{p(1-p)/n}$), a 95% interval of roughly $\pm 0.6$. Spans cluster in
+sentences, so they are not independent; a bootstrap over sentences would be more
+accurate and would likely give a wider interval, and the gap between two models
+needs a paired bootstrap — we ran neither. The 84.23-against-85.45 gap that
+fixes the crossover is 1.22 points, about four of those rough standard errors,
+so by that approximation the test set is not the main source of uncertainty. The
 single training run is: we do not know how far a different seed would move
 84.23. Three seeds per budget is the measurement this table is missing.
 
@@ -1037,8 +1041,8 @@ list of roughly 265 entities, and it would score below 55.26; we did not
 measure where. What this row really stands for is having a ready-made list
 (provinces, a product catalogue).
 
-The encoder's 3.14, on the other hand, is not a bug, and it is the most useful
-thing in this chapter. At 200
+The encoder's 3.14, on the other hand, is not a software bug, but this run
+cannot separate its causes. At 200
 sentences the model has seen roughly 265 entities spread over six entity tags
 plus `O`; the classification head is randomly initialised; and at batch size 16,
 three epochs is **39 gradient updates**.
@@ -1046,8 +1050,9 @@ three epochs is **39 gradient updates**.
 Note what that last number does to the diagnosis. Every row in this table uses
 the same three epochs at 3e-5 — a schedule tuned for the full budget, which
 starves the small ones. So some of that 3.14 is the label budget and some of it
-is the schedule, and this run does not separate them. The standard remedy at 200
-examples is ten to twenty epochs, possibly at a higher learning rate; running
+is the schedule, and this run does not separate them. The usual advice at 200
+examples is ten to twenty epochs, possibly a higher learning rate, and several
+seeds; running
 that is the first thing to try before drawing the conclusion, and we did not.
 So do not read 3.14 as the ceiling of what 200 sentences can buy. With 500
 sentences and only 96 updates the same recipe already reaches 54.47, and a
@@ -1064,9 +1069,10 @@ mostly wrong.
 
 The crossover against the 20,000-sentence CRF sits between **2,000 and 5,000** labelled
 sentences: at 2,000 the encoder is still a point behind (84.23 against
-85.45), and by 5,000 it is nearly three ahead. So [somewhere around two and a
-half thousand labelled sentences of BERTurk buy what twenty thousand
-sentences of hand-engineered CRF buy]{.hl}. Call it a fourfold to tenfold
+85.45), and by 5,000 it is nearly three ahead. So [with this recipe, somewhere
+between 2,000 and 5,000 labelled sentences of BERTurk buy what twenty thousand
+sentences of hand-engineered CRF buy]{.hl}; we did not measure the points in
+between, so the exact crossover is unknown. Call it a fourfold to tenfold
 reduction in annotation ($20{,}000 / 5{,}000$ to $20{,}000 / 2{,}000$). That is
 the range the measured crossover actually supports, it is the honest case for
 pre-training on this task, and it is smaller than the folklore suggests. Be exact about what that
@@ -1081,7 +1087,11 @@ missing measurement.
 The `illegal` column is worth a second look, because it says something the F1
 column does not. Well-formedness is *learned* here, not guaranteed: illegal
 BIO transitions peak at 3,739 once the model starts emitting entity tags at
-all, then fall steadily as it picks up the grammar from data.
+all, then fall. The raw count also moves with how many entity tags the model
+emits — most of the rise from 200 to 500 is the model starting to emit entities
+at all. To see whether the *rate* of malformed output really falls, report the
+raw count alongside its ratio to the `I-` tags produced or to all transitions;
+we did not record that ratio.
 
 And they never reach zero. Even at 20,000 sentences and 91.92 F1, the tagger
 emits 139 sequences that IOB2 forbids. The 20,000-sentence CRF emitted none,
@@ -1092,9 +1102,10 @@ rather than the empirical zero, mask the forbidden transitions before decoding
 
 ::: {.column-margin}
 Notice which way the errors run. The CRF is precision-leaning (86.27 P
-against 84.64 R); every encoder row from 500 up is recall-leaning. Feature
-templates fire when they match and stay silent otherwise, while a fine-tuned
-encoder will guess. Which failure you prefer is a product decision, and
+against 84.64 R); every encoder row from 500 up is recall-leaning. That is a
+tendency observed on this test; we did not examine which entity and error types
+it comes from, so do not treat it as a general behaviour of either model
+family. Which failure you prefer is a product decision, and
 @sec-classification-costs is the machinery for making it.
 :::
 
@@ -1158,8 +1169,10 @@ Plot.plot({
 html`<p style="font-size:0.85rem; color:var(--fig-muted); margin-top:0.5rem;">
 Both axes matter. On <b>span-level F1</b> the encoder does not pass the CRF
 until somewhere between 2,000 and 5,000 sentences. On <b>token accuracy</b>
-it looks competitive almost immediately — which is the metric lying, exactly
-as the section on metrics below describes. And <b>illegal
+it already passes the CRF at 2,000 sentences (94.68 against 94.41) while still
+behind on span F1 (84.23 against 85.45). In this NER experiment token accuracy
+does not represent span quality on its own, so, as the section on metrics below
+describes, we choose models on the span-level measure. And <b>illegal
 transitions</b> peak once the model starts predicting entities at all, then
 fall without ever reaching the zero the CRF reached here.</p>`
 ```
