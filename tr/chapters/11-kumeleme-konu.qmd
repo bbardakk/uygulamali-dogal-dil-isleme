@@ -1228,26 +1228,26 @@ gösterecek.
 
 ## Şekil yanlış olduğunda: yoğunluk tabanlı kümeleme {#sec-yogunluk}
 
-Yukarıdaki her k-means sonucu 3. varsayıma tabi: *her nokta bir kümeye aittir*.
-Bir ürün yorumu derleminde bu açıkça yanlış. Yorumların önemli bir kısmı kısa ve
-genel bir övgü ve belirli hiçbir şeye ait değil. **Gürültü** demesine izin verilen bir
-yöntemin bu yüzden daha iyi iş çıkarması gerekir. Onu çalıştırmaya değer kılan da
-şu: başarısız olma biçimi, k-means'inkinden daha bilgilendirici.
+k-means bütün belgeleri $k$ kümeye atar (3. tercih). Kısa ve genel yorumların bir
+kısmını hiçbir kümeye atamamak isteyebiliriz; **gürültü** demesine izin verilen
+HDBSCAN bu seçeneği sunar. Bunun daha yararlı olup olmadığını küme kararlılığı,
+gürültü payı ve aşağı akıştaki görevle ölçmek gerekir.
 
-[HDBSCAN](#gloss-hdbscan){#term-hdbscan .term-ref} bir yoğunluk seviyeleri
-hiyerarşisi kuruyor, sonra bu hiyerarşi boyunca en uzun süre ayakta kalan
-kümeleri çıkarıyor [@campello2013density; @mcinnes2017hdbscan]. $k$'si yok. Ana
+[HDBSCAN](#gloss-hdbscan){#term-hdbscan .term-ref} farklı uzaklık eşiklerinden
+oluşan bir yoğunluk hiyerarşisi kuruyor ve bu hiyerarşide kararlı görünen
+grupları seçiyor [@campello2013density; @mcinnes2017hdbscan]. $k$'si yok. Ana
 ayarı `min_cluster_size`: küme demeye razı olduğunuz en küçük grup. Yeterince
 yoğun olmayan her şey $-1$ etiketini alıp dışarıda bırakılıyor.
 HDBSCAN, [DBSCAN](https://dl.acm.org/doi/10.5555/3001460.3001507)'in (Ester vd.,
 1996) hiyerarşik ardılı. DBSCAN sizden tek bir `eps` yarıçapı ister ve böylece
-bütün derlem için tek bir yoğunluk düzeyi varsayar; HDBSCAN bu ayarı kaldırır ve
-her bölgenin kendi yoğunluğuna sahip olmasına izin verir.
+bütün derlem için tek bir yoğunluk düzeyi varsayar; HDBSCAN bu tek `eps`
+değerine bağlılığı azaltır. Yine de `min_samples`, `min_cluster_size`, uzaklık ve
+seçim yöntemi sonuçları güçlü biçimde etkiler.
 
 ::: {#gloss-hdbscan .column-margin .term-gloss}
-**HDBSCAN** — kümeleri, çevresinden daha yoğun bölgeler olarak buluyor; her
-bölge kendi yoğunluğuyla değerlendiriliyor. Geri kalanını *gürültü* sayıyor.
-$k$ istemiyor ve her noktayı atama zorunluluğu yok.
+**HDBSCAN** — bir uzaklık ve yoğunluk hiyerarşisinden kararlı kümeler seçer;
+seçilmeyen noktaları verilen ayarlarda *gürültü* olarak etiketleyebilir. $k$
+istemez ve bütün noktaları bir kümeye atama zorunluluğu yoktur.
 [↩](#term-hdbscan){.term-back}
 :::
 
@@ -1255,11 +1255,12 @@ Her temsilde `min_cluster_size`'ı üç değerde taradık, `min_samples`'ı ise
 varsayılanında bıraktık. Bu varsayılanın ne olduğunu açıkça söyleyelim, çünkü
 aşağıdaki tablo hakkındaki en belirleyici bilgi bu: hem
 `sklearn.cluster.HDBSCAN`'de hem de `hdbscan` paketinde `min_samples=None`,
-`min_samples = min_cluster_size` demek.
-Yani bunlar tek bir eksen üzerindeki üç nokta değil. Her satır yoğunluk
+`min_samples = min_cluster_size` demek. Ama iki uygulama birebir eşdeğer değil:
+`sklearn.cluster.HDBSCAN` noktanın kendisini `min_samples` içinde sayar,
+`scikit-learn-contrib/hdbscan` saymaz; kullanılan sınıfı ve bütün parametreleri
+sonuçlarla birlikte belirtin. Yani bunlar tek bir eksen üzerindeki üç nokta değil. Her satır yoğunluk
 tahminini ve asgari küme büyüklüğünü birlikte değiştiriyor; gürültü oranı da
-çoğunlukla birincisine tepki veriyor. Sonuç her hücrede aynı ve hiç de ince bir
-sonuç değil.
+çoğunlukla birincisine tepki veriyor.
 
 | temsil | `min_cluster_size` | küme | gürültü | en büyük küme | süre |
 |:--|--:|--:|--:|--:|--:|
@@ -1273,15 +1274,17 @@ sonuç değil.
 | E5 | 100 | 0 | %100,0 | — | 1530sn |
 | E5 | 500 | 0 | %100,0 | — | 2631sn |
 
-: 49.849 belge üzerinde HDBSCAN. Her ayar ya derlemin yarısını tek bir yığına
-gömüyor ya da neredeyse tamamını çöpe atıyor {tbl-colwidths="[22,18,12,14,18,16]"}
+: 49.849 belge üzerinde HDBSCAN. Denenen ayarlar ya derlemin yarısını tek bir
+yığında topluyor ya da neredeyse tamamını gürültü sayıyor {tbl-colwidths="[22,18,12,14,18,16]"}
 
 Her temsilin üç satırını birlikte okuyun. LSA ve MiniLM'de
 `min_cluster_size = 25` *iki* küme buluyor; biri her şeyin kabaca yarısını tutuyor, diğeri yuvarlama hatası
 düzeyinde; kalan yarı gürültü. Bu bir yapı keşfi değil, tek bir büyük yığının
 tarifi. Eşiği 100'e çıkarın, yığın yoğun sayılmayı bırakıyor ve derlemin
-%90–100'ü gürültü oluyor. 500'e çıkarın: hangi yoğunluk seviyesine
-bakarsanız bakın, 49.849 belgenin hiçbir yerinde küme kalmıyor.
+%90–100'ü gürültü oluyor. 500'e çıkarın, hiçbir küme seçilmiyor. Bu dokuz
+koşulda HDBSCAN en çok üç küme seçti; bu, seçilen temsil, metrik ve
+parametrelerle **kararlı küme seçimi** yapılamadığını gösteriyor — verinin her
+ölçekte ya da başka ayarlarda kümesiz olduğunu değil.
 
 E5 uç durum ve en öğretici olanı. Denediğimiz en gevşek ayar olan
 `min_cluster_size = 25`'te bile derlemin **%99,5**'ini gürültü ilan ediyor ve en
@@ -1302,29 +1305,29 @@ ortalama uzaklığına göre ölçüldüğünde ($1 - 0,8547 \approx 0,145$) E5'
 yayılımı yaklaşık 0,19 — MiniLM'in 0,22'sine yakın ve LSA'nın 0,085'inin iki
 katından fazla. HDBSCAN'in asıl ihtiyaç duyduğu şey *yerel yoğunluğun
 değişmesi*: her noktanın `min_samples`'ıncı en yakın komşusunun başka yerlere
-göre çok daha yakın olduğu bölgeler. E5'te bu değişim belli ki fazla zayıf ve
-nedenini ölçmedik. Akla gelen iki şüpheli var: ortak yön (@sec-kumeleme-temsiller'teki
+göre çok daha yakın olduğu bölgeler. E5'te bunun zayıf olabileceğini düşünüyoruz,
+ama komşu uzaklığı dağılımlarını ve bir parametre taramasını ölçmeden bir neden
+seçemeyiz; `min_samples` seçimi de olası açıklamalardan biri. Akla gelen iki
+şüpheli daha var: ortak yön (@sec-kumeleme-temsiller'teki
 merkezleme ablasyonu bunu sınardı) ve yüksek boyutlu uzaylarda uzaklıkların
 genel olarak birbirine yaklaşma eğilimi. **Bir noktanın en yakın ve en uzak
 komşusu arasındaki büyük fark, yoğunluğun bölgeden bölgeye değiştiğini garanti
 etmez; yoğunluk tabanlı yöntemlerin ihtiyacı ise ikincisidir.** Bir ironi var: **E5, *en iyi* başarımı
 gösteren (@sec-kumeleme-getiri) temsil; yoğunluk tabanlı kümelemenin en ağır
-biçimde çuvalladığı temsil de o.** Bunlar çelişki değil — farklı şeyleri
-ölçüyorlar — ama yalnızca HDBSCAN deneyen bir uygulayıcı, kazanan modeli çöpe
-atmış olurdu.
+biçimde çuvalladığı temsil de o.** Bunlar çelişki değil; farklı şeyleri ölçüyorlar
+ve bir temsilin triyajdaki yararı ayrı bir sonuç.
 
 ::: {.callout-important appearance="simple"}
-**%90–100'lük gürültü oranları bir ölçüm, bir başarısızlık değil.** HDBSCAN size doğru
-ve belirli bir şey söylüyor: yüzlerce belge ölçeğinde bu derlemin, çevresinden
-anlamlı biçimde daha yoğun bölgeleri yok. Derlem bir takımada değil, yoğunluğu
-kademeli olarak değişen tek bir bulut. k-means size bunu söyleyemezdi, çünkü
-k-means ortada küme olsun ya da olmasın $k$ küme döndürmek zorunda.
+**Bu ayarlarda güçlü, ayrık kümeler görünmedi.** k-means'in düşük silhouette'i ve
+HDBSCAN'in yüksek gürültü payı, seçilen temsillerde ve parametrelerde kolay
+ayrılan gruplar bulunmadığını gösteriyor. `min_samples`, seçim yöntemi, metrik ve
+ön işleme değiştirilmeden derlemde hiç yoğunluk yapısı olmadığı sonucuna
+varmayın.
 :::
 
-Doğru okuma bu ve k-means taramasını da açıklıyor. Silhouette'in 0,1042'nin
-üstüne hiç çıkmaması yanlış $k$'yi aradığımız için değil, bulunacak sınır olmadığı
-için. Varsayımları tamamen farklı iki yöntem aynı şeyi söylüyor; bu, sonuçların
-herhangi birinden tek başına daha değerli.
+Varsayımları farklı iki yöntemin bu ayarlarda benzer bir tablo vermesi, ikisinden
+herhangi birinin tek başına verdiğinden daha güçlü bir işaret; ama ikisi de aynı
+temsilleri kullanıyor.
 
 **Bu iddia nereye kadar geçerli.** HDBSCAN'in sonucu belirleyen üç ayarı var ve
 biz bunlardan birini değiştirdik. `min_samples` yoğunluk tahmininin sıkılığını
@@ -1334,8 +1337,8 @@ belirliyor ve gürültü oranının asıl tepki verdiği parametre o;
 yapıyor. Bu tablo için hâlâ yapmamız gereken iki takip çalışması var.
 Birincisi, `min_samples`'ı `min_cluster_size`'dan ayıran bir tarama:
 `min_samples` 5 ya da 10'da sabit kalırken `min_cluster_size` değişir. İkincisi,
-sıfırdan farklı bir epsilon. Bunlar çalıştırılana kadar "bu derlemde yoğunluk
-yapısı yok" ifadesi, üç boyutlu bir parametre uzayının tek ekseni üzerindeki üç
+sıfırdan farklı bir epsilon. Bunlar çalıştırılana kadar "bu ayarlarda yoğunluk
+yapısı görünmedi" ifadesi, üç boyutlu bir parametre uzayının tek ekseni üzerindeki üç
 nokta hakkında bir iddiadır. Bu iddiayı tek başına tarama değil, yukarıdaki
 k-means uyuşması destekliyor.
 
@@ -1348,15 +1351,14 @@ belirtisi: `min_cluster_size`'ı yükseltmek `min_samples`'ı da yükseltiyor.
 maliyeti belirleyen de bu sorgu.
 
 ::: {.callout-tip appearance="simple"}
-**Standart geçici çözüm ve bedeli.** Alışılmış tavsiye, önce UMAP
+**UMAP sonrası kümeyi bağımsız doğrulayın.** Alışılmış tavsiye, önce UMAP
 [@mcinnes2018umap] ile 5–15 boyuta inmek, sonra izdüşüm üzerinde HDBSCAN
-çalıştırmak. BERTopic varsayılan olarak bunu yapıyor [@grootendorst2022bertopic]
-ve gerçekten de küme üretiyor. Nedeni konusunda net olun: UMAP, komşuları
-birbirine çekip geri kalan her şeyi iterek yerel yoğunluğu *imal eden* doğrusal
-olmayan bir yöntem. Bir UMAP izdüşümünde bulunan kümeler kısmen UMAP'in bir
-özelliği. Yine de faydalı olabilirler — ama "UMAP'ten sonra HDBSCAN küme buldu",
-özgün uzayın küme içerdiğinin kanıtı değildir. Özgün uzayın gerçekte neye
-benzediğini yukarıdaki sayılar gösteriyor.
+çalıştırmak; BERTopic varsayılan olarak bunu yapıyor [@grootendorst2022bertopic]
+ve çoğu zaman küme üretiyor. UMAP komşuluk ilişkilerini yaklaşık korurken
+yoğunluk ve küme ayrımını değiştirebilir; sahte kopukluklar da oluşabilir.
+"UMAP'ten sonra HDBSCAN küme buldu" ifadesi, özgün uzayda aynı kümelerin
+bulunduğunu tek başına kanıtlamaz; ama kümeleri otomatik olarak sahte de yapmaz.
+seed ve komşu ayarına karşı kararlılığı ve ayrı bir görev ölçüsünü sınayın.
 
 Aynı uyarı, insanların UMAP ya da t-SNE ile çizdiği iki boyutlu resimler için de
 geçerli. Bu yöntemler *kimin kimin yanında olduğunu* oldukça iyi korur; ama
@@ -1364,10 +1366,9 @@ grafikteki bir öbeğin büyüklüğünü ve iki öbek arasındaki boşluğu bü
 veri değil, yöntemin kendisi ve ayarları belirler
 ([Wattenberg vd., 2016](https://distill.pub/2016/misread-tsne/)). Böyle bir
 grafiği hangi belgeleri okuyacağınıza karar vermek için kullanın, asla ölçüm
-olarak değil. Doğrusal alternatif PCA'dır: en büyük varyans yönlerine bir
-izdüşüm; uzaklıkları kısaltır ama bir bölgeyi ötekinden fazla germez. Daha az
-çarpıcıdır ve metinde çoğu zaman tek bir bulut gösterir; öteki kanıtlar da
-ortada ada olmadığını söylüyorsa, daha sadık resim odur.
+olarak değil. Doğrusal alternatif PCA: en büyük varyans yönlerine bir izdüşüm;
+uzaklıkları kısaltır ama bir bölgeyi ötekinden fazla germez. PCA da bilgi atar;
+daha az çarpıcı görünmesi daha doğru olduğu anlamına gelmez.
 :::
 
 ### Çalıştırmadığımız iki aile ve onları neden çalıştırmak isteyebilirsiniz

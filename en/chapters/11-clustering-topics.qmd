@@ -1195,28 +1195,28 @@ wrong question.
 
 ## When the shape is wrong: density-based clustering {#sec-density}
 
-Every k-means result above is subject to assumption 3: *every point belongs to
-a cluster*. On a corpus of product reviews that is plainly false. A good share of
-reviews are short, generic praise and belong to nothing in particular. A method
-that is allowed to say **noise** should therefore do better — and it is worth
-running precisely because the way it fails is more informative than the way
-k-means fails.
+k-means assigns every document to one of $k$ clusters (preference 3). We may
+want to leave some of the short, generic reviews out of every cluster; HDBSCAN,
+which is allowed to say **noise**, offers that option. Whether it is more useful
+has to be measured by cluster stability, the noise share and the downstream
+task.
 
-[HDBSCAN](#gloss-hdbscan){#term-hdbscan .term-ref} builds a hierarchy of
-density levels and then extracts the clusters that persist longest across that
-hierarchy [@campello2013density; @mcinnes2017hdbscan]. It has no $k$. Its main
+[HDBSCAN](#gloss-hdbscan){#term-hdbscan .term-ref} builds a density hierarchy
+over different distance thresholds and selects the groups that look stable in
+it [@campello2013density; @mcinnes2017hdbscan]. It has no $k$. Its main
 knob is `min_cluster_size`: the smallest group you are willing to call a
 cluster. Everything not dense enough to qualify is labelled $-1$ and left out.
 It is the hierarchical successor of
 [DBSCAN](https://dl.acm.org/doi/10.5555/3001460.3001507) (Ester et al., 1996),
 which asks you for a single radius `eps` and so assumes one density level for
-the whole corpus. HDBSCAN removes that knob and lets each region have its own
-density.
+the whole corpus; HDBSCAN reduces the dependence on that single `eps`. Even so,
+`min_samples`, `min_cluster_size`, the distance and the selection method affect
+the result strongly.
 
 ::: {#gloss-hdbscan .column-margin .term-gloss}
-**HDBSCAN** — finds clusters as regions denser than their surroundings, at
-whatever density each region happens to have, and labels the rest *noise*. No
-$k$ required, and no obligation to assign every point.
+**HDBSCAN** — selects stable clusters from a distance and density hierarchy,
+and can label the points not selected as *noise* under the given settings. No
+$k$ required, and no obligation to assign every point to a cluster.
 [↩](#term-hdbscan){.term-back}
 :::
 
@@ -1224,10 +1224,12 @@ We swept `min_cluster_size` at three values on each representation, leaving
 `min_samples` at its default. State what that default is, because it is the
 single most consequential thing about the table below: in both
 `sklearn.cluster.HDBSCAN` and the `hdbscan` package, `min_samples=None` means
-`min_samples = min_cluster_size`. So these are not three points on one axis —
+`min_samples = min_cluster_size`. The two implementations are not exactly
+equivalent, though: `sklearn.cluster.HDBSCAN` counts the point itself in
+`min_samples`, `scikit-learn-contrib/hdbscan` does not; state the class used and
+every parameter alongside the results. So these are not three points on one axis —
 each row moves the density estimate and the cluster-size floor together, and the
-noise rate responds mostly to the first. The result is the same in every cell,
-and it is not a subtle one.
+noise rate responds mostly to the first.
 
 | representation | `min_cluster_size` | clusters | noise | largest cluster | time |
 |:--|--:|--:|--:|--:|--:|
@@ -1241,8 +1243,8 @@ and it is not a subtle one.
 | E5 | 100 | 0 | 100.0% | — | 1530s |
 | E5 | 500 | 0 | 100.0% | — | 2631s |
 
-: HDBSCAN on 49,849 documents. Every setting either swallows half the corpus in
-one blob or throws almost all of it away {tbl-colwidths="[22,18,12,14,18,16]"}
+: HDBSCAN on 49,849 documents. The settings tried either gather half the corpus
+in one blob or label almost all of it noise {tbl-colwidths="[22,18,12,14,18,16]"}
 
 Read each representation's three rows together. On LSA and MiniLM,
 `min_cluster_size = 25` finds *two*
@@ -1250,8 +1252,10 @@ clusters, one of which holds roughly half of everything and the other of which
 is a rounding error; the remaining half is noise. That is not a discovery of
 structure, it is a description of one big lump. Raise the threshold to 100 and
 the lump stops qualifying as dense, so 90–100% of the corpus becomes noise.
-Raise it to 500 and there is no cluster anywhere in 49,849 documents at any
-density level.
+Raise it to 500 and no cluster is selected. Across these nine conditions
+HDBSCAN selected at most three clusters; that shows **no stable cluster
+selection** was possible with the chosen representation, metric and parameters
+— not that the data are cluster-free at every scale or under other settings.
 
 E5 is the extreme case and the most instructive one. Even at
 `min_cluster_size = 25` — the most permissive setting we tried — it calls
@@ -1272,28 +1276,29 @@ against its own mean distance ($1 - 0.8547 \approx 0.145$), E5's spread is
 about 0.19 — close to MiniLM's 0.22, and more than twice LSA's 0.085. What
 HDBSCAN actually needs is *variation in local density*: regions where each
 point's `min_samples`-th nearest neighbour is much closer than it is elsewhere.
-In E5 that variation is evidently too weak, and we have not measured why. The two
-obvious suspects are the shared direction (the centring ablation in
+We suspect that variation is weak in E5, but without measuring the
+nearest-neighbour distance distributions and a parameter sweep we cannot pick a
+cause; the choice of `min_samples` is one possible explanation. Two further
+suspects are the shared direction (the centring ablation in
 @sec-clustering-reps would test it) and the way distances in general bunch
 together in high-dimensional spaces. **A large gap between a point's nearest and
 farthest neighbour does not guarantee that density varies from one region to
 another, and density-based methods need the second.** Note the irony: **E5 is the representation that performed *best*
 in @sec-clustering-payoff and the one where density-based clustering fails most
-completely.** Those are not in tension — they measure different things — but a
-practitioner who tried only HDBSCAN would have discarded the winning model.
+completely.** Those are not in tension; they measure different things, and a
+representation's triage value is a separate result.
 
 ::: {.callout-important appearance="simple"}
-**Noise rates of 90–100% are a measurement, not a failure.** HDBSCAN is telling you
-something true and specific: at the scale of hundreds of documents, this corpus
-has no regions that are meaningfully denser than their surroundings. It is one
-cloud with gradients, not a set of islands. k-means could not tell you that,
-because k-means is required to return $k$ clusters whether or not any exist.
+**No strong, separate clusters appeared under these settings.** k-means' low
+silhouette and HDBSCAN's high noise share show that the chosen representations
+and parameters did not yield easily separated groups. Do not conclude that the
+corpus has no density structure at all without varying `min_samples`, the
+selection method, the metric and the preprocessing.
 :::
 
-That is the honest reading, and it also explains the k-means sweep. The
-silhouette never rose above 0.1042 not because we searched the wrong $k$ but
-because there are no boundaries to find. Two methods with completely different
-assumptions agree, which is worth more than either result alone.
+Two methods with different assumptions giving a similar picture under these
+settings is a stronger signal than either alone — though both use the same
+representations.
 
 **How far that claim is entitled to go.** HDBSCAN has three consequential dials
 and we moved one of them. `min_samples` sets the tightness of the density
@@ -1302,7 +1307,7 @@ is a flat distance floor that stops over-fragmentation; `cluster_selection_metho
 chooses between `"eom"` and `"leaf"` extraction. A sweep that separates the
 first from `min_cluster_size` — hold `min_samples` at 5 or 10 while
 `min_cluster_size` varies — and a non-zero epsilon are the two follow-ups we owe
-this table. Until they are run, "this corpus has no density structure" is a
+this table. Until they are run, "no density structure appeared under these settings" is a
 claim about three points on one axis of a three-dimensional parameter space,
 supported by the k-means agreement above rather than by the sweep alone.
 
@@ -1314,15 +1319,15 @@ above, since raising `min_cluster_size` raises `min_samples`, and `min_samples`
 is the $k$ of the core-distance nearest-neighbour query that dominates the cost.
 
 ::: {.callout-tip appearance="simple"}
-**The standard workaround, and its cost.** The usual advice is to run UMAP
-[@mcinnes2018umap] down to 5–15 dimensions first, then HDBSCAN on the
-projection. This is what BERTopic does by default [@grootendorst2022bertopic],
-and it does produce clusters. Be clear about why: UMAP is a non-linear method
-that *manufactures* local density by pulling neighbours together and pushing
-everything else apart. Clusters found in a UMAP projection are partly a
-property of UMAP. They can still be useful — but "HDBSCAN found clusters after
-UMAP" is not evidence that the original space had them, and the numbers above
-are what the original space actually looks like.
+**Validate clusters found after UMAP independently.** The usual advice is to run
+UMAP [@mcinnes2018umap] down to 5–15 dimensions first, then HDBSCAN on the
+projection; BERTopic does this by default [@grootendorst2022bertopic], and it
+often produces clusters. UMAP roughly preserves neighbourhood relations while it
+can change density and cluster separation, and spurious gaps can appear. "HDBSCAN
+found clusters after UMAP" does not by itself prove the same clusters exist in
+the original space, but it does not automatically make them spurious either.
+Test stability across seeds and neighbour settings, and a separate task
+measure.
 
 The same caution applies to the 2-D pictures people draw with UMAP or t-SNE.
 They keep *who is next to whom* reasonably well, but the size of a blob and the
@@ -1330,9 +1335,8 @@ gap between two blobs in the plot are largely set by the method and its
 settings, not by the data ([Wattenberg et al., 2016](https://distill.pub/2016/misread-tsne/)).
 Use such a plot to decide which documents to read, never as a measurement. PCA
 is the linear alternative: a projection onto the directions of largest variance,
-which squashes distances but never stretches one region more than another. It
-is less dramatic, and on text it often shows a single cloud; when the other
-evidence says there are no islands, that is the more faithful picture.
+which squashes distances but never stretches one region more than another. PCA
+discards information too; looking less dramatic does not make it more correct.
 :::
 
 ### Two families we did not run, and why you might
