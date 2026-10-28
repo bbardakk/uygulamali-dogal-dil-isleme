@@ -439,14 +439,17 @@ count it as a word character, so a tokenizer built on `\w+` splits the word in
 two at that point. Check your own engine before assuming it behaves the same
 way: `\w` is defined per implementation, and some engines fold nonspacing marks
 into it while others do not.
-[`İstanbul` becomes `i` plus `stanbul`, and no amount of downstream modelling
-recovers from it]{.hl} — the model never sees the word.
+[`İstanbul` becomes `i` plus `stanbul`]{.hl}; pre-tokenization like that can
+break the word's identity and affect later retrieval or tagging steps. The
+effect depends on the model and features used (a subword model may handle it
+differently), so test it in your own pipeline.
 
 And it does not go away when you normalize:
 
 ```text
-  unicodedata.normalize("NFC",  'İSTANBUL'.lower())   →   ['i', 'stanbul']
-  'TAVSİYE'.lower()                                   →   ['tavsi', 'ye']
+  s = unicodedata.normalize("NFC", 'İSTANBUL'.lower())    # still 'i̇stanbul'
+  re.findall(r"\w+", s)                                  →   ['i', 'stanbul']
+  re.findall(r"\w+", 'TAVSİYE'.lower())                  →   ['tavsi', 'ye']
 ```
 
 NFC does not recombine, because NFC only composes a sequence into a single
@@ -477,8 +480,11 @@ def tr_upper(s):
     return s.replace("i", "İ").replace("ı", "I").upper()
 ```
 
-Six lines, applied before anything else touches the text — and the NFC line is
-not optional. Text arrives decomposed more often than you would like: from HTML
+Two small functions, applied before anything else touches the text — and the
+NFC line is not optional. They are a practical start for the common composed
+and decomposed I/İ cases in Turkish text; for general Unicode case conversion
+use ICU with the Turkish locale, and test the helpers separately on text with
+combining marks, mixed languages and edge cases. Text arrives decomposed more often than you would like: from HTML
 forms, from some macOS filenames, from OCR. Without the normalization,
 `tr_lower` on a decomposed `İstanbul` returns `ı̇stanbul` — the combining dot is
 still there and it is now over the *wrong* vowel, which is worse than what you
@@ -489,8 +495,10 @@ This is why the bug survives: the code that causes it is `text.lower()`, which
 is correct-looking, ubiquitous, and inside every library you did not write.
 In @sec-clustering it became visible because a cluster came back 94.7% full of
 one artefact, and reading that cluster identified it — nobody had set out to
-look for it. Check for it by lowercasing
-a word with `İ` and printing the code points.
+look for it. A cluster like that is a warning; confirming the cause means
+comparing those documents' lowercased code points and tokens with the raw
+text. In your own pipeline, check by lowercasing a word with `İ` and printing
+the code points.
 :::
 
 ### Diacritics: deasciification and what it merges
