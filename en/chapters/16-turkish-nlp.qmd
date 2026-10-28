@@ -764,20 +764,24 @@ here.
 ## The five-chapter pattern {#sec-turkish-nlp-pattern}
 
 Something has happened repeatedly in this book, and it is worth naming as a
-pattern rather than leaving as a handful of anecdotes. In each case a standard,
-widely-used tool produced a number that was silently wrong on Turkish, and in
-each case a *control measurement* — not a better model — is what exposed it.
+pattern rather than leaving as a handful of anecdotes. In each case a common
+tool, or a measurement we wrote ourselves, produced a silently misleading
+number on Turkish, and in most cases a *control measurement* — not a better
+model — is what exposed it. The six rows are not the same kind of thing: two
+are locale-dependent lowercasing, one is train/test overlap, one is a metric's
+tokenizer, one is an implementation bug in a proxy measure, and the last is a
+difference in metric scale between two languages.
 
 | chapter | the tool | what it did on Turkish | how it surfaced |
 |:--|:--|:--|:--|
 | @sec-bake-off | `str.lower()` | `IYI` → `iyi` under English rules, `ıyı` under Turkish | comparing the two case mappings side by side |
 | @sec-clustering | `str.lower()` | `İ` becomes `i` + a combining mark, splitting the word | a cluster that was 94.7% one artefact |
 | @sec-sequence-labeling | WikiANN | 13.06% of the test set sitting verbatim in training | hashing test inputs against training inputs |
-| @sec-summarization | `rouge-score` | 44.4% of Turkish words mutilated by its tokenizer | two implementations of one metric disagreeing |
-| @sec-summarization | a faithfulness proxy | reported human journalists as 56% unfaithful | scoring copied text, which cannot be unfaithful |
-| @sec-machine-translation | BLEU | about 22.5% fewer word tokens per sentence (English uses 29% more), so each error costs more | a comparable error, run in two languages (exploratory) |
+| @sec-summarization | `rouge-score` | its tokenizer split 44.4% of the words in 300 Turkish references at Turkish letters | two implementations of one metric disagreeing |
+| @sec-summarization | a faithfulness proxy | its buggy first version also flagged copied text, so the 56% it gave human journalists' summaries could not be interpreted | scoring copied text: this measure only looks at numbers and proper nouns missing from the source, so a verbatim copy must get zero flags |
+| @sec-machine-translation | BLEU | about 22.5% fewer word tokens per sentence (English uses 29% more); a possible mechanism by which an error costs more in a word n-gram metric | two separate perturbations on unmatched subsets in two languages (exploratory; the direction of the bias cannot be stated) |
 
-: Six silent failures, and the control that caught each {tbl-colwidths="[20,14,38,28]"}
+: Six different evaluation risks that surfaced in Turkish experiments, and the control that made each visible {tbl-colwidths="[20,14,38,28]"}
 
 Three things generalise, and none of them is about Turkish specifically.
 
@@ -785,27 +789,34 @@ Three things generalise, and none of them is about Turkish specifically.
 `rouge-score` reproduces the original Perl behaviour faithfully. BLEU does
 exactly what its definition says. WikiANN was built as described. Each is
 correct on the language it was validated on, and each carries an assumption
-its documentation does not state.
+its documentation does not state. (The faithfulness proxy is the exception: we
+wrote it, and its flaw was a plain implementation bug.)
 
 **Every one was caught by a control, not by inspection.** Two case mappings
 side by side; a cluster that should not exist; test inputs hashed against
 training; two implementations of one metric compared; copied text that must
-score perfectly; a comparable error in two languages. [When you cannot verify a metric
-directly, feed it an input whose correct answer you already know.]{.hl} That
-habit found every one of them, and reading the code found none.
+get zero flags from this measure; one perturbation in each of two languages
+(exploratory). [When you cannot verify a metric directly, feed it an input
+whose correct answer you already know.]{.hl} In these examples, controls of
+this kind are what made the problems visible. Reading the code could have
+caught some of them too — a Unicode regex and a data split are both visible in
+code — so the two methods complement each other rather than compete.
 
 **The failures were silent by construction.** No exception, no warning, no
-missing field — just a number that was 60% too high, or a benchmark that was
-13% memorisation. A pipeline that fails loudly is a pipeline you will fix. The
+missing field — just a ROUGE-1 that was 22% to 80% higher than with the right
+tokenizer (`rouge-score`'s default, on the six systems of @sec-summarization;
+the size depends on the corpus, the system and the tokenizer), or a benchmark
+whose test set was 13% verbatim training material. A pipeline that fails loudly is a pipeline you will fix. The
 ones to worry about are the ones that return a plausible float.
 
 ::: {.column-margin}
 If you work in a language that is not English, expect this and budget for it.
-The practical version: before trusting any tool on your language, run it on an
-input whose answer is known — identical strings, empty strings, a copied
-document, a single-token change — and check that the number is what it must be.
-Ten minutes, and it is the highest-return ten minutes in a non-English NLP
-project.
+The practical version: before trusting any tool on your language, run it on a
+few short inputs whose answer is known — I/İ, a combining mark, identical
+strings, an empty output, a copied document, a one-word change that alters the
+meaning — and check that the number is what it must be. Preparing these
+usually does not take long; after that, audit more widely on your real data
+and metric protocol.
 :::
 
 ## Turkish corpora, models, and benchmarks {#sec-turkish-nlp-ecosystem}
