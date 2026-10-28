@@ -304,10 +304,15 @@ condition B     dense e5 alone             96.2%  R@1
                 hybrid surface + e5        49.4%  R@1      -46.8
 ```
 
-**Unweighted reciprocal rank fusion did worse than the better parent in both
-conditions**, and badly. That is the opposite of the standard claim that hybrid retrieval beats
-both parents [@cormack2009reciprocal], and the reason is visible in the
-mechanism.
+**In the two synthetic conditions reported, the unweighted RRF setting used
+landed 32.8 and 46.8 points behind the best single system.**
+@cormack2009reciprocal reported that, in the settings they studied, RRF did
+better than the individual systems it fused. This result does not show hybrid
+retrieval is harmful in general; it shows that this fusion setting can be
+harmful on these query distributions. It still beat the weaker parent by 26–27
+points in both conditions, so fusion can be insurance when you do not know
+which condition you are in — not a free gain. A plausible reason is visible in
+the mechanism.
 
 Be precise about what was measured, because the claim is narrower than "hybrid
 retrieval is oversold". These rows are *unweighted*, *rank-based* fusion at a
@@ -317,27 +322,30 @@ you that $k$ changes the answer, which makes not reporting it a real gap.
 Two standard repairs went untried. **Weighted RRF** — $\sum w_s/(k + \text{rank}_s)$
 with a per-system weight fitted on held-out queries — is the obvious one, and
 this chapter defers it to an exercise rather than running it. **Score-based
-fusion** is the better one: @bruch2024fusion analyses exactly this question and
-finds that a convex combination of normalised scores beats RRF both in and out
-of domain, with a single parameter that needs very few examples to tune. So the
-finding to carry is this one: *unweighted rank fusion of unequal parents can
-be harmful — it was in both cases measured here — because rank fusion throws away precisely the score-magnitude
-information that would tell it which parent to trust.*
+fusion** is the second: @bruch2024fusion report, on the datasets they studied,
+that a convex combination of normalised scores beats RRF both in and out of
+domain, with a single parameter that needs few examples to tune; whether it
+wins on this chapter's two query conditions has to be tested. So the finding to
+carry is this one: *unweighted rank fusion of unequal parents can be harmful —
+it was in both cases measured here — and one plausible reason is that rank
+fusion does not use the score-magnitude information that could tell it which
+parent to trust.*
 
-[RRF assumes the systems it is fusing are comparably good.]{.hl} It scores
-each document by $\sum 1/(k + \text{rank})$ across the lists, which treats a
-rank-1 hit from a useless system exactly like a rank-1 hit from an excellent
-one.
+[Unweighted RRF gives both lists the same coefficient.]{.hl} It scores each
+document by $\sum 1/(k + \text{rank})$ across the lists, which treats a rank-1
+hit from a weak system like a rank-1 hit from a strong one.
 
 When one parent is at 96% and the other at 36%, the weak parent's top-ranked
-irrelevant documents arrive with full weight and displace the strong parent's
-correct answer. Note that "confidence" is not the word: rank fusion never sees
+irrelevant documents arrive with full weight and can displace the strong
+parent's correct answer. Confirming that plausible mechanism means inspecting
+where the right document and the decoys sit in each component list; that
+breakdown is not reported here. Note that "confidence" is not the word: rank fusion never sees
 a confidence score, which is exactly the information that would have told it
 which parent to trust.
 
 ::: {.anlp-widget}
 ```{=html}
-<div class="widget-title">Fuse two rankers by hand — and watch the right document lose</div>
+<div class="widget-title">Fuse two rankings: how does the right document's rank change?</div>
 ```
 
 ```{ojs}
@@ -363,11 +371,13 @@ viewof rrfK = Inputs.range([1, 60], {step: 1, value: 60, label: "RRF constant k"
 // The strong system has that decoy far down its own list.
 rrfRows = {
   const score = (a, b) => 1 / (rrfK + a) + 1 / (rrfK + b);
+  // Decoys skip the right document's weak rank, so each column stays a proper ranking.
+  const w = r => r >= rrfGoldWeak ? r + 1 : r;
   const rows = [
     {doc: "the right document", strong: rrfGoldStrong, weak: rrfGoldWeak},
-    {doc: "decoy the weak system loves", strong: 20, weak: 1},
-    {doc: "decoy the weak system likes", strong: 25, weak: 2},
-    {doc: "decoy both systems dislike", strong: 15, weak: 15}
+    {doc: "decoy the weak system loves", strong: 20, weak: w(1)},
+    {doc: "decoy the weak system likes", strong: 25, weak: w(2)},
+    {doc: "decoy both systems dislike", strong: 15, weak: w(15)}
   ].map(r => ({...r, fused: score(r.strong, r.weak)}));
   const order = [...rows].sort((a, b) => b.fused - a.fused);
   return rows.map(r => ({...r, rank: order.indexOf(r) + 1}));
@@ -379,7 +389,7 @@ rrfRows = {
 Inputs.table(rrfRows, {
   columns: ["doc", "strong", "weak", "fused", "rank"],
   header: {doc: "document", strong: "strong rank", weak: "weak rank",
-           fused: "RRF score", rank: "fused rank"},
+           fused: "RRF score", rank: "rank among the 4"},
   format: {fused: v => v.toFixed(5)},
   width: {doc: 240, strong: 100, weak: 100, fused: 100, rank: 90},
   rows: 5})
@@ -399,7 +409,9 @@ equal vote.`
 ```
 :::
 
-Move the second slider and the mechanism becomes obvious: the weak system does
+The table's ranks are computed among the four documents shown only; the rank
+in the full candidate list can differ. Move the second slider and the mechanism
+becomes obvious: the weak system does
 not need to be *right* to change the outcome, only to put the wrong document
 at the top of its list. And notice what `k` does. A small `k` makes first
 place worth far more than tenth, so each system's top hit dominates. Raising it
@@ -416,10 +428,12 @@ condition B     dense alone       R@1 96.2%    R@10  99.9%
                 hybrid            R@1 49.4%    R@10  99.6%
 ```
 
-**Recall@10 barely moved; recall@1 halved.** Fusion did not *lose* the
-document — it pushed it down the list. So if your consumer reads the top ten,
-the fusion cost you almost nothing; if it reads the top one, fusion cost you
-half your accuracy.
+**In condition B fusion took @10 from 99.9% to 99.6% and @1 from 96.2% to
+49.4%.** The big loss is at the top: fusion mostly pushed the target down the
+list, and a few targets fell out of the top ten. If your consumer reads the top
+ten the loss looks small, but the effect of the reordering on the outcome (how
+a generator uses its context, say) has to be measured end to end; if it reads
+only the top one, about half the accuracy is gone.
 
 All three findings fit in one picture — the swap, the fusion loss, and the
 metric that hides it:
@@ -428,7 +442,7 @@ metric that hides it:
 ```{=html}
 <div class="fig-title">Recall@1 on one corpus: the winner swaps, and fusion loses to the better system in both conditions</div>
 <svg viewBox="0 0 764 322" style="max-width:744px" role="img"
-     aria-label="Two panels of recall@1 bars drawn at the same scale. In condition A, keyword queries inflected differently from the document, stemmed BM25 reaches 96.0 percent, the dense multilingual-e5 retriever 35.9 percent, and their reciprocal-rank fusion 63.2 percent, which is 32.8 points below the better parent. In condition B, cross-lingual queries, the ordering reverses: stemmed BM25 falls to 23.8 percent, dense reaches 96.2 percent, and fusion reaches 49.4 percent, 46.8 points below the better parent. A bottom band shows the same condition-B fusion measured at recall@10, where dense alone scores 99.9 percent and the fusion 99.6 percent, so the damage is invisible at that depth.">
+     aria-label="Two panels of recall@1 bars drawn at the same scale. In condition A, keyword queries inflected differently from the document, stemmed BM25 reaches 96.0 percent, the dense multilingual-e5 retriever 35.9 percent, and their reciprocal-rank fusion 63.2 percent, which is 32.8 points below the better parent. In condition B, cross-lingual queries, the ordering reverses: stemmed BM25 falls to 23.8 percent, dense reaches 96.2 percent, and fusion reaches 49.4 percent, 46.8 points below the better parent. A bottom band shows the same condition-B fusion measured at recall@10, where dense alone scores 99.9 percent and the fusion 99.6 percent, so the damage looks very small at that depth.">
 
   <text x="16" y="16" class="t-xs t-b t-muted">CONDITION A — KEYWORD QUERIES, INFLECTED</text>
   <text x="392" y="16" class="t-xs t-b t-muted">CONDITION B — CROSS-LINGUAL QUERIES</text>
@@ -477,7 +491,7 @@ metric that hides it:
   <text x="748" y="216" class="t-xs t-muted t-end">100%</text>
 
   <line x1="16" y1="238" x2="748" y2="238" class="ln-thin ln-dash"/>
-  <text x="16" y="258" class="t-xs t-b t-muted">CONDITION B AGAIN, MEASURED AT RECALL@10 — WHERE THE SAME DAMAGE IS INVISIBLE</text>
+  <text x="16" y="258" class="t-xs t-b t-muted">CONDITION B AGAIN, MEASURED AT RECALL@10 — WHERE THE SAME DAMAGE BARELY SHOWS</text>
 
   <rect x="16" y="268" width="355.64" height="20" rx="4" class="box-accent"/>
   <text x="26" y="282" class="t-sm">dense alone</text>
@@ -487,7 +501,7 @@ metric that hides it:
   <text x="26" y="308" class="t-sm">hybrid RRF</text>
   <text x="362.58" y="308" class="t-sm t-b t-end">99.6%</text>
 
-  <text x="392" y="282" class="t-sm t-b">Recall@10 says nothing happened.</text>
+  <text x="392" y="282" class="t-sm t-b">Recall@10 only fell from 99.9% to 99.6%.</text>
   <text x="392" y="306" class="t-sm t-muted">At recall@1 the same fusion went 96.2% to 49.4%.</text>
 </svg>
 ```
@@ -500,9 +514,9 @@ better of the two hybrids in its table; in condition B that is the fusion with
 *surface-form* BM25 (23.2% alone), not the stemmed BM25 drawn above it. In each panel the dashed
 line marks the better parent and the rose bracket is what fusing cost against
 it. The bottom band is the same condition-B fusion seen at depth ten, where
-the two bars are indistinguishable — the right document was never lost, only
-pushed down, which is why a system can regress badly while the number you are
-watching does not move.
+the two bars are nearly indistinguishable (99.9% and 99.6%) — the right document
+was mostly pushed down, and a few targets left the top ten, which is why a
+system can regress badly while the number you are watching barely moves.
 :::
 ::::
 
