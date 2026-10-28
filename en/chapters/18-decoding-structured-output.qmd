@@ -915,9 +915,10 @@ milliseconds — even when both finish at the same moment, so no throughput
 metric can tell them apart.
 
 The tension with everything above is that **structured output and streaming
-want opposite things**. A JSON object is only parseable once its last brace
-arrives, so the natural implementation buffers the whole response and streams
-nothing. Three ways out, in increasing order of effort:
+want opposite things**. You cannot validate a complete JSON document as a whole
+before its closing character arrives, so the natural implementation buffers
+the whole response and streams nothing. An incremental parser, by contrast,
+can track completed fields and still-open structures during the stream. Three ways out, in increasing order of effort:
 
 | approach | what the user sees | cost |
 |:--|:--|:--|
@@ -931,16 +932,22 @@ The middle row is the one worth building, and the thing to get right is that
 **a partial parse is a different type from a complete one**. `{"duygu": "olu`
 is not a bad object; it is an incomplete one, and a consumer that cannot
 represent *not yet known* will either crash or render garbage. Model it
-explicitly — a field is missing, pending, or present — rather than letting
-`None` mean two things.
+explicitly — "not yet there", "forming", "complete" and "whole document
+validated" — rather than letting `None` mean two things. Even a completed
+field can end up in a document that is later invalid through truncation or a
+schema violation; use only the finally validated document for an action or a
+persistent record.
 
-One practical note follows from @sec-decoding-constrained: a grammar and an
-incremental parser are the same automaton looked at from two ends.
+One practical note follows from @sec-decoding-constrained: constrained
+generation and incremental parsing can draw on the same schema definition. The
+producer tracks which next tokens are allowed; the consumer tracks which fields
+the received prefix has settled.
 
-If you are already constraining generation, the state machine that decides
-which tokens are legal is also the one that can tell a consumer which fields
-are final. Most stacks do not connect the two, and it is a reasonable thing to
-build when the interface warrants it.
+If you are already constraining generation, matching the two components'
+states can help tell a consumer which fields are final; but that matching
+depends on the implementation (they may use different state machines and
+tokenizer transitions), so do not take it for granted. It is a reasonable thing
+to build when the interface warrants it.
 
 ## Intuition checks {#sec-decoding-intuition}
 
