@@ -1101,19 +1101,24 @@ $$
 Burada $f_{t,d}$, $t$ teriminin $d$ belgesinde kaç kez geçtiği; $|d|$ belgenin
 uzunluğu, avgdl ise derlemdeki ortalama uzunluktur. IDF genellikle, $N$
 belgenin $n_t$ tanesinde $t$ geçiyorsa $\log\frac{N - n_t + 0{,}5}{n_t + 0{,}5}$
-olarak alınır (Lucene, negatife düşmesin diye logaritmanın içine 1 ekler).
-Yaygın varsayılanlar $k_1 \approx 1{,}2$–$2{,}0$ ve $b = 0{,}75$'tir.
+olarak alınır (Lucene, negatife düşmesin diye logaritmanın içine 1 ekler:
+$\log(1 + \frac{N - n_t + 0{,}5}{n_t + 0{,}5})$). Bu, BM25'in yaygın bir biçimi;
+varyantlar farklı IDF'ler kullanır. Bir sonucu raporlarken kullandığınız
+uygulamanın tam IDF tanımını, tokenization'ını ve $k_1$, $b$ değerlerini verin
+(bu bölümün koşusunda bunlar kaydedilmedi). Yaygın varsayılanlar $k_1 \approx
+1{,}2$–$2{,}0$ ve $b = 0{,}75$'tir.
 
 Açıkça söylenmesi gereken kısım, formülün *neden* doyuma ulaştığıdır.
 @sec-metin-veri'nin ham sayımlı TF-IDF'inde bir terimin onuncu geçişi
 birincisi kadar sayılır; burada ise terim frekansı çarpanı hiçbir zaman
 $k_1+1$'i aşamaz ve $k_1$ bu tavana ne kadar hızlı yaklaşılacağını belirler.
-$k_1 = 1{,}2$ ile (uzunluğu yok sayarsak) üç kez geçen bir kelime 1,57 × IDF,
-yirmi kez geçen bir kelime ise yalnızca 2,08 × IDF katkı verir — yedi kat
-değil, üçte bir fazla. Dolayısıyla tekrar, sorgunun diğer terimlerinden daha
-fazlasını eşleştiren bir belgeyi ezip geçemez. $b$ ise uzunluk normalleştirmesini iki uç arasında
-ayarlar: $b=0$ belge uzunluğunu yok sayar, $b=1$ uzunluğun etkisini tümüyle
-giderir. `scikit-learn`'deki `sublinear_tf`'in aynı
+$|d|/\text{avgdl} = 1$ ve $k_1 = 1{,}2$ varsayılırsa üç kez geçen bir kelime
+1,57 × IDF, yirmi kez geçen bir kelime ise yalnızca 2,08 × IDF katkı verir —
+yedi kat değil, üçte bir fazla. Doyum aşırı tekrarın katkısını sınırlar; yine de
+toplam sıralama IDF'ye ve diğer sorgu terimlerine bağlıdır. $b$ ise uzunluk
+normalleştirmesini iki uç arasında ayarlar: $b=0$ uzunluk düzeltmesini kapatır,
+$b=1$ seçilen formüldeki uzunluk normalleştirmesini tam uygular — bu, uzunluğun
+etkisinin sıfırlanması demek değildir. `scikit-learn`'deki `sublinear_tf`'in aynı
 fikrin kaba hâli olduğunu eklerseniz iki bölümü birbirine bağlamış olursunuz.
 
 **S: Çift kodlayıcı mı çapraz kodlayıcı mı? Neden her yerde daha iyi olanı
@@ -1121,21 +1126,23 @@ kullanmıyoruz?**
 
 Bir çift kodlayıcı sorguyu ve belgeyi *bağımsız* gömer, dolayısıyla belgeler bir
 kez, çevrimdışı kodlanabilir ve arama bir vektör işlemidir. Bir çapraz kodlayıcı
-çifti birlikte okur ve puanlar; bu ilke olarak daha fazla bilgi kullanır ve önceden
-hesaplanamaz — bedeli sorgu anında aday başına bir ileri geçiştir. Bu yüzden
-mimaride hep ikisi birlikte bulunur: kısa listeyi ucuza getirin, pahalıya yeniden
-sıralayın. Sorulmadan ekleyebileceğiniz devam konusu, kısa listenin nerede
-doyduğudur: 1.000 adayı yeniden sıralamak, 100 adayı sıralamaktan nadiren daha
-fazlasını kazandırır ve on kat pahalıya gelir.
+çifti birlikte okur ve puanlar; token'lar arası etkileşim kurar ve puanı önceden
+hesaplanamaz — bedeli sorgu anında aday başına bir puanlamadır. Bu yüzden büyük
+bir derlemde çift kodlayıcı ya da sözcüksel erişim aday getirir; kalite ve
+gecikme bütçesi izin verirse çapraz kodlayıcı kısa listeyi yeniden sıralar. Her
+sistemde ikincisi gerekmez. Sorulmadan ekleyebileceğiniz devam konusu, kısa
+listenin nerede doyduğudur: bunu 10, 25, 50, 100 gibi boyutlarda kendi
+sorgularınızla ölçün; maliyet kısa listeyle doğrusal artar.
 
 **S: Yaklaşık bir indekste kaliteyi hangi ayar belirler ve şu anda kaça ayarlı?**
 
 HNSW'de `efSearch`, IVF'de `nprobe` — çizgenin ne kadarının ya da kaç kümenin
 ziyaret edileceği. Sorunun asıl amacı ikinci yarısıdır: bu ayarın bir
 varsayılan değeri vardır; o değeri siz değil, kütüphanenin yazarı seçmiştir ve
-bu, performans kılığına girmiş bir *recall* ayarıdır. Gerçek komşuların
-%92'sini sessizce döndüren bir ANN indeksi, model daha hiçbir şey görmeden tam
-aramanın bulacağı şeylerin %8'ini kaybetmiştir. Yaklaşık aramayı bir örneklemde tam
+bu, performans kılığına girmiş bir *recall* ayarıdır. Komşu yakalama oranı %92
+olan bir ANN indeksinde, örneklemde tam aramanın ilk *k* komşusunun ortalama
+%8'i yaklaşık sonuçlarda yoktur; bunun ilgililiğe ve cevap kalitesine etkisini
+etiketli sorgularda ayrıca ölçün. Yaklaşık aramayı bir örneklemde tam
 aramayla karşılaştırın; böylece sayıyı varsaymak yerine bilirsiniz.
 
 ### Bir tane yayına alıp almadığınızı sınayanlar

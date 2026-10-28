@@ -1071,30 +1071,37 @@ $$
 Here $f_{t,d}$ is how often term $t$ occurs in document $d$, $|d|$ is the
 document's length and avgdl the average length in the collection. The IDF is
 usually $\log\frac{N - n_t + 0.5}{n_t + 0.5}$ for $N$ documents of which $n_t$
-contain $t$ (Lucene adds 1 inside the log so it never goes negative). Common
-defaults are $k_1 \approx 1.2$–$2.0$ and $b = 0.75$.
+contain $t$ (Lucene adds 1 inside the log so it never goes negative:
+$\log(1 + \frac{N - n_t + 0.5}{n_t + 0.5})$). That is one common form of BM25;
+variants use different IDFs. When you report a result, give the exact IDF,
+tokenization and $k_1$, $b$ of the implementation you used (this chapter's run
+did not record them). Common defaults are $k_1 \approx 1.2$–$2.0$ and
+$b = 0.75$.
 
 The part worth saying out loud is *why* it saturates. In @sec-text-as-data's
 TF-IDF with raw counts the tenth occurrence of a term counts exactly as much as
 the first; here the term-frequency factor can never exceed $k_1+1$, and $k_1$
-sets how fast it approaches that ceiling. With $k_1 = 1.2$ (and ignoring
-length), a word used three times contributes 1.57 × IDF and a word used twenty
-times only 2.08 × IDF — a third more, not seven times more — so repetition
-cannot swamp a document that matches more of the query's other terms. And $b$
-interpolates length normalisation: $b=0$ ignores document length, $b=1$
-divides it out fully. If you add that `sublinear_tf` in `scikit-learn` is the
+sets how fast it approaches that ceiling. Assuming $|d|/\text{avgdl} = 1$ and
+$k_1 = 1.2$, a word used three times contributes 1.57 × IDF and a word used
+twenty times only 2.08 × IDF — a third more, not seven times more. Saturation
+limits what repetition adds, though the overall ranking still depends on the
+IDF and the other query terms. And $b$ interpolates length normalisation:
+$b=0$ switches the length correction off, $b=1$ applies the chosen formula's
+length normalisation in full — which is not the same as removing the effect of
+length. If you add that `sublinear_tf` in `scikit-learn` is the
 crude version of the same idea, you have connected the two chapters.
 
 **Q: Bi-encoder or cross-encoder? Why not use the better one everywhere?**
 
 A bi-encoder embeds query and document *independently*, so documents can be
 encoded once, offline, and search is a vector operation. A cross-encoder reads
-the pair jointly and scores it, which is strictly more informative and cannot
-be precomputed — the cost is one forward pass per candidate at query time.
-That is why the architecture is always both: retrieve a shortlist cheaply,
-rerank it expensively. The follow-up to volunteer is where the shortlist
-saturates, because reranking 1,000 candidates rarely buys more than reranking
-100 and costs ten times as much.
+the pair jointly and scores it, so tokens interact and the score cannot be
+precomputed — the cost is one scoring per candidate at query time. So on a large
+corpus a bi-encoder or lexical retrieval fetches candidates, and if quality and
+latency budgets allow, a cross-encoder reranks the shortlist; not every system
+needs the second. The follow-up to volunteer is where the shortlist saturates:
+measure it at sizes such as 10, 25, 50 and 100 on your own queries, knowing the
+cost grows linearly with the shortlist.
 
 **Q: What is the quality dial in an approximate index, and what is it set to
 right now?**
@@ -1102,9 +1109,10 @@ right now?**
 `efSearch` in HNSW, `nprobe` in IVF — how much of the graph or how many
 clusters get visited. The point of the question is the second half: it has a
 default, the default was chosen by the library author and not by you, and it
-is a *recall* setting wearing a performance costume. An ANN index that silently
-returns 92% of the true neighbours has thrown away 8% of what exact search
-would have found, before the model sees anything. Measure approximate against exhaustive on a sample and
+is a *recall* setting wearing a performance costume. With a neighbour recall of
+92%, on average 8% of exhaustive search's top-*k* neighbours are missing from
+the approximate results in the sample; measure what that does to relevance and
+answer quality on labelled queries separately. Measure approximate against exhaustive on a sample and
 you will know the number instead of assuming it.
 
 ### Testing whether you have shipped one
