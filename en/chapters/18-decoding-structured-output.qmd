@@ -445,8 +445,23 @@ structured NLP tasks.
 
 The interesting question is not whether a grammar can enforce a schema — it
 can — but **where an unenforced model stops complying on its own**, and what
-enforcement costs when it takes over. Four schemas of increasing awkwardness,
-150 balanced reviews, two models, asked-versus-enforced:
+enforcement costs when it takes over. Four schemas, 150 balanced reviews, two
+models; schema compliance measured once merely asked (`asked`) and once
+enforced (`forced`). The four schemas' full JSON Schema texts (required fields,
+enum values, array and `null` rules) are not published in this chapter; the
+L1–L4 labels below are short names only and should not be read as a strict
+difficulty order. The four levels are L1 a flat object with a naturally
+labelled enum (`flat, natural enum`), L2 an enum with unnatural labels
+(`unnatural enum`), L3 a nested object and array (`nested + array`), and L4 a
+nested object with a nullable field (`nested + nullable`). The columns are the
+share of outputs that parse (`parses`), the share that match the schema
+(`schema-ok`), accuracy (`accuracy`) and seconds per item (`s/item`).
+`accuracy` is computed over all 150 reviews, with invalid or unparseable
+outputs counted as wrong. To separate task success from format success,
+accuracy on schema-valid items alone should also have been reported; and since
+`asked` and `forced` ran on the same 150 reviews, the item-level paired results
+(both right, only one right, both wrong) and the uncertainty of the difference
+are also missing from this table:
 
 ```text
 qwen3.5:9b                        parses  schema-ok  accuracy  s/item
@@ -475,7 +490,9 @@ Three findings, and the first is the one that reframes the technique.
 **On a strong model, the grammar buys almost nothing.** `qwen3.5:9b` complied
 with the schema 98–99.3% of the time when merely *asked*, at every difficulty
 level including nested objects with a nullable field. Enforcement took that to
-100% and left accuracy unchanged. [Modern instruction-tuned models mostly
+100%; the observed accuracy differences were about ±0.7 points on L1 and L2
+and zero on L3 and L4. A 150-item experiment cannot rule out small task
+effects. [Modern instruction-tuned models mostly
 produce the JSON you describe; the grammar is insurance on the last one or two
 percent.]{.hl}
 
@@ -484,41 +501,49 @@ matter more than the result itself.**
 First, it is a null on 150 items: the 95% interval around an 88% accuracy is
 roughly ±5 points, so this experiment could not have detected a two- to
 five-point degradation even if one were there. Second, the task here is
-*classification*. @tam2024format found that format restriction **helps**
-classification and **hurts** multi-step reasoning — GSM8K-style tasks lost
+*classification*. @tam2024format reported, for the models and tasks they
+studied, that format restriction **can help** classification and **can hurt**
+multi-step reasoning — GSM8K-style tasks lost
 several points under JSON mode with near-zero parsing failures, which locates
 the loss in the reasoning rather than in the parsing. So this chapter's result
 is a narrow subset of theirs rather than a contradiction of it, and it does not
-license the general claim. Do not carry "enforcement is free" into a
-chain-of-thought task; the safe pattern there is to let the model reason
-unconstrained and constrain only the final answer field.
+license the general claim. Only sentiment classification was measured here, so
+do not carry "enforcement is free" into a chain-of-thought task. Letting the
+intermediate steps run free and constraining only the final answer field is a
+reasonable design option; its effect needs testing on the same task.
 
 **On a weak model, it is the difference between working and not.**
 `llama3.2:3b` fell to **79.3% schema-valid** on the nested-plus-array schema —
 one output in five unusable. Enforcement took it to 100%, and **accuracy rose
-from 70.7% to 88.0%**, a 17.3-point gain, because the malformed fifth had been
-scored as wrong. The grammar did not make the model smarter; it stopped a
-formatting failure from being counted as a reasoning failure.
+from 70.7% to 88.0%** over all 150 reviews, a 17.3-point gain (a net 26 correct
+answers; 31 `asked` outputs were off-schema). Scoring invalid outputs as wrong
+is one possible cause and the numbers are consistent with it; but how much of
+the gain came from format and how much from class decisions that enforcement
+changed on valid outputs needs item-level paired results.
 
-**The cost is latency, and it is not where you would guess.** Overhead ranged
-from **1.01× to 17.5×**; the top of that range is the weak model at L4, where
+**The cost is latency, and it may not be where you would guess.** On this single
+laptop run, overhead ranged from **1.01× to 17.5×**; the top of that range is the weak model at L4, where
 0.53 s per item became 9.26 s. The overhead was not monotone in schema complexity — on `llama3.2:3b` L1 and L3 were cheap, L2 and L4 expensive; on `qwen3.5:9b` L3 was the most expensive.
 The two ends sit on different models, which is itself the finding: on
 `qwen3.5:9b` the grammar costs between 1.006× and 1.13× — **essentially
-free** — and on `llama3.2:3b` between 1.5× and 17.5×. A grammar is cheap where
-the model already agrees with the schema and expensive where it does not.
+free** — and on `llama3.2:3b` between 1.5× and 17.5×. Without repeated timing,
+how stable these ratios are and what causes the high latency are unknown; base
+deployment decisions on repeated measurements for your own model–schema
+pair.
 
-The two expensive ones share a property: the schema demands something the
-model does not want to produce, an unnatural enum in one case and a nullable
-field in the other. That is consistent with the grammar having to fight the
-model's distribution rather than ride it, though this measurement establishes
-the pattern rather than the mechanism.
+For the two conditions that came out expensive on `llama3.2:3b` — an unnatural
+enum in one case and a nullable field in the other — possible explanations
+include a long or difficult constrained search against the model's
+distribution, different token counts and implementation overhead. This
+experiment does not separate them; explaining the latency needs token counts
+and constrainer timings measured separately.
 
 ::: {.column-margin}
 Which is a reason to measure rather than reason about it. If the grammar's
 cost depended only on schema complexity you could budget for it from the
-schema; it appears to depend on the *disagreement* between the schema and the
-model, which you cannot see without running both.
+schema; in this run it was not monotone in schema complexity, and what it does
+depend on cannot be known without running both together and timing them
+repeatedly.
 :::
 
 ### What it cannot fix
