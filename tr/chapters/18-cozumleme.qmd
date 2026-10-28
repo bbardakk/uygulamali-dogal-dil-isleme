@@ -57,9 +57,11 @@ akış (streaming); yapılandırılmış çıktının istediği her şeyin tersi
 
 Bir dil modelinin ileri geçişi bir **logit** vektörüyle biter — sözlükteki her
 token için bir ham puan. @sec-transformerlar'nin tamamı o vektörü üretmekle
-ilgiliydi. Bu puanları gerçek token'lara çevirme işine **kod çözme** (decoding)
-diyoruz. Bu adımda olan şey öğrenme değil,
-[çıkarım anında sizin kontrol ettiğiniz bir örnekleme politikası]{.hl}. Bu
+ilgiliydi. Bu puanlardan çıktı token'larını seçme işine **kod çözme**
+(decoding) diyoruz. Greedy ve beam araması belirlenimci arama yöntemleri;
+sıcaklık ve top-k/top-p ise örnekleme dağılımını belirleyen ayarlar. Bu adımda
+olan şey öğrenme değil, [çıkarım anında sizin kontrol ettiğiniz bir kod çözme
+politikası]{.hl}; model ağırlıklarını değiştirmez. Bu
 politika, çıktının karakterini çoğu insanın beklediğinden fazla değiştiriyor.
 
 - **Sıcaklık** $\tau$, softmax'tan önce logit'leri yeniden ölçekler:
@@ -67,8 +69,9 @@ politika, çıktının karakterini çoğu insanın beklediğinden fazla değişt
   düzleştirir.
 - **Top-k** yalnızca en yüksek olasılıklı $k$ token'ı tutar, sonra yeniden
   normalize eder.
-- **Top-p (nucleus)** kümülatif olasılığı $p$'ye ulaşan en küçük token
-  kümesini tutar, sonra yeniden normalize eder [@holtzman2020curious].
+- **Top-p (nucleus)** token'ları olasılıklarına göre sıralayıp kümülatif
+  kütlesi en az $p$ olan en kısa ön eki tutar; kalan adayları sıfırlayıp
+  tutulanları yeniden normalize eder [@holtzman2020curious].
 
 **Bunların çalışma sırası önemlidir ve insanları asıl şaşırtan kısım da budur.**
 `transformers`'ta (5.x) tek bir kod çözme adımı şunu uygular: ham logit'lere
@@ -79,16 +82,20 @@ presence penalty (önceden geçen token'a sabit ceza) — ardından sıcaklığ�
 uygular; ama min-p'yi top-k ve top-p'den *önce* çalıştırır. llama.cpp'nin varsayılan
 zincirinde ise sıcaklık bütün kesimlerden sonra, *en sonda* gelir. Yani sıra tek
 bir kütüphanenin içinde sabittir, kütüphaneler arasında değil; kullandığınız
-kütüphaneye bakın. Sıcaklığın önce geldiği sıralamada bundan iki sonuç
-çıkıyor. Birincisi, sıcaklık top-p'den *önce* çalıştığı için sıcaklığı
+kütüphaneye, sürümüne ve yapılandırmasına bakın: buradaki sıralar belirtilen
+sürümlerin *varsayılan* zincirleri, llama.cpp'de örnekleyici zinciri ayrıca
+değiştirilebiliyor. Deney koşusunun gerçek zincirini kaydedin. Sıcaklığın önce
+geldiği sıralamada bundan iki sonuç çıkıyor. Birincisi, sıcaklık top-p'den *önce* çalıştığı için sıcaklığı
 yükseltmek hangi token'ların çekirdeğe (nucleus) gireceğini değiştirir. Yani
 sıcaklığın "yalnızca kontrastı değiştirdiği, sıralamayı asla değiştirmediği"
-yolundaki yaygın iddia, tek başına sıcaklık için doğrudur; ama kırpma da yapan
-bir hatta yanıltıcıdır. Aşağıdaki etkileşimli araç, çekirdeğe hangi token'ların girip
-çıktığını izlemenizi sağlıyor. İkincisi, cezalar (üç kütüphanede de)
-sıcaklıktan *önce* çalıştığı için aynı ceza değeri $\tau = 0{,}2$'de,
-$\tau = 1{,}5$'tekinden çok daha sert etki eder: ham logit'e uygulanan
-toplamsal bir $\alpha$ cezası, ölçeklemeden sonra $\alpha/\tau$ olur. İkisini
+yolundaki yaygın iddia, tek başına pozitif bir sıcaklık için doğrudur — logit
+sırası korunur; ama kırpma da yapan bir hatta tutulan token kümesi değişebilir.
+"Argmax aynı kalır" ile "üretilen dağılım aynı kalır" farklı iddialardır. Aşağıdaki etkileşimli araç, çekirdeğe hangi token'ların girip
+çıktığını izlemenizi sağlıyor. İkincisi, cezalar (üç kütüphanenin varsayılan
+zincirinde de) sıcaklıktan *önce* çalıştığı için aynı ceza değeri $\tau =
+0{,}2$'de, $\tau = 1{,}5$'tekinden çok daha sert etki eder: ham logit'e
+toplamsal olarak uygulanan bir $\alpha$ cezası, sıcaklık ölçeklemesinden sonra
+$\alpha/\tau$ olur. İkisini
 birlikte ayarlıyorsanız önce sıcaklığı ayarlayın.
 
 ### Keşfedin: sıcaklık, top-k ve top-p

@@ -34,15 +34,19 @@ distribution summary.
 
 A language model's forward pass ends in a vector of **logits** — one raw
 score per vocabulary token. Everything in @sec-transformers was about
-producing that vector. What happens next is not learning; it is a
-[sampling policy you control at inference time]{.hl}, and it changes the
-character of the output more than most people expect.
+producing that vector. Choosing output tokens from those scores is
+**decoding**: greedy and beam search are deterministic search methods, while
+temperature and top-k/top-p shape a sampling distribution. What happens next is
+not learning; it is a [decoding policy you control at inference time]{.hl}, it
+does not change the weights, and it changes the character of the output more
+than most people expect.
 
 - **Temperature** $\tau$ rescales logits before the softmax:
   $p_i \propto \exp(z_i/\tau)$. Low $\tau$ sharpens, high $\tau$ flattens.
 - **Top-k** keeps only the $k$ highest-probability tokens, then renormalises.
-- **Top-p (nucleus)** keeps the smallest set of tokens whose cumulative
-  probability reaches $p$, then renormalises [@holtzman2020curious].
+- **Top-p (nucleus)** sorts tokens by probability and keeps the shortest
+  prefix whose cumulative mass is at least $p$; it zeroes the rest and
+  renormalises the kept ones [@holtzman2020curious].
 
 **The order these run in matters, and it is the part that surprises people.**
 In `transformers` (5.x), one decoding step applies the repetition penalty
@@ -51,15 +55,20 @@ then top-k, then top-p, then min-p, and then samples. vLLM also applies the
 penalties (repetition, frequency and presence) and then temperature first, but runs min-p *before* top-k and top-p;
 llama.cpp's default chain applies temperature *last*, after all the cutoffs.
 So the order is fixed inside one library, not across libraries — check the one
-you use. Two consequences follow for the temperature-first order.
+you use, its version and its configuration: the orders here are the *default*
+chains of the versions named, and llama.cpp's sampler chain can be changed.
+Record the actual chain of your run. Two consequences follow for the
+temperature-first order.
 Because temperature runs *before* top-p, raising the temperature changes which
 tokens fall inside the nucleus — so the common claim that temperature "only
-changes the contrast, never the ranking" is true of temperature alone and
-misleading in a pipeline that also truncates; the explorer below lets you watch
+changes the contrast, never the ranking" is true of a positive temperature
+alone (the logit order is kept), but in a pipeline that also truncates the kept
+set can change; "the argmax stays the same" and "the output distribution stays
+the same" are different claims; the explorer below lets you watch
 the nucleus change membership. And because the penalties run *before*
-temperature (in all three libraries), the same penalty value bites far harder
-at $\tau = 0.2$ than at $\tau = 1.5$: an additive penalty $\alpha$ on the raw
-logit becomes $\alpha/\tau$ after scaling. If you are tuning both, tune the
+temperature (in the default chains of all three libraries), the same penalty
+value bites far harder at $\tau = 0.2$ than at $\tau = 1.5$: a penalty $\alpha$
+added to the raw logit becomes $\alpha/\tau$ after temperature scaling. If you are tuning both, tune the
 temperature first.
 
 ### Explore: temperature, top-k, and top-p
