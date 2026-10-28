@@ -90,15 +90,18 @@ queries, the model prefixes and the relevance judgements need checking.
 three-term queries derived from the target sentence, their terms deliberately
 inflected differently from the document, surface-form BM25 reaches 28.0%
 recall@1 and stemming takes it to 95.3%. Those queries do not come from a user
-log; do not assume the same gain on real queries.
+log; do not assume the same gain on real queries. Condition A below is built
+the same way, a design that tests lexical matching and stemming in
+particular.
 
 The obvious next step is to add a dense retriever to that setup and see. **The
 obvious next step is also a trap**, and it is worth spending a paragraph on
 because the same trap is available in any retrieval evaluation you build.
 
-Those queries are *three disconnected content words*. That is the natural
-input for a lexical matcher and it is out of distribution for a bi-encoder
-trained to embed sentences. Running only that condition and reporting "dense
+Those queries are *three disconnected content words*. That is unlike a
+natural-language question and favourable to a lexical matcher; for a
+bi-encoder trained on full sentences it may be out of distribution (without
+knowing the training mix that cannot be stated for sure). Running only that condition and reporting "dense
 retrieval is weak in Turkish" would have been measuring the query format and
 blaming the model.
 
@@ -107,41 +110,60 @@ So the experiment runs **two query conditions** against the same documents:
 | condition | the query is | who this favours |
 |:--|:--|:--|
 | **A. keyword, inflected** | three content words, in a different inflection than the document uses | lexical matching, if it can handle morphology |
-| **B. cross-lingual** | the document's professional English translation | dense only — there is no shared vocabulary at all |
+| **B. cross-lingual** | the document's professional English translation | a multilingual dense model; BM25 can still find some matches through names, numbers and shared spellings |
 
-: Two conditions: each family plays at home in one and away in the other
+: Two conditions: two synthetic tests derived from the target document, biased in opposite directions
 {tbl-colwidths="[24,44,32]"}
 
+In condition B both the language and the form of the query change (a full
+sentence instead of three words), so do not put the difference between the
+conditions down to language alone.
+
 And **two dense models**, for the same reason:
-`paraphrase-multilingual-MiniLM` is a *similarity* model, trained to score how
-alike two sentences are, and `multilingual-e5-base` [@wang2024e5] is a
-*retrieval* model, trained on query-document pairs with hard negatives.
-Reaching for the first because it is the famous one is a common mistake, and
-running only it would have understated dense retrieval.
+`paraphrase-multilingual-MiniLM` (its full model id and revision were not
+recorded for this run) produces multilingual sentence representations and,
+per its model card, can be used for clustering and semantic search too;
+`multilingual-e5-base` [@wang2024e5] is a *retrieval* model with explicit usage
+instructions for asymmetric query–passage retrieval, trained on query-document
+pairs with hard negatives. The two also differ in parameter count, training
+data and prefix use, so the gap between them cannot be read as the effect of
+the training objective alone. Running only one would have given an incomplete
+picture of dense retrieval.
 
 **One instruction from E5's model card that this chapter should have recorded
 and did not.** `multilingual-e5-base` is an *asymmetric* retrieval model: it is
 trained with a `query: ` prefix on queries and a `passage: ` prefix on
-documents, and the card is explicit that it behaves measurably worse without
-them. This is exactly the setting where the prefixes matter most — an
-asymmetric query-document task is what they exist for — and it is the most
-common silent error in an embedding pipeline; @sec-clustering makes the same
-point for the symmetric case, where the card prescribes `query: ` on both sides.
+documents, and the card says explicitly that you will see a performance drop
+without them. This is exactly the setting where
+the prefixes matter most — an asymmetric query-document task is what they exist
+for — and skipping them is one of the common silent errors in an embedding
+pipeline; @sec-clustering makes the same
+point for the symmetric case, where the card prescribes `query: ` on both sides. A second silent error close to
+the prefixes is normalisation: cosine similarity equals the inner product only
+for unit-length vectors, and E5's card passes its outputs through L2
+normalisation before comparing them. Searching unnormalised vectors by inner
+product (in an inner-product ANN index, say) favours documents with large norms.
 Our runs do not state which convention they used. If the prefixes were omitted,
 E5's numbers below are measured under a setting its own card advises against —
 which is a reason to re-run rather than a guarantee that the scores would rise
 or that both of this chapter's headline margins would shrink. Treat the E5 rows
-as pending that check, and record the prefixes beside the model name when you
-run this.
+as pending that check, record the prefixes and the normalisation setting beside
+the model name when you run this, and do not read the gaps as a firm measure of
+one model's superiority until a run that follows the model card is
+reported.
 
 Two upstream decisions this experiment sidesteps, so that you do not miss
 them in your own system. First, what counts as a "document": here every
 document is a single sentence, but real documents are longer and have to be
 cut into chunks before they are embedded, and the best chunk size depends on
 the kind of question (@sec-rag-chunking measures it). Second, for Turkish
-BM25, lowercase with Turkish rules: Python's default `lower()` turns `I` into
-`i` instead of `ı` and `İ` into `i` plus a combining dot, which mangles words
-before stemming ever runs (@sec-turkish-nlp-normalization).
+BM25, lowercase queries and documents with the same Turkish rule (`I → ı`,
+`İ → i`). Python's default `lower()` does not provide that mapping — it turns
+`I` into `i` instead of `ı` and `İ` into `i` plus a combining dot — so query and
+document forms can diverge before stemming runs
+(@sec-turkish-nlp-normalization). Which lowercasing rule this experiment used
+was not recorded; verify the normalisation with examples in your own
+pipeline.
 
 ## What the measurements say {#sec-retrieval-results}
 

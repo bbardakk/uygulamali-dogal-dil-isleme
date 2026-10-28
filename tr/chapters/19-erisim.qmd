@@ -101,41 +101,53 @@ vektörlerin nereye konacağı. Sonuçları gerçek kullanıcı sorgularına ta�
 türetilmiş, terimleri belgedekinden bilerek farklı çekimlenmiş üç terimli
 sorgularla yüzey biçimli BM25 %28,0 recall@1'e ulaşıyor ve gövdeleme onu
 %95,3'e taşıyor. Bu sorgular bir kullanıcı kaydından gelmiyor; gerçek
-sorgularda aynı kazanımı varsaymayın.
+sorgularda aynı kazanımı varsaymayın. Aşağıdaki A koşulu da aynı yordamla
+kuruluyor; bu tasarım özellikle sözcüksel eşleşmenin ve gövdelemenin etkisini
+sınar.
 
-Bariz sonraki adım o kuruluma yoğun bir retriever ekleyip sonuca bakmak.
-**Bariz sonraki adım aynı zamanda bir tuzak**. Üzerinde bir paragraf duralım,
-çünkü aynı tuzak, oluşturacağınız her erişim değerlendirmesinde de var.
+Bu düzene yoğun bir retriever eklemek ilk bakışta yeterli görünebilir. **Ama
+sorgu biçimi sistemlerden birine avantaj sağlıyor**; bu yüzden karşılaştırmayı
+ikinci bir koşulla tamamlıyoruz. Aynı tuzak kuracağınız her erişim
+değerlendirmesinde var.
 
-O sorgular *birbirinden kopuk üç içerik kelimesi*. Bu, sözcüksel bir eşleştirici
-için doğal girdidir; cümle embedding'i üretmek üzere eğitilmiş bir çift
-kodlayıcı için ise dağılım dışıdır. Yalnızca o koşulu çalıştırıp "yoğun erişim Türkçede zayıf" diye
-raporlamak, sorgu formatını ölçüp faturayı modele kesmek olurdu.
+O sorgular *birbirinden kopuk üç içerik kelimesi*. Bu, doğal dil sorularından
+farklıdır ve sözcüksel bir eşleştirici için elverişlidir; tam cümlelerle
+eğitilmiş bir çift kodlayıcı için dağılım dışı olabilir (modelin eğitim karışımı
+bilinmeden kesin söylenemez). Yalnızca o koşulu çalıştırıp "yoğun erişim
+Türkçede zayıf" diye raporlamak, sorgu formatının etkisini modele yüklemek
+olurdu.
 
 Bu yüzden deney aynı belgeler üzerinde **iki sorgu koşulu** çalıştırıyor:
 
 | koşul | sorgu | kimin lehine |
 |:--|:--|:--|
 | **A. anahtar kelime, çekimli** | belgedekinden farklı bir çekimde üç içerik kelimesi | çekim farklılıklarını ele alabiliyorsa sözcüksel eşleştirme |
-| **B. diller arası** | belgenin profesyonel İngilizce çevirisi | yalnızca yoğun — ortak sözcük dağarcığı hiç yok |
+| **B. diller arası** | belgenin profesyonel İngilizce çevirisi | çok dilli yoğun model; özel adlar, sayılar ve ortak yazımlı terimler sayesinde BM25 de bazı eşleşmeler bulabilir |
 
-: İki koşul: her aile birinde kendi sahasında, diğerinde deplasmanda oynuyor
+: İki koşul: hedef belgeden üretilmiş, farklı yönlerde yanlı iki sentetik sınama
 {tbl-colwidths="[24,44,32]"}
 
+B koşulunda sorgunun hem dili hem biçimi (üç kelime yerine tam cümle) değişiyor;
+bu yüzden iki koşul arasındaki farkı yalnızca dile bağlamayın.
+
 Ve aynı nedenle **iki yoğun model**:
-`paraphrase-multilingual-MiniLM` bir *benzerlik* modeli, iki cümlenin ne kadar
-benzediğini puanlamaya eğitilmiş; `multilingual-e5-base` [@wang2024e5] ise bir
-*erişim* modeli, zor negatiflerle sorgu-belge çiftleri üzerinde eğitilmiş. Ünlü
-olduğu için birincisini seçmek yaygın bir hatadır; yalnızca onu çalıştırmak
-yoğun erişimi olduğundan kötü göstermiş olurdu.
+`paraphrase-multilingual-MiniLM` (tam model kimliği ve revizyonu bu koşuda
+kaydedilmedi) çok dilli cümle gösterimleri üretir ve model kartına göre
+kümelemede ve semantik aramada da kullanılabilir; `multilingual-e5-base`
+[@wang2024e5] ise asimetrik sorgu–pasaj erişimi için açık kullanım yönergesi
+veren, sorgu–belge çiftleri ve zor negatiflerle eğitilmiş bir *erişim* modeli.
+İkisi parametre sayısı, eğitim verisi ve ön ek kullanımı bakımından da farklı;
+bu yüzden aralarındaki fark yalnızca eğitim hedefinin etkisi olarak
+yorumlanamaz. Yalnızca birini çalıştırmak yoğun erişim hakkında eksik bir resim
+verirdi.
 
 **E5'in model kartında, bu bölümün kaydetmesi gereken ama kaydetmediği bir
 talimat var.** `multilingual-e5-base` *asimetrik* bir erişim modeli: sorgularda
 `query: `, belgelerde `passage: ` ön ekiyle eğitiliyor ve kart, onlarsız
-ölçülebilir biçimde daha kötü davrandığını açıkça söylüyor. Ön eklerin en çok
+performans düşüşü göreceğinizi açıkça söylüyor. Ön eklerin en çok
 önem taşıdığı ayar da burası — asimetrik bir sorgu-belge görevi zaten
-onların var olma sebebi. Ön ekleri atlamak da bir embedding hattındaki en
-yaygın sessiz hatadır. @sec-kumeleme-konu simetrik durum için aynı uyarıyı
+onların var olma sebebi. Ön ekleri atlamak da bir embedding hattındaki sık
+sessiz hatalardan biridir. @sec-kumeleme-konu simetrik durum için aynı uyarıyı
 yapıyor; orada kart iki tarafa da `query: ` öngörüyor. Ön eke yakın ikinci
 sessiz hata normalleştirmedir: kosinüs benzerliği iç çarpıma ancak birim
 uzunluklu vektörlerde eşittir ve E5'in kartı da çıktıları L2 normalleştirmesinden
@@ -146,16 +158,21 @@ sayıları, modelin kendi kartının önermediği bir ayarda ölçülmüş demek
 deneyi yeniden koşturmak için bir sebeptir; skorların mutlaka yükseleceğinin ya
 da bu bölümün öne çıkardığı iki farkın da küçüleceğinin garantisi değildir. E5
 satırlarını o kontrolü bekleyen satırlar sayın ve bu deneyi kendiniz
-çalıştırdığınızda ön ekleri model adının yanına yazın.
+çalıştırdığınızda ön ekleri ve normalleştirme ayarını model adının yanına
+yazın; modelin kartına uygun bir koşu raporlanana kadar farkları bir model
+üstünlüğünün kesin ölçümü saymayın.
 
 Bu deneyin bilerek kenara bıraktığı, ama kendi sisteminizde atlamamanız
 gereken iki üst akış kararı var. Birincisi, neyin "belge" sayılacağı: burada her
 belge tek bir cümle; gerçek belgeler ise daha uzundur ve gömülmeden önce
 parçalara bölünmeleri gerekir. En iyi parça boyutu sorunun türüne bağlıdır ve
 bunu @sec-rag-parcalama ölçüyor. İkincisi, Türkçe BM25 için küçük harfe
-çevirmeyi Türkçe kurallarıyla yapmak: Python'un varsayılan `lower()`'ı `I`'yı
-`ı` yerine `i`'ye, `İ`'yi de `i` artı birleşen bir noktaya çevirir ve kelimeler
-daha gövdeleme başlamadan bozulur (@sec-turkce-nlp-normalizasyon).
+çevirmek: sorgu ve belgeleri aynı yerel kuralla çevirin (`I → ı`, `İ → i`).
+Python'un varsayılan `lower()`'ı bu eşlemeyi sağlamaz — `I`'yı `ı` yerine `i`'ye,
+`İ`'yi de `i` artı birleşen bir noktaya çevirir — ve sorgu ile belgedeki
+biçimler gövdelemeden önce ayrışabilir (@sec-turkce-nlp-normalizasyon). Bu
+deneyde hangi küçük harf kuralının uygulandığı kaydedilmedi; kendi hattınızda
+normalizasyonu örneklerle doğrulayın.
 
 ## Ölçümler ne diyor {#sec-erisim-sonuclar}
 
