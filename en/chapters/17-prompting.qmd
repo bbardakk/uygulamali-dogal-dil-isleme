@@ -285,27 +285,34 @@ craft matter, and it is the one to run on your own task before you trust any
 number you have.
 
 Twelve prompts were written for the same task — decide whether a Turkish
-product review is positive or negative. **A competent reader would call them
-the same instruction.**
+product review is positive or negative. **All target the same task; but the
+label words, the codes and the instruction layout change, so the results
+compare prompt *packages*.**
 
 They differ in formatting, in the surface form of the labels, in where the
 review sits relative to the instruction, in delimiters, and in politeness. None
-changes the task or the criteria.
+is meant to change the task or the criterion; to attribute an effect to a
+single surface feature you would need controlled pairs that keep the rest of
+the text identical.
 
 Three of them do change what the labels *are*, and that turns out to be
 informative rather than a flaw in the design: `A`/`B` and `1`/`0` strip the
 labels of meaning entirely, and `olumlu`/`olumsuz` changes their language. Hold
 that in mind for the table — the semantically empty `A`/`B` finishes **second**,
 ahead of the meaningful Turkish pair by more than ten points. That suggests the
-meaning of the label word is not decisive here — yet `olumlu`/`olumsuz`, which
-differs from `positive`/`negative` only in the labels' language, trails it by 12
-points, so the words still matter. The two findings together want an
+meaning of the label word is not decisive here (how the codes map to classes
+cannot be confirmed without the full text) — yet `olumlu`/`olumsuz`, described
+as differing from `positive`/`negative` only in the labels' language, trails it
+by 12 points, so the words may matter.
+
+Each variant is defined against a plain prompt called `baseline`. Here baseline
+names not a model but the reference prompt the others are compared with. The two findings together want an
 explanation, and the label-bias discussion below is one candidate.
 
 | variant | what it changes against `baseline` |
 |:--|:--|
 | `baseline` | — instruction, then the review, then `Answer:`; labels `positive` / `negative` |
-| `label positive/negative` | label surface form |
+| `label positive/negative` | a detail of how the labels are written (which one is unclear without the full text) |
 | `label A/B` | label surface form, meaning removed |
 | `label 1/0` | label surface form, meaning removed |
 | `label olumlu/olumsuz` | label surface form, language changed to Turkish |
@@ -322,12 +329,28 @@ explanation, and the label-bias discussion below is one candidate.
 One thing this chapter owes you and does not supply: the full text of all
 twelve. The table above names what changes; it does not let you reproduce the
 run, and a prompt experiment whose prompts are not printed is not reproducible.
-Print yours.
+Print yours. The row that suffers most is `label positive/negative`: its label
+words are the same as `baseline`'s, the difference comes from details of how
+they are written, and without the texts nobody can say which — so do not read
+that row as a "label surface change". Nor does this chapter report which
+language the prompts were written in or whether the model's thinking mode was
+on. When you repeat the experiment, put each variant's full system and user
+message, the label-to-class mapping, the model id and digest, the chat
+template, the thinking mode, temperature, the seed value and the parsing rule
+into the same run record.
 
 All twelve ran on the same 150 balanced reviews, same model, temperature 0,
-fixed seed. Every response parsed; nothing was dropped. The intervals below are
-*Wilson* intervals — a 95% confidence interval for a proportion that, unlike the
-textbook $\hat p \pm 1.96\,\text{SE}$, stays sensible near 0% and 100%.
+fixed seed. Every response was parsed into a class and none was excluded; but
+the rule that selected the 150 reviews and its seed, the parsing rule, and how a
+response that breaks it would be scored are not reported in this chapter. The
+intervals below are *Wilson* intervals — a 95% confidence interval for a
+proportion that, unlike the textbook $\hat p \pm 1.96\,\text{SE}$, stays
+sensible near 0% and 100%. Each row of the output gives one variant's accuracy
+(`acc`) and Wilson interval; the last line summarises the worst-to-best spread
+(`spread`), the mean (`mean`) and the standard deviation (`sd`). These
+intervals belong to each prompt's accuracy *on its own*. Because the prompts
+were evaluated on the same reviews, compare them with item-level paired results,
+not by whether the intervals overlap.
 
 ```text
 variant                        acc      95% CI (Wilson)
@@ -350,11 +373,15 @@ spread 75.33% – 90.00% = 14.67 points     mean 82.06   sd 5.57
 **A range needs something to be a range against.** If all twelve prompts were
 equally good and each score were an independent draw at $n = 150$, the standard
 error on one estimate would be 3.13 points and the *expected* spread of twelve
-such draws about **10 points** — from sampling noise alone. So 14.67 is roughly
-one and a half times what chance would hand you, not an order of magnitude
-above it. The paired design makes the true null tighter than the independent
-calculation, so the effect is probably real; the number to report is a
-permutation one — within each review, shuffle which variant produced which of
+such draws (the expected range of twelve independent normal draws, about 3.26
+standard errors) about **10 points** — from sampling noise alone. So 14.67 is
+roughly one and a half times that rough yardstick. But the scores were measured
+on the same reviews, so the independent-draw assumption does not fit here. If
+the prompts' accuracies are positively correlated (all twelve gave the same
+class on 104 reviews), the paired null is probably tighter; only a proper test
+can say, and until it is run we do not call the effect "probably real". 14.67
+is the observed best-minus-worst accuracy for this data and these twelve
+prompts. The number to report is a permutation one — within each review, shuffle which variant produced which of
 its twelve answers, recompute the spread, repeat ten thousand times, and read
 off where 14.67 falls. We did not run that,
 and it is the first thing to add if you repeat this experiment.
@@ -391,11 +418,11 @@ viewof promptShowCI = Inputs.toggle({label: "show 95% Wilson intervals", value: 
 //| echo: false
 Plot.plot({
   width: 700, height: 380, marginLeft: 175, marginBottom: 40,
-  x: {label: "accuracy (%)", domain: [65, 96], grid: true},
+  x: {label: "accuracy (%, axis 65–96)", domain: [65, 96], grid: true},
   color: {legend: true, scheme: "Tableau10"},
   marks: [
-    Plot.barX(promptData, {
-      y: "variant", x: "acc", fill: "kind",
+    Plot.dot(promptData, {
+      y: "variant", x: "acc", fill: "kind", r: 5,
       sort: {y: "x", reverse: true}}),
     promptShowCI
       ? Plot.ruleX(promptData, {y: "variant", x1: "lo", x2: "hi", stroke: "currentColor"})
@@ -409,15 +436,18 @@ Plot.plot({
 
 ```{ojs}
 //| echo: false
-md`The dashed line is the plain \`baseline\` prompt. Note that the four
-best variants (third and fourth tied) differ from it *only* in how the two labels are spelled or how
-the instruction is laid out — and that the role prefix, the most reproduced
-pattern in circulation, comes 11th of 12.`
+md`The dashed line is the plain \`baseline\` prompt's accuracy. The dots are
+the prompt variants measured on the same 150 reviews; the intervals belong to
+the individual accuracies and do not show the uncertainty of the differences
+between them. Per the table, the four best variants (third and fourth tied)
+differ from it in how the labels are written or how the instruction is laid
+out (other differences cannot be ruled out without the full texts) — and the
+role prefix, the most reproduced pattern in circulation, comes 11th of 12.`
 ```
 :::
 
-[Almost fifteen points of accuracy, between two prompts that say the same
-thing.]{.hl}
+[An observed 14.67-point accuracy range across twelve prompts asking for the
+same task, on these 150 reviews.]{.hl}
 
 ### Is that real, or is it 150 documents of noise?
 
