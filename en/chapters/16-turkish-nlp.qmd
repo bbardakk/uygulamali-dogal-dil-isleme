@@ -1029,16 +1029,21 @@ with a measurement rather than an argument.
 ::: {.callout-note collapse="true"}
 ## 1. Your Turkish search box returns nothing useful. Where do you look first?
 
-Not the ranker, and not the embeddings. Look at whether you are indexing
-surface forms.
+First sample real queries that failed, and compare tokenization, lowercasing,
+apostrophe handling and stemming on the query side and the document side.
+Whether you are indexing surface forms is one of the first places to look;
+the index, the language setting and the relevance labels are candidates too.
 
-Measured on 7,165 Turkish documents with queries whose terms are inflected
-differently from the documents: surface-form BM25 gets **28.0%** recall@1,
-Snowball stemming gets **95.3%**. A user types the dictionary form; the corpus
-contains an inflected one; exact string matching finds nothing.
+This chapter's measurement used 7,165 Turkish documents and three-term queries
+derived from the target sentence, with terms deliberately inflected differently
+from the documents: surface-form BM25 gets **28.0%** recall@1, Snowball
+stemming gets **95.3%**. When the query form differs from the document form,
+exact matching cannot find that term; but measure the rate again on your own
+usage.
 
-If you have no Turkish stemmer, character 4-grams get 74.9% at 3.5× the index
-size, and truncating to five characters gets 74.6% for free.
+If you have no Turkish stemmer, character 4-grams get 74.9% at 3.5× the terms
+per document, and truncating to five characters gets 74.6% with no increase in
+terms per document.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -1047,14 +1052,15 @@ size, and truncating to five characters gets 74.6% for free.
 Two reasons, and the second is worse.
 
 Turkish has four letters where English has two — `İ i I ı` — and the case
-mapping is not the ASCII one. Every word containing `I` or `İ` comes out
-differently under English rules — that follows from the two mappings — and on
-the WMT16 Turkish source such words are **0.95%** of all tokens, many of them
-names.
+mapping is not the ASCII one. Every token containing `I` or `İ` lowercases
+differently under the two mappings — that follows from the mappings themselves
+— and on the WMT16 Turkish source those 438 tokens are **0.95%** of all
+tokens, many of them names. A different string is not a task error for every
+token; measure the real error rate with your tokenizer on your task.
 
 Then: `'İSTANBUL'.lower()` produces `i` followed by `U+0307 COMBINING DOT
-ABOVE`, which is a nonspacing mark and not a word character. So
-`re.findall(r"\w+", ...)` returns `['i', 'stanbul']` — the word is split in
+ABOVE`, which is a nonspacing mark and not a word character. So with Python's
+`re` module, `re.findall(r"\w+", ...)` returns `['i', 'stanbul']` — the word is split in
 two, and NFC normalization does not put it back. The model never sees
 `istanbul` at all.
 :::
@@ -1063,12 +1069,16 @@ two, and NFC normalization does not put it back. The model never sees
 ## 3. Should you strip Turkish diacritics so `guzel` matches `güzel`?
 
 Only with your eyes open. On the WMT16 source it merges 15,173 forms into
-15,101 — just **72 collisions** — which looks like a free win until you read
-them: *oldu* / *öldü* is "it happened" / "he died". *bas* / *baş* is "press" /
+15,101 (a net loss of 72 forms; the ASCII keys merging at least two forms
+also number 72) — just **72 collisions** — which looks like a free win until
+you read them: *oldu* / *öldü* is "it happened" / "someone died". *bas* / *baş* is "press" /
 "head".
 
-The shape of that trade is the worst one available: too rare to show up in an
-aggregate metric, and catastrophic in each individual case. Restore the
+The danger of that trade is that it can be too rare to show up in an
+aggregate metric while some of the merged pairs change the meaning. Report
+which original forms merge and their token frequencies, and check the
+meaning-changing pairs in context, since context resolves some of them.
+Restore the
 diacritics if you can afford it. If you must strip, strip both sides and
 document that those pairs are now indistinguishable.
 :::
@@ -1081,28 +1091,39 @@ Turkish produced **32,866 distinct forms from 141,412 tokens** against
 English's **16,652 from 182,429**. Twice the vocabulary from 78% of the
 tokens.
 
-The number that matters more is that the ratio *grows*: 1.49 at 5,000 tokens,
-2.31 at 141,000. Both vocabularies follow Heaps' law and keep growing, but
-Turkish has the larger exponent (about 0.78 against 0.65) because it generates
-forms by rule, so the ratio widens as the corpus grows. Any design that assumes a vocabulary can be enumerated — a fixed word
-list, a closed feature set, an exact-match index — is fighting that.
+On equal-token prefixes the ratio rises from 1.49 at 5,000 tokens to 2.31 at
+141,000 (equal-token prefixes do not cover the same sentences). Both curves
+keep growing over this range; the Heaps exponent, roughly estimated from six
+points, is about 0.78 for Turkish against 0.65 for English (no uncertainty
+reported). A likely reason is that Turkish builds forms with suffixes. This is
+an observation about the chosen range of this news corpus; it was not shown
+that the ratio keeps widening as the corpus grows, so measure the curve again
+for another domain or more data. Still, any design that assumes a vocabulary
+can be enumerated — a fixed word list, a closed feature set, an exact-match
+index — will strain against this growth.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. A colleague reports a Turkish benchmark score of 85. What do you ask?
 
-Three questions, in order.
+First: 85 on which metric, which task, which test set, and which version?
+Without that, nobody can say whether 85 is good or bad. Then three questions,
+in order.
 
 **Was the benchmark written in Turkish or translated into it?** A translated
-benchmark measures competence on translationese.
+benchmark measures the task through translationese, whose linguistic
+properties can differ from text written in Turkish.
 
 **Is the test set in the training set?** @sec-sequence-labeling found 13.06%
 of a widely-used Turkish NER benchmark's test set verbatim in its own
-training split. Hashing takes four lines.
+training split. Hashing for exact overlap takes a few lines; check label
+agreement and near-duplicates separately.
 
-**What did the tokenizer do?** @sec-summarization found the standard ROUGE
-implementation mutilating 44.4% of Turkish words. If the score came out of a
-tool that was validated on English, the score is a hypothesis.
+**What did the tokenizer do?** @sec-summarization found that the default
+tokenizer of the widely used `rouge-score` implementation split 44.4% of the
+words in 300 Turkish references at Turkish letters. If the score came out of a
+tool that was validated on English, treat it as a hypothesis until the scorer
+has been tested on Turkish control inputs.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -1113,12 +1134,14 @@ transfer from a language with more labelled data, or when no monolingual model
 exists for your language.
 
 What you give up is measurable rather than mysterious: a multilingual
-tokenizer spends more tokens per Turkish word, which costs money and context
+tokenizer may spend more tokens per Turkish word — here mBERT produced about
+19% more subwords, but the rate is not the same for every multilingual
+tokenizer, so measure it on your own text. Extra tokens cost money and context
 (@sec-pretraining), and it spends vocabulary on languages you are not using.
 
 But do not assume the accuracy follows. @sec-turkish-nlp-decide ran both on
-the same task and **the two came out within 0.84 span F1 of each other**, with
-the multilingual one ahead despite needing 19% more tokens for the same text —
+the same task and **in a single run the multilingual one was 0.84 span F1
+ahead**, despite producing 19% more subwords per word —
 on a benchmark whose domain matched its pretraining corpus, from a single seed.
 Measure fertility first, domain second, and the task third; and run more than
 one seed before you call a gap that size a result.

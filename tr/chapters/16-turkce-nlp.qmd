@@ -1066,17 +1066,20 @@ Her birini açmadan önce cevaplayın. Altısı da bu bölümün tartışmayla d
 ::: {.callout-note collapse="true"}
 ## 1. Türkçe arama kutunuz işe yarar bir şey döndürmüyor. Önce nereye bakarsınız?
 
-Sıralayıcıya değil, embedding'lere de değil. Yüzey biçimlerini indeksleyip
-indekslemediğinize bakın.
+Önce başarısız gerçek sorgulardan örnek alın ve sorgu ile belge tarafındaki
+tokenization, küçük harf, kesme işareti ve gövdeleme adımlarını karşılaştırın.
+Yüzey biçimlerini indeksleyip indekslemediğiniz ilk bakılacak yerlerden biri;
+dizin, dil ayarı ve ilgililik etiketleri de adaylar arasında.
 
-Ölçüm, 7.165 Türkçe belge üzerinde, terimleri belgelerdekinden farklı
-çekimlenmiş sorgularla yapıldı: yüzey biçimli BM25 **%28,0** recall@1 alıyor,
-Snowball gövdeleme ise **%95,3**. Kullanıcı sözlük biçimini yazar; derlemde
-çekimli bir biçim vardır; tam dizgi eşleştirme hiçbir şey bulmaz.
+Bu bölümün ölçümü 7.165 Türkçe belge üzerinde, hedef cümleden türetilmiş,
+terimleri belgelerdekinden bilerek farklı çekimlenmiş üç terimli sorgularla
+yapıldı: yüzey biçimli BM25 **%28,0** recall@1 alıyor, Snowball gövdeleme ise
+**%95,3**. Sorgudaki biçim belgedekinden farklıysa tam eşleştirme o terimi
+bulamaz; ama oranı kendi kullanımınızda yeniden ölçün.
 
-Türkçe gövdeleyiciniz yoksa karakter 4-gram'ları %74,9 veriyor, ama indeks
-3,5 kat büyüyor. Kelimeleri beş karaktere kırpmak ise hiçbir ek maliyet
-olmadan %74,6 veriyor.
+Türkçe gövdeleyiciniz yoksa karakter 4-gram'ları %74,9 veriyor, ama belge
+başına terim sayısı 3,5 katına çıkıyor. Kelimeleri beş karaktere kırpmak ise
+belge başına terim sayısını artırmadan %74,6 veriyor.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -1086,13 +1089,15 @@ olmadan %74,6 veriyor.
 
 İngilizcede bir harfin iki biçimi varken Türkçede iki ayrı harfin dört biçimi
 var: `İ i I ı`. Büyük-küçük harf eşlemesi de ASCII eşlemesi değil. `I` ya da
-`İ` içeren her kelime İngilizce kurallarla farklı çıkıyor — bu, iki eşlemenin
-doğrudan sonucu — ve WMT16 Türkçe kaynağında bu kelimeler bütün token'ların
-**%0,95**'ini oluşturuyor; birçoğu özel ad.
+`İ` içeren her token'ın küçük harfli biçimi iki eşlemede farklı çıkıyor — bu,
+iki eşlemenin doğrudan sonucu — ve WMT16 Türkçe kaynağında bu 438 token bütün
+token'ların **%0,95**'ini oluşturuyor; birçoğu özel ad. Farklı bir karakter
+dizisi her token'da görev hatası demek değil; gerçek hata oranını kullandığınız
+tokenizer ve görevde ölçün.
 
 İkinci neden: `'İSTANBUL'.lower()` önce `i`, ardından
 `U+0307 COMBINING DOT ABOVE` üretiyor. Bu bir nonspacing mark ve kelime
-karakteri sayılmıyor. Bu yüzden `re.findall(r"\w+", ...)` `['i', 'stanbul']`
+karakteri sayılmıyor. Bu yüzden Python'un `re` modülünde `re.findall(r"\w+", ...)` `['i', 'stanbul']`
 döndürüyor: kelime ikiye bölünüyor ve NFC normalleştirmesi de parçaları yeniden
 birleştirmiyor. Model `istanbul`'u hiç görmüyor.
 :::
@@ -1101,12 +1106,16 @@ birleştirmiyor. Model `istanbul`'u hiç görmüyor.
 ## 3. `guzel`, `güzel` ile eşleşsin diye Türkçe karakterleri ASCII'ye indirmeli misiniz?
 
 Ancak ne yaptığınızı bilerek. Türkçe karakterleri ASCII'ye indirmek WMT16 kaynağında 15.173 biçimi
-15.101'e indiriyor; yalnızca **72 çakışma**. Çakışmaları tek tek okuyana kadar
+15.101'e indiriyor (net 72 biçim kaybı; en az iki biçimi birleştiren ASCII
+anahtarı da 72); yalnızca **72 çakışma**. Çakışmaları tek tek okuyana kadar
 bu, maliyetsiz bir kazanç gibi görünüyor: *oldu* / *öldü* ("bir şey oldu" /
 "biri öldü"), *bas* / *baş* ("düğmeye bas" / "baş ağrısı").
 
-Bu, olabilecek en kötü türden bir ödünleşim (trade-off): toplu bir metrikte görünmeyecek
-kadar seyrek, her bir vakada ise felaket. Maliyetini karşılayabiliyorsanız
+Bu ödünleşimin (trade-off) tehlikesi şurada: toplu bir metrikte görünmeyecek
+kadar seyrek olabilir, ama birleşen çiftlerin bazıları anlamı değiştirir.
+Hangi özgün biçimlerin birleştiğini ve token sıklıklarını ayrıca raporlayın;
+anlamı değiştiren çiftleri bağlam içinde denetleyin, çünkü bağlam bazılarını
+çözer. Maliyetini karşılayabiliyorsanız
 Türkçe karakterleri geri getirin. İndirmek zorundaysanız bunu sorguda da
 belgede de aynı eşlemeyle yapın ve bu çiftlerin artık ayırt edilemediğini belgeleyin.
 :::
@@ -1119,29 +1128,38 @@ Birebir aynı içerikte — 9.007 profesyonelce çevrilmiş cümle çifti — T�
 16.652**. Yani Türkçe, token sayısının %78'iyle iki kat büyük bir sözlük
 üretiyor.
 
-Daha önemli olan sayı, oranın *büyümesi*: 5.000 token'da 1,49, 141.000'de 2,31.
-İki sözlük de Heaps yasasına uyar ve ikisi de büyümeyi sürdürür; ama Türkçenin
-üssü daha büyük (yaklaşık 0,78'e karşı 0,65), çünkü biçimlerini kuralla üretir.
-Bu yüzden aradaki oran derlem büyüdükçe açılır. Bir
-sözlüğün sayılabileceğini varsayan her tasarım — sabit bir kelime listesi,
-kapalı bir öznitelik kümesi, tam eşleşen bir indeks — bu gerçekle boğuşur.
+Eşit token öneklerinde oran 5.000 token'da 1,49'dan 141.000'de 2,31'e
+yükseliyor (eşit token önekleri aynı cümleleri kapsamıyor). İki eğri de bu
+aralıkta büyümeyi sürdürüyor; altı noktadan kabaca kestirilen Heaps üssü
+Türkçede yaklaşık 0,78, İngilizcede 0,65 (belirsizlik raporlanmadı). Olası
+nedeni Türkçenin biçimleri eklerle üretmesi. Bu, seçilen haber derlemi
+aralığına ait bir gözlem; oranın derlem büyüdükçe açılmayı sürdüreceği
+gösterilmedi, farklı bir alan ya da daha büyük veri için eğriyi yeniden ölçün.
+Yine de bir sözlüğün sayılabileceğini varsayan her tasarım — sabit bir kelime
+listesi, kapalı bir öznitelik kümesi, tam eşleşen bir indeks — bu büyümeyle
+zorlanır.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Bir meslektaşınız 85'lik bir Türkçe benchmark puanı bildiriyor. Ne sorarsınız?
 
-Sırayla üç soru.
+Önce: 85 hangi metrikte, hangi görevde, hangi test kümesinde ve hangi sürümle?
+Bunu bilmeden 85'in iyi mi kötü mü olduğu söylenemez. Ardından sırayla üç soru.
 
-**Benchmark Türkçe mi yazılmış, Türkçeye mi çevrilmiş?** Çevrilmiş bir benchmark çeviri
-dilindeki yetkinliği ölçer.
+**Benchmark Türkçe mi yazılmış, Türkçeye mi çevrilmiş?** Çevrilmiş bir benchmark
+görevi çeviri dili üzerinden ölçer; dil özellikleri Türkçe yazılmış metinden
+farklı olabilir.
 
 **Test kümesi eğitim kümesinde mi?** @sec-dizi-etiketleme, yaygın kullanılan bir
 Türkçe NER benchmark'ında test kümesinin %13,06'sının benchmark'ın kendi eğitim
-bölmesinde birebir yer aldığını buldu. Hash'lemek dört satırlık iş.
+bölmesinde birebir yer aldığını buldu. Tam örtüşmeyi hash'lemek birkaç
+satırlık iş; etiket uyumunu ve yakın kopyaları ayrıca denetleyin.
 
-**Tokenizer ne yaptı?** @sec-ozetleme, standart ROUGE uygulamasının Türkçe
-kelimelerin %44,4'ünü sakatladığını buldu. Puan İngilizce üzerinde doğrulanmış
-bir araçtan çıktıysa puan bir hipotezdir.
+**Tokenizer ne yaptı?** @sec-ozetleme, yaygın `rouge-score` uygulamasının
+varsayılan tokenizer'ının 300 Türkçe referansta kelimelerin %44,4'ünü Türkçe
+harflerde böldüğünü buldu. Puan İngilizce üzerinde doğrulanmış bir araçtan
+çıktıysa, puanlayıcıyı Türkçe kontrol girdileriyle sınayana kadar puanı bir
+hipotez sayın.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -1152,14 +1170,16 @@ verisi olan bir dilden diller arası aktarım istediğinizde ya da diliniz için
 tek dilli bir model olmadığında.
 
 Vazgeçtiğiniz şey gizemli değil, ölçülebilir: çok dilli bir tokenizer Türkçe
-kelime başına daha çok token harcar. Bu hem maliyeti artırır hem de bağlam
-penceresini daraltır (@sec-on-egitim). Üstelik tokenizer sözlüğünün bir kısmını
+kelime başına daha çok token harcayabilir — burada mBERT yaklaşık %19 fazla alt
+kelime üretti, ama bu oran her çok dilli tokenizer için aynı değil; kendi
+metninizde ölçün. Fazla token hem maliyeti artırır hem de bağlam penceresini
+daraltır (@sec-on-egitim). Üstelik tokenizer sözlüğünün bir kısmını
 da kullanmadığınız dillere ayırır.
 
 Ama doğruluğun da buna paralel olarak düşeceğini varsaymayın.
-@sec-turkce-nlp-karar ikisini de aynı görevde çalıştırdı ve **aralarındaki fark
-0,84 span F1'i geçmedi**. Çok dilli model, aynı metin için %19 daha çok token
-gerektirmesine rağmen öndeydi. Ancak bu sonuç, alanı çok dilli modelin ön
+@sec-turkce-nlp-karar ikisini de aynı görevde çalıştırdı ve **tek koşuda çok
+dilli model 0,84 span F1 öndeydi**; hem de kelime başına %19 daha çok alt kelime
+üretmesine rağmen. Ancak bu sonuç, alanı çok dilli modelin ön
 eğitim derlemiyle örtüşen bir benchmark'ta ve tek bir tohumla alındı. Önce
 fertility'yi, sonra alanı, en son görevi ölçün. O büyüklükte bir farka sonuç
 demeden önce de deneyi birden fazla tohumla çalıştırın.
