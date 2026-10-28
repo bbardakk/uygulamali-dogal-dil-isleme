@@ -951,51 +951,58 @@ to build when the interface warrants it.
 
 ## Intuition checks {#sec-decoding-intuition}
 
-Answer each one before you open it. The first follows from the algebra; the
-other five are questions this chapter settled with a measurement rather than
-an argument.
+Think of your own answer before you open each one. Some follow directly from
+the definition of decoding; for the others, the chapter's measurements are
+evidence only for the model, data and implementation used.
 
 ::: {.callout-note collapse="true"}
 ## 1. Does lowering temperature make the model more accurate?
 
-It makes it more *deterministic*, which is not the same thing. Temperature
-rescales the logits before the softmax, so it changes the contrast between
-options and never the ranking — the argmax token at $\tau = 0.1$ is the argmax
+It makes it more *deterministic*, which is not the same thing. A positive
+temperature on its own rescales the logits before the softmax, so it changes
+the contrast between options and not the ranking — the argmax token at $\tau = 0.1$ is the argmax
 token at $\tau = 1.9$.
 
 So if greedy decoding gets an item wrong, lowering the temperature will not
 fix it; it will only make the model wrong more reliably. What temperature
 controls is variance. Lowering it *can* raise the accuracy of sampled output —
-each draw lands on the argmax more often, which is what @sec-machine-translation
-saw at temperature 1.0. But as the temperature falls, the accuracy of sampled
+each draw lands on the argmax more often, consistent with what
+@sec-machine-translation saw at temperature 1.0. But sampled accuracy need not
+change monotonically with temperature; the expected task success depends on
+how the model scores correct continuations. As the temperature falls, sampled
 output converges to greedy's; in the limit the two are the same, and an item
-whose argmax is wrong stays wrong.
+whose argmax is wrong stays wrong — whereas at a higher temperature some draws
+might have reached the right answer. Measure it on your evaluation set.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Your JSON parse failure rate is 2%. Is constrained decoding worth it?
 
-It depends entirely on what happens next. For extraction into a table, 2% is a
-retry and a shrug. For **tool calls, 2% is a wrong action or a stack trace on
-every fiftieth request**, and the answer is yes without further discussion.
+It depends on what happens next. First measure whether invalid output is
+rejected at runtime, what a retry costs and what the action risk is. For
+extraction into a table, 2% is usually a retry. For **tool calls, do not
+execute invalid arguments**; constrained generation with a supported schema can
+reduce format errors.
 
 Then measure the cost rather than assuming it is small: overhead here ranged
-from 1.01× to 17.5×, worst where the schema demanded something the model did not
-want to produce.
+from 1.01× to 17.5× (one run); compare latency and the real error types in your
+own pipeline.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. A grammar guarantees valid JSON. What does it not guarantee?
 
-Anything about the content. Measured in @sec-sequence-labeling-llm: a schema demanding
+It constrains shape for output completed under a supported grammar; it does not
+guarantee that the chosen value is right, current or authorised. Seen in
+@sec-sequence-labeling-llm: a schema demanding
 an integer `answer` returned `{"answer": 1}` for the capital of France —
 valid, typed, parseable, meaningless.
 
-Constrained decoding converts parse failures into semantic failures. That is
-usually the trade you want, because a wrong value can be validated and a crash
-cannot, but it is a trade. Push what you can into enums, validate values
+Constrained decoding can prevent parse failures while leaving content failures
+in place, and some content errors (free text, values that depend on the
+outside world) cannot be checked automatically at all. Push what you can into enums, validate values
 separately from structure, and give the model a legal way to say *I do not
-know*.
+know*; test separately, with examples, whether they are chosen correctly.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -1005,8 +1012,10 @@ Partly, but less than the number suggests. Measured here: `llama3.2:3b` at
 79.3% schema-validity on a nested schema scored **70.7% accuracy** — and with
 the grammar turned on, 100% valid and **88.0% accurate**.
 
-Seventeen of those points were never a reasoning failure; they were a
-formatting failure being counted as one. Before concluding a small model
+Scoring invalid outputs as wrong is one possible cause of the gap; but because
+it was not reported item by item which items improved through format alone and
+which through a different class decision, the 17.3 points cannot all be pinned
+on one cause. Before concluding a small model
 cannot do your task, make sure you are measuring the task rather than its
 punctuation.
 :::
@@ -1014,28 +1023,29 @@ punctuation.
 ::: {.callout-note collapse="true"}
 ## 5. The model says it is 92% confident. Should you believe it?
 
-Not as a probability. Measured on 400 items: the bin of answers the model
-rated 0.90–0.95 was right **68.0%** of the time. Expected calibration error
+Not directly as a probability, on this sample. On 400 items, the 25 answers
+the model rated 0.90–0.95 were right **68.0%** of the time (17 of them). Expected calibration error
 was 7.04%, and the bin nearest probability 0.5 was right **33.3%** on 15 items — an interval
 wide enough to contain chance, and too wide to prove anything except that the
 number is not a calibrated probability.
 
 But the *ranking* was good — AUC 0.8268 for predicting its own correctness —
-which is enough to route on. Use logprobs to order items, not to quote
-percentages, and calibrate on a held-out slice if you need the number itself.
+which can be used to route. If calibrated on separate data the score can be
+reported as a probability; otherwise use it as a ranking score.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. You want a confidence score for a free-text answer. How?
 
-Not by averaging the logprobs, which mostly measures how ordinary the phrasing
-was rather than how likely the content is to be right.
+Do not read the average of the token logprobs directly as a probability of
+being right.
 
-Restructure the task instead. Ask for the answer *and* a single constrained
-token that classifies it — a verdict, a category, a yes/no — and read the
-logprob of that token. This chapter's abstention curve works because the
-answer was one token from a two-token alphabet; that property is something you
-design in, not something you find.
+Instead you can produce a separate check question or label suited to the task —
+a verdict, a category, a yes/no — and test how that score relates to real
+correctness on labelled, untouched data. A model judging its own answer can be
+biased, and that token's logprob is not automatically calibrated to the
+correctness of the free text. This chapter's abstention curve was easy to build
+because the answer was one token from a two-token alphabet.
 :::
 
 ## Interview questions {#sec-decoding-interview}
