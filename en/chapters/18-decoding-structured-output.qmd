@@ -328,17 +328,19 @@ Everything above reshapes a distribution over the whole vocabulary.
 does something stricter: at each step it computes which tokens could legally
 continue the output under a grammar, and sets the logits of all the others to
 $-\infty$. Invalid output stops being unlikely and becomes **unreachable** —
-with three conditions on that word. The schema has to be one the library
-actually supports, since unsupported keywords are commonly ignored rather than
-enforced. The generation has to *finish*: a run that hits your token limit, a
-timeout, or a dropped connection leaves a prefix that is legal so far and
-invalid as a document. And a grammar constrains structure, not semantics, so a
+with three conditions on that word. The schema has to be a grammar the
+implementation supports and actually enables; unsupported schema features may
+be rejected or silently not applied, depending on the provider. The generation
+has to *finish*: a refusal, a run that hits your token limit, a timeout or a
+dropped connection is outside the completed-document guarantee and can leave a
+prefix that is legal so far and invalid as a document. And a grammar constrains structure, not semantics, so a
 required field can be filled with a plausible fabrication. Parse and validate
 the result anyway; the guarantee is worth a lot and it is not "never check".
 
 ::: {#gloss-constrained-decoding .column-margin .term-gloss}
 **constrained decoding** — masking the logits at each step to the tokens a
-grammar allows. Guarantees the *shape* of a completed generation and says
+grammar allows. Guarantees the *shape* of a generation completed under a
+supported grammar and says
 nothing about whether it is true. [↩](#term-constrained-decoding){.term-back}
 :::
 
@@ -350,14 +352,16 @@ masking has no way to renormalise for that — so what you get is a distribution
 over grammatical strings whose likelihoods are no longer proportional to the
 model's own [@park2024grammar]. In practice it shows up as grammatical output
 the unconstrained model would have ranked lower. Grammar-aligned decoding fixes
-it at extra cost; every library in @sec-decoding-tools ships the cheap,
-distorting version, which is the right default and worth knowing you are using.
+it at extra cost. Check which algorithm your constrained-generation
+implementation follows and what the difference does on your task; it was not
+verified here that every library in @sec-decoding-tools makes the same
+choice.
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">One decoding step, with and without a grammar</div>
+<div class="fig-title">At one representative step, the continuations a no-whitespace JSON grammar allows</div>
 <svg viewBox="0 0 764 300" style="max-width:744px" role="img"
-     aria-label="A diagram of a single decoding step. On the left, the model has produced the partial output open brace, quote, label, quote, colon, and the next-token distribution is shown as four candidates with probabilities: quote at 0.61, the word maybe at 0.18, a newline at 0.12, and the word positive at 0.09. In the unconstrained path, sampling can select any of the four; this implementation emits canonical JSON with no whitespace, so only the quote continues a valid document and the other three, newline included, do not. In the constrained path, a finite-state machine compiled from the schema knows that only a quote can legally continue at this point, so the logits of the other three are set to negative infinity and their probability becomes zero; the quote is renormalised to probability one. A caption notes that the grammar guarantees the shape of the output and says nothing about whether the content is correct.">
+     aria-label="A diagram of one representative decoding step; the four candidates and their probabilities were chosen for teaching. On the left, the model has produced the partial output open brace, quote, label, quote, colon, and the next-token distribution is shown as four candidates with probabilities: quote at 0.61, the word maybe at 0.18, a newline at 0.12, and the word positive at 0.09. In the unconstrained path, sampling can select any of the four; this implementation emits canonical JSON with no whitespace, so only the quote continues a valid document and the other three, newline included, do not. In the constrained path, a finite-state machine compiled from the schema knows that only a quote can legally continue at this point, so the logits of the other three are set to negative infinity and their probability becomes zero; the quote is renormalised to probability one. A caption notes that the grammar guarantees the shape of the output and says nothing about whether the content is correct.">
 
   <text x="10" y="16" class="t-xs t-b t-muted">PARTIAL OUTPUT SO FAR</text>
   <rect x="10" y="26" width="220" height="34" rx="6" class="chip"/>
@@ -415,11 +419,22 @@ distorting version, which is the right default and worth knowing you are using.
 ```
 
 ::: {.fig-cap}
-The machinery is a finite-state machine over the tokenizer's vocabulary
+The four candidates and their probabilities were chosen for teaching; they are
+not a real model's full vocabulary. After the prefix `{"label":` this example
+grammar allows only the opening quote; standard JSON syntax would accept
+whitespace too. For schemas with bounded nesting, the allowed tokens can be
+tracked with a finite-state machine over the tokenizer's vocabulary
 [@willard2023efficient]: compile the regex — or a JSON Schema whose nesting is
 bounded — into an automaton, track which state you are in, and precompute for
-each state the set of allowed next tokens. A general context-free grammar does
-*not* fit in a finite-state machine, because unbounded nesting needs a stack;
+each state the set of allowed next tokens. (Think of the finite-state machine
+as a flowchart that knows, from what has been written so far, what may be
+written next.) The real engineering difficulty is that tokens do not line up
+with grammar symbols — one token can carry several characters, such as `":` or
+`", "` — so the allowed set has to be computed at the token level, not the
+character level; that is why libraries such as `outlines` and `xgrammar`
+exist. A general context-free grammar does *not* fit in a finite-state machine
+— so do not assume every JSON Schema constraint reduces to a regular language —
+because unbounded nesting needs a stack;
 libraries that accept a CFG run an incremental parser (a pushdown automaton)
 instead, which costs more per step and buys back arbitrary recursion. @geng2023grammar is the same idea for general
 structured NLP tasks.
