@@ -638,33 +638,35 @@ queries, and evaluate the model on an independent set of real queries.
 ## Reranking {#sec-retrieval-reranking}
 
 Every architecture above compares a query vector to a document vector that was
-computed without ever seeing the query. There is a more accurate thing to do,
-and a reason nobody does it at corpus scale.
+computed without ever seeing the query. There is an often more accurate thing
+to do, and a reason it is rarely done at corpus scale.
 
 A [cross-encoder](#gloss-cross-encoder){#term-cross-encoder .term-ref}
 [@nogueira2019passage] reads the query and the document **together**, in one
-forward pass with attention across both. That is strictly more informative
-than comparing two independently computed vectors, and it is why a
-cross-encoder is usually more accurate than a bi-encoder of similar size and
-training — usually, not always: a cross-encoder trained on another domain can
+forward pass with attention across both, so tokens interact. Under similar
+size and training that can give it an edge over a bi-encoder in reranking; but
+length limits, domain fit and training data mean the advantage is not
+guaranteed in every comparison: a cross-encoder trained on another domain can
 still lose to a well-trained bi-encoder on yours.
 
 ::: {#gloss-cross-encoder .column-margin .term-gloss}
 **cross-encoder** — query and document concatenated and read in a single
-forward pass, so attention runs across both. Usually more accurate than a
-bi-encoder and impossible to precompute, which is why it reranks a shortlist instead of
-searching a corpus. [↩](#term-cross-encoder){.term-back}
+forward pass, so attention runs across both. Often more accurate than a
+bi-encoder under similar conditions, but the query–document score cannot be
+precomputed, which is why it usually reranks a shortlist instead of searching a
+corpus. [↩](#term-cross-encoder){.term-back}
 :::
 
-It is also unusable as a retriever. Because the score depends on the pair,
-nothing can be precomputed: scoring a query against a million documents means
-a million forward passes. Hence the standard two-stage pattern:
+It also cannot precompute document representations independently of the
+query. On a small corpus it can score every document; with millions of
+candidates, the cost of scoring every candidate per query means it is usually
+used to rerank a shortlist. Hence the common two-stage pattern:
 
 :::: {.anlp-fig}
 ```{=html}
-<div class="fig-title">Why the architecture is always two stages</div>
+<div class="fig-title">Why the two-stage pipeline is common</div>
 <svg viewBox="0 0 764 322" style="max-width:744px" role="img"
-     aria-label="A diagram comparing a bi-encoder with a cross-encoder, and then showing the two-stage pipeline that combines them. On the left, the bi-encoder encodes the query and each document separately into vectors that are compared by a dot product; the document vectors are marked as computed offline, so search over a million documents costs one query encoding plus a vector operation. On the right, the cross-encoder concatenates the query and one document and reads them in a single forward pass with attention across both; nothing can be precomputed, so scoring a million documents would cost a million forward passes. Below, a pipeline shows a corpus of one million documents entering a cheap recall-oriented first stage that returns a shortlist of fifty to a hundred, then an expensive precision-oriented cross-encoder reranking that shortlist, then the top five to ten returned. A label states that the first stage sets a ceiling the second cannot raise.">
+     aria-label="A diagram comparing a bi-encoder with a cross-encoder, and then showing the two-stage pipeline that combines them. On the left, the bi-encoder encodes the query and each document separately into vectors that are compared by a dot product; the document vectors are marked as computed offline, so search over a million documents costs one query encoding plus an exact or approximate vector search, which still needs compute and memory access. On the right, the cross-encoder concatenates the query and one document and reads them in a single forward pass with attention across both; the query–document score cannot be precomputed, so every candidate pair has to be scored per query. Below, a pipeline shows a corpus of one million documents entering a cheap recall-oriented first stage that returns a shortlist of fifty to a hundred, then an expensive precision-oriented cross-encoder reranking that shortlist, then the top five to ten returned. A label states that the second stage cannot bring back a document the first stage did not return.">
 
   <text x="10" y="16" class="t-xs t-b t-muted">BI-ENCODER — SEPARATE, SO IT PRECOMPUTES</text>
   <text x="400" y="16" class="t-xs t-b t-muted">CROSS-ENCODER — JOINT, SO IT CANNOT</text>
@@ -686,7 +688,7 @@ a million forward passes. Hence the standard two-stage pattern:
   <text x="292" y="72" class="t-xs t-mid t-b">product</text>
 
   <text x="179" y="112" class="t-xs t-mid t-navy t-b">document side: computed once, offline</text>
-  <text x="179" y="126" class="t-xs t-mid t-muted">1M documents = 1 query encoding + a vector op</text>
+  <text x="179" y="126" class="t-xs t-mid t-muted">1M documents = 1 query encoding + exact/ANN search</text>
 
   <rect x="400" y="28" width="200" height="30" rx="6" class="chip"/>
   <text x="500" y="48" class="t-xs t-mid t-b">query ⧺ document</text>
@@ -698,8 +700,8 @@ a million forward passes. Hence the standard two-stage pattern:
   <rect x="638" y="80" width="76" height="34" rx="6" class="box"/>
   <text x="676" y="101" class="t-xs t-mid t-b">score</text>
 
-  <text x="500" y="132" class="t-xs t-mid t-rose t-b">nothing can be precomputed</text>
-  <text x="500" y="146" class="t-xs t-mid t-muted">1M documents = 1M forward passes</text>
+  <text x="500" y="132" class="t-xs t-mid t-rose t-b">the pair score cannot be precomputed</text>
+  <text x="500" y="146" class="t-xs t-mid t-muted">every candidate pair scored per query</text>
 
   <path d="M10 166 L 754 166" class="ln-thin ln-dash"/>
   <text x="10" y="186" class="t-xs t-b t-muted">SO THE PIPELINE USES BOTH</text>
@@ -726,35 +728,42 @@ a million forward passes. Hence the standard two-stage pattern:
   <text x="695" y="226" class="t-sm t-mid t-b">top 5–10</text>
 
   <path d="M184 254 L 184 268 L 590 268 L 590 254" class="ln-accent"/>
-  <text x="387" y="286" class="t-xs t-mid t-b t-accent">stage 1 sets a ceiling stage 2 cannot raise</text>
+  <text x="387" y="286" class="t-xs t-mid t-b t-accent">stage 2 cannot bring back what stage 1 missed</text>
   <text x="387" y="300" class="t-xs t-mid t-muted">a reranker can only reorder what it was given</text>
 </svg>
 ```
 
 ::: {.fig-cap}
-The bi-encoder is fast because it never sees a pair; the cross-encoder is
-accurate because it only ever sees pairs. Neither property is negotiable, so
-production systems buy recall with the first and precision with the second.
+The bi-encoder can precompute document vectors, which suits broad candidate
+search; the cross-encoder scores the query–document pair together and can
+improve the order of a shortlist. Even with precomputed document vectors,
+vector search still needs compute and memory access. Measure each stage by
+candidate coverage and model quality.
 :::
 ::::
 
 Three consequences worth internalising:
 
-- **The first stage sets a ceiling the second cannot raise.** A reranker can
-  only reorder what it is given. If recall@50 is 80%, no reranker gets you
-  past 80% — which is why @sec-retrieval-metrics argues recall@k is the metric
-  to watch on stage one.
+- **The first stage sets a candidate coverage the second cannot exceed.** A
+  reranker can only reorder what it is given: if the target is in only 80% of
+  the shortlists, it is in at most 80% of the reranked lists. Do not equate that
+  coverage with end-to-end answer accuracy; multiple pieces of evidence or
+  missing relevance labels change the relation. That is why
+  @sec-retrieval-metrics argues recall@k is the metric to watch on stage
+  one.
 - **The cost is linear in the shortlist**, so the shortlist size is your
   quality/latency dial, and it is an easier dial than the ANN parameter: its
-  cost is predictable, and the recall it hands the reranker can only grow as
-  the shortlist grows. Final accuracy is another matter — it usually
+  cost is predictable, and with a fixed first-stage ranking a longer shortlist
+  cannot reduce target coverage. Final accuracy is another matter — it usually
   plateaus and can even dip, as step 6 of @sec-retrieval-lab explains.
 - **Late interaction is the middle path.** ColBERT [@khattab2020colbert] keeps
   a vector per token and scores by summed maximum similarity (each query
   token finds its most similar document token, and those best matches are
-  added up), which recovers
-  much of the cross-encoder's accuracy while remaining precomputable. It costs
-  an order of magnitude more storage, which is the trade.
+  added up), which aims to approach the cross-encoder's accuracy while the
+  document side stays precomputable. It costs a larger index than a
+  bi-encoder; the ratio depends on token count, vector dimension, compression
+  and implementation. Measure the storage and quality difference on the version
+  you choose and on your own corpus.
 
 ## Approximate nearest neighbour, and the dial nobody sets on purpose {#sec-retrieval-ann}
 
