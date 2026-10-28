@@ -949,70 +949,70 @@ see should never come back from retrieval, however well it ranks.
 
 ## Intuition checks {#sec-retrieval-intuition}
 
-Answer each one before you open it. Most are questions this chapter settled
-with a measurement rather than an argument.
+Answer each one before you open it. The chapter's measurements belong to two
+synthetic query conditions derived from the target document, and the answers
+are limited to those conditions.
 
 ::: {.callout-note collapse="true"}
 ## 1. Should you replace BM25 with a dense retriever?
 
-Only after checking which queries you actually get. Measured on one corpus,
-the same two systems swapped places by sixty points between two query
-conditions: stemmed BM25 **96.0%** against dense **35.9%** on keyword queries,
+Only after checking which queries you actually get. On one corpus, in two
+synthetic query conditions derived from the target document, the same two
+systems swapped places by sixty points: stemmed BM25 **96.0%** against dense **35.9%** on keyword queries,
 and dense **96.2%** against BM25 **23.8%** cross-lingually.
 
-Neither family dominates. Lexical wins exact-match and rare-token queries;
-dense wins paraphrase, synonymy and anything crossing a language boundary.
-Sample a hundred real queries and classify them before choosing.
+Neither family dominated in these two conditions. Lexical tends to be strong on
+exact-match and rare-token queries, dense on paraphrase, synonymy and queries
+crossing a language boundary. Sample a hundred real queries, classify them and
+measure with multiple relevance judgements before replacing one family with
+the other.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Everyone says hybrid retrieval beats both parents. Does it?
 
-Not when the parents are unequal. Measured here, reciprocal rank fusion **cost
-32.8 points** in one condition and **46.8** in the other, against the better
-parent each time.
+Not here. In these two synthetic conditions the unweighted RRF used landed
+**32.8 points** behind the better parent's target hit@1 in one and **46.8** in
+the other.
 
-RRF weights a rank-1 hit from a weak system exactly like a rank-1 hit from a
-strong one, so the weak parent's top-ranked wrong answers displace the strong
-parent's right ones. Fusion is a variance-reduction trick for *comparable*
-systems. Check that yours are comparable before fusing, which costs one
-evaluation run.
+Because unweighted RRF gives every list the same weight, the weaker parent's
+top ranks can do damage. Compare a single model, weighted fusion and, if
+needed, routing on your own data; that costs a few evaluation runs.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. Your recall@10 barely changed but users complain. What happened?
 
 Look at recall@1. In this chapter's condition B, fusion took recall@10 from
-99.9% to 99.6% — nothing — while recall@1 went from **96.2% to 49.4%**. The
-document was still retrieved; it was pushed down the list.
+99.9% to 99.6% while recall@1 went from **96.2% to 49.4%**. The document was
+mostly still retrieved; it was pushed down the list.
 
-Which metric matters depends on the consumer. A RAG pipeline passing ten
-chunks to a model cares about recall@10. A user reading the first result cares
-about recall@1. Reporting only the one that looks good is the easiest
+Which metric matters depends on the consumer. In a RAG pipeline, check that all
+ten chunks really reach the model; target hit@10 shows coverage, @1 and ranking
+metrics show top-rank shifts, and end-to-end answer evaluation shows the effect
+on users. A user reading the first result cares about recall@1. Reporting only the one that looks good is the easiest
 self-deception in retrieval.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Which embedding model should you use?
 
-Not the famous one, and the difference only shows on hard inputs. A
-*similarity* model and a *retrieval* model were within 2.4 points on the easy
-condition here — and **25.3 points apart** on the hard one, 10.6% against
-35.9%.
-
-Similarity models are trained to score how alike two sentences are; retrieval
-models are trained on query-document pairs with hard negatives. They are
-different tasks. And the practical consequence for evaluation: if your test
-set is easy, every model looks the same and you will pick by download count.
+The one you have measured on your own task. Here the E5 row was 2.4 points
+above the MiniLM row on the easy condition and **25.3 points** above it on the
+hard one (A), 10.6% against 35.9%. The training objective is not the only
+cause: size, training data and prefix use differ too. When choosing, record the
+usage prefixes and the full model id, and evaluate easy and hard query slices
+separately: if your test set is easy, every model looks the same.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Why is recall@k the number that bounds a RAG system?
 
 Because a generator cannot ground an answer in a document it never received.
-If recall@10 is 80% and you pass ten chunks, then 20% of questions are
-ungroundable before the model is invoked, and prompt engineering cannot reach
-them.
+If every answer is found only in one completely labelled passage and that
+passage does not reach the generator, the answer cannot be grounded in
+retrieved evidence; under those conditions an 80% target coverage gives at most
+80% evidence-grounded answers, and prompt engineering cannot reach the rest.
 
 State the ceiling precisely, because it holds under conditions worth naming.
 The model may still answer some of that 20% from its parametric knowledge, which
@@ -1034,16 +1034,17 @@ recall the second stage needed.
 ::: {.callout-note collapse="true"}
 ## 6. Do you need a vector database?
 
-Under about 100k documents, no — exhaustive search over a NumPy array is a
-matrix multiply and it is exact. Up to roughly ten million, `pgvector` in the
-Postgres you already run gives you transactions, backups, joins and access
-control for free.
+First measure the load of exact or approximate vector search and the quality of
+filtered queries in the datastore you already have. On a small corpus,
+exhaustive search over a NumPy array is a matrix multiply and it is exact;
+`pgvector` in the PostgreSQL you already run uses its transactions, backups,
+joins and access control, but carries capacity, backup and index-management
+costs.
 
-The thing that genuinely forces a dedicated store is rarely scale; it is
-**filtered search** — the top ten documents this user may see, from the last
-90 days, in this language — which needs the filter and the vector search to
-cooperate. Weigh that against operating a second datastore with its own
-consistency and backup story.
+The choice is often decided by **filtered search** — the top ten documents
+this user may see, from the last 90 days, in this language — and `pgvector`
+can do that too. `pgvector`, FAISS and dedicated services differ in operating
+cost, access control and latency; choose the store by those requirements.
 :::
 
 ## Interview questions {#sec-retrieval-interview}
