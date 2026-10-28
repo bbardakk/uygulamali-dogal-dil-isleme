@@ -933,38 +933,41 @@ kalitesi ayrıca izlenmeli.
 
 ## Vektör veritabanı mı, değil mi? {#sec-erisim-depolama}
 
-Son karar vektörlerin nerede tutulacağıdır ve bu karar genellikle çok erken ve
-çok pahalıya verilir. Kullanışlı bir rehber ölçeğe göre ayrım yapar:
+Son karar vektörlerin nerede tutulacağıdır. Belge sayısı kaba bir başlangıç
+noktası verir, ama seçimi toplam vektör belleğine, sorgu hacmine, gecikme
+hedefine, güncelleme ve süzgeç gereksinimlerine göre yapın; aşağıdaki eşikler
+bir karar kuralı değil, ölçülmesi gereken seçeneklerin kabaca yeri:
 
-| belge | ne kullanılır | neden |
+| belge (kabaca) | ne kullanılabilir | dikkat edilecekler |
 |:--|:--|:--|
-| ~100 binin altı | NumPy dizisi artı tam arama | bir matris çarpımı; bu bölümdeki yoğun erişim sayıları böyle hesaplandı ve sonuç kesindir |
-| ~100 bin–10 milyon | zaten çalıştırdığınız Postgres'te `pgvector` ya da süreç içi FAISS | işlemler (transaction), yedekleme, join'ler ve erişim kontrolü hazır gelir; işletmeniz gereken yeni bir servis de olmaz |
-| 10 milyon+ ya da çok kiracılı | özel bir vektör deposu | sharding (veriyi makinelere bölme), çoğaltma ve süzgeçli arama sizin çözeceğiniz problem olmaktan çıktığında |
+| ~100 binin altı | NumPy dizisi artı tam arama | bir matris çarpımı; bu bölümdeki yoğun erişim sayıları böyle hesaplandı ve sonuç kesindir; ama bir dizi tek başına kalıcılık, işlem ya da erişim kontrolü sağlamaz |
+| ~100 bin–10 milyon (ölçüme bağlı) | zaten çalıştırdığınız PostgreSQL'de `pgvector` ya da uygulama içinde FAISS | `pgvector` PostgreSQL'in işlemlerini (transaction), yedeklemesini, join'lerini ve erişim kontrolünü kullanır; FAISS ise yalnızca vektör indeksi sağlar, bu işletim işlevlerinin ayrıca kurulması gerekir |
+| 10 milyon+ ya da çok kiracılı | özel bir vektör deposu | sharding (veriyi makinelere bölme), çoğaltma ve süzgeçli arama hazır bir çözüm olarak gerektiğinde |
 
 : Vektörler nereye konur {tbl-colwidths="[18,38,44]"}
 
-[Çoğu proje için varsayılan cevap sıkıcı olanıdır]{.hl}: vektörleri ait
-oldukları verinin yanında tutun.
+[Çoğu projede ilk seçenek, vektörleri ait oldukları kayıtlarla aynı veri
+yönetiminde tutmaktır.]{.hl}
 
-İkinci bir veri deposunun operasyonel bedeli — onunla asıl veri kaynağınız (source
-of truth, sistemin esas kabul ettiği kayıt deposu) arasındaki tutarlılık,
-kendine ait yedekleme
-düzeni, kendine ait erişim kontrol modeli — genellikle kısaltmaya çalıştığınız
-sorgu gecikmesinden büyüktür. Üstelik bu bedel, zamanlamasını başka bir ekibin
-belirlediği bir anda önünüze çıkar.
+Ayrı bir vektör servisi, asıl veri kaynağınızla (source of truth, sistemin esas
+kabul ettiği kayıt deposu) senkronizasyon, kendine ait yedekleme düzeni ve
+kendine ait erişim kontrol modeli yükü ekleyebilir. Bu yükü, ölçülen gecikme,
+kapasite ve bakım gereksinimleriyle birlikte değerlendirin.
 
-Özel bir depoyu gerçekten zorunlu kılan etken nadiren ham ölçektir; asıl etken
-**ölçekte süzgeçli aramadır**: "bu kullanıcının görmesine izin verilen, son 90
-gündeki, Türkçe ilk 10 belge." Bunu iyi yapmak için süzgeç ile vektör aramasının
-birlikte çalışması gerekir. Önce ANN ile ilk 10'u alıp sonra süzmek, süzgeç
+Depo seçimini çoğu zaman ham ölçekten çok **süzgeçli arama** belirler: "bu
+kullanıcının görmesine izin verilen, son 90 gündeki, Türkçe ilk 10 belge." Bunu
+iyi yapmak için süzgeç ile vektör aramasının birlikte çalışması gerekir; seçici
+süzgeçlerle ANN araması zorlaşabilir. Önce ANN ile ilk 10'u alıp sonra süzmek, süzgeç
 seçiciyse elinizde hiç sonuç bırakmayabilir; önce süzüp sonra aramak ise ya
 kalan belgelerde tam aramaya döner (yavaş) ya da HNSW gibi bir çizgede
-gezinmeyi koparıp recall'u düşürür.
-Süzgeçle vektör aramasını birlikte yürütmek bir boyut meselesi değil, ayrı bir
-mühendislik yeteneğidir. İzin süzgeci üstelik bir kalite değil güvenlik
-ayarıdır: kullanıcının görmemesi gereken bir belge, sıralamada ne kadar
-iyi olursa olsun erişimden dönmemelidir.
+gezinmeyi koparıp recall'u düşürür. PostgreSQL'de `pgvector` süzgeç sütunu
+indeksleri, kısmi indeksler, bölümleme ve 0.8.0 sürümünden beri yinelemeli
+indeks taramasıyla bunu destekler; özel depolar süzgeçle bütünleşik ANN
+seçenekleri sunar — ikisini de kendi verinizde sınayın. İzin süzgeci üstelik
+bir kalite değil güvenlik ayarıdır: yetki süzgecini sonuçların sonradan
+temizlenmesine bırakmayın, erişim denetimini sorgu hattının zorunlu koşulu
+yapın; kullanıcının görmemesi gereken bir belge, sıralamada ne kadar iyi olursa
+olsun erişimden dönmemelidir.
 
 ## Sezgi kontrolleri {#sec-erisim-sezgi}
 

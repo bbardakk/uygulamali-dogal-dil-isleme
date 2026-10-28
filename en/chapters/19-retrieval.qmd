@@ -912,30 +912,40 @@ Two practical notes on measurement itself:
 
 ## Vector database, or not {#sec-retrieval-storage}
 
-The last decision is where the vectors live, and it is usually made too early
-and too expensively. The honest guide is by scale:
+The last decision is where the vectors live. Document count gives a rough
+starting point, but choose by total vector memory, query volume, latency
+target, and update and filtering needs; the thresholds below are not a decision
+rule but a rough map of options to measure:
 
-| documents | what to use | why |
+| documents (roughly) | what you can use | what to watch |
 |:--|:--|:--|
-| under ~100k | NumPy array plus exhaustive search | a matrix multiply; the dense numbers in this chapter were computed this way, and it is exact |
-| ~100k–10M | `pgvector` in the Postgres you already run, or FAISS in-process | you get transactions, backups, joins and access control for free, and no new service to operate |
-| 10M+, or multi-tenant | a dedicated vector store | when sharding, replication and filtered search stop being your problem to solve |
+| under ~100k | NumPy array plus exhaustive search | a matrix multiply; the dense numbers in this chapter were computed this way, and it is exact; but an array alone gives no persistence, transactions or access control |
+| ~100k–10M (depends on measurement) | `pgvector` in the PostgreSQL you already run, or FAISS inside the application | `pgvector` uses PostgreSQL's transactions, backups, joins and access control; FAISS provides only the vector index, and those operational functions have to be built separately |
+| 10M+, or multi-tenant | a dedicated vector store | when you need sharding, replication and filtered search as a ready-made solution |
 
 : Where to put the vectors {tbl-colwidths="[18,38,44]"}
 
-[The default answer for most projects is the boring one]{.hl}: keep the
-vectors next to the data they belong to.
+[For most projects the first option is to keep the vectors under the same data
+management as the records they belong to.]{.hl}
 
-The operational cost of a second datastore — consistency between it and your
-source of truth, its own backup story, its own access-control model — is
-usually larger than the query latency you were trying to save, and it arrives
-on a different team's schedule.
+A separate vector service can add synchronisation with your source of truth,
+its own backup story and its own access-control model. Weigh that load against
+the measured latency, capacity and maintenance needs.
 
-The question that actually forces a dedicated store is rarely raw scale. It is
-**filtered search at scale**: "the top 10 documents this user is allowed to
-see, from the last 90 days, in Turkish." Doing that well requires the filter
-and the vector search to cooperate, and that is a genuine engineering
-capability rather than a matter of size.
+What decides the store is often less raw scale than **filtered search**: "the
+top 10 documents this user is allowed to see, from the last 90 days, in
+Turkish." Doing that well requires the filter and the vector search to
+cooperate, and selective filters make ANN search harder. Taking the ANN top 10
+and filtering afterwards can leave you with no results when the filter is
+selective; filtering first and searching after either falls back to exhaustive
+search over what is left (slow) or breaks the walk through a graph like HNSW
+and lowers recall. In PostgreSQL, `pgvector` supports this with indexes on the
+filter columns, partial indexes, partitioning and, since version 0.8.0,
+iterative index scans; dedicated stores offer ANN integrated with filtering —
+test both on your own data. And a permission filter is a security setting, not
+a quality one: do not leave it to cleaning results afterwards, make access
+control a mandatory condition of the query path; a document the user must not
+see should never come back from retrieval, however well it ranks.
 
 ## Intuition checks {#sec-retrieval-intuition}
 
