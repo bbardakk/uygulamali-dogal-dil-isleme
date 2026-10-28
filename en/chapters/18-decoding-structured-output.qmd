@@ -586,37 +586,44 @@ calls. A tool call *is* a structured output — a function name and a typed
 argument object — and it has a property that makes correctness matter more
 than usual: **something executes afterwards.**
 
-A malformed summary is a bad summary. A malformed argument object is either a
-crash or, worse, a call that succeeds with the wrong value.
+In a tool call, the model's output becomes another operation's input. A format
+error can get the call rejected or retried; a valid but wrong argument can get
+the wrong operation executed. The two error types need measuring
+separately.
 
 How this looks in practice: with *function calling*, you send the model a list
 of tool definitions, each a name, a description and a JSON Schema for its
-arguments, and the model replies with a tool name and an argument object
-instead of prose. Whether those arguments are *enforced* depends on a flag.
-Hosted APIs usually offer two strengths. A "JSON mode" guarantees only that the
-output is syntactically valid JSON, not that it matches your schema; a
-schema-enforced mode (OpenAI's API, for example, calls it `strict`) compiles
-your schema into the kind of grammar described above. Know which one you have
-switched on.
+arguments, and depending on the API the model replies with prose or with a tool
+name and an argument object. Whether those arguments are *enforced* depends on
+a setting. Hosted APIs usually offer two strengths. A "JSON mode" aims only at
+syntactically valid JSON, not at matching your schema; a strict-schema mode
+(OpenAI's API, for example, calls it `strict`) compiles the supported subset of
+your schema into the kind of grammar described above. Check in the provider's
+documentation which one you have switched on, which fields an option like
+`strict` applies to, and what happens on refusal or truncation.
 
 Three rules follow from the measurements above.
 
-**Constrain the arguments, always.** This is the case where the strong-model
-result does not let you off. 98% schema-validity is excellent for extraction
-and unacceptable for execution: at a thousand calls a day it is twenty
-failures a day, each one a stack trace or a wrong action. The grammar takes
-that to zero for every call that finishes. Its latency cost is real and varies
+**Constrain the arguments with a supported schema.** This is the case where the
+strong-model result does not let you off. 98% schema compliance, if that rate
+held in production, means about twenty invalid arguments per thousand calls.
+Invalid calls should be rejected before execution or retried safely.
+Constrained generation with a supported schema prevents format errors in calls
+that finish; runtime validation and action authorisation are still needed. Its latency cost is real and varies
 by schema, but you can measure it before you ship.
 
 **Type the arguments as narrowly as the tool allows.** An enum of four
 operations cannot be called with a fifth. A date typed as a string can be
-`"yesterday"`; typed with a pattern, it cannot. Every constraint you can push
-into the schema is a validation you do not have to write and an error class
-that becomes unreachable.
+`"yesterday"`; typed with a pattern, it cannot. Rules such as enums and
+patterns reduce invalid generations **when the provider supports and applies
+them**. Validate the same rules again at the tool boundary anyway, checking
+dates, resource ids and permission conditions at runtime in particular.
 
 **A valid call is still not a correct call.** The grammar guarantees
 `{"operation": "delete", "id": 4}` is well-formed. It does not know whether 4
-was the right id, and @sec-tool-design is where that problem — and the
+points at the right resource or whether the caller may delete it. Check the
+resource id, the permission and any required confirmation at runtime before
+the operation; @sec-tool-design is where that problem — and the
 confirmation and authorisation machinery around it — belongs.
 
 ## Logprobs, confidence, and abstention {#sec-decoding-logprobs}
