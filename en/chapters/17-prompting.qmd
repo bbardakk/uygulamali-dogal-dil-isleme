@@ -31,10 +31,11 @@ first. Software: `ollama` 0.24.0 serving `qwen3.5:9b`, Python 3.14.5.
 
 ## Why prompting works at all {#sec-prompting-why}
 
-A pretrained model predicts the next token. Nothing in that objective says it
-should follow an instruction, and the first large models mostly did not — you
-had to trick them, by writing a prefix whose natural continuation happened to
-be the answer you wanted.
+A pretrained model predicts the next token. That objective does not directly
+reward following instructions (nor does it stop the model inferring a task
+from the context), and the first large base models did not follow them
+reliably — so prefixes that made the wanted answer a natural continuation were
+common.
 
 @reynolds2021prompt is the historical document for that era, and reading it
 now is a good reminder of how much of "prompt engineering" was working around
@@ -43,21 +44,23 @@ a missing capability.
 Two things changed. **Scale** made models able to infer a task from examples
 in the context [@brown2020language], and **instruction tuning**, followed by
 preference training (@sec-post-training), trained them to treat an instruction
-as an instruction rather than as text to continue. The second is why modern prompting feels like
-asking rather than tricking.
+as an instruction rather than as text to continue. The second is why modern
+prompting feels like asking rather than building a prefix whose continuation is
+the answer.
 
 ::: {#gloss-in-context-learning .column-margin .term-gloss}
 **in-context learning** (bağlam içi öğrenme) — the model doing better at a
-task because examples of it are sitting in the prompt. No weight is updated
-and nothing survives the call, which is why *learning* is a slightly
-misleading word for it.
+task because examples of it are sitting in the prompt. No weight is updated;
+when a single call without history ends, the context is not written into the
+weights (if the application stores the history and sends it again, the same
+examples take effect again). That is why *learning* is a slightly misleading
+word for it.
 [↩](#term-in-context-learning){.term-back}
 :::
 
 [In-context learning](#gloss-in-context-learning){#term-in-context-learning .term-ref}
 is the first of those: you put input-output pairs in the prompt, and the model
-does better on the next input, **with no parameter updated and nothing retained
-after the call**.
+does better on the next input, **with no parameter updated**.
 
 Two words you will meet constantly name how many examples you give. A
 **zero-shot** prompt has none — only the instruction and the input. A
@@ -65,7 +68,7 @@ Two words you will meet constantly name how many examples you give. A
 *$k$-shot* names the exact number: an 8-shot prompt carries eight.
 
 So it is not learning in the sense @sec-post-training uses the word — nothing is
-fitted, nothing persists. That is a claim about the *mechanism*, not about what
+fitted, nothing is written into the weights. That is a claim about the *mechanism*, not about what
 the model can pick up: a mapping it genuinely acquires from the context is still
 acquired from the context, and a paragraph below names exactly that case. A
 useful working description of the common case is *task inference*: the examples
@@ -73,40 +76,47 @@ narrow down which task you are asking for, out of the many the model already
 knows how to do.
 
 That framing predicts something odd, and the prediction holds.
-@min2022rethinking replaced the labels in the demonstrations with **random**
-ones and found performance mostly survived. What the examples were mainly
-conveying was the *shape* of the task — the label space, the format, the
-distribution of inputs — not the input-to-label mapping.
+@min2022rethinking, on the classification and multiple-choice tasks they
+studied, replaced the labels in the demonstrations with **random** ones and
+found that performance mostly dropped only a little. Under those conditions
+much of what the examples contributed came from the *shape* of the task — the
+label space, the format, the distribution of inputs — rather than the
+input-to-label mapping. That does not mean the correct mapping matters for no
+task.
 
-That is worth knowing before you spend a week curating perfect examples.
-
-Two lines of work say *how* that narrowing happens, and they are worth having
-because "task inference" is otherwise just a phrase. @xie2022explanation
+Two lines of work suggest *how* that narrowing might happen — the mechanism
+is still being researched — and they are worth having because "task inference"
+is otherwise just a phrase. @xie2022explanation proposes a model that
 formalises it as implicit Bayesian inference: the demonstrations sharpen a
 posterior over latent concepts the model already acquired in pretraining, which
-is why the *distribution* of the examples matters more than their correctness.
-@olsson2022induction gives the circuit-level version — attention heads that
-complete `[A][B] … [A] → [B]`, which appear at exactly the point in training
-where in-context learning ability jumps. After @sec-transformers, that is the
-hardware answer to "how can examples in a prompt work without changing a
-weight".
+explains why the *distribution* of the examples can sometimes matter more than
+their correctness. @olsson2022induction offers a circuit-level observation —
+attention heads that complete `[A][B] … [A] → [B]`, which in the models they
+studied appear at exactly the point in training where in-context learning
+ability jumps. After @sec-transformers, that is a partial, mechanism-level
+answer to "how can examples in a prompt work without changing a weight";
+neither study offers one explanation for every model and task.
 
 And a limit on @min2022rethinking worth carrying, because this chapter repeats
-it several times. @pan2023incontext separates **task recognition** — the
+it several times. @pan2023incontext, on the classification tasks it studied,
+separates **task recognition** — the
 demonstrations tell the model *which* task — from **task learning**, where they
-teach it the mapping. Random labels leave task recognition intact, which is what
-Min et al. measured; task learning does exist, grows with model scale, and is
-exactly what random labels destroy. So "the labels do not matter" is true of the
-recognition part and false of the learning part, and it is not a licence to use
-wrong labels.
+teach it the mapping. In those experiments random labels left task recognition
+largely intact, close to what Min et al. measured; task learning was observed,
+grew with scale in the models studied, and is the part random labels hurt. So
+"the labels do not matter" can be largely true of the recognition part, not of
+the learning part, and it is not a licence to use wrong labels. The practical
+upshot runs both ways: measure whether examples help before spending a week
+curating perfect ones, but keep the labels of the ones you use correct.
 
 ::: {.column-margin}
 It also predicts the failure mode. If demonstrations mostly convey format,
 then a model that already knows the format gains little from them — which is
-exactly what @sec-classification measured, where eight examples were worth
+consistent with what @sec-classification measured, where eight examples were worth
 +7.17 macro-F1 on one model and +0.51 ($p = 0.62$, an interval running to about
-+2.5) on a stronger one. On that task the technique did not stop working; the
-stronger model needed it much less.
++2.5) on a stronger one. Under those conditions no added benefit could be shown
+for the second model; with other tasks and demonstrations the result may
+differ.
 :::
 
 ### The claim this chapter is built on
