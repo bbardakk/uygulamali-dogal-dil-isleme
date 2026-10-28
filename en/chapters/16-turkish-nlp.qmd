@@ -647,17 +647,30 @@ a general gain for every Turkish search task.
 
 ## Turkish retrieval: how much of the gap is morphology {#sec-turkish-nlp-retrieval}
 
-Search in Turkish is harder than search in English, and practitioners
-generally know it. What is worth knowing is *how much* of the difficulty is
-morphology alone — because that part has a cheap fix, and the rest does not.
+One well-known difficulty of Turkish lexical search is inflection: the form a
+user types and the form in the document often differ. What is worth knowing is
+*how much* of the difficulty comes from inflection differences alone — because
+that part has a cheap fix. (No measurement comparing Turkish with English is
+made here.)
 
 The experiment isolates it. Take 7,165 Turkish sentences as documents, index
 them with BM25 — the standard word-matching ranking function, which scores a
 document by the query words it contains (@sec-text-as-data) — and query with three
 content words drawn from a target document, but in a **different surface form
-than the document uses**. That is the real case: the user types *İstanbul*, the
-document says *İstanbul'da*. The score is recall@1, the share of queries whose
-target document comes back in first place (recall@10: anywhere in the top ten).
+than the document uses**. The case being imitated: the user types *İstanbul*,
+the document says *İstanbul'da*; but the queries were built from the target
+document, not taken from a user log. Each query has one target document chosen
+in advance. The score is recall@1, the share of queries whose target comes back
+in first place (recall@10: anywhere in the top ten); it is not classic recall
+over all relevant documents.
+
+::: {.callout-note appearance="simple" icon="false"}
+**Setup.** Corpus: 7,165 sentences of 8+ words from the Turkish side of
+WMT16–18, one document each. Query: three content words from the target
+document; 69% of the terms are in a different inflection than the document's,
+drawn from elsewhere in the corpus. Ranking: BM25 with four index/query
+schemes. Success: the target document in first place (recall@1).
+:::
 
 ```text
 7,165 Turkish documents (sentences of 8+ words)
@@ -673,7 +686,8 @@ character 4-grams            74.9%       94.9%        55.7
 
 [Surface-form BM25 finds the right document 28% of the time. Stemming takes
 it to 95.3%.]{.hl} One preprocessing step, a 3.4× improvement, and no model
-involved at all.
+involved at all. That 3.4× holds for three-term queries chosen this way; real
+user queries need their own measurement.
 
 Read the setup before you take the headline anywhere, because three separate
 things could inflate that 3.4× on their own.
@@ -683,28 +697,33 @@ query term were produced by applying a suffix rule, the same rule-based stemmer
 would be scored against its own inverse and 95.3% would be near-tautological.
 The forms here are drawn from elsewhere in the corpus rather than generated,
 which avoids that — but the design is still *known-item* retrieval: the query
-comes from the target document, so a stem match is guaranteed once stemming
-works at all. Read 95.3% as an upper bound on what stemming can recover, not as
-what a user's query will do.
+comes from the target document, so this setup makes a stem match easy once
+stemming works at all. Do not read 95.3% as an estimate of real user
+performance or as a theoretical upper bound; measure it on a real query log.
 
 **And part of the gain is string surgery rather than morphology.** Since
 version 3.0.0, `snowballstemmer`'s Turkish algorithm truncates a token at its
 first apostrophe (ignoring one in the first two characters, so *O'Neill'in*
-keeps *O'Neill*). So the chapter's own headline example, `İstanbul'da` →
-`İstanbul`, is not a morphological analysis; it is a `split("'")`. On a news
+keeps *O'Neill*), then goes on to stem what is left with the normal rules. So
+in the chapter's own headline example, `İstanbul'da` → `İstanbul`, the work is
+done by the truncation step rather than the morphological rules; a
+`split("'")` would give the same result. On a news
 corpus full of inflected proper nouns that step alone is worth a share of the
 gap, and we did not separate it. Two rows would: apostrophe truncation with no
 stemming, and Snowball with the apostrophe step disabled. They are the first
 thing to run before quoting 3.4× anywhere. (One practical trap: only the ASCII
 apostrophe `'` counts. The typographic `’`, common in edited text, is not
-recognised, so replace it with `'` before stemming.)
+recognised. Replacing it with `'` before stemming is one fix, but `’` also
+serves as a closing quotation mark, so check on your own data that the mapping
+does not cause wrong truncations outside proper nouns.)
 
 Finally, 69% of query terms were deliberately chosen to be a different
 inflection, and a query can only rank its target first if enough of its three
-terms match the indexed form. That
-is harsher than an average query and gentler than the worst one — a user
-searching a Turkish corpus usually types the dictionary form, which the corpus
-often does not contain in that shape.
+terms match the indexed form. How inflection differences and query length are
+distributed in real user queries was not measured here; users may type bare
+forms, inflected forms, multi-word phrases or proper nouns. Whether this setup
+is harsher or gentler than an average query can only be said after measuring
+it on a query log.
 
 Three practical consequences:
 
@@ -716,22 +735,30 @@ Three practical consequences:
    shrinks. Measure it on your own query log before quoting this as a universal
    requirement.
 2. **Character n-grams are the robust fallback.** 74.9% recall@1 with no
-   linguistic knowledge at all, at the cost of 3.5× the index size (55.7
-   terms per document against 15.7). When you have no stemmer for a language,
-   this is the move.
+   linguistic knowledge at all, at the cost of 3.5× the terms per document
+   (55.7 against 15.7). The index size in bytes depends on the posting lists
+   and compression and was not measured here. When you have no stemmer for a
+   language, this is the first fallback to try.
 3. **Prefix truncation is a surprisingly good approximation.** Keeping the
-   first five characters gets 74.6% — nearly the same as character n-grams, at
-   no index cost. It is crude, it is wrong on short words, and it is what to
-   reach for when a real stemmer is not available.
+   first five characters gets 74.6% — nearly the same as character n-grams,
+   with no increase in terms per document. It is crude, it is wrong on short
+   words, it can merge words that are not equivalent into one prefix and so
+   produce false matches (false matches were not counted in this experiment),
+   and it is what to reach for when a real stemmer is not available. Measure
+   both prefix truncation and character n-grams on real queries for recall,
+   false matches and storage in bytes.
 
 ::: {.column-margin}
-This is also the strongest single argument for dense retrieval in Turkish:
-an embedding of *İstanbul'da* and an embedding of *İstanbul* are close
-whatever the tokenizer did, because the model learned them from context rather
-than matching strings. @sec-retrieval builds that properly, including the
+This is also a reason to try dense retrieval in Turkish: because the model
+learns forms from context rather than by matching strings, the dense
+representations of *İstanbul'da* and *İstanbul* may be close in some models.
+That was not measured in this setup; compare stemmed sparse, dense and hybrid
+indexes on the same real query set. @sec-retrieval builds dense retrieval
+properly, including the
 *hybrid* retriever that combines a word-matching (sparse) half with an
 embedding (dense) half. The measurement here says what the sparse half needs
-in Turkish: stemming. Without it, that half does not pull its weight.
+on queries like these: stemming. Without it, that half does not pull its weight
+here.
 :::
 
 ## The five-chapter pattern {#sec-turkish-nlp-pattern}
