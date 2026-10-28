@@ -795,10 +795,11 @@ model and the same sentences — and `ollama` samples by default. Its global
 fallback is temperature 0.8 with top-$k$ 40, but a library model can ship its
 own settings, and the `qwen3.5:9b` entry lists temperature 1.0, top-$k$ 20,
 top-$p$ 0.95 and a presence penalty of 1.5 at the time of writing. Unless the
-request overrode them, the LLM row was sampled at the very temperature that cost
-the Marian model half its BLEU — softened somewhat by top-$k$ and top-$p$,
-which restrict the draw to the most likely tokens (@sec-decoding covers
-them). Benchmarking an LLM at a chat default and
+request overrode them, the LLM row was sampled at temperature 1.0 (with
+top-$k$ and top-$p$ restricting the draw to the most likely tokens;
+@sec-decoding covers them). The Marian sampling sweep does not tell you what
+that cost Qwen: a temperature's effect can differ between models in size, even
+in direction. Benchmarking an LLM at a chat default and
 concluding that LLMs translate badly is the most common way to get this
 comparison wrong, and the LLM row below is only interpretable if its decoding
 settings are published beside it. They are not, and neither are the prompt
@@ -811,9 +812,10 @@ by default, while `opus-mt-tc-big` runs unquantised through `transformers`. So
 the headline is not 237M against 9B but 237M unquantised against a 4-bit 9B.
 Quantisation plausibly hurts more when the model must *generate* a
 morphologically rich language, which would put its cost in the en-tr column
-where the gap is largest — but that has not been measured here. Both the
-sampling and the quantisation push the LLM's score down, so the 6-BLEU figure
-more likely overstates than understates the gap between the models themselves;
+where the gap is largest — but that has not been measured here. Sampling and
+quantisation can push the LLM's score down, so the 6-BLEU figure may overstate
+the gap between the models themselves — but we tested neither with a
+controlled ablation on the same Qwen model;
 contamination, discussed below, pulls the other way.
 
 ```text
@@ -832,18 +834,22 @@ wmt16 en-tr                          BLEU    chrF   s/sentence
 
 The control row is there because a metric you have not sanity-checked is a
 metric you do not understand: leaving the source untranslated scores 2.09, so
-the numbers above are measuring translation rather than incidental overlap.
+the numbers above measure more than incidental overlap. It is a rough check of
+the metric and direction; model quality needs reading examples, critical-error
+analysis and a check of data exposure.
 
 **One control the table cannot run, and one warning about its last column.**
 newstest2016 has been public since 2016 — in `sacrebleu`, on GitHub, in
 HuggingFace datasets, with its reference translations. Any LLM trained on a
 2020s web crawl has plausibly seen it, and that contamination *inflates* the
-LLM's score. Which means it works against nothing in the conclusion below: the
-dedicated model wins despite the benchmark possibly sitting in its opponent's
-training data. The dedicated side is cleaner, since Helsinki-NLP excludes WMT
-test sets from OPUS-MT training, but note that "zero-shot" here means *no
+LLM's score if it happened — a possibility, not evidence. The dedicated side is
+probably cleaner, since Helsinki-NLP's policy excludes WMT test sets from
+OPUS-MT training, but a general policy does not prove that the checkpoint used
+has no leak; verify its actual training sources. "Zero-shot" here means *no
 examples in the prompt* and not *never seen this data*. If you need an
-uncontaminated number, use a test set published after your model's cutoff.
+uncontaminated number, use a test set published after your model's cutoff and
+record the publication date, the model version and all fine-tuning data — a
+later test set does not automatically rule out exposure in later versions.
 
 As for the seconds: they are not measured the same way as the `ms/sent` column
 in @sec-machine-translation-decoding, which is why the same model at the same
@@ -855,13 +861,15 @@ batch.
 
 Three things to take from this.
 
-**The small dedicated model wins both directions.** 237M parameters beat 9B,
-by 3 BLEU into English and by 6 into Turkish, at **41× to 164× the speed**
-depending on direction and beam width — 41× for the slowest honest comparison
-(beam-4 into Turkish) and 164× for the fastest (greedy into Turkish); at the
-beam-4 setting you would actually ship into English it is 45×. A
-model trained on nothing but this language pair is very hard to beat on this
-language pair.
+**In this measurement the small dedicated model leads in both directions.** On
+the first 400 sentences, 237M parameters lead the 9B on BLEU and chrF — by 3
+BLEU into English and 6 into Turkish — at **41× to 164× the measured
+per-sentence speed**: 41× for beam-4 into Turkish, 164× for greedy into
+Turkish, 45× for beam-4 into English. Those ratios belong to this
+single-request measurement and change with batching, concurrency and hardware;
+for deployment, measure QPS, p95 latency and cost on the same hardware. A model
+trained on nothing but this language pair is hard to beat on this language
+pair.
 
 **The gap is twice as large translating *into* Turkish.** That is the
 asymmetry to expect and to check for: a general multilingual model has seen
@@ -869,12 +877,13 @@ far more English than Turkish, and generating a morphologically rich language
 is harder than parsing one. [Never assume your MT quality is symmetric —
 measure both directions.]{.hl}
 
-**Translating into Turkish is harder for every system here.** opus-mt drops
-from 32.33 to 23.13 when the target changes. Part of that is genuine
-difficulty and part is @sec-machine-translation-turkish's measurement
-artefact: the same quality of translation scores lower when the target
-language gives BLEU 22.5% fewer tokens to match. chrF, which does not have
-that bias, drops far less — 60.08 to 57.41. The same check applies to the
+**Turkish-target conditions score lower for both models.** When the target
+changes, opus-mt's BLEU drops from 32.33 to 23.13 and its chrF far less, from
+60.08 to 57.41. Because the target language and references change, these
+numbers are not direct evidence that "translating into Turkish is harder"; the
+token asymmetry of @sec-machine-translation-turkish may explain part of the
+gap, but not how much. Investigate the direction gap with independent human
+evaluation and error-type analysis in both directions. The same check applies to the
 previous point: in chrF the LLM's deficit is 1.76 into English and 3.74 into
 Turkish, so the doubling is not only BLEU's harshness on Turkish.
 
