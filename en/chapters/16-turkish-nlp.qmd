@@ -1454,60 +1454,77 @@ chapter is downstream of believing that result.
 
 ## What to remember {#sec-turkish-nlp-summary}
 
-- **Agglutination is measurable, and it compounds.** On identical content,
-  Turkish produced **32,866 distinct forms from 141,412 tokens** against
+- **Agglutination is measurable, and it compounds.** Over all 9,007 parallel
+  pairs, Turkish produced **32,866 distinct forms from 141,412 tokens** against
   English's **16,652 from 182,429** — twice the vocabulary from 78% of the
-  tokens. The ratio grows with corpus size (1.49 → 2.31): both curves follow
-  Heaps' law, but Turkish has the larger exponent (≈0.78 vs ≈0.65), because it
-  generates forms by rule rather than drawing them from a list. Any design
-  that assumes a vocabulary can be enumerated is fighting that.
+  tokens. On equal-token prefixes the ratio rose from 1.49 to 2.31 over the
+  observed range; Heaps exponents roughly estimated from six points are about
+  0.78 and 0.65. A likely reason is that Turkish builds forms with suffixes;
+  the trend should be measured again on another corpus or a longer range. Any
+  design that assumes a vocabulary can be enumerated will strain against this
+  growth.
 
-- **`str.lower()` is a correctness bug in Turkish, twice over.** Every word
-  containing `I` or `İ` comes out wrong under English rules — that part is
-  arithmetic — and such words are about one token in a hundred (**0.95%** of
-  the WMT16 source), concentrated in names. And `'İSTANBUL'.lower()` emits
-  `i` plus a combining mark, so `\w+` returns `['i', 'stanbul']` — the word splits and NFC does not repair
-  it. A three-line `tr_lower` before anything else touches the text.
+- **`str.lower()` is a correctness bug in Turkish, twice over.** Every token
+  containing `I` or `İ` lowercases to a different string under locale-free
+  `lower()` than under the Turkish mapping, and such tokens are **0.95%** of
+  the WMT16 source, concentrated in names; a different string is not a task
+  error for every token. And `'İSTANBUL'.lower()` emits `i` plus a combining
+  mark, so a Python `re` based `\w+` returns `['i', 'stanbul']` — the word
+  splits and NFC does not repair it. If you need to lowercase, apply the
+  Turkish mapping before anything else touches the text and consistently with
+  the model's training preprocessing; do not lowercase for a cased model. (This
+  chapter's `tr_lower` fixes only the I/İ mapping; it is not a full ICU
+  equivalent.)
 
 - **Stemming is not optional in Turkish lexical search — on queries like the
   ones tested here.** Sixty-nine percent of that query set was built to differ
   from the document in inflection, so measure the gain on your own query logs
-  before treating it as a requirement. Surface-form BM25: **28.0%** recall@1.
-  Snowball stemming: **95.3%**. Character 4-grams get
-  74.9% with no linguistic knowledge, at 3.5× the index. In English this is
-  usually reported as a tweak; here it is whether the search box works.
+  before treating it as a requirement. The rate at which the target comes
+  first (recall@1) is **28.0%** for surface-form BM25 and **95.3%** for
+  Snowball stemming. Character 4-grams get 74.9% with no linguistic knowledge,
+  at 3.5× the terms per document (index size in bytes was not measured). With
+  this query design, that was the difference between a search box that works
+  and one that does not; do not assume the same gain on real user queries.
 
-- **Stripping diacritics causes only 72 collisions, and some of them are
-  total.** *oldu* and *öldü* — "it happened" and "he died" — become the same
-  string (a few, like *mi*/*mı*, cost nothing). Rare enough to pass every
-  aggregate metric, severe enough to matter every time it hits.
+- **Stripping diacritics reduces the distinct-form count by only 72, but
+  some collisions are total.** *oldu* and *öldü* — "it happened" and "someone
+  died" — become the same string (a few, like *mi*/*mı*, cost nothing). It can
+  be too rare to show up in aggregate metrics; measure the meaning-changing
+  collisions and their token frequencies separately.
 
-- **A multilingual model came out ahead of the monolingual one on this task**, 92.76
-  against 91.92 span F1 — with identical transformer bodies (85.5M each; the
-  parameter gap is all embedding table) and *despite* tokenizing Turkish 19%
-  worse — from a single seed, so not yet a separation. If the gap holds up,
-  the likely reason is domain: the benchmark is built from Wikipedia and mBERT
-  was pretrained on Wikipedia alone. There is no general verdict here,
-  only a protocol — fertility on your text, domain overlap, both models on
-  your task with an identical recipe, then the operational columns.
+- **On this task, in a single run, a multilingual model came out 0.84 span
+  F1 ahead of the monolingual one** (92.76 against 91.92). The transformer
+  bodies are the same size (85.5M each), but mBERT is bigger in total (the gap
+  is almost all embedding table) and splits Turkish into 19% more pieces per
+  word. Neither the stability nor the cause of the gap is known; domain overlap
+  (the benchmark is built from Wikipedia, and mBERT was pretrained on Wikipedia
+  alone) is one possible explanation. There is no general verdict here, only a
+  protocol — fertility on your text, domain overlap, both models on your task
+  with an equal tuning budget and several seeds, then the operational
+  columns.
 
-- **Subword tokenization replaced morphological analysis for modelling, not
-  for everything.** Reach for a real analyser when the grammar is the output,
-  when a wrong answer must be explainable, or when you need the stem to index
-  on — and note that a stemmer of a few hundred lines carried most of the retrieval
-  benefit.
+- **Subword models work without a separate morphological analyser on many
+  tasks, not on everything.** Reach for a real analyser when the grammar is
+  the output, when a wrong answer must be explainable, or when the root/suffix
+  split is required; decide per task where analysis is needed. And note that a
+  stemmer of a few hundred lines took recall@1 from 28.0% to 95.3% in this
+  chapter's retrieval experiment.
 
-- **The pattern, across five chapters: standard tools fail silently outside
-  English.** `str.lower()`, `rouge-score`, BLEU, a benchmark's own splits, and
-  a faithfulness proxy written for this book each produced a plausible wrong
-  number on Turkish. None raised an error. Every one was caught by a **control
-  measurement** — an input whose correct answer was known in advance — and none
-  by reading the code. The last entry on that list is ours, which is the point:
+- **The pattern, across five chapters: tools and measurements can produce
+  silently misleading numbers outside English.** `str.lower()`,
+  `rouge-score`, BLEU, a benchmark's own splits, and a faithfulness proxy
+  written for this book each produced a plausible but misleading number on
+  Turkish, and none raised an error. They are not the same kind of thing —
+  locale-dependent conversion, data overlap, tokenization, a proxy's
+  implementation bug, and metric scale. Most were made visible by a **control
+  measurement** — an input whose correct answer was known in advance — and
+  code and data review complement it. The last entry on that list is ours, which is the point:
   the failure mode is not other people's carelessness.
 
 - **So build the control first.** Before trusting a tool on your language,
   give it something whose answer cannot be in doubt: identical strings, copied
   text, a perfect prediction, two texts that share no word, a majority-class
-  floor. A perfect score on identical inputs is necessary, not sufficient — it
-  cannot see a tokenizer that damages both sides alike. Ten minutes, and it is
-  the highest-return ten minutes in a non-English NLP project.
+  floor. The expected score on identical inputs (a perfect score for most
+  metrics) is necessary, not sufficient — it cannot see a tokenizer that
+  damages both sides alike. Use these controls together with code and data
+  review.
