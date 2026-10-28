@@ -287,32 +287,35 @@ koşusunda sohbet varsayılanı olan 1,0 sıcaklıkla örnekleme BLEU'yu 30,17'd
 
 ## Tekrar ve yozlaşma {#sec-cozumleme-tekrar}
 
-Greedy ve düşük sıcaklıklı kod çözmenin karakteristik bir kusuru var: model bir
-döngüye düşer ve token sınırına çarpana kadar bir öbeği tekrarlar.
+Greedy ve düşük sıcaklıklı kod çözme bazı modellerde ve bağlamlarda bir
+kusur gösterir: model bir döngüye düşer ve token sınırına çarpana kadar bir
+öbeği tekrarlar.
 
-Mekanizma gizemli değil. Bir öbeği bir kez ürettikten sonra model o öbeği kendi
-bağlamının parçası yapmıştır ve gerçek metin üzerinde eğitilmiş bir dil modeli
-tekrarlanan öbeklerin ilk tekrardan sonra daha olası olduğunu öğrenmiştir.
+Olası bir açıklama: her adımın yerel olarak en yüksek puanlı devamı, bütün
+metin için iyi bir devam olmak zorunda değil; bir öbek bağlama girdikten sonra
+model onun tekrarını da yüksek olasılıklı görebilir.
 
-@holtzman2020curious buna ad verdi ve şaşırtıcı kısmı gösterdi: döngü düşük
-olasılıklı bir rastlantı değil. **Tekrarlanan devam çoğu zaman, mevcut diziler
-arasında olasılığı en yüksek olanıdır**; greedy kod çözmenin bu döngüye
-girmesinin, örneklemenin ise nadiren girmesinin nedeni budur.
+@holtzman2020curious buna ad verdi ve şaşırtıcı kısmı gösterdi: inceledikleri
+modellerde döngü düşük olasılıklı bir rastlantı değildi. **Tekrarlanan devam
+çoğu zaman, mevcut diziler arasında olasılığı yüksek olanlardandı**; greedy kod
+çözmenin bu döngüye girebilmesinin nedeni bu. Örnekleme döngüleri azaltabilir
+ama tamamen önlemez; döngünün sıklığı modele, bağlama ve kod çözme ayarlarına
+bağlıdır.
 
 Alışıldık kontroller ve her birinin bedeli:
 
 | kontrol | ne yapar | neyi bozar |
 |:--|:--|:--|
 | Örnekleme (top-p, min-p) | bazen argmax olmayan bir token seçer, döngüyü kırar | bir bilgi çıkarma görevinde istemeyebileceğiniz çeşitlilik |
-| Tekrar cezası (repetition penalty) | zaten kullanılmış her token'ın logit'ini düşürür — pozitifken bölerek, negatifken çarparak (aşağıya bakın) | meşru biçimde tekrarlanan kelimeleri cezalandırır — adlar, teknik terimler, `null` |
-| No-repeat n-gram (n-gram tekrar yasağı) | zaten üretilmiş her n-gram'ı yasaklar | gerçekten tekrarlanması gereken öbekleri de yasaklar; `{"type":` gibi ifadelerin tekrarlandığı yapılandırılmış çıktıda yıkıcıdır |
-| Presence penalty (varlık cezası) | daha önce geçmiş her token'ın logit'inden sabit bir miktar çıkarır | aynı kusur, daha hafif biçimde; tırmanmaz |
-| Frequency penalty (sıklık cezası) | kaç kez geçtiğiyle orantılı bir miktar çıkarır | her tekrarla tırmanır, bu yüzden uzun çıktılar kayar |
+| Tekrar cezası (repetition penalty) | zaten kullanılmış her token'ın logit'ini dönüştürür — `transformers`'ta pozitifken bölerek, negatifken çarparak (aşağıya bakın) | gerekli token tekrarlarını da etkileyebilir — adlar, teknik terimler, `null` |
+| No-repeat n-gram (n-gram tekrar yasağı) | zaten üretilmiş her token n-gram'ını yasaklar | gerçekten tekrarlanması gereken öbekleri de yasaklayabilir; `{"type":` gibi ifadelerin tekrarlandığı yapılandırılmış çıktıda geçerli devamları engelleyebilir |
+| Presence penalty (varlık cezası) | daha önce geçmiş her token'ın logit'inden sabit bir miktar çıkarır | gerekli tekrarları da etkileyebilir; tekrar sayısıyla büyümez, etkisi ceza değerine bağlı |
+| Frequency penalty (sıklık cezası) | kaç kez geçtiğiyle orantılı bir miktar çıkarır | her tekrarla büyür; etkisi ceza değerine ve çıktı uzunluğuna bağlı |
 
 : Bir döngüyü durdurmanın beş yolu ve her birinin bedeli {tbl-colwidths="[26,38,36]"}
 
-Tekrar cezası $\theta$ ham logit üzerinde çalışıyor ve uygulamaların en sık
-yanlış yaptığı yer, logit'in işaretinin nasıl ele alındığı:
+`transformers`'taki tekrar cezası $\theta$ ham logit üzerinde çalışıyor ve
+dikkat edilmesi gereken yer, logit'in işaretinin nasıl ele alındığı:
 
 $$
 z_i' = \begin{cases} z_i / \theta & z_i \ge 0 \\ z_i \cdot \theta & z_i < 0 \end{cases}
@@ -322,8 +325,11 @@ $$
 yani ceza değil ödül olur. Formüldeki iki dalın göstermelik olmamasının nedeni
 bu. Ceza CTRL'den gelir [@keskar2019ctrl]; oradaki formül yalnızca böler.
 İşaret durumunu `transformers` gibi sonraki uygulamalar eklemiştir.
-OpenAI tarzı cezalar ise toplamsal oldukları ve bunun yerine sayımlara
-dayandıkları için bu sorundan kaçınıyor:
+Decoder-only modellerde "daha önce görülen token'lar" varsayılan olarak
+prompt'u da kapsayabilir; kullandığınız uygulamayı ve ayarı belirtin. OpenAI
+tarzı presence ve frequency cezaları ise toplamsal oldukları ve sayımlara
+dayandıkları için bu işaret sorununu yaşamaz (sağlayıcıların tam davranışı bu
+formülden farklı olabilir):
 $z_i' = z_i - \alpha_{\text{presence}}\,\mathbb{1}[c_i > 0] - \alpha_{\text{freq}}\,c_i$;
 burada $c_i$, $i$ token'ının kaç kez geçtiği. Presence penalty bir kez
 devreye girer; frequency penalty her tekrarla büyümeye devam eder.
@@ -331,10 +337,11 @@ devreye girer; frequency penalty her tekrarla büyümeye devam eder.
 [Bu cezalar gerekli tekrarı gereksiz tekrardan ayırt etmez; bu yüzden
 yapılandırılmış çıktı için yanlış araçtır.]{.hl} Bir
 JSON nesnesi meşru biçimde anahtarları, süslü parantezleri ve tırnak
-karakterlerini tekrarlar; aynı anahtarların yinelendiği bir JSON'a (örneğin bir
-nesne dizisine) no-repeat-3-gram kısıtı koymak, ikinci nesnede anahtarı
-yazmayı yasaklar ve şemaya aykırı çıktıyı neredeyse kaçınılmaz kılar. Yapı üretiyorsanız tekrarın çözümü bir ceza
-değil, @sec-cozumleme-kisitli'teki gramerdir.
+karakterlerini tekrarlar; aynı anahtarların yinelendiği bir JSON'da (örneğin bir
+nesne dizisinde) no-repeat n-gram yasağı, tokenization'a ve $n$'ye bağlı olarak
+ikinci nesnede anahtarı yazmak gibi geçerli devamları engelleyebilir. Yapı
+geçerliliği için ceza yerine @sec-cozumleme-kisitli'teki şemaya dayalı kısıtlı
+üretimi kullanın; anlamsız içerik tekrarını ise ayrıca değerlendirin.
 
 ## Kısıtlı kod çözme {#sec-cozumleme-kisitli}
 

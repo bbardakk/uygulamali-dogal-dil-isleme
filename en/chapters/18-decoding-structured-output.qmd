@@ -267,33 +267,35 @@ opposite of everything structured output wants.
 
 ## Repetition and degeneration {#sec-decoding-repetition}
 
-Greedy and low-temperature decoding have a characteristic failure: the model
-falls into a loop and repeats a phrase until it hits the token limit.
+Greedy and low-temperature decoding show a failure on some models and in some
+contexts: the model falls into a loop and repeats a phrase until it hits the
+token limit.
 
-The mechanism is not mysterious. Having produced a phrase once, the model has
-made that phrase part of its own context, and a language model trained on real
-text has learned that repeated phrases are more likely after the first
-repetition.
+One plausible account: the locally highest-scoring continuation at each step
+need not be a good continuation for the text as a whole, and once a phrase is
+in the context the model may rate repeating it as highly probable.
 
-@holtzman2020curious named this and showed the surprising part: the loop is
-not a low-probability accident. **The repeated continuation is often the
-single highest-probability sequence available**, which is why greedy decoding
-walks into it and sampling rarely does.
+@holtzman2020curious named this and showed the surprising part: in the models
+they studied the loop was not a low-probability accident. **The repeated
+continuation was often among the highest-probability sequences available**,
+which is why greedy decoding can walk into it. Sampling can reduce loops but
+does not rule them out; how often they happen depends on the model, the context
+and the decoding settings.
 
 The usual controls, and what each costs:
 
 | control | what it does | what it breaks |
 |:--|:--|:--|
 | Sampling (top-p, min-p) | takes a non-argmax token sometimes, breaking the loop | variety you may not want in an extraction task |
-| Repetition penalty | lowers the logit of any already-used token — dividing it when positive, multiplying when negative (see below) | punishes legitimately repeated words — names, technical terms, `null` |
-| No-repeat n-gram | forbids any n-gram already emitted | forbids real repeated phrases; ruinous in structured output where `{"type":` recurs |
-| Presence penalty | a flat subtraction the first time a token appears | same failure mode, milder; does not escalate |
-| Frequency penalty | a subtraction proportional to how often it has appeared | escalates with every repeat, so long outputs drift |
+| Repetition penalty | transforms the logit of any already-used token — in `transformers`, dividing it when positive, multiplying when negative (see below) | can hit necessary token repeats too — names, technical terms, `null` |
+| No-repeat n-gram | forbids any token n-gram already emitted | can forbid phrases that genuinely recur; in structured output where `{"type":` recurs it can block valid continuations |
+| Presence penalty | a flat subtraction the first time a token appears | can hit necessary repeats too; does not grow with the count, effect depends on the value |
+| Frequency penalty | a subtraction proportional to how often it has appeared | grows with every repeat; effect depends on the value and the output length |
 
 : Five ways to stop a loop, and what each one costs {tbl-colwidths="[26,38,36]"}
 
-The repetition penalty $\theta$ acts on the raw logit, and its sign handling is
-the part implementations get wrong:
+The repetition penalty $\theta$ in `transformers` acts on the raw logit, and its
+sign handling is the part to watch:
 
 $$
 z_i' = \begin{cases} z_i / \theta & z_i \ge 0 \\ z_i \cdot \theta & z_i < 0 \end{cases}
@@ -302,19 +304,22 @@ $$
 Dividing a *negative* logit by $\theta > 1$ raises it towards zero — that is a
 reward, not a penalty — which is why the two branches are not cosmetic. The
 penalty comes from CTRL [@keskar2019ctrl], whose formula simply divides; the
-sign case was added by later implementations such as `transformers`. The
-OpenAI-style penalties avoid the problem by being additive and acting on counts
-instead:
+sign case was added by later implementations such as `transformers`. In
+decoder-only models "previously seen tokens" may include the prompt by default,
+so name the implementation and setting you use. The OpenAI-style presence and
+frequency penalties avoid the sign problem by being additive and acting on
+counts (a provider's exact behaviour may differ from this formula):
 $z_i' = z_i - \alpha_{\text{presence}}\,\mathbb{1}[c_i > 0] - \alpha_{\text{freq}}\,c_i$,
 where $c_i$ is how many times token $i$ has already appeared. Presence fires
 once; frequency keeps scaling.
 
 [The penalties are blunt instruments and they are the wrong tool for
 structured output.]{.hl} A JSON object legitimately repeats keys, braces and
-quote characters; a no-repeat-3-gram constraint on JSON whose keys recur (an
-array of objects, say) forbids writing a key the second time and makes
-schema-invalid output all but certain. If you are generating structure, the fix for repetition is the
-grammar in @sec-decoding-constrained, not a penalty.
+quote characters; on JSON whose keys recur (an array of objects, say), a
+no-repeat n-gram ban can, depending on tokenization and $n$, block valid
+continuations such as writing a key the second time. For structural validity
+use the schema-based constrained generation of @sec-decoding-constrained rather
+than a penalty, and judge meaningless content repetition separately.
 
 ## Constrained decoding {#sec-decoding-constrained}
 
