@@ -824,14 +824,15 @@ separates the two, and it is cheap to run once on a sample.
 
 ## Measuring retrieval {#sec-retrieval-metrics}
 
-Everything above was reported in four columns — recall at two depths, MRR and
-nDCG — with only a one-line gloss of each. The table below adds precision@k,
-which the tables did not use. These metrics answer different questions, and picking the wrong one is how a retrieval
-regression stays invisible.
+Retrieval quality does not fit in one number. The metrics below look from
+different angles at whether a relevant document was found, where it sits in the
+ranking, and how clean the top *k* is (including precision@k, which the tables
+above did not use); picking the wrong one is how a retrieval regression can stay
+invisible.
 
 | metric | asks | use it when |
 |:--|:--|:--|
-| **[recall@k](#gloss-recall-k){#term-recall-k .term-ref}** | what share of the relevant documents is in the top *k*? With one relevant document per query — this chapter's setup — that reduces to *is it there at all*, which is also called hit rate or success@k | the consumer reads all *k* — which includes every RAG system |
+| **[recall@k](#gloss-recall-k){#term-recall-k .term-ref}** | what share of all relevant documents is in the top *k*? This chapter assigned one target document per query; the binary rate computed reduces to *is the target there at all*, also called target hit@k or success@k | the consumer reads all *k*; in a RAG pipeline, state *k* together with the number of untrimmed candidates actually passed to the generator |
 | **MRR** | how high is the *first* right answer? | the user reads one result and stops |
 | **nDCG@k** | are the relevant documents near the top, weighted by how relevant? | graded relevance, several relevant documents |
 | **precision@k** | what share of the *k* is relevant? | the cost of a wrong result is per-result |
@@ -839,11 +840,11 @@ regression stays invisible.
 : Four metrics, four questions {tbl-colwidths="[16,42,42]"}
 
 ::: {#gloss-recall-k .column-margin .term-gloss}
-**recall@k** — the share of a query's relevant documents that appear in the top
-*k*. When there is exactly one relevant document, as here, it collapses to
-*did the right document appear at all* — the quantity often called hit rate or
-success@k. The number that bounds everything downstream: a generator cannot
-ground an answer in a document the retriever never returned.
+**recall@k** — the share of all of a query's relevant documents that appear in
+the top *k*. When a single target is assigned it collapses to *did the target
+appear at all* — the quantity often called hit rate or success@k. Under certain
+conditions it bounds what comes downstream: a generator cannot ground an
+answer in a document the retriever never returned.
 [↩](#term-recall-k){.term-back}
 :::
 
@@ -865,34 +866,43 @@ Here $\text{rel}_i$ is the relevance grade of the document at position $i$
 (0 or 1 in this chapter), and IDCG@$k$ is the DCG of the best possible
 ordering, so nDCG lies between 0 and 1. Some tools use the gain
 $2^{\text{rel}_i}-1$ instead of $\text{rel}_i$; with 0/1 labels the two agree.
+For a query with no labelled relevant document IDCG@$k$ = 0; some tools drop
+such queries and some score them 0, so say which you do. In this chapter's
+single-target queries IDCG@$k$ is never zero.
 
 A worked example with one relevant document, as in this chapter's tables.
 Suppose it comes back at rank 3. Then recall@1 = 0, recall@10 = 1, the
 reciprocal rank is $1/3 \approx 0.33$, and nDCG@10 is
 $1/\log_2 4 = 0.5$ (the ideal list puts it at rank 1, so IDCG = 1). Both
-metrics punish rank 3, but nDCG punishes it more gently. That is why, in every
-row of the tables above, nDCG@10 sits between MRR@10 and recall@10.
+metrics punish rank 3, but nDCG punishes it more gently. Because
+$1/r \le 1/\log_2(r+1) \le 1$ for a single target in the top 10, nDCG@10 sits
+between MRR@10 and target hit@10 in every row of the tables above; that
+ordering is not a general property with several relevant documents.
 
-[If you report one number for the retrieval stage of a RAG system, report
-recall@k for the *k* you actually pass to the model.]{.hl} It is a ceiling on
-what *grounding* can deliver: @sec-rag's generator can only ground in what
-arrives, so with one relevant document per question a retrieval recall@10 of
-80% means 20% of answers cannot be grounded in retrieved evidence before
-generation begins — and no amount of prompting fixes them. (Intuition check 5
-below states exactly when this ceiling holds.)
+[If you report one number for the retrieval stage of a RAG system, report how
+often the *k* chunks you actually pass to the model contain supporting
+evidence.]{.hl} @sec-rag's generator can only *ground* in what arrives. If
+every question is answerable from a single, completely labelled passage, that
+rate is a ceiling on the questions that can get an evidence-grounded answer: at
+80%, 20% of questions cannot be grounded in retrieved evidence before
+generation begins, and prompting does not fix that. In the general case measure
+evidence coverage and end-to-end answer quality separately; intuition check 5
+below spells out the conditions.
 
 The corollary is that **the two stages want different metrics**. Stage one is
 judged on recall, because its job is not to miss. Stage two — a reranker, or
 the generator itself — is judged on precision and ordering, because its job is
-to choose. Optimising the first stage for precision@1 is a common and
-expensive mistake.
+to choose. Optimising a first stage that feeds a reranker for precision@1 can be
+an expensive mistake; but if the first stage's results are also shown directly
+to users, top-rank quality needs watching too.
 
 Two practical notes on measurement itself:
 
 - **You need relevance judgements, and building them is the real work.** With
-  no labels, the cheapest honest start is what this chapter did: take
-  documents you have, construct queries whose answer you know, and accept that
-  synthetic queries are a proxy. BEIR [@thakur2021beir] is the reference
+  no labels, generating synthetic queries from target documents, as this chapter
+  did, is a starting point for diagnosing components; but such queries carry a
+  directional bias and do not stand in for user quality. When the first real
+  queries arrive, pool several systems' results and build relevance judgements. BEIR [@thakur2021beir] is the reference
   benchmark suite if you want to compare against published numbers rather than
   measure your own corpus.
 - **Report the query mix.** @sec-retrieval-results is one long argument that a
