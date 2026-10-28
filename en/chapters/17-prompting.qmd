@@ -830,28 +830,33 @@ with a measurement rather than an argument.
 ::: {.callout-note collapse="true"}
 ## 1. Model A beat model B by 5 points on your eval. Which is better?
 
-You do not know, because you have not separated the model from the prompt.
-Measured on one model, one task and twelve semantically identical prompts, the
-spread was **14.67 points** — three times the gap you are trying to interpret.
-Part of that observed spread is sampling noise (roughly 10 points of it could
-come from noise alone at 150 items), but the same noise sits in your 5 points.
+The gap was observed for the chosen prompt and data; because you have not
+separated the model from the prompt, you do not know how robust it is to the
+prompt choice. In this chapter, on one model, twelve prompts asking for the
+same task spanned an observed **14.67 points**. That does not prove your 5
+points come from the prompt, but it shows you need to measure to rule it out.
+Part of that range is sampling noise (about 10 points of it by a rough
+yardstick at 150 items), and the same noise sits in your 5 points.
 
-Run both models over a *set* of prompts and compare the distributions. If that
-is too expensive, at least run each model on two or three prompts and report
-the range. A single-prompt comparison is a statement about the prompts.
+Compare both models on the same evaluation set with a family of prompts fixed
+in advance, and report the model–prompt interaction. If that is too expensive,
+at least run each model on two or three prompts and report the range. A
+single-prompt comparison is conditional on that prompt.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Your reviewer says "moving the input above the instruction is a no-op." Are they right?
 
-Semantically yes; empirically you cannot rely on it. Here the score fell
-**4.00 points** (79.33% → 75.33%; a net six reviews of 150). No paired test is
-reported for this pair, so the drop is not established — but you cannot predict
-its sign by reading, and you have to measure it.
+Semantically it looks that way; empirically you cannot rely on it. Here the
+`review first` variant measured **4.00 points** below `baseline` (79.33% →
+75.33%; a net six reviews of 150). Without the full prompt texts and a paired
+test for this pair you cannot pin the gap on the move alone or call it general
+— but you cannot predict its sign by reading either, so measure it on your own
+data.
 
 That is the whole argument for treating prompts as testable components. No
-reviewer can predict that by reading, because there is nothing to read — the
-change is meaning-preserving. The only thing that catches it is running the
+reviewer can predict that by reading, because the change looks
+meaning-preserving. The only thing that catches it is running the
 evaluation, which makes prompt changes a testing problem rather than a writing
 problem.
 :::
@@ -859,36 +864,40 @@ problem.
 ::: {.callout-note collapse="true"}
 ## 3. Does "You are an expert…" help?
 
-On this task it came 11th of 12, at 76.00% against 79.33% for the same prompt
-without it.
+On this task it came 11th of 12, at 76.00% against 79.33% for `baseline`.
+Because the full texts are unpublished, it cannot be confirmed here that the
+two prompts are identical apart from the role sentence.
 
 Do not over-read that either — it is one task and one model, and a net
 difference of five reviews in 150 cannot be significant at the 5% level. The
 point is not that role prefixes are bad. The point is that the most-reproduced
-pattern in prompting failed to beat its own baseline here, and the sign could
-not be guessed in advance. Measure it on your task: one extra run and a paired
-test on a large enough set.
+pattern in prompting failed to beat its own baseline here, and the sign could not be guessed in advance. Measure it on your task: a pair that keeps the
+rest of the text identical, one extra run, and a paired test on a large enough
+set.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Your few-shot examples have wrong labels. How bad is that?
 
-It depends on *how* they are wrong. Randomly noisy labels are less bad than you
-would think, which tells you something about what demonstrations are for.
-@min2022rethinking randomised the labels in the
-demonstrations and most of the benefit survived, because what the examples
-mainly convey is the *format and the label space* rather than the mapping.
+It depends on *how* they are wrong, and on the task. Random labels hurt less
+than expected in some classification experiments, which tells you something
+about what demonstrations are for. @min2022rethinking, on the tasks they
+studied, randomised the labels in the demonstrations and most of the benefit
+survived; under those conditions much of the contribution came from the
+*format and the label space* rather than the mapping.
 
 But random labels and systematically flipped labels are not the same thing.
-Task learning is real and grows with scale [@pan2023incontext], and large enough
-models can follow a flipped mapping in the demonstrations and fall below chance
-(Wei et al., 2023). Fix wrong labels as soon as you know about them.
+Task learning was observed and grew with scale in the models studied
+[@pan2023incontext], and large enough models can follow a flipped mapping in
+the demonstrations and fall below random guessing [@wei2023larger]. Fix wrong
+labels as soon as you know about them, then compare gold-labelled and
+random-labelled demonstrations on the same data.
 
 Practical readings: do not spend a week hand-curating examples before checking
 whether examples help at all; and if your task's difficulty is in the mapping
 rather than the format, expect demonstrations to underdeliver.
 
-What does move the number is *which* examples you show — @liu2022makes found
+One of the things that does move the number is *which* examples you show — @liu2022makes found
 that retrieving demonstrations semantically close to the input beats choosing
 them at random, which turns example selection into a retrieval problem and
 hands it to @sec-retrieval's machinery.
@@ -897,26 +906,32 @@ hands it to @sec-retrieval's machinery.
 ::: {.callout-note collapse="true"}
 ## 5. Is temperature 0 reproducible?
 
-Locally, here, yes — 100% identical across ten repeats, with or without a
-seed. On a hosted API, often not, because batching changes floating-point
-reduction order and your request shares a batch with strangers.
+In this local setup, yes — 30 documents gave identical raw output across ten
+repeats, with or without a seed. Do not assume the same for another endpoint:
+on hosted APIs batching can change floating-point reduction order and your
+request may share a batch with strangers; the model version and service
+settings matter too.
 
 Run the check rather than assuming: same prompt, same input, ten times,
-against the endpoint you will ship on. If it varies, every number in your
-evaluation needs repeats and an interval.
+against the endpoint and settings you will ship on, comparing raw output and
+label separately. If it varies, every number in your evaluation needs repeats
+and an interval.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. When should a prompt stop being a prompt?
 
-When you are maintaining a specification rather than writing a request. The
-signals: the prompt has a version history, its output is parsed by code, a
-change to it can break a downstream consumer, and you cannot safely edit it
-without running something.
+The real question is when to start managing a prompt as a versioned
+component, and the answer is: from its first version, if it affects
+production output. The signs that it has become a specification — a version
+history, output parsed by code, changes that can break a downstream consumer,
+not being able to edit it safely without running something — only make that
+more visible.
 
-At that point it is a component of your system and belongs under the same
-discipline as the rest of your code — repository, version, contract,
-regression test. @sec-decoding is where the output contract gets *enforced*
+As a component of your system it belongs under the same discipline as the rest
+of your code — repository, version, contract, regression test. If its output
+is parsed, record the format contract; if accuracy matters, the evaluation set;
+and for every change, the difference in results. @sec-decoding is where the output contract gets *enforced*
 rather than requested.
 :::
 
