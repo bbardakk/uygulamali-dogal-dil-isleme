@@ -1277,52 +1277,62 @@ those.
 
 ## What to remember {#sec-decoding-summary}
 
-- **Temperature never changes the ranking.** It rescales logits before the
-  softmax, so it controls variance, and lowering it moves the accuracy of
-  sampled output towards greedy's, reaching it in the limit. If greedy gets an item wrong, a lower temperature makes it
-  wrong more reliably.
+- **A positive temperature on its own keeps the token order.** Cutoffs applied
+  after it can change the candidate set; the accuracy of sampled output has to
+  be measured on the task. As temperature falls, sampled output approaches
+  greedy's; if greedy gets an item wrong, a lower temperature makes it wrong
+  more reliably.
 
-- **Pick the policy from how many good answers the task has.** One answer:
-  greedy or a narrow beam. Many: sample. @sec-machine-translation measured the
-  cost of getting it backwards at more than half the BLEU (30.17 → 14.34).
+- **Test the decoding policy against the task metric.** Classification may want
+  one short label, translation can have several acceptable renderings,
+  open-ended text has many good answers. In @sec-machine-translation's run,
+  sampling at temperature 1.0 took BLEU from 30.17 to 14.34; that gap is limited
+  to that model and data.
 
-- **Repetition loops are high-probability, not accidental**, which is why
-  greedy walks into them. The penalties that fix them are blunt, and they are
-  the wrong tool for structured output, where repeated keys and braces are
-  correct.
+- **Repetition loops can be high-probability on some models**, which is why
+  greedy can walk into them. Penalties do not tell necessary repetition from
+  unnecessary repetition; in structured output, where repeated keys and braces
+  are correct, they can block valid continuations too.
 
-- **On a strong model a grammar buys the last one or two percent.**
-  `qwen3.5:9b` was 98–99.3% schema-valid when merely asked, at every schema
-  difficulty tested. Enforcement took it to 100% and left accuracy alone.
+- **Constrained generation can cut format errors.** In this experiment the
+  enforced mode gave 100% schema compliance on both models and all four
+  schemas. `qwen3.5:9b` was already 98–99.3% compliant when merely asked; the
+  observed accuracy differences were ±0.7 points or zero.
 
-- **On a weak model it is the difference between working and not.**
-  `llama3.2:3b` fell to **79.3%** valid on a nested schema; with the grammar
-  it was 100% valid and accuracy rose **70.7% → 88.0%**, because a formatting
-  failure had been counted as a reasoning failure.
+- **On the weak model the gap was large.** `llama3.2:3b` stayed at **79.3%**
+  compliance on a nested schema; enforced it reached 100%, and accuracy over
+  the 150 reviews rose **70.7% → 88.0%**. Scoring invalid outputs as wrong is
+  one possible cause; how much of the gap came from format needs item-level
+  examination.
 
-- **The grammar's cost is latency and it is unpredictable** — 1.01× to **17.5×**
-  here, and not monotone in schema complexity. It was worst where the schema
-  demanded what the model did not want to produce. Measure it on your schema.
+- **Measure latency in your own setup.** In this single run the overhead ranged
+  from 1.01× to **17.5×** and did not rise steadily with schema complexity; its
+  cause and stability need repeated timing.
 
 - **A schema guarantees shape, never truth.** `{"answer": 1}` for the capital
-  of France is valid, typed and meaningless. Constrained decoding converts
-  parse failures into semantic failures, which is a good trade and not a fix.
+  of France is valid, typed and meaningless. Constrained decoding can prevent
+  parse failures while leaving content failures in place.
 
-- **Constrain tool arguments without arguing about it.** 98% is fine for
-  extraction and unacceptable when something executes: at a thousand calls a
-  day that is twenty wrong actions or stack traces.
+- **Constrain tool arguments and validate them before execution.** 98% schema
+  compliance means about twenty invalid arguments per thousand calls; refusal,
+  retry and valid-but-wrong actions are separate error types.
 
-- **Logprobs discriminate well and calibrate badly.** AUC **0.9492** against
-  the label and **0.8268** for predicting its own correctness, at **7.04%**
-  ECE — with the 0.90–0.95 bin right only 68.0% of the time and the bin nearest
-  0.5 right on **5 of 15** items, with substantial uncertainty. Rank with them;
-  do not quote them as probabilities.
+- **Use the label logprob first as a score.** On these 400 reviews the ranking
+  AUCs were **0.9492** (against the label) and **0.8268** (predicting its own
+  correctness), with a ten-bin ECE of **7.04%**; 68.0% of the 25 answers in the
+  0.90–0.95 bin were right. Do not quote them as probabilities without
+  calibration, and re-validate on other tasks and data.
 
-- **Abstention is the cheapest accuracy on kept items you will buy.** Dropping
-  the least-confident 20% took accuracy on the kept items from **86.75% to
-  92.50%** (80% coverage) with no model change; the cost of the other 20% has
-  to be measured separately. Choose the threshold on held-out data and report coverage with it.
+- **Report coverage and kept accuracy together for abstention.** On these 400
+  reviews, setting aside the least-confident 20% left **92.50%** accuracy on
+  the 320 kept (**86.75%** on all; 80% coverage). The cost of the other 20% has
+  to be measured separately; choose the threshold on a separate development
+  set.
 
-- **A usable confidence signal is designed in, not discovered.** It worked
-  here because the answer was one token from a two-token alphabet. Averaging
-  logprobs over free text measures how ordinary the phrasing was.
+- **Build and test a confidence signal through task design.** Here a
+  one-token answer from a two-token alphabet made it easy. Do not read the
+  average token logprob over free text as a probability of being right.
+
+Sampling settings cannot reliably add a fact that is not in the model's
+context; @sec-retrieval moves to the step that finds the relevant documents and
+puts them in the context before generation: retrieval.
