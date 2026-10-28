@@ -572,55 +572,68 @@ separately. Do not infer a model's quality on other tasks from this table.
 
 ## Training a dense retriever {#sec-retrieval-training}
 
-The models above were used off the shelf. When they are not good enough on
-your domain, the training recipe is short to state and has one part that
-matters far more than the rest.
+The models above were used off the shelf. To adapt one to your domain you can
+train on query–document pairs. Choosing the negative candidates is an
+important design decision, but label quality and the real query distribution
+affect the result too.
 
-A bi-encoder is trained **contrastively**: pull the embedding of a query
+Bi-encoders are often trained **contrastively**: pull the embedding of a query
 toward its relevant document and push it away from irrelevant ones. The loss
 is usually InfoNCE over a batch. It is ordinary softmax cross-entropy in
 which the "classes" are the candidate documents: score the query against the
 relevant document and against several irrelevant ones, and ask the softmax to
-put its probability on the relevant one. The whole difficulty is in the word
-*irrelevant* — which documents you use as the wrong answers.
+put its probability on the relevant one. Much of the difficulty is in the word
+*irrelevant* — which documents you use as the wrong answers; quality also
+depends on how correct the positives are, the model's starting point and the
+target query distribution.
 
-**In-batch negatives** are free: for a batch of query-document pairs, every
-other document in the batch is a negative. They cost nothing and they are
-mostly *easy* — a random document about football is not a plausible answer to
-a query about invoices, so the model learns to separate topics and stops
-there.
+**In-batch negatives** come for free: for a batch of query-document pairs, the
+other pairs' documents are used as candidate negatives. They cost nothing extra
+to collect and they are mostly *easy* — a random document about football is not
+a plausible answer to a query about invoices, so the model mostly learns to
+separate topics. But if another document in the batch is also relevant to the
+query, it becomes a false negative; check for duplicate relevant documents and
+near-equivalents.
 
 [**Hard negatives**](#gloss-hard-negative){#term-hard-negative .term-ref} are
-documents that look right and are not. Mine them by retrieving with your
-current model and taking the top-ranked wrong answers.
+documents that look close to the query and have been checked to be irrelevant.
+You can draw candidates from your current model's top ranks; but before
+treating them as negatives just because they are not the assigned target,
+check their relevance.
 
 ::: {#gloss-hard-negative .column-margin .term-gloss}
-**hard negative** — a wrong document that looks right to the current model,
-found by retrieving with it and keeping the top-ranked wrong answers. Training
-against these, rather than random documents, is most of what makes a dense
-retriever precise. [↩](#term-hard-negative){.term-back}
+**hard negative** — a document that looks right to the current model but has
+been checked to be irrelevant; candidates come from the model's top ranks.
+Training against these, rather than random documents, often contributes a lot
+to a dense retriever learning fine distinctions. [↩](#term-hard-negative){.term-back}
 :::
 
-[This is the whole game.]{.hl} A retriever trained only on random negatives
-learns topical similarity; a retriever trained on hard negatives learns the
-distinction your users actually need, which is between two documents that are
-both about invoices and only one of which answers the question.
+[The choice of negatives often has a strong effect on the result.]{.hl} A
+retriever trained only on easy negatives tends to learn mostly topical
+similarity; hard negatives can help it learn the distinction your users need,
+which is between two documents that are both about invoices and only one of
+which answers the question.
 
 Two failure modes to plan for:
 
 1. **False negatives.** Your "hard negative" may be an unlabelled relevant
    document, and training says it is wrong. On a corpus with sparse relevance
-   labels this is common enough to hurt; the usual mitigation is to skip the
-   very top of the retrieved list and mine from a little further down.
+   labels this can be common enough to hurt. A common mitigation is to skip the
+   very top of the retrieved list and mine from a little further down; but that
+   does not reliably remove false negatives and can lose the most instructive
+   negatives. Use pooled human judgements, similarity checks against the
+   positives, and a sensitivity analysis over the mining position.
 2. **Staleness.** Negatives mined with the initial model stop being hard once
    the model improves. Re-mine periodically, which is what makes this an
    iterative procedure rather than a preprocessing step.
 
-If you have no labelled pairs at all, generate them: ask an LLM to write a
-question that each document answers, and train on those. The synthetic query
-is noisy on the input side and the document is genuine on the output side —
-the same asymmetry that makes back-translation work in
-@sec-machine-translation.
+If you have no labelled pairs at all, a starting point is to ask an LLM to
+write a question that each document answers. The synthetic query is noisy on
+the input side and the document is genuine on the output side — an asymmetry
+resembling back-translation in @sec-machine-translation. But generated
+questions can be too close to their source document: check that they are really
+answerable from it, look for duplicates and for similarity to real user
+queries, and evaluate the model on an independent set of real queries.
 
 ## Reranking {#sec-retrieval-reranking}
 

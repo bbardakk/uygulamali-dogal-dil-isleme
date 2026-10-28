@@ -584,58 +584,67 @@ argüman. Bir modelin başka görevlerdeki niteliğini bu tablodan çıkarmayın
 
 ## Yoğun bir retriever'ı eğitmek {#sec-erisim-egitim}
 
-Yukarıdaki modeller hazır kullanıldı. Alanınızda yeterince iyi olmadıklarında
-başvuracağınız eğitim tarifi kısaca anlatılabilir; tarifin bir parçası da
-diğerlerinden çok daha önemlidir.
+Yukarıdaki modeller hazır kullanıldı. Alanınıza uyarlamak için sorgu–belge
+çiftleriyle eğitim yapabilirsiniz. Negatif adayların seçimi önemli bir tasarım
+kararı; ama etiket kalitesi ve gerçek sorgu dağılımı da sonucu etkiler.
 
-Bir çift kodlayıcı **karşıtsal** olarak eğitilir: sorgunun embedding'i ilgili
+Çift kodlayıcılar sıklıkla **karşıtsal** olarak eğitilir: sorgunun embedding'i ilgili
 belgesine doğru çekilir, ilgisiz belgelerden uzaklaştırılır. Kayıp genellikle
 bir batch (yığın) üzerinde hesaplanan InfoNCE'dir. Bu, "sınıfların" aday
 belgeler olduğu sıradan bir softmax çapraz entropisidir: sorgu, ilgili belgeyle
 ve birkaç ilgisiz belgeyle puanlanır ve softmax'tan olasılığı ilgili belgeye
-vermesi istenir. Bütün zorluk *ilgisiz* kelimesindedir — yanlış cevap olarak
-hangi belgeleri kullandığınızda.
+vermesi istenir. Zorluğun önemli bir kısmı *ilgisiz* kelimesinde — yanlış cevap
+olarak hangi belgeleri kullandığınızda; kalite ayrıca pozitiflerin doğruluğuna,
+modelin başlangıç noktasına ve hedef sorgu dağılımına da bağlı.
 
 **Batch içi negatifler** (in-batch negatives) kendiliğinden elde edilir:
-sorgu-belge çiftlerinden oluşan bir batch'te, batch'teki diğer her belge bir
-negatiftir. Hiçbir şeye mal olmazlar ve çoğunlukla *kolaydırlar* — futbolla
-ilgili rastgele bir belge, faturayla ilgili bir sorgunun makul bir cevabı
-olamaz. Dolayısıyla model konuları birbirinden ayırmayı öğrenir ve bunun
-ötesine geçmez.
+sorgu-belge çiftlerinden oluşan bir batch'te, diğer çiftlerin belgeleri aday
+negatif olarak kullanılır. Ek belge toplama maliyetleri yoktur ve çoğunlukla
+*kolaydırlar* — futbolla ilgili rastgele bir belge, faturayla ilgili bir sorgunun
+makul bir cevabı olamaz; model daha çok konuları birbirinden ayırmayı öğrenir.
+Ama batch'teki başka bir belge de sorguyla ilgiliyse yanlış negatif oluşabilir;
+ilgili belge tekrarlarını ve yakın eşdeğerleri denetleyin.
 
 [**Zor negatifler**](#gloss-hard-negative){#term-hard-negative .term-ref}
-(hard negatives) doğru görünen ama doğru olmayan belgelerdir. Onları bulmak
-için mevcut modelinizle erişim yapın ve en üst sıralara gelen yanlış cevapları
-seçin.
+(hard negatives) sorguyla yakın görünen ama ilgisizliği doğrulanmış
+belgelerdir. Adayları mevcut modelinizin üst sıralarından seçebilirsiniz; ama
+yalnızca atanmış hedef olmadıkları için onları otomatik olarak negatif saymadan
+önce ilgililiklerini kontrol edin.
 
 ::: {#gloss-hard-negative .column-margin .term-gloss}
-**hard negative** (zor negatif) — mevcut modele doğru görünen yanlış bir belge; modelle erişim
-yapıp en üst sıralardaki yanlış cevaplar alınarak bulunur. Rastgele belgeler
-yerine bunlara karşı eğitmek, yoğun bir retriever'ı isabetli kılan şeyin
-büyük kısmıdır. [↩](#term-hard-negative){.term-back}
+**hard negative** (zor negatif) — mevcut modele doğru görünen ama ilgisizliği
+doğrulanmış bir belge; adaylar modelin üst sıralarından seçilir. Rastgele
+belgeler yerine bunlara karşı eğitmek, yoğun bir retriever'ın ince ayrımları
+öğrenmesine çoğu zaman önemli katkı sağlar. [↩](#term-hard-negative){.term-back}
 :::
 
-[Her şey buna bağlıdır.]{.hl} Yalnızca rastgele negatiflerle eğitilmiş bir
-retriever konu benzerliğini öğrenir. Zor negatiflerle eğitilmiş bir retriever
-ise kullanıcılarınızın gerçekten ihtiyaç duyduğu ayrımı öğrenir: ikisi de
-faturayla ilgili olan ama yalnızca biri soruyu cevaplayan iki belge arasındaki
-ayrımı.
+[Negatiflerin seçimi sonucu çoğu zaman güçlü biçimde etkiler.]{.hl} Yalnızca
+kolay negatiflerle eğitilmiş bir retriever daha çok konu benzerliğini öğrenme
+eğilimindedir; zor negatifler ise kullanıcılarınızın ihtiyaç duyduğu ayrımı
+öğrenmesine yardım edebilir: ikisi de faturayla ilgili olan ama yalnızca biri
+soruyu cevaplayan iki belge arasındaki ayrımı.
 
 Önceden hesaba katmanız gereken iki kusur biçimi:
 
 1. **Yanlış negatifler.** "Zor negatifiniz" etiketlenmemiş ilgili bir belge
    olabilir; eğitim ise modele bu belgenin yanlış olduğunu öğretir. İlgililik
-   etiketleri seyrek olan bir derlemde bu durum, zarar verecek kadar yaygındır.
-   Genellikle başvurulan çözüm, erişilen listenin en tepesini atlayıp
-   negatifleri biraz daha aşağıdan seçmektir.
+   etiketleri seyrek olan bir derlemde bu durum zarar verecek kadar sık olabilir.
+   Sık başvurulan bir hafifletme, erişilen listenin en tepesini atlayıp
+   negatifleri biraz aşağıdan seçmektir; ama bu yanlış negatifleri garantiyle
+   temizlemez ve en öğretici negatifleri de kaybettirebilir. Havuzlanmış insan
+   yargısı, pozitiflerle benzerlik denetimi ve örnekleme konumuna göre bir
+   duyarlılık çözümlemesi kullanın.
 2. **Bayatlama.** İlk modelle seçilen negatifler, model iyileştikçe zor olmayı
    bırakır. Negatifleri belirli aralıklarla yeniden seçin. Bu tekrar yüzünden
    iş, bir ön işleme adımı değil yinelemeli bir yordamdır.
 
-Hiç etiketli çiftiniz yoksa bu çiftleri üretin: bir LLM'den her belgenin
-cevapladığı bir soru yazmasını isteyin ve modeli bu çiftlerle eğitin. Sentetik
-sorgu girdi tarafında gürültülüdür, belge ise çıktı tarafında gerçektir —
-@sec-makine-cevirisi'te geri çeviriyi işe yarar kılan asimetrinin aynısı.
+Hiç etiketli çiftiniz yoksa bir başlangıç olarak bir LLM'den her belgenin
+cevapladığı bir soru yazmasını isteyebilirsiniz. Sentetik sorgu girdi tarafında
+gürültülü, belge ise çıktı tarafında gerçek — @sec-makine-cevirisi'teki geri
+çeviriye benzeyen bir asimetri. Ama üretilen sorular hedef belgeye fazla
+benzeyebilir: belgeyle gerçekten cevaplanabilirliklerini, tekrarları ve gerçek
+kullanıcı sorgularına benzerliklerini denetleyin ve modeli bağımsız, gerçek bir
+sorgu kümesinde değerlendirin.
 
 ## Yeniden sıralama {#sec-erisim-yeniden-siralama}
 
