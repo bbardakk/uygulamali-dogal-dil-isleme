@@ -1341,51 +1341,59 @@ reliable decision needs a larger, completely labelled sample.
 
 ## What to remember {#sec-retrieval-summary}
 
-- **Neither retrieval family dominates, and the query type decides.** Same
-  corpus, two query conditions: stemmed BM25 **96.0%** against dense **35.9%**
-  on keyword queries; dense **96.2%** against BM25 **23.8%** cross-lingually.
-  A retrieval number without its query distribution is not interpretable.
+- **In this experiment's two conditions the best system swapped.** Same corpus,
+  two query conditions derived from the target document: stemmed BM25 **96.0%**
+  against dense **35.9%** on keyword queries; dense **96.2%** against BM25
+  **23.8%** cross-lingually. Compare BM25 and dense retrieval on your real query
+  distribution with multiple relevance judgements; a retrieval number without
+  its query distribution is not interpretable.
 
-- **Unweighted RRF is not free, and it is not always positive.** It cost
-  **32.8** and **46.8** recall@1 points against the better parent in the two
-  conditions, because rank fusion weights a rank-1 hit from a weak system like a
-  rank-1 hit from a strong one. Note the word *unweighted*: rank fusion discards
-  score magnitude, which is the only signal that separates a
-  confident-and-right system from a confident-and-wrong one. Weighted RRF does
+- **In these conditions unweighted RRF fell behind the better single model** —
+  by **32.8** and **46.8** target-hit@1 points. A plausible reason is that rank
+  fusion weights a rank-1 hit from a weak system like one from a strong
+  system; confirm the mechanism at candidate level. Note the word *unweighted*:
+  rank fusion does not use raw score magnitude; but raw scores from different
+  models are not a direct confidence measure either, and score-based fusion
+  needs suitable normalisation. Weighted RRF does
   not recover it: it still fuses ranks, and only scales each system's
   contribution by a fixed weight. Score-normalised fusion [@bruch2024fusion]
-  uses the scores themselves. Each needs one fitted parameter, and neither was
-  measured here.
+  uses the scores themselves. Each needs one parameter tuned on separate data,
+  and neither was measured here.
 
-- **The damage lands on recall@1, not recall@10.** In condition B, fusion took
-  R@10 from 99.9% to 99.6% and R@1 from 96.2% to 49.4%. Which metric you watch
-  determines whether you notice.
+- **Most of the damage is at recall@1.** In condition B, fusion lowered target
+  hit@10 by 0.3 points (99.9% → 99.6%) and @1 by 46.8 points (96.2% → 49.4%).
+  Measure top-1 and top-ten coverage together, and the effect on users
+  separately.
 
-- **Fuse comparable systems; route mixed query loads.** If one retriever
-  dominates on your queries, use it. If your users send both kinds, classify
-  the query and dispatch — and evaluate the router separately.
+- **For mixed query loads, a single model, weighted fusion and routing are all
+  candidates.** This chapter did not measure routing; evaluate a router together
+  with its own error rate and choose it only if it does better.
 
-- **A similarity model is not a retrieval model.** The two were 2.4 points
-  apart on the easy condition and **25.3** apart on the hard one. Component
-  quality only becomes visible on the inputs that are hard for that component,
-  which is an argument for keeping a difficult slice in your evaluation.
+- **The model gap is clearer in the hard condition.** The E5 and MiniLM rows
+  were 2.4 points apart on the easy condition and **25.3** on the hard one; size,
+  data and prefix use may explain it as much as the training objective. Check
+  the model ids and E5's prefixes, and report difficulty slices separately.
 
-- **Hard negatives are the whole game in dense training.** In-batch negatives
-  teach topical separation; mined hard negatives teach the distinction your
-  users need. Re-mine as the model improves, and mine slightly below the top
-  of the list to avoid training against unlabelled relevant documents.
+- **Hard negatives can help dense training.** In-batch negatives mostly teach
+  topical separation; hard negatives checked to be irrelevant help the model
+  learn the distinction your users need. Re-mine as the model improves; verify
+  candidates so unlabelled relevant documents do not become false negatives —
+  skipping the top of the list is not a guarantee. Watch positive-label quality
+  and the real query distribution too.
 
-- **Retrieve broadly, rerank precisely.** A cross-encoder is usually more accurate and
-  cannot be precomputed, so it reorders a shortlist. It can only reorder what
-  stage one returned — **the first stage sets a ceiling the second cannot
-  raise**.
+- **Retrieve broadly, rerank precisely.** Under similar conditions a
+  cross-encoder is often more accurate, but its score cannot be precomputed, so
+  it usually reorders a shortlist. It can only reorder what stage one returned —
+  **a reranker cannot surface a document the first stage did not return**.
 
-- **Report recall@k for the k you actually pass downstream.** It bounds what
-  any RAG system can ground: a generator cannot ground an answer in a document
-  it never received. With one relevant document per question, 80% recall@10
-  means 20% of questions cannot be grounded in retrieved evidence before
-  generation starts (the model may still answer some from memory, ungrounded).
+- **Report the coverage of evidence that actually reaches the generator.** Under
+  the assumption of a single, required, completely labelled piece of evidence,
+  that coverage is an upper bound on evidence-grounded answers: a generator
+  cannot ground an answer in a document it never received (the model may still
+  answer some from memory, ungrounded). Otherwise measure end-to-end answer
+  quality separately.
 
-- **Keep the vectors where the data is until scale forces otherwise.** Under
-  100k documents, exhaustive search is exact and instant. What eventually
-  forces a dedicated store is filtered search at scale, not raw volume.
+- **Choose the store by requirements more than by document count.** Look at
+  latency, memory, updates, filtering and access control; measure your existing
+  PostgreSQL, in-process FAISS and a separate store under a representative load.
+  On small corpora exhaustive search is exact and often fast enough.
