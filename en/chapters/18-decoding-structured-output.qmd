@@ -195,12 +195,17 @@ applied system from here on.
 
 Three more policies complete the picture.
 
-**Greedy** takes the argmax at every step. It is temperature 0 in the limit,
-and it is the right default whenever there is one correct answer. (APIs treat
+**Greedy** takes the argmax at every step. It is temperature 0 in the limit. It
+is a useful starting point for tasks that want one short label or a strict
+format, but it does not guarantee that the most probable continuation is
+correct; compare its accuracy with other policies on the same evaluation
+set. (APIs treat
 "temperature 0" as a request for greedy decoding, since dividing by zero is
 undefined. Even then a hosted API may not return the same string every time:
 batching and floating-point rounding on the GPU can change a near-tie between
-two tokens, and after one different token the rest of the text differs too.)
+two tokens, and after one different token the rest of the text differs too.
+A fixed seed does not fix this by itself either: it pins the sampler's random
+draws, not the batch composition, the hardware or the library version.)
 
 **Beam search** keeps the *k* best partial sequences (*k* is the *beam
 width*) and extends all of them, so it searches for a high-probability *whole
@@ -211,9 +216,12 @@ search with a limited width, so it can miss the single most probable sequence.
 findings are worth carrying here. The gains die quickly — beam 1 to 2 bought
 +0.61 BLEU, and beam 2 to 64 bought +0.57 more for seven times the compute.
 And the widely repeated warning that wider beams make the output *worse* (the
-"curse of beam search") did not appear at all, most likely because the decoder
-normalised by length during the search. Length normalisation divides a beam's
-log-probability by its length; without it, every extra token adds another
+"curse of beam search") did not appear in this run; the decoder normalising by
+length during the search is one possible reason, but that was not checked
+separately. A wider search can raise the chance of finding the most probable
+sequence without necessarily improving the task metric. In its simplest form,
+length normalisation divides a beam's log-probability by its length
+(implementations use other penalties too); without it, every extra token adds another
 negative log-probability, so the search prefers outputs that are too short.
 
 **Min-p** [@nguyen2024minp] is the newer cutoff. Where top-p keeps a fixed
@@ -228,18 +236,22 @@ That makes the cutoff adapt to the shape of the distribution rather than to a
 constant. Typical values of $m$ are 0.05–0.1: with $m = 0.1$ and a top token
 at 0.6, every token below 0.06 is cut.
 
-When the model is confident — one token at 0.9 — min-p keeps almost nothing,
-which is what you want. When it is genuinely uncertain across twenty plausible
+When the model is confident — one token at 0.9, with $m = 0.1$ — the threshold
+is 0.09, and the remaining 0.1 of mass can hold at most one more token above
+it, so min-p keeps at most one candidate besides the top. In general how many
+survive depends not only on the top probability but on how the rest of the
+mass is spread. When it is genuinely uncertain across twenty plausible
 continuations, min-p keeps them all, where top-p 0.9 would cut the last few by
 cumulative mass alone, however plausible they are.
 
 ::: {.column-margin}
-The general rule underneath all of them: [the policy should depend on how many
-good answers the task has]{.hl}. Extraction, classification and translation
-have one, so greedy or a narrow beam. Drafting, brainstorming and dialogue
-have many, so sample. @sec-machine-translation measured the cost of getting
-this backwards — a chat-default temperature of 1.0 took a translation model
-from 30.17 BLEU to 14.34.
+The general rule underneath all of them: [choose the policy by the task metric
+and the variety of acceptable outputs]{.hl}. Classification and extraction can
+expect one label or value; translation often has more than one good rendering;
+drafting, brainstorming and dialogue have many good answers, so sampling fits
+better. In @sec-machine-translation's run, sampling at the chat-default
+temperature of 1.0 took BLEU from 30.17 to 14.34; that result is limited to
+that model and dataset.
 :::
 
 **What we will look at.** First why greedy decoding walks into repetition
