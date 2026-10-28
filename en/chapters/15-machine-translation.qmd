@@ -995,16 +995,16 @@ is an error-propagation question rather than a modelling one.
 
 | approach | what happens | where errors accumulate |
 |:--|:--|:--|
-| **[Translate-train](#gloss-translate-train){#term-translate-train .term-ref}** | translate the English training data into Turkish once, train a Turkish model | translation noise is baked into training, but the model sees it consistently and can partly learn around it |
-| **[Translate-test](#gloss-translate-test){#term-translate-test .term-ref}** | keep the English model, translate every incoming Turkish input at inference | a translation error at request time is a wrong prediction, every time, with no chance to recover |
-| **Neither** | a multilingual model applied directly (@sec-pretraining) | no translation error at all; whatever the multilingual model gives up on Turkish |
+| **[Translate-train](#gloss-translate-train){#term-translate-train .term-ref}** | translate the English training data into Turkish once, train a Turkish model | the model learns from translated examples; the effect of the noise depends on the task and data |
+| **[Translate-test](#gloss-translate-test){#term-translate-test .term-ref}** | keep the English model, translate every incoming Turkish input at inference | a translation step is added to every input; some translation errors affect the task, some do not |
+| **Neither** | a multilingual model applied directly (@sec-pretraining) | no translation step; but the multilingual model has its own Turkish error profile |
 
 : Three pipelines, three failure profiles {tbl-colwidths="[22,40,38]"}
 
 ::: {#gloss-translate-train .column-margin .term-gloss}
 **translate-train** — machine-translate the labelled training data into the
 target language, then train there. The translation cost is paid once, offline,
-and the noise it introduces is at least consistent.
+as long as the training data does not change.
 [↩](#term-translate-train){.term-back}
 :::
 
@@ -1015,27 +1015,32 @@ prediction now depends on a translation you did not check.
 [↩](#term-translate-test){.term-back}
 :::
 
-The arithmetic that decides it: **translate-test pays the translation cost per
-request, forever, and inherits the translation's error rate on every
-prediction.** Translate-train pays once. If your system is a chatbot handling
-a thousand requests a second, that is not a close call.
+The cost arithmetic: **translate-test pays the translation cost per request**
+(repeated inputs can be cached and batched) **and is exposed to the
+translation's error rate on every prediction.** Translate-train pays once, as
+long as the training data does not change. A thousand requests a second can
+make translate-train attractive, but does not on its own prove it better:
+compare expected traffic, repeated inputs, caching, how often the training data
+is updated, the unit cost of translation and task performance together.
 
 Two more considerations that decide it in practice:
 
 1. **Which direction is your MT better in?** They are not symmetric. Measure
    both before assuming.
-2. **What is the task?** Translate-test destroys anything that depends on
-   surface form — @sec-sequence-labeling's span offsets do not survive
-   translation, so extraction can use it only with an extra step that maps
-   the predicted spans back to the original text through a word alignment,
-   and that step adds its own errors. Document classification survives it
-   comparatively well.
+2. **What is the task?** Translate-test makes surface-form tasks harder —
+   @sec-sequence-labeling's span offsets are not preserved by translation, so
+   extraction needs an extra step that maps the predicted spans back to the
+   original Turkish offsets through a word alignment, and that step adds its own
+   errors. A direct Turkish model can skip it. Document classification survives
+   it comparatively well.
 
 @sec-turkish-nlp measures the third row for Turkish — a multilingual model
 against a monolingual Turkish one on the same task — and finds no general
 verdict, only a protocol. Translate-train and translate-test are not measured
 in this book; this chapter's contribution is the mechanics and the arithmetic,
-and exercise 7 is where you measure translate-test for your own task (for
+and the guidance above is not a measurement. Compare the three pipelines on the
+same independent Turkish test set, labelling translation errors and model errors
+separately; exercise 7 is where you measure translate-test for your own task (for
 translate-train, translate the same task's training data, train on it, and
 compare on the same Turkish test set).
 
