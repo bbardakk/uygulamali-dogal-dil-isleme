@@ -765,18 +765,22 @@ Three consequences worth internalising:
   and implementation. Measure the storage and quality difference on the version
   you choose and on your own corpus.
 
-## Approximate nearest neighbour, and the dial nobody sets on purpose {#sec-retrieval-ann}
+## Approximate nearest neighbour: choosing the speed–quality dial {#sec-retrieval-ann}
 
-Exhaustive search over a few thousand vectors is a matrix multiply and takes
-no time at all — the dense numbers above were computed that way. At millions
-of vectors it stops being free, and you move to an approximate index.
+Exhaustive search over a few thousand vectors is a matrix multiply and is fast
+enough on most setups — the dense numbers above were computed that way. For
+larger corpora, decide between exhaustive search and an approximate index by
+measuring memory, latency and query volume; even at millions of vectors,
+exhaustive search on a GPU or in batches can sometimes be enough.
 
 "Approximate" means the index may miss some of the true nearest neighbours in
 exchange for speed. Two families dominate in practice:
 
 **HNSW** [@malkov2018hnsw] builds a navigable graph and walks it greedily from
-a coarse layer down to a fine one. Fast and accurate, memory-hungry — the
-graph plus the full vectors sit in RAM.
+a coarse layer down to a fine one. It is fast and can reach a high neighbour
+recall; memory use depends on the implementation: Faiss's `HNSWFlat`, for
+example, keeps the full vectors and the graph links in RAM, while quantised
+HNSW variants trade memory and accuracy differently.
 
 **IVF-PQ** [@johnson2019billion] partitions the space into cells (an inverted
 file, IVF: k-means clusters, each with a list of the vectors inside it),
@@ -784,8 +788,10 @@ searches only the nearest few cells, and stores *compressed* vectors via
 product quantisation (PQ). PQ cuts each vector into short pieces and replaces
 every piece by the index of its nearest entry in a small learned codebook. A
 768-dimensional float32 vector takes 3,072 bytes; cut into 96 pieces with 256
-codebook entries each, it takes 96 bytes, one per piece — 32 times smaller.
-The compression is lossy in a way that costs accuracy.
+codebook entries each, it takes 96 bytes, one per piece — 32 times smaller for
+the vector code alone. The index's total memory or disk use also includes
+document ids, the inverted lists, the codebooks and any reranking data. The
+compression is lossy in a way that costs accuracy.
 
 Both expose a knob — `efSearch` for HNSW (how many candidates the graph walk
 keeps), `nprobe` for IVF (how many cells it searches) — that trades recall
@@ -793,13 +799,20 @@ against latency. [The thing to remember is that the default is somebody
 else's operating point]{.hl}, chosen for a benchmark that is not your corpus.
 
 The discipline is the same one @sec-classification applied to a decision
-threshold: sweep it, plot recall against p95 latency (the latency that 95% of
-queries stay under), state your latency SLO (the service-level objective, the
-latency target you have committed to), and pick the point that meets it.
+threshold: first state a quantitative service-level objective (SLO), such as
+"at least 95% of search queries complete within 200 ms"; then sweep the knob
+under a representative load, plot neighbour recall against p95 latency (the
+latency that 95% of queries stay under), and pick the point that meets the
+objective. A single p95 does not show the worst of the tail or changes in
+load.
 
 And measure recall against **exhaustive search on your own data**, not against
 the library's published curve — the loss depends on how your vectors are
-distributed, which is a property of your corpus and your embedding model.
+distributed, which is a property of your corpus and your embedding model. That
+measurement gives how many of exhaustive search's top-*k* neighbours the ANN
+index finds (neighbour recall); the end-to-end relevance metric on labelled
+queries is a separate number — the first shows index loss, the second the
+pipeline's effect on users.
 
 ::: {.column-margin}
 There is a trap in evaluating an ANN index against the *labels* rather than

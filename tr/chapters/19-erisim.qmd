@@ -782,18 +782,22 @@ Buradan üç sonuç çıkıyor:
   token sayısına, vektör boyutuna, sıkıştırmaya ve uygulamaya bağlıdır.
   Depolama ve kalite farkını seçtiğiniz sürümde ve kendi derleminizde ölçün.
 
-## Yaklaşık en yakın komşu ve kimsenin bilerek seçmediği ayar {#sec-erisim-ann}
+## Yaklaşık en yakın komşu: hız ve kalite ayarını seçmek {#sec-erisim-ann}
 
-Birkaç bin vektör üzerinde tam arama bir matris çarpımıdır ve hiç zaman almaz —
-yukarıdaki yoğun erişim sayıları böyle hesaplandı. Milyonlarca vektörde bu
-arama artık maliyetsiz olmaz ve yaklaşık bir indekse geçersiniz.
+Birkaç bin vektör üzerinde tam arama bir matris çarpımıdır ve çoğu kurulumda
+yeterince hızlıdır — yukarıdaki yoğun erişim sayıları böyle hesaplandı. Daha
+büyük derlemlerde tam arama ile yaklaşık bir indeks arasında bellek, gecikme ve
+sorgu hacmini ölçerek karar verin; milyonlarca vektörde de GPU ya da toplu
+aramayla tam arama bazen yeterli olabilir.
 
 "Yaklaşık", indeksin hız karşılığında gerçek en yakın komşuların bir kısmını
 kaçırabileceği anlamına gelir. Pratikte iki aile öne çıkıyor:
 
 **HNSW** [@malkov2018hnsw] gezilebilir bir çizge kurar ve bu çizgede kaba bir
-katmandan ince bir katmana doğru açgözlü biçimde ilerler. Hızlı ve doğrudur ama
-çok bellek ister: çizge ve vektörlerin tam hâli RAM'de tutulur.
+katmandan ince bir katmana doğru açgözlü biçimde ilerler. Hızlıdır ve yüksek komşu
+yakalama oranına ulaşabilir; bellek kullanımı uygulamaya bağlıdır: örneğin
+Faiss'in `HNSWFlat`'ı tam vektörleri ve çizge bağlantılarını RAM'de tutar,
+nicemlenmiş HNSW varyantlarında bellek ve doğruluk farklıdır.
 
 **IVF-PQ** [@johnson2019billion] uzayı hücrelere böler (ters dosya, IVF:
 k-means kümeleri ve her kümenin içindeki vektörlerin listesi), yalnızca en
@@ -803,7 +807,9 @@ nicemleme) ile
 parçanın yerine, küçük ve öğrenilmiş bir kod kitabındaki en yakın girdinin
 numarasını yazar. 768 boyutlu bir float32 vektör 3.072 bayt tutar; 256
 girdilik kod kitaplarıyla 96 parçaya bölündüğünde parça başına bir bayt, yani
-96 bayt tutar — 32 kat daha küçük. Sıkıştırma kayıplıdır ve bu kayıp
+96 bayt tutar — yalnızca vektör kodunda 32 kat daha küçük. İndeksin toplam
+bellek ya da disk kullanımı belge kimliklerini, ters listeleri, kod kitaplarını
+ve varsa yeniden sıralama verisini de içerir. Sıkıştırma kayıplıdır ve bu kayıp
 doğruluktan götürür.
 
 İkisi de recall ile gecikme arasındaki dengeyi ayarlayan bir düğme sunar: HNSW
@@ -813,13 +819,20 @@ başka birinin çalışma noktasıdır]{.hl} ve sizin derleminiz olmayan bir
 benchmark için seçilmiştir.
 
 Burada da @sec-siniflandirma'nin karar eşiğine uyguladığı disiplin geçerlidir:
-düğmeyi tarayın, recall'u p95 gecikmeye (sorguların %95'inin altında kaldığı
-gecikme) göre çizin, gecikme SLO'nuzu (hizmet düzeyi hedefi, yani taahhüt
-ettiğiniz gecikme sınırı) belirtin ve bu SLO'yu karşılayan noktayı seçin.
+önce örneğin "arama sorgularının en az %95'i 200 ms içinde tamamlanacak"
+biçiminde nicel bir hizmet düzeyi hedefi (SLO) belirleyin; sonra düğmeyi
+temsilî bir yük altında tarayın, komşu yakalama oranını p95 gecikmeye
+(sorguların %95'inin altında kaldığı gecikme) göre çizin ve hedefi karşılayan
+noktayı seçin. Tek bir p95, kuyruğun en kötü ucunu ya da yük değişimini
+göstermez.
 
 Recall'u da kütüphanenin yayımladığı eğriye göre değil, **kendi verinizde tam
 aramaya göre** ölçün. Kayıp, vektörlerinizin nasıl dağıldığına bağlıdır; bu
-dağılım da derleminizin ve embedding modelinizin bir özelliğidir.
+dağılım da derleminizin ve embedding modelinizin bir özelliğidir. Bu ölçüm,
+ANN'in tam aramanın ilk *k* komşusundan kaçını yakaladığını verir (komşu
+yakalama oranı); etiketli sorgulardaki uçtan uca ilgililik ölçütü ise ayrı bir
+sayıdır — ilki indeks kaybını, ikincisi arama hattının kullanıcıya etkisini
+gösterir.
 
 ::: {.column-margin}
 Bir ANN indeksini tam aramayla değil de *etiketlerle* karşılaştırarak
