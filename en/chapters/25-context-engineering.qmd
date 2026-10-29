@@ -629,34 +629,41 @@ tells you how to check on your own system.
 ::: {.callout-note collapse="true"}
 ## 1. Your model has a 200K window. Can you stop thinking about context?
 
-No, for two separate reasons that are easy to conflate. The **cost** reason is
-close to unconditional: every token is re-sent on every model call, so a
-context you did not curate is a bill you pay forever — @sec-rag measured 148×
-the input for identical accuracy. Prompt caching discounts the part of the
-prefix that does not change, which is why the part that *does* change is where
-the money is. The **capability** reason is conditional but real: a
-window is a capacity, not a competence, and @hsieh2024ruler found that of 17
-models claiming 32K or more, only half held up at 32K.
+No, for two separate reasons that are easy to conflate. A 200K capacity
+guarantees neither quality nor cost on its own. The **cost** reason is the
+stronger one: in a loop that re-sends the whole history on every model call, a
+context you did not curate is billed again on every call — in @sec-rag's easy
+needle test, eighty documents meant 148× the input tokens of one, for accuracy
+that was 100% in both conditions. Caching, trimming and history management
+change the real bill: prompt caching discounts the part of the prefix that
+does not change, which is why the part that *does* change is where the money
+is. The **capability** reason is conditional but real: a window is a capacity,
+not a competence, and @hsieh2024ruler found that of 17 models claiming 32K or
+more, only half held up at 32K by its own threshold.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. You ran needle-in-a-haystack and scored 100%. What have you learned?
 
-Almost nothing about your task. NIAH lets the model match a rare string that
-is already in the question, which is the easiest thing attention does —
+That the model can find a rare key at those lengths — and very little about
+your task. NIAH lets the model match a rare string that is already in the
+question, which is probably among the easiest things attention does —
 @sec-rag's run returned a flat 100% at every size and position, and this
 chapter's harder local version stayed between 88.3% and 100% with no trend in
 context length.
 @modarressi2025nolima removed exactly that crutch and **11 of 13 models fell
 below half their short-context baseline at 32K**; even GPT-4o, one of the
-exceptions, went from 99.3% to 69.7%. Test with paraphrases, not literal matches.
+exceptions, went from 99.3% to 69.7%. Semantic association and combining
+several pieces of evidence need their own tests: add paraphrased and
+multi-fact questions alongside the literal one.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. What is the first thing to do when an agent costs too much?
 
-Count, by category — system prompt, tool definitions, retrieved documents,
-tool results, history. Not because counting is virtuous but because the
+Measure, by category — system prompt, tool definitions, retrieved documents,
+tool results, history — in tokens, in billed cost and in latency. Not because
+measuring is virtuous but because the
 largest category is routinely not the one people assume. The fixed costs
 (system prompt, tool definitions) are multiplied by every step in the loop, so
 their token count is larger than it looks — but a cached prefix bills those
@@ -668,34 +675,39 @@ alone.
 ## 4. When should a sub-task get its own context?
 
 When its inputs are large and its output is small: searching, scanning,
-filtering, verifying. The saving is not the tokens the sub-task read, it is
-those tokens multiplied by every remaining model call in the parent's loop —
-minus what the sub-agent itself costs.
+filtering, verifying. The gross saving is not the tokens the sub-task read, it
+is those tokens multiplied by the model calls remaining in the parent's loop;
+the net saving is what is left after the sub-agent's own calls and caching.
+Check it with a pilot.
 Do not isolate when the parent will need the detail — you pay a round trip and
-then ask for it again. And return a pointer alongside the summary, because the
-parent has otherwise lost the evidence and cannot notice a wrong conclusion.
+then ask for it again. And return, alongside the summary, a pointer the parent
+is authorised to re-read, because the parent has otherwise lost the evidence
+and cannot notice a wrong conclusion.
 :::
 
 ::: {.callout-note collapse="true"}
-## 5. What must never be summarised?
+## 5. What should you not leave to the summariser?
 
-Numbers, identifiers, and anything the final answer has to contain. A
-summariser will turn *the budget is 4,318 lira* into *the budget was
-discussed* without any signal that it did. Keep a structured facts list beside
-the prose and exempt it from compaction by rule. Also worth protecting: the
-original task, restated at the end of the context rather than left to drift
-into the middle.
+The numbers, identifiers, dates and sources the final answer needs. A
+summariser can turn *the budget is 4,318 lira* into *the budget was
+discussed* without any signal that it did. Keep them in a structured facts
+record, validated against the source, and exempt it from compaction by rule.
+Also worth protecting: the original task. Restating it at the end of the
+context may help keep it from drifting into the middle.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. Your agent works on your demo data and fails on the real database. Why?
 
 Often because the real data has structure and the pipeline treats it as text.
-A table row means nothing without its header; a function means nothing without
-its callers; *which customers churned after the March incident* is a join
-rather than a search. Chunking does not repair any of those. Give the agent a
-way to query the structure — `run_sql` over a real schema, `grep` plus `read`
-over a repository — instead of embedding rows and hoping.
+A table row means little without its header; a function is often hard to
+understand without its callers; *which customers churned after the March
+incident* is a join rather than a search. Tuning the chunking does not repair
+those on its own; for tables, structure-aware parsing that keeps the
+row–column link can be an option. Give the agent a way to query the structure
+— a read-only, permission-scoped query tool over a real schema, `grep` plus
+`read` over a repository — instead of embedding rows and hoping, and measure
+which path works on real questions.
 :::
 
 ## Interview questions {#sec-context-engineering-interview}
