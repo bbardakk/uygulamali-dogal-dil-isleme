@@ -991,79 +991,91 @@ answer says so.
 ::: {.callout-note collapse="true"}
 ## 1. Context windows keep growing. Is RAG a temporary workaround?
 
-No — and this chapter measured how large the cost is, which is the part usually
-asserted rather than shown: answering from 80 documents instead of the 1 that
-mattered cost **148× the input tokens for identical accuracy**. The permanent
-reasons are different again: **the model is frozen and your documents are
-not** — a retrieval step is how new, private or changing information reaches a
-model that finished training before it existed, and most real corpora are far
-larger than any context window anyway. Access control is the other permanent
-reason: a prompt cannot enforce who may read which document, and an index with
-per-document permission filters can. Long context and
-retrieval are complements, not competitors — a bigger window changes how many
-chunks you can afford to pass, not whether you needed to choose them.
+No — and this chapter measured one cost item: on this needle test, answering
+from 80 documents instead of the 1 that mattered used **about 148× the input
+tokens for the same accuracy**. That is a token ratio; price and latency have
+to be measured separately. The permanent reasons are different again: **the
+model is frozen and your documents are not** — a retrieval step is how new,
+private or changing information reaches a model that finished training before
+it existed, and most real corpora are far larger than any context window
+anyway. Access control is the other reason: a prompt cannot enforce who may
+read which document, while retrieval gives you a point at which to select
+current, permitted content — which still has to be implemented with correct
+index updates and query-time permission checks. Long context and retrieval
+are complements, not competitors — a bigger window changes how many chunks you
+can afford to pass, not whether you needed to choose them.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. What chunk size should you use?
 
-The honest answer is that it depends on the granularity of your questions,
-and this chapter measured how much: on the same corpus, 400-word chunks led
-on article-level questions at **72.5%** recall@1 and came *last* on fact-level
-questions at **93.8%**, while 50-word chunks did the reverse. If you need a
-default before you have measured, pack whole sentences to roughly 100–200
-words. If your questions are genuinely of both kinds, consider indexing twice
-rather than compromising once — and measure whether the compromise actually
-costs you anything, because on this corpus it cost about a point.
+It may depend on the granularity of your questions, and this chapter measured
+how much the ranking moved in two synthetic query conditions: on the same
+corpus, 400-word chunks led on article-level queries at **72.5%** source-article
+hit@1 and came *last* on fact-level queries at **93.8%**, while 50-word chunks
+did the reverse. Condition B only measures finding any chunk of the source
+article, not the needed sentence. If you need a starting point before you have
+measured, pack whole sentences to roughly 100–200 words and re-evaluate size
+on your real questions by whether the supporting passage is found. If your
+questions are genuinely of both kinds, consider indexing twice rather than
+compromising once — and measure whether the compromise actually costs you
+anything; on this corpus the gap was about a point.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. Should you add overlap between chunks?
 
-Only if your questions are fact-shaped. Measured here, a 25-word overlap on
-100-word chunks moved fact-level recall@1 from 95.5% to **97.5%** and moved
-article-level recall@1 *down* from 66.5% to 65.8% — while adding 29% more
-chunks to the index. It is a repair for facts that straddle a boundary, not a
-general safety margin. And chunking on sentence boundaries matched overlapping
-fixed windows (97.8% against 97.5%, one query apart) with a 9% smaller index.
+Decide by measuring. Here, a 25-word overlap on 100-word chunks moved
+source-article hit@1 on fact-level queries from 95.5% to **97.5%** and on
+article-level queries from 66.5% to 65.8% — while adding 29% more chunks to the
+index. The query-level reliability of those differences and overlap's effect
+on real fact evidence were not measured; treat overlap as a repair to test for
+facts that straddle a boundary, not a general safety margin. Chunking on
+sentence boundaries also reached the level of overlapping fixed windows
+(97.8% against 97.5%, one query apart) with a 9% smaller index.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Your RAG system gives a wrong answer. What do you do first?
 
-Attribute it, before tuning anything. Check whether the supporting chunk was
-retrieved at all: if not, it is a **retrieval miss** and the prompt is
-irrelevant. If it was retrieved and the answer contradicts it, that is a
-**grounding miss**. If everything needed was present and the conclusion is
-still wrong, that is a **synthesis miss**. Three causes, three different
-fixes, one symptom — and the default reflex, swapping the embedding model,
-addresses only the first.
+Attribute it, before tuning anything. First check whether the text passed to
+the generator holds evidence supporting the expected answer — the wrong chunk
+of the right article may have arrived, and another document may carry the
+evidence. If not, inspect retrieval, chunking and parsing (a **retrieval
+miss**); the prompt is irrelevant. If it does and the generated claims are not
+supported by it, that is a **grounding miss**. If the claims are supported and
+the conclusion is still wrong, assess the source, the label and a
+**synthesis** error separately. One symptom, different fixes — and the default
+reflex, swapping the embedding model, can only help with the first.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Is more retrieved context always safer?
 
 No — but this is one of the answers the chapter did not measure for itself.
-Irrelevant context can actively degrade answers [@shi2023large], so *k* is a
-real trade rather than a "more is safer" dial: raising it improves recall and
-imports noise, and past some point the second effect can win. That evidence
-comes from reasoning problems; this chapter's own needle test put 79
-irrelevant documents around the answer at no cost, so measure the penalty on
-your task before you assume it. There is a second
-reason to keep *k* honest — every chunk you pass is paid for on every request,
-so a *k* chosen by superstition is a permanent line item.
+With a fixed ranking, taking more chunks does not reduce the coverage of
+reachable candidates; but the length, order and noise of the context passed to
+the generator can change answer quality. Irrelevant context can degrade answers
+on some tasks [@shi2023large]; that evidence comes mostly from reasoning
+problems (in RAG-style question answering, @liu2024lost shows accuracy
+saturating early as more documents are retrieved). On this chapter's simple
+needle test, putting 79 extra documents around the answer brought no drop. So
+choose *k* by measuring evidence coverage, answer accuracy and cost on your own
+task: every chunk you pass is processed on every request, so a *k* chosen by
+superstition is a permanent line item.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. Your system never says "I don't know". Is that a prompting problem?
 
-Usually it is a *design* problem: the system has no legal way to abstain, so
-it answers from parametric memory, fluently and without warning. Give it an
-explicit refusal output, make it cheap to produce, and then — the step nobody
-takes — **test it on questions you know the corpus cannot answer**. Until you
-have run that test you do not know whether you built a system that abstains or
-one that has simply never been given the option. @sec-decoding has the
-machinery for making the abstention a real, thresholded decision.
+Often it is a *design* problem: if the system has no legal way to abstain, it
+usually answers from parametric memory, fluently and without warning. Define an
+explicit refusal output, make it cheap to produce, and then measure both the
+unnecessary-refusal rate and the ungrounded-answer rate **on questions with and
+without an answer**. Refusal behaviour depends on the prompt, the model and the
+decision threshold; an explicit option alone is not enough, and systems without
+one sometimes abstain too. @sec-decoding has the machinery for making the
+abstention a real, thresholded decision.
 :::
 
 ## Interview questions {#sec-rag-interview}
