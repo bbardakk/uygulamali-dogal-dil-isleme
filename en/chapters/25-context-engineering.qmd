@@ -584,25 +584,35 @@ pipeline still fails.
 
 @sec-rag's machinery — chunk, embed, retrieve — assumes the information is
 *text with local meaning*: a passage that means roughly the same thing on its
-own as it did in the document. Three common cases break that assumption
-outright, and no amount of chunking repairs them:
+own as it did in the document. Three common cases break that assumption, and
+tuning the chunking alone does not repair them:
 
 - **Tables and schemas.** A row is meaningless without its header, and a
   column name is meaningless without the table's purpose. @sec-rag measured
-  what chunking does to structure; the fix here is not better chunking but
-  serialising each row into a self-contained sentence, or not retrieving at
-  all and letting the agent query the table.
+  what chunking does to structure. The options: structure-aware chunking that
+  keeps the row–column link (the header travels with each row), serialising
+  each row into a self-contained sentence, or not retrieving at all and
+  letting the agent query the table; test which one works on the task.
 - **Code.** A function's meaning depends on its callers, its types and the
   module's conventions — all of which live elsewhere in the repository.
-  Retrieving the function body alone retrieves the least useful part.
+  For some questions the function body is the evidence, but it is often not
+  enough on its own; fetch the body, the types and the callers as the
+  question requires.
 - **Anything relational.** *Which customers churned after the March incident*
-  is a join, not a search. Embedding rows and hoping is the expensive way to
-  get a worse answer than a query would have given.
+  is a join, not a search. Embedding rows and hoping the right ones come back
+  is usually the expensive way to get a worse answer than a query would have
+  given.
 
 The rule: **when the data has structure, give the agent a way to query the
 structure.** For the query shapes above — aggregates, joins, follow the callers
-of this function — a `run_sql` tool over a real schema beats embedding rows,
-and a `grep`-and-`read` pair beats embedding a codebase. It is a claim about
+of this function — a query tool over a real schema usually beats embedding
+rows. But it should not be a `run_sql` that sends the model's free-form SQL
+straight to the database: that opens the door to unauthorised data access and
+runaway queries (@sec-agent-security is about that risk). Offer a read-only,
+parameterised query interface scoped to the user's permissions, with row and
+time limits. In a codebase, likewise, compare lexical search (a
+`grep`-and-`read` pair) with structured symbol and call-graph access on the
+task. It is a claim about
 those query shapes, not a general ranking: a question like *where do we handle
 retries* has no exact string to grep for, and that is what embedding search is
 good at. Most real systems want both. That is a
