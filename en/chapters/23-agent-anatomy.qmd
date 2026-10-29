@@ -627,19 +627,23 @@ numbers and a quadratic cost curve. That experiment is worth running before
 trusting any of these figures on a task shaped differently.
 :::
 
-### The structured API is not a convenience
+### Structured API against a text protocol {#the-structured-api-is-not-a-convenience}
 
-Both loops in that table ran the same model over the same tasks; only the
-protocol differed. So the second block is a clean answer to a question that
-usually gets settled by taste: does the provider's tool-calling API buy you
+Both loops in that table ran the same model over the same tasks; what differed
+was the whole protocol: the provider's tool API against an `ARA/CEVAP` text
+format with no Thought step. The difference includes the prompt, the parser
+and the multi-call option as much as the API's typed fields, so the result is
+not the causal effect of the transport alone. It still gives data on a question
+that usually gets settled by taste: does the provider's tool-calling API buy you
 anything a well-written prompt could not?
 
 The text protocol is deliberately the shape @yao2023react introduced. In
 ReAct ("reason + act") the model writes, in plain text, a *Thought* (a short
 piece of reasoning), then an *Action* (a tool name and its arguments); a
 parser extracts the action, the runtime runs it, and the result comes back as
-an *Observation* line, after which the cycle repeats. In 2022 there was no
-alternative — no provider exposed a typed tool schema — and the contribution
+an *Observation* line, after which the cycle repeats. When ReAct appeared
+(2022), the common providers did not yet expose typed tool schemas, and the
+contribution
 was showing that interleaving reasoning with acting beat acting without
 reasoning, and that combining it with chain-of-thought gave the best
 question-answering results. So what follows is not "ReAct is bad". It
@@ -652,7 +656,11 @@ accuracy points — while using about a third of the model calls on average
 (between a fifth and two-fifths, depending on the step count). But only the
 first of those gaps survives a test on 25 tasks: 25/25 against 10/25 is Fisher
 exact p = 3 × 10⁻⁶, while the 8-point gap at four lookups is 17 correct
-against 15 (p = 0.77) and means nothing. The text protocol's own curve — 40,
+against 15 (p = 0.77) and cannot be told apart. These Fisher values treat the
+two protocols as independent samples; if the same 25 tasks went through both,
+the right test comes from a paired table, and the five *k* levels form a
+multiple-testing family. With item-level results unpublished, read the gaps
+descriptively for now. The text protocol's own curve — 40,
 76, 52, 60, 28 — is not even monotone. It does vary more than chance alone
 would explain (a χ² test across the five cells gives p ≈ 0.009), but not as a
 steady decay: its low points are one lookup, where most runs never stopped,
@@ -674,27 +682,31 @@ SORU: BRS-26 projesinin bütçesi kaçtır?
   ...  repeats until the step cap
 ```
 
-It got the answer at step 0 and never stopped. **Sixty percent of the
+It got the answer at step 0 and did not stop; this single transcript is an
+example of a termination failure, not the cause of every run. **Sixty percent of the
 one-lookup tasks hit the step cap** — the easiest condition had the worst
 termination behaviour, and it made **10.7 tool calls for a task needing one**.
 
 Read that against the accuracy column and an identity falls out. At one and
 two lookups the text protocol's accuracy is exactly 100% minus its cap rate:
-40 + 60, and 76 + 24. *Every run that managed to stop was correct.* The
-protocol was not reasoning worse there; it was failing to say it was done. So
-the 60-point gap at one lookup is a termination result rather than an accuracy
-result — which is the cleanest evidence in this chapter that the exit is the
+40 + 60, and 76 + 24. That *suggests every run that managed to stop was
+correct*; a run-level cross-table of outcome against cap would confirm it. If
+so, the protocol was not reasoning worse there; it was failing to say it was
+done, and the 60-point gap at one lookup is more a termination result than an
+accuracy result — the clearest sign in this chapter that the exit can be the
 fragile part of the loop. From three lookups on the identity breaks (52 + 28,
 60 + 0, 28 + 12) and real reasoning errors appear alongside the cap.
 
 This is @sec-agent-anatomy-loop's third point, measured. The exit is a model
 decision, and in the native API "stop calling tools and answer" is a
-*structurally different* action from calling a tool.
+*structurally different* action from calling a tool. In this run every native
+run stopped before the cap; whether the text protocol's gap comes from that
+formal distinction alone needs a further ablation.
 
 In a text protocol it is not. `CEVAP(...)` is just another string competing
 with `ARA(...)` — and once the transcript contains three `ARA` lines, the most
-likely next line is a fourth one. The loop's own history argues against leaving
-it.
+likely next line may be a fourth one. The loop's own history can argue against
+leaving it.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -738,10 +750,10 @@ it.
 ```
 
 ::: {.fig-cap}
-Nothing about the model changed between these two panels — only how the
-decision to stop is expressed. On the left it is a different field; on the
-right it is a string competing with the strings already in the transcript, and
-the transcript wins.
+The model is the same; what changes is how the decision to stop is expressed
+(and with it the prompt and the parsing). On the left it is a different field;
+on the right it is a string competing with the strings already in the
+transcript, and the transcript can win.
 :::
 ::::
 
@@ -753,9 +765,12 @@ every step unparseable and every task hitting the cap. That is a suspiciously
 total failure, which is the shape a harness bug usually has.
 
 It was mine. I had written the protocol's signature as `ARA(proje, alan)`,
-intending those as placeholders. The model read them as literal labels and
-emitted `ARA(proje, ZRG-14)`, which my regex correctly refused. Adding one
-concrete example — `ornek: ARA(ZRG-14, butce)` — fixed it.
+intending those as placeholders. The model interpreted the abstract signature
+as a different argument sequence and emitted `ARA(proje, ZRG-14)` — it may have
+taken the placeholder for a real field or swapped the argument order — which my
+regex correctly refused. Adding one concrete example — `ornek: ARA(ZRG-14,
+butce)` — removed that failure, and the experiment was rerun. The before/after
+prompts and a few raw outputs are not published.
 
 The lesson is not "write better prompts". It is that a hand-rolled protocol
 makes you specify a calling convention unambiguously, in prose, and a typed
