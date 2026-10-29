@@ -121,8 +121,9 @@ also saying what it could not have detected.
 
 ## How big does your eval set need to be? {#sec-llm-eval-size}
 
-Here is the question almost every LLM project answers by feel, and it has an
-exact answer. Given a system that is right about 80% of the time, how large
+Here is a question many LLM projects answer by feel, though it can be computed
+once you fix the smallest difference to detect, the baseline accuracy, the
+test, whether the design is paired, and the power target. Given a system that is right about 80% of the time, how large
 must an eval set be to detect an improvement of *d* points, at 80%
 [**statistical power**](#gloss-statistical-power){#term-statistical-power .term-ref}
 and the conventional 5% significance level?
@@ -137,6 +138,12 @@ So low power costs you both the improvements you miss and the size of the ones
 you find.
 [↩](#term-statistical-power){.term-back}
 :::
+
+The output below gives approximate planning results for two independent
+proportions, from the normal approximation; the formula behind it is in
+@sec-math-inference. The "none" in the 30 row means that under these
+assumptions (80% baseline, two independent samples, two-sided α = 0.05, 80%
+power) no possible improvement reaches 80% power.
 
 ```text
 smallest difference detectable at 80% power (two independent proportions,
@@ -191,7 +198,8 @@ evalZ = p => {
 ```{ojs}
 //| echo: false
 evalN = {
-  const d = evalDiff / 100, pa = evalBase, pb = Math.min(pa + d, 0.999);
+  const d = evalDiff / 100, pa = evalBase, pb = pa + d;
+  if (pb >= 1) return null;
   const za = evalZ(0.975), zb = evalZ(evalPower);
   const pbar = (pa + pb) / 2;
   const n = Math.pow(za * Math.sqrt(2 * pbar * (1 - pbar)) +
@@ -202,11 +210,13 @@ evalN = {
 
 ```{ojs}
 //| echo: false
-md`To detect **${evalDiff} points** on top of ${(evalBase * 100).toFixed(0)}%
-at ${(evalPower * 100).toFixed(0)}% power, you need about
+md`${evalN === null
+  ? "**The target success rate reaches or exceeds 100%; choose a smaller difference.**"
+  : `To detect **${evalDiff} points** on top of ${(evalBase * 100).toFixed(0)}%
+at ${(evalPower * 100).toFixed(0)}% power, the normal approximation says you need about
 **${evalN.toLocaleString()} items per system** — ${evalN > 500
-  ? "more than most teams label, which is the useful thing to find out before running the comparison rather than after"
-  : "a size you can realistically label"}.
+  ? "a large labelling job, which is the useful thing to find out before running the comparison rather than after"
+  : "an easier size to label"}.`}
 A paired design needs fewer *if* the two systems mostly agree, and fewer still
 the more they agree; see the table below.${evalBase + evalDiff / 100 > 0.97
   ? " **Above about 97% this number stops being trustworthy**, because the normal approximation's variance term collapses as the target approaches 1.00. Use an exact test — `scipy.stats.fisher_exact` or `binomtest` — anywhere in that range."
@@ -214,16 +224,21 @@ the more they agree; see the table below.${evalBase + evalDiff / 100 > 0.97
 ```
 :::
 
-[At thirty items there is no answer, because no difference is large enough.]{.hl}
+[Under these assumptions, thirty items cannot detect any improvement at 80% power.]{.hl}
 Against a system that is right 80% of the time, even a *perfect* replacement —
 one that is right 100% of the time — reaches only **57%** power on thirty
 items. That figure is from an exact test, and the exact test is the one to
 quote here: the normal approximation everywhere else in this section returns
 75%, but at *p* = 1.00 its variance term is exactly zero and there is nothing
-left for it to approximate. Both exact routes agree — Fisher's exact test with
-thirty items per arm and McNemar's exact test on thirty paired items both give
-0.5725. A hundred items per system detects 13.4 points. Most real improvements
-are two to five.
+left for it to approximate. In this boundary case both exact routes give the
+same number — Fisher's exact test with thirty items per arm and McNemar's exact
+test on thirty paired items both give 0.5725 (recomputed in this revision).
+On the paired side B is never wrong, so every discordant item falls B's way and
+the test reduces to the chance of seeing at least six discordant items in
+thirty. In general the power of independent and paired designs is computed
+from different tests and sampling models; the agreement is specific to this
+boundary case. A hundred items per system detects 13.4 points; if the
+difference you are after is smaller, you need a bigger set.
 
 That is worth sitting with, because thirty items is a common size; it is the
 size this chapter's own exercise asked for in an earlier draft.
@@ -234,14 +249,14 @@ in this chapter:
 
 | eval set size | what it is genuinely for |
 |:--|:--|
-| **20–50 items** | finding *failure modes*. Read every output by hand. You are looking for categories of wrongness, not for a number, and thirty items surfaces them well — this is a real job, and the size is right for it |
+| **20–50 items** | finding *failure modes*. Read every output by hand. You are looking for categories of wrongness, not for a number; a starting point for qualitative failure discovery |
 | **100–300 items** | catching *large* regressions — a broken parser, a prompt that stopped working, a model swap that went badly |
 | **500+ items** | comparing two systems that are actually close, which is the case whenever you are tuning rather than fixing |
 
-: Three different jobs, three different sizes {tbl-colwidths="[22,78]"}
+: A rough guide for three jobs (80% baseline and this chapter's assumptions); compute the n you need in advance from the target difference, baseline success, error cost and pairing {tbl-colwidths="[22,78]"}
 
-The failure to distinguish these is why so much prompt engineering is
-folklore. Thirty examples were tried, one prompt looked better, and the
+For some safety failures even thirty items may be too few to discover them.
+Failing to distinguish these jobs is one reason prompt comparisons can mislead. Thirty examples were tried, one prompt looked better, and the
 difference was smaller than the noise floor by an order of magnitude.
 
 ### What pairing buys, and when it does not
