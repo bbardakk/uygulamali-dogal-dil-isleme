@@ -531,34 +531,36 @@ Araçlarınıza baştan yerleştirmeniz gereken iki sonuç:
   ayrıntıyı korunan bir günlükte tutun. Bu deneyde en büyük iyileşme, çevrilmiş
   ve seçenekleri listeleyen hata metniyle görüldü.
 
-Bu bölümün iki önerisini — araç sınırında normalleştirme ve istisnayı çevirme —
-birleştiren küçük bir sarmalayıcı şöyle görünür (`RECORDS` deneydeki gibi uydurma
-bir kayıt tablosu):
+Bu bölümün iki önerisini — sınırda açık takma adlarla kanonikleştirme ve hatayı
+çevirme — birleştiren küçük bir sarmalayıcı şöyle görünür (`RECORDS` deneydeki
+gibi uydurma bir kayıt tablosu; `yetkili_mi` uygulamanızın yetki kontrolü):
 
 ```python
 import unicodedata
 
 RECORDS = {"ZRG-14": {"butce": 1_200_000, "personel": 14, "sure": 18}}
 ALANLAR = ("butce", "personel", "sure")
-KATLA = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
+TAKMA_ADLAR = {"butce": "butce", "bütçe": "butce", "personel": "personel",
+               "sure": "sure", "süre": "sure"}   # yalnızca sabit alan için
 
-def alan_normallestir(deger: str) -> str:
-    # önce NFC, sonra Türkçe harfleri açık tabloyla katla; .lower() en sonda
-    return unicodedata.normalize("NFC", deger).strip().translate(KATLA).lower()
-
-def veri_getir(proje: str, alan: str) -> str:
-    try:
-        return str(RECORDS[proje][alan_normallestir(alan)])
-    except KeyError:               # ham istisnayı modele göndermeyin; çevirin
-        if proje not in RECORDS:
-            return (f"HATA: '{proje}' adlı bir proje yok. "
-                    f"Mevcut projeler: {', '.join(RECORDS)}.")
+def veri_getir(kullanici, proje: str, alan: str) -> str:
+    # önce yetki: bulunamayan ve yetkisiz projeye aynı güvenli mesaj
+    if proje not in RECORDS or not yetkili_mi(kullanici, proje):
+        return "HATA: bu proje bulunamadı ya da erişim izniniz yok."
+    kanonik = TAKMA_ADLAR.get(unicodedata.normalize("NFC", alan).strip())
+    if kanonik is None:            # ham istisnayı modele göndermeyin; çevirin
         return (f"HATA: '{alan}' geçerli bir alan değil. "
                 f"Geçerli alanlar şunlardır: {', '.join(ALANLAR)}.")
+    return str(RECORDS[proje][kanonik])
 ```
 
-Burada `veri_getir("ZRG-14", "bütçe")` hata değil `1200000` döndürür;
-`veri_getir("ZRG-14", "takvim")` ise deneydeki actionable hata metninin karşılığını.
+Burada yetkili bir kullanıcı için `veri_getir(kullanici, "ZRG-14", "bütçe")` hata
+değil `1200000` döndürür; `"takvim"` ise deneydeki actionable hata metninin
+karşılığını. Proje listesi hata mesajında verilmiyor: erişim izni olmayan proje
+kimliklerini sızdırabilir; "mevcut projeler" listesini ancak açıkça yetkili bir
+keşif aracında gösterin. Takma ad tablosu genel bir diakritik katlama değil,
+yalnızca sabit alan için açık bir eşleme; böylece yeni alanlar eklendiğinde
+çakışma olmaz.
 
 ## Bir aracın döndürdüğü şey tasarımının parçasıdır {#sec-arac-tasarimi-sonuclar}
 

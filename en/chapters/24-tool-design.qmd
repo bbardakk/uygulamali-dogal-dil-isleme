@@ -517,6 +517,38 @@ Two corollaries worth building in:
   translate it, and keep the detail in a protected log. In this experiment the
   largest improvement came with a translated error that listed the options.
 
+A small wrapper that combines this chapter's two suggestions — canonicalising
+with explicit aliases at the boundary, and translating the error — looks like
+this (`RECORDS` is an invented record table as in the experiment; `yetkili_mi`
+is your application's permission check):
+
+```python
+import unicodedata
+
+RECORDS = {"ZRG-14": {"butce": 1_200_000, "personel": 14, "sure": 18}}
+ALANLAR = ("butce", "personel", "sure")
+TAKMA_ADLAR = {"butce": "butce", "bütçe": "butce", "personel": "personel",
+               "sure": "sure", "süre": "sure"}   # for the fixed field only
+
+def veri_getir(kullanici, proje: str, alan: str) -> str:
+    # permission first: the same safe message for missing and forbidden projects
+    if proje not in RECORDS or not yetkili_mi(kullanici, proje):
+        return "HATA: bu proje bulunamadı ya da erişim izniniz yok."
+    kanonik = TAKMA_ADLAR.get(unicodedata.normalize("NFC", alan).strip())
+    if kanonik is None:            # do not send the raw exception; translate it
+        return (f"HATA: '{alan}' geçerli bir alan değil. "
+                f"Geçerli alanlar şunlardır: {', '.join(ALANLAR)}.")
+    return str(RECORDS[proje][kanonik])
+```
+
+For a permitted user, `veri_getir(user, "ZRG-14", "bütçe")` returns `1200000`
+rather than an error, and `"takvim"` returns the equivalent of the experiment's
+actionable error. The project list is not given in the error message: it could
+leak project ids the user may not access; show a "current projects" list only
+in an explicitly permitted discovery tool. The alias table is not a general
+diacritic fold but an explicit mapping for the fixed field only, so adding new
+fields cannot cause collisions.
+
 ## What a tool returns is part of its design {#sec-tool-design-results}
 
 A tool's return value goes straight into the transcript, which
