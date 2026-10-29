@@ -348,13 +348,14 @@ curve your own model and task will produce; measure it.
 @sec-agent-anatomy established that the transcript only grows.
 [**Compaction**](#gloss-compaction){#term-compaction .term-ref} is what you do
 about that, and it is a lossy compression problem with an unusual property:
-**you choose what to lose, and you choose it before you know what will be
-needed.**
+**you choose what to lose, and you usually choose it before you fully know
+what will be needed.** So separate the history that can be summarised from
+the sources, numbers, dates and instructions that must be kept verbatim.
 
 ::: {#gloss-compaction .column-margin .term-gloss}
 **Compaction** — summarising or dropping parts of an agent's transcript so the
-context stops growing. Lossy, and the loss is chosen before you know what will
-be needed. [↩](#term-compaction){.term-back}
+context stops growing. Lossy, and the loss is usually chosen before you fully
+know what will be needed. [↩](#term-compaction){.term-back}
 :::
 
 The useful move is to stop treating the transcript as one thing. It has parts
@@ -364,8 +365,8 @@ with very different value per token:
 |:--|:--|:--|
 | The **task** — what the user actually asked | verbatim, always, and re-state it near the end | it is short, it is the thing being optimised against, and it is what gets lost when history dominates |
 | **Decisions** the agent made and their reasons | summarised | *what* was decided is needed; the deliberation that produced it usually is not |
-| **Tool results** that are still live | verbatim | these are facts the answer depends on. Summarising a number is how you lose it |
-| **Tool results** already superseded or consumed | drop, or reduce to one line | the ten search results you rejected are pure cost from the moment you rejected them |
+| **Tool results** that are still live | the verified facts the answer needs, and their source ids, losslessly; long outputs stored behind a source pointer (file path, record id) so they can be fetched back | these are facts the answer depends on. Summarising a number is how you lose it |
+| **Tool results** already superseded or consumed | drop the text; keep one line on what was rejected and why | the text of the ten search results you rejected is now cost, but knowing why they were rejected stops the same search being repeated and keeps the run auditable |
 | **Errors** already recovered from | drop the traceback, keep one line of what it taught | @sec-agent-anatomy's point: a stale error keeps conditioning the model toward the confusion it caused — but "the date field wants ISO-8601" is the sentence that stops it happening again, and it costs eight tokens |
 
 : Not all tokens are worth the same {tbl-colwidths="[26,18,56]"}
@@ -374,25 +375,49 @@ Three failure modes are worth knowing before you build this.
 
 **Summarising numbers.** A summariser will happily turn *the budget is 4,318
 lira* into *the budget was discussed*. Any value the final answer must contain
-should be exempt from compaction by rule, not by hope — the safest
-implementation keeps a structured `facts` list beside the prose and never
-summarises it.
+should be exempt from compaction by rule, not by hope. A safer implementation
+extracts critical numbers, dates and ids from the source tool output in code,
+validates them, and keeps them in a typed `facts` record beside the prose, each
+entry carrying its source id and version. The summariser neither produces nor
+edits those records — a summariser can also write a wrong number or attach it
+to the wrong source — and writes only the prose summary of decisions. The
+format and the summariser instruction can be this simple:
+
+```text
+facts (extracted from tool output in code and validated; the summariser
+       neither produces nor edits this list, it is copied as-is):
+  [{"key": "budget", "value": "4,318 TL", "type": "money",
+    "source": "step 7", "source_version": "record v3"},
+   {"key": "deadline", "value": "2026-03-14", "type": "date",
+    "source": "step 12", "source_version": "record v3"}]
+
+summariser instruction:
+  Summarise the history below in at most 150 tokens.
+  Keep each decision and its reason in one sentence.
+  Drop rejected search results and resolved errors;
+  leave the lesson from an error as one line.
+  Do not write numbers, dates or ids: they are in the facts list.
+```
 
 **Compacting the task away.** As history grows, the original request drifts
 toward the middle of a long context. @liu2024lost measured what that costs:
 accuracy on a retrieval task is highest when the relevant material sits at the
 beginning or the end of the input and degrades markedly in the middle. My own
-needle test did *not* reproduce this — 100% at every position — for the same
-reason it found nothing else: a literal string match is immune to where it
-sits. Re-stating the objective at the end of the context is nearly free — the
-task is short, and appending it leaves the cached prefix intact — and it largely
-stops the task getting lost in the middle. It does not fix *evidence* that sits
-there; the remedy for that is the selecting and cutting the rest of this chapter
-is about.
+needle test did *not* reproduce this — 100% at every position — probably for
+the same reason it found nothing else: a literal string match is likely less
+sensitive to where it sits. Re-stating the objective at the end of the context
+is cheap — the task is short, and appending it leaves the cached prefix intact
+— and it may help keep the task from getting lost in the middle. But this
+chapter did not measure whether it improves accuracy; test that on your own
+tasks, together with the extra tokens it costs. Nor does it, on its own, fix
+*evidence* that sits in the middle; the remedy for that is the selecting and
+cutting the rest of this chapter is about.
 
-**Compaction that is not idempotent.** Summarising a summary loses more each
-time, and long-running agents do this repeatedly. Compact from the *original*
-where you can, or accept and measure the drift.
+**Compaction that is not idempotent.** Summarising a summary usually loses a
+little more each round, and long-running agents do this repeatedly. Measure
+fact loss and drift across successive summaries. Where needed, produce the new
+summary from the *original* record — but that means keeping the raw history,
+so keep access to it authorised and time-limited, not indefinite.
 
 ### Rolling history, concretely
 
