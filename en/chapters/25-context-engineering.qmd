@@ -961,37 +961,50 @@ without them.
 ## What to remember {#sec-context-engineering-summary}
 
 - **The window is a budget, not a container.** Check both: whether the input
-  fits, and whether each part earns its cost. Every token is re-sent on every
-  model call, so an uncurated context is multiplied by the number of steps.
-- **Count before you cut.** Tokens by category — system prompt, tool
+  fits, and whether each part earns its cost. In a loop that re-sends the whole
+  history on every model call, an uncurated context is multiplied by the
+  number of steps; caching and context management change the real cost.
+- **Measure before you cut.** Tokens by category — system prompt, tool
   definitions, retrieved documents, tool results, history. The largest
   category is routinely not the assumed one. Fixed costs are paid per *call*
   rather than per run, but a cached prefix is billed at a discount, so rank
   categories by measured cost.
 - **A claimed context length is a capacity, not a competence.** Of 17 models
-  claiming 32K or more, only half held up at 32K [@hsieh2024ruler].
-- **Needle-in-a-haystack is the easy test, and it will pass.** @sec-rag's
-  retrieval run scored 100% at every position and size, and this chapter's
-  60-task version stayed between 88.3% and 100% with no monotone decline — both
-  with a needle that shared a rare string with the question. Remove that overlap and **11 of 13 models fall
-  below half their short-context baseline at 32K**; even GPT-4o, one of the
-  exceptions, goes from 99.3% to 69.7% [@modarressi2025nolima]. Evaluate with paraphrases.
-- **Isolation is the largest lever *when the shape is right*.** A read-heavy
-  sub-task in its own context returns a paragraph instead of forty thousand
-  tokens, multiplied by every remaining call in the parent's loop.
-  @sec-multi-agent modelled where it inverts: six steps producing 200-token
-  results cost **1.20×** as three agents, because the per-agent fixed cost is
-  paid three extra times; twenty-four steps producing 3,000-token results saved
-  two thirds. Large inputs, small outputs, many remaining steps — all three, or
-  it is not a saving.
-- **Compaction is lossy, and you choose the loss in advance.** Keep the task
-  and live tool results verbatim, summarise decisions, drop consumed results
-  and resolved tracebacks — keeping a one-line lesson where it stops the same
-  error recurring. Preserve exact values the answer requires.
-- **Prefer identifiers to payloads.** A pointer costs ten tokens and a
-  document costs two thousand, and most pointers are never dereferenced. Load
-  eagerly only what is used on nearly every request.
-- **When the data has structure, query the structure.** Aggregates, joins and
-  exact lookups over tables are what `run_sql` over a real schema is for, and
-  chunk-and-embed handles them badly; semantic search over code or prose is a
-  different task, and most systems end up using the two side by side.
+  claiming 32K or more, only half held up at 32K by RULER's own success
+  threshold [@hsieh2024ruler]. Effective length varies with the task and the
+  threshold; measure it on yours.
+- **Needle-in-a-haystack is the easy test.** It scored high in this book's
+  runs: @sec-rag's retrieval run scored 100% at every position and size, and
+  this chapter's 60-task version stayed between 88.3% and 100% with no
+  monotone decline — both with a needle that shared a rare string with the
+  question. That is no guarantee another model will pass, and passing shows
+  only rare-key lookup. Remove that overlap and **11 of 13 models fall below
+  half their short-context baseline at 32K**; even GPT-4o, one of the
+  exceptions, goes from 99.3% to 69.7% [@modarressi2025nolima]. Evaluate with
+  paraphrased and multi-fact questions as well.
+- **Isolation can be a strong lever *when the shape is right*.** A read-heavy
+  sub-task in its own context returns a short result and source pointers
+  instead of everything it read. The gross saving is the tokens read
+  multiplied by the calls remaining in the parent; the net saving is what is
+  left after the sub-task's own calls, caching and the need for evidence.
+  @sec-multi-agent shows with a cost model where it can invert: six steps
+  producing 200-token results cost **1.20×** as three agents, because the
+  per-agent fixed cost is paid extra; twenty-four steps producing 3,000-token
+  results save two thirds. Large inputs, small outputs, many remaining steps —
+  without all three, do not expect a saving.
+- **Compaction is lossy, and you usually choose the loss in advance.** Keep the
+  task and the verified facts the answer needs losslessly, with source ids;
+  put long tool outputs behind a pointer; summarise decisions; drop consumed
+  results but keep one line on why they were rejected; drop resolved
+  tracebacks — keeping a one-line lesson where it stops the same error
+  recurring. Do not leave critical values to the summariser; keep them in a
+  facts record validated against the source.
+- **Prefer identifiers to payloads.** A pointer is usually far shorter than a
+  document — count both with your own tokenizer — and many pointers may never
+  be dereferenced. Choose what to load eagerly from the usage rate, latency
+  and fetch failures.
+- **When the data has structure, query the structure.** For aggregates, joins
+  and exact lookups over tables, a permission-scoped, limited schema query
+  usually beats chunking and embedding the rows; semantic search over code or
+  prose is a different task. Most systems end up using the two side by side;
+  choose the tool by real task accuracy.
