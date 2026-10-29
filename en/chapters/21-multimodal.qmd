@@ -264,22 +264,25 @@ the two directly on the same pages.
 
 Patches give you a sequence. They do not give you a sequence whose vectors mean
 anything to a *language* model — a projected patch is just pixels in a new
-basis. Something has to teach the two spaces to agree, and the answer that
-made everything since possible is contrastive pretraining.
+basis. Visual representations need suitable training and alignment to be
+useful for language tasks. The contrastive pretraining CLIP and SigLIP use is
+one effective way; some vision–language systems are trained with different or
+additional objectives.
 
 CLIP [@radford2021clip] is the canonical version of
 [**contrastive pretraining**](#gloss-contrastive-pretraining){#term-contrastive-pretraining .term-ref}
 and the idea is one sentence long: take a large collection of images with their
 captions, encode each image and each caption, and train so that **matching pairs
-land near each other and mismatched pairs land apart**. Nothing labels what is in
-the image. The caption is the supervision, and the internet supplies both halves
-for free.
+land near each other and mismatched pairs land apart**. No one has to write a new
+class label for each image: the existing image–text pairs are the supervision.
+The captions are still written by people, though, and the corpus's selection,
+rights, filtering and noise have to be managed separately.
 
 ::: {#gloss-contrastive-pretraining .column-margin .term-gloss}
 **Contrastive pretraining** — training an image encoder and a text encoder
 together so that a picture and its caption land close in one space, and
-mismatched pairs land apart. The captions are the supervision, so no one
-labels anything. [↩](#term-contrastive-pretraining){.term-back}
+mismatched pairs land apart. The captions are the supervision, so no
+task-specific class labels are needed; the captions are still human-written. [↩](#term-contrastive-pretraining){.term-back}
 :::
 
 ::: {.column-margin}
@@ -291,7 +294,9 @@ supervision. Every scaling story in this book has that shape.
 **How "near" and "apart" become a loss.** Take a batch of *N* image–caption
 pairs. Encode all of them, normalise the vectors, and compute the cosine
 similarity of every image with every caption: an *N* × *N* table whose diagonal
-holds the true pairs and whose other *N*² − *N* cells are mismatches. CLIP then
+holds the true pairs and whose other *N*² − *N* cells are treated as negatives
+during training — though some of them may be semantically related (two images
+of the same object, or two equivalent captions). CLIP then
 treats each row as a classification problem — "which of these *N* captions
 belongs to this image?" — and applies softmax cross-entropy with the diagonal
 cell as the right answer; it does the same down each column, for "which image
@@ -307,9 +312,10 @@ Two consequences are worth carrying forward.
 **It buys zero-shot classification.** Because captions are text, the label
 space is open: to ask *is this a defective weld*, encode one caption per
 candidate answer — "a photo of a defective weld", "a photo of a sound weld" —
-and pick the one closest to the image. You are no longer restricted to the categories someone enumerated at
-training time, which is what made vision models useful in places nobody had
-labelled a dataset for.
+and pick the one closest to the image. You are no longer restricted to the
+categories someone enumerated at training time. But for a real inspection
+decision, especially a safety-critical defect such as a weld, these scores have
+to be validated on domain data and the cost of errors weighed separately.
 
 **It buys a shared space, which is what a VLM is built on.** A shared space is
 not the same as intelligibility: nothing about CLIP's geometry makes an
@@ -324,23 +330,26 @@ different things.
 model entirely, compresses a variable number of patches into a fixed set of
 latents with a resampler, and inserts gated cross-attention blocks between the
 frozen layers. The image never enters the text sequence at all; it is a second
-pathway the text attends *into*. Cheaper to train than updating the whole
-model, since the language model's weights never change, and it leaves the
-language model's text behaviour untouched.
+pathway the text attends *into*. That choice limits which parameters are
+updated; because the gates start at zero, the output at the start of training
+equals the original model's, but that is no guarantee after training. Training
+cost and text-only behaviour have to be measured in practice.
 
 *Projection into one sequence.* LLaVA [@liu2023visual] does the simpler thing: a
 small projector — a single linear layer in the original LLaVA, a two-layer MLP
 in its successor LLaVA-1.5 — projects each patch vector to the language model's hidden size, those
 vectors are concatenated with the text tokens. Training has two stages: first
 only the projector is trained for alignment, then the projector and the language
-model are instruction-tuned together, with the vision encoder frozen throughout. One stream, one attention, no new modules — which is the
-design in the figure above, and the one most open VLMs now follow.
+model are instruction-tuned together, with the vision encoder frozen throughout.
+One stream, one attention; the vision encoder and the projector are still new
+modules — the general idea in the figure above. Later open models apply the
+same idea with different image-processing and alignment schemes; do not take it
+as every model's default architecture.
 
 Knowing which you have in front of you tells you what you can change. Be
 precise about what "frozen" rules out: gradients still flow *through* a frozen
 language model, which is exactly how the resampler and the gates get trained —
-what is frozen is the language model's own weights, so its text-only
-behaviour cannot drift. The *system* still learns through the image path: the
+what is frozen is the language model's own weights, which do not change. The *system* still learns through the image path: the
 resampler and gates are trained, and they change what the frozen model does
 whenever an image is present. A single-stream model, by contrast, has no
 separate cross-attention pathway inside the decoder to intervene on — its
@@ -348,12 +357,15 @@ separate modules are the vision encoder and the projector in front of it.
 
 The vision encoder in this chapter's model is a descendant of CLIP trained with
 the sigmoid loss described above [@zhai2023sigmoid], and its fixed pooled output
-size is why an image costs a flat rate here.
+size is why every image takes the same token count here.
 
 What contrastive pretraining does *not* buy is any guarantee about detail. The
 objective rewards matching an image to its caption, and a caption describes what
-a photograph is *about*, not what every region of it contains. That is the root
-of the failure this chapter measures next, and it has been documented since
+a photograph is *about*, not what every region of it contains; it does not
+guarantee that small text survives at the letter level. That is one possible
+cause of the failure this chapter measures next; resolution, later alignment
+training and the language model's generation tendencies may play a part too,
+and the experiment does not separate them. A similar failure was documented
 before the current generation of models: caption models assert objects that are
 not in the image [@rohrbach2018object].
 
