@@ -856,80 +856,86 @@ criterion above is how you tell which one you have.
 ## Intuition checks {#sec-agent-anatomy-intuition}
 
 Answer each one before you open it. Two are definitions this chapter argues
-for; the other four it settled with a measurement rather than an argument.
+for; the chapter approached the others with a measurement, and where it did
+not measure, the answer says so.
 
 ::: {.callout-note collapse="true"}
 ## 1. What is an agent, in one sentence?
 
-A while-loop around a model that can call functions. The model emits arguments
-and your runtime executes them; the loop ends when the model chooses not to
-call anything. Everything else — planning, memory, orchestration — is
-engineering around those fourteen statements, and being able to say so is what keeps
-framework documentation readable.
+In this chapter an agent is a loop in which the model chooses a tool action and
+decides again from the observations: a while-loop around a model that can call
+functions. The model proposes arguments and your runtime executes them; the
+loop ends when the model chooses not to call anything. Production adds state,
+oversight and safety components; planning, memory and orchestration are
+engineering around those fourteen statements, and knowing that keeps framework
+documentation readable.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Your agent is wrong 60% of the time on a task with five lookups. Where do you look?
 
-Not at the tool calls, probably. Measured here, tool use stayed **perfect** —
-exactly the right number of calls, none malformed, none hitting the cap — while
-accuracy fell from 100% to 40%. The failure was in aggregating what came back.
-Note the shape of the task before generalising: the five lookups are
-independent, so the model batched them into two model calls and never ran five
-sequential steps. What fell apart is aggregation under load, not a chain of
-five dependent decisions.
-Check the reasoning over collected observations before you rewrite a schema,
-and decompose the task if you can: fewer things to hold at once is the fix that
-actually works.
+First put the failing runs' call arguments, tool results and final calculation
+side by side. Here call counts and formats held — exactly the right number of
+calls, none malformed, none hitting the cap — while accuracy fell from 100% to
+40%; but the right number of calls does not prove the right arguments. Note the
+shape of the task before generalising: the five lookups are independent, so
+the model batched them into two model calls and never ran five sequential
+steps. If the observations are right and the sum is wrong, test moving the
+arithmetic into a separate tool or decomposing the task, and measure the
+improvement on the same tasks.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. What is an agent's state?
 
-In the minimal loop, the transcript and nothing else — no working memory, no
-variable bindings. Three things follow: cost grows with the number of model
-calls because each one re-sends everything; nothing is ever forgotten,
-including mistakes, which is why a confused agent tends to stay confused in the
-same direction; and there is no rollback of the transcript unless you build
-one, and rolling it back does not undo external effects, which need their own
-transaction or compensation mechanism where one exists. Then say what the rest of this
-part adds: external files, a memory store, and sub-agents with their own
-transcripts are all ways of not living inside one message list.
+In the minimal loop, the state the model sees on the next turn is the
+transcript — no working memory, no variable bindings; external tool state and
+side effects are kept separately. Three things follow: cost depends on the
+number of model calls and each call's tokens, because each one re-sends
+everything; wrong observations can stay in the transcript — the model may
+recover from them or keep going wrong in the same direction; and there is no
+rollback of the transcript unless you build one, and rolling it back does not
+undo external effects, which need idempotency, transactions or compensation.
+Then say what the rest of this part adds: external files, a memory store, and
+sub-agents with their own transcripts are all ways of not living inside one
+message list.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Does the structured tool-calling API actually help, or is it sugar?
 
-It helps, and by more than convenience. On the same model and task the native
-API beat a hand-rolled text protocol at every step count — by up to 60 accuracy
-points, though only that largest gap is statistically clear on 25 tasks —
-while using about a third of the model calls. The mechanism is termination:
-in the structured API "answer instead of calling a tool" is a different *kind*
-of action, whereas in a text protocol the answer command competes with the tool
-command, and the transcript's own history argues for another tool call.
+On this model and these tasks it helped: the native API used fewer model turns
+(about a third) and came out ahead of a hand-rolled text protocol at every step
+count in this comparison — but only the 60-point gap at one lookup is
+statistically clear on 25 tasks, and that gap is largely a termination
+difference. The plausible mechanism is termination: in the structured API
+"answer instead of calling a tool" is a different *kind* of action, whereas in
+a text protocol the answer command competes with the tool command.
+Generalising the effect needs text-prompt ablations, paired results and token
+and tool costs.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Five tool calls means five model calls, right?
 
-Not if the model batches them. Measured here the native loop used **2.0 model
-calls at every step count from 1 to 5**, because it emitted all the lookups in
-one turn. That is why five times the work cost only 1.52× the tokens. Count the
-two separately: tool calls tell you what the agent did, model calls tell you
-what it cost.
+Not if the model requests them in one turn. Measured here the native loop used
+**2.0 model calls at every step count from 1 to 5**, because it emitted all
+the independent lookups in one turn; that is why five times the work used only
+1.52× the reported tokens. Count the two separately: tool calls tell you what
+the agent did, while model calls and each call's tokens tell you much of what
+it cost.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. When should you not build an agent?
 
 When the control flow is not data-dependent. The criterion is branching, not
-difficulty: if you can write the steps down, write them down. A fixed pipeline
-for this chapter's task has no decision to get wrong at any step count, costs
-nothing per call, and runs in microseconds, against an agent that reaches 40%
-at five lookups. (It can still have bugs — it is code — and it needs the same
-tests as any other code; what it does not have is a model choosing what to do
-next.) Reach for the loop when what you do second genuinely depends
-on what you found first.
+difficulty: if you can write the steps down, build a fixed pipeline as a
+candidate. For this chapter's task such a pipeline is a strong candidate, but
+it was not built or tested here; code has bugs and costs of its own. Measure
+accuracy, latency, tool fees and failure visibility against the agent on the
+same tasks, and consider a constrained loop when what you do second genuinely
+depends on what you found first.
 :::
 
 ## Interview questions {#sec-agent-anatomy-interview}
