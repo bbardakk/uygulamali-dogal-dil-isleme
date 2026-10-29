@@ -24,9 +24,11 @@ here; this chapter is about the loop itself. Software: NumPy 2.5.2 on Python
 
 ## The loop, and nothing else {#sec-agent-anatomy-loop}
 
-An agent is not magic: [it is an
-[**agent loop**](#gloss-agent-loop){#term-agent-loop .term-ref} — a while-loop
-around a language model with access to functions]{.hl}.
+An agent is not magic. [This chapter's minimal
+[**agent loop**](#gloss-agent-loop){#term-agent-loop .term-ref} is a while-loop
+around a language model with access to functions]{.hl}: the model chooses a tool
+action, the runtime returns the result, and the model decides again. Real
+agents may add state, plans, oversight and stopping rules to that cycle.
 
 ::: {#gloss-agent-loop .column-margin .term-gloss}
 **Agent loop** — the model chooses an action, the runtime executes it, the
@@ -35,7 +37,7 @@ the model stops calling tools. [↩](#term-agent-loop){.term-back}
 :::
 
 Everything else — planning, memory, orchestration — is engineering around that
-loop. So here is the whole thing, with nothing removed:
+loop. So here is the minimal loop, in schematic form:
 
 ```python
 def agent(question, tools, model, max_steps=10):
@@ -62,7 +64,10 @@ def agent(question, tools, model, max_steps=10):
     raise StepLimitExceeded(question, messages)   # 7. it did not finish
 ```
 
-That is an agent. Fourteen statements, the `def` included — count them — and
+That is the minimal loop. It is provider-independent pseudo-code and does not
+run as is: `SYSTEM` and `StepLimitExceeded` need defining and `json` importing,
+and `model_dump()` and `call.id` are client-specific. Fourteen statements, the
+`def` included — count them — and
 this loop is the pattern underneath the frameworks you will meet. (The numbers
 in the comments are labels for the discussion below, not statement counts.)
 `model.chat` is a schematic client, and `tools` does double duty here, standing
@@ -94,13 +99,18 @@ goes back as a separate `role: "tool"` message with the matching
 `tool_use` blocks (an `id`, a `name` and an `input` object), the response's
 `stop_reason` is `"tool_use"`, and the results go back as `tool_result` blocks,
 each with the matching `tool_use_id`, inside the next `user` message. The loop
-is the same in both; only the field names change.
+is the same in both; the field names and structures change. The example above
+assumes the OpenAI-compatible client format; Ollama's native API and Anthropic
+Messages return argument and call-id fields differently, and a call id may not
+come in the same field from every provider. The runtime should match calls
+using the chosen provider's actual response schema and type-check the
+arguments.
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">The loop, and where each failure lives</div>
 <svg viewBox="0 0 764 320" style="max-width:744px" role="img"
-     aria-label="A diagram of an agent loop. A question enters a transcript box holding the system prompt and the user message. An arrow goes from the transcript to the model. The model either emits tool calls, which go to the runtime, or emits no tool call, which exits the loop and returns the answer. The runtime executes each call and appends the result, or an error string, back into the transcript, and the arrow returns to the model, closing the loop. Labels mark four places where things go wrong: the exit is a model decision and nothing checks whether the task is complete; the transcript only grows, so cost rises with the number of model calls and mistakes are never forgotten; the runtime is the only security boundary because the model emits arguments rather than executing them; and a step cap catches a loop that does not terminate on its own.">
+     aria-label="A diagram of an agent loop. A question enters a transcript box holding the system prompt and the user message. An arrow goes from the transcript to the model. The model either emits tool calls, which go to the runtime, or emits no tool call, which exits the loop and returns the answer. The runtime executes each call and appends the result, or an error string, back into the transcript, and the arrow returns to the model, closing the loop. Labels mark four places where things go wrong: the exit is a model decision and nothing checks whether the task is complete; the transcript only grows, so cost rises with the number of model calls and mistakes are never forgotten; the runtime is an important security boundary because the model emits arguments rather than executing them; and a step cap catches a loop that does not terminate on its own.">
 
   <rect x="10" y="60" width="120" height="46" rx="6" class="chip"/>
   <text x="70" y="88" class="t-sm t-mid t-b">question</text>
@@ -137,8 +147,8 @@ is the same in both; only the field names change.
   <path d="M408 83 L 380 83" class="ln-thin ln-dash"/>
   <rect x="10" y="168" width="150" height="62" rx="6" class="box-rose"/>
   <text x="85" y="190" class="t-xs t-mid t-b t-rose">STEP CAP</text>
-  <text x="85" y="206" class="t-xs t-mid t-muted">the admission that</text>
-  <text x="85" y="219" class="t-xs t-mid t-muted">it may not stop</text>
+  <text x="85" y="206" class="t-xs t-mid t-muted">a guard against a</text>
+  <text x="85" y="219" class="t-xs t-mid t-muted">loop that won't stop</text>
   <path d="M160 199 L 380 199" class="ln-thin ln-dash"/>
 
   <text x="10" y="262" class="t-xs t-b t-muted">WHERE THINGS GO WRONG</text>
@@ -146,7 +156,7 @@ is the same in both; only the field names change.
   <text x="10" y="293" class="t-xs t-muted">nothing checks whether the task is done</text>
   <text x="270" y="280" class="t-xs t-rose t-b">the transcript only grows</text>
   <text x="270" y="293" class="t-xs t-muted">cost rises per model call; mistakes stay</text>
-  <text x="530" y="280" class="t-xs t-rose t-b">the runtime is the boundary</text>
+  <text x="530" y="280" class="t-xs t-rose t-b">the runtime is a boundary</text>
   <text x="530" y="293" class="t-xs t-muted">model emits arguments, not actions</text>
 </svg>
 ```
@@ -161,17 +171,21 @@ what the runtime is permitted to execute.
 Six things in it are worth naming, because each is a decision people make by
 accident.
 
-**The model never executes anything.** It emits *arguments*; your runtime
-decides whether to run them. This is the entire security boundary, and
-@sec-agent-security is about what happens when people forget that it is the
-only one.
+**The model never executes anything.** It proposes *arguments*; your runtime
+decides whether to run them. The runtime enforces schema, permission and rate
+limits; that is an important security boundary but not the only one — external
+services' own authentication and access controls must stay in place too.
+@sec-agent-security is about what happens when those boundaries are
+forgotten.
 
 **`messages` is the state, and it only grows.** There is no other memory. Every
-observation is appended, so the context gets longer with every step — which
-makes cost grow superlinearly in the number of steps, and eventually collides
-with the context window. The fourteen statements do not handle that collision: when
-the window overflows, `model.chat` raises *outside* the `try`, and the run
-dies with the transcript unsaved. A production version wraps that call too,
+observation is appended and the whole `messages` list is resent on every model
+call; if each turn adds roughly the same amount, the total input tokens sent
+grow roughly quadratically with the number of steps (caching, truncation and
+summarisation change that load), and the context eventually collides with the
+context window. The fourteen statements do not handle that collision: when the
+window overflows, `model.chat` raises *outside* the `try`, and in this
+implementation, which keeps no persistent log, the transcript is lost. A production version wraps that call too,
 persists `messages` before re-raising, and hands the overflow to a compaction
 step — which is where @sec-context-engineering starts.
 
@@ -183,7 +197,10 @@ prediction. It also catches more than a finished answer. A reply that was cut
 off by the output-token limit, or blocked by a content filter, has no tool
 calls either, so this loop returns the fragment as if it were the answer.
 Check the reason the provider gives for stopping (`finish_reason` or
-`stop_reason`) before you trust `reply.content`.
+`stop_reason`) before you trust `reply.content`. The schematic code above does
+not; in a real implementation, when there is no tool call, first check that the
+stop reason is a successful finish, and do not return partial text as the
+answer after a token-limit or filter cut-off.
 
 **The line marked 6 turns an exception into text.** A failed tool call is not a
 crash; it is an observation the model gets to react to. Whether it reacts
@@ -192,18 +209,23 @@ string says. Note also what else that `except` swallows: a `KeyError` from
 `tools[call.function.name]` is *your* bug, and the model receives it as though the tool
 had failed. A runtime worth trusting distinguishes tool failures from failures
 of the *harness* — your own code around the model — before it writes the
-observation.
+observation. Let the runtime validate the tool name and the arguments; return
+expected tool errors as observations with fixed error codes that contain no
+secrets; log unexpected programming errors and stop the run. Raw exception text
+can contain file paths, user data or internal details; keep the error shown to
+the user apart from the internal log.
 
 **The line marked 7 is the honest part.** A
-[**step cap**](#gloss-step-cap){#term-step-cap .term-ref} is not a performance
-tuning knob,
+[**step cap**](#gloss-step-cap){#term-step-cap .term-ref} is a mandatory
+runtime guard that bounds non-terminating or expensive loops — its number is
+tuned by measuring task success, latency and cost —
 
 ::: {#gloss-step-cap .column-margin .term-gloss}
-**Step cap** — the maximum number of loop iterations. Not a tuning parameter
-but an admission that the loop's exit is a model decision and may never be
-taken. [↩](#term-step-cap){.term-back}
+**Step cap** — the maximum number of loop iterations. A mandatory guard that
+admits the loop's exit is a model decision and may never be taken; its value is
+tuned against task success, latency and cost. [↩](#term-step-cap){.term-back}
 :::
-it is an admission that the loop may not terminate on its own. What you do when
+and an admission that the loop may not terminate on its own. What you do when
 it fires — retry, escalate, return partial work — is a product decision that
 deserves to be made deliberately rather than by whatever the framework defaults
 to.
@@ -214,9 +236,10 @@ plan into its own context and then following it, or your code imposing
 structure from outside. Both are legitimate; neither is in the loop. The
 distinction is worth keeping: writing a plan into the transcript is
 *in-context* planning, and it works about as well as the model's coherence
-over the run. Imposing a decomposition your code then executes is not planning
-at all — it is a pipeline, and @sec-agent-anatomy-decide argues it is usually
-the better trade.
+over the run. Imposing a decomposition your code then executes is planning
+too, but done at design time, with the run-time order of actions not left to
+the model — it is a pipeline, and @sec-agent-anatomy-decide argues it can often
+be the better trade.
 
 ### Three ways to make the exit a condition again
 
