@@ -303,8 +303,10 @@ istiyor mu?
 
 ## Durum bir transkripttir ve asıl problem budur {#sec-ajan-anatomisi-durum}
 
-Bu ajanın durumunun ne *olduğunu* sorarsanız cevap rahatsız edicidir:
-mesaj listesi, o kadar. Çalışma belleği yoktur, değişken bağlamaları yoktur,
+Bu ajanın durumunun ne *olduğunu* sorarsanız cevap rahatsız edicidir: bu asgari
+döngüde modelin sonraki kararı için taşınan **konuşma durumu** mesaj listesidir,
+o kadar. Araçların dış durumu — veritabanı, dosyalar, saat — ayrı kalır; ama
+modelin erişebildiği koşu bağlamı transkripttir. Çalışma belleği yoktur, değişken bağlamaları yoktur,
 modelin adresleyebileceği bir karalama alanı yoktur. Ajanın yedinci adımda
 bildiği her şey, altıncı adıma kadar transkripte girmiş ve orada kalmış olan
 şeydir.
@@ -318,8 +320,9 @@ sonucu *varsayılan olarak* elinize geçen şey ve o bölümlerin var olma sebeb
 diye okuyun.
 
 ::: {.column-margin}
-Akıl yürüten modellerde (@sec-akil-yuruten) transkripte bir şey daha girer:
-düşünce içeriği. Sağlayıcılar bunu farklı taşır. Anthropic'in genişletilmiş
+Akıl yürüten modellerde (@sec-akil-yuruten) transkripte bir şey daha girebilir:
+düşünce içeriği. Sağlayıcılar bunu farklı taşır ve yeniden gönderim kuralları
+istemci şemasına ve veri saklama politikasına bağlıdır. Anthropic'in genişletilmiş
 düşünme (extended thinking) modu, bir araç turunda son asistan mesajının
 `thinking` bloklarının değiştirilmeden geri gönderilmesini ister; Ollama ise
 düşünceyi `content`'ten ayrı bir `thinking` alanında döndürür ve yalnızca
@@ -330,27 +333,29 @@ eklemeden önce istemcinizin hangi alanları döndürdüğüne bakın.
 Bu durumdan doğrudan üç sonuç çıkıyor; pratikte ters giden şeylerin çoğunu
 bunlar açıklıyor.
 
-**Maliyet, araç çağrısı sayısıyla değil *model çağrısı* sayısıyla büyür.** Her
-model çağrısı bütün transkripti yeniden gönderir, dolayısıyla gerçekten sıralı
-*n* adımlık bir koşu kabaca ilk *n* bağlam uzunluğunun toplamına mal olur
-— doğrusal değil karesel. İşin tesellisi, @sec-ajan-anatomisi-bozulma'te
-ölçüldüğü gibi, aynı anda birkaç araç çağrısı üreten bir modelin pek çok adımı
-bire indirmesidir; bu bölümün ölçümünde ajanın maliyeti üzerindeki en büyük
-kaldıraç da bu çıkıyor.
+**Maliyet, araç çağrısı sayısından çok *model çağrısı* sayısına ve her çağrının
+token'larına bağlıdır.** Her model çağrısı bütün transkripti yeniden gönderir,
+dolayısıyla her tur benzer miktarda eklenen gerçekten sıralı *n* adımlık bir koşu
+kabaca ilk *n* bağlam uzunluğunun toplamına mal olur — doğrusal değil karesel.
+Ajan maliyetini model çağrısı sayısıyla birlikte her çağrının giriş/çıkış
+token'ı, önbellek isabeti ve dış araç bedeliyle hesaplayın. Bu deneyde beş
+bağımsız arama tek araç turunda toplandığı için model çağrısı iki kaldı
+(@sec-ajan-anatomisi-bozulma).
 
 **Hiçbir şey unutulmaz, hatalar dâhil.** Yanlış bir araç çağrısı ve hata mesajı
 koşunun geri kalanı boyunca bağlamda kalır; model de sonraki her adımda
-çıktısını onlara koşullu olarak üretmeyi sürdürür. Yanlış giden bir ajanın çoğu
-zaman aynı yönde yanlış gitmeyi sürdürmesinin nedeni budur — daha önceki kafa
-karışıklığının izleri artık akıl yürütürken dayandığı malzemenin bir
-parçasıdır.
+çıktısını onlara koşullu olarak üretmeyi sürdürür. Bu, iki yöne de işleyebilir:
+model eski hatadan toparlanabilir ya da aynı yönde yanlış gitmeyi
+sürdürebilir.
 
 **Varsayılan olarak transkript geri alınamaz.** Sıradan yazılımda
 başarısız bir adımı temiz bir durumdan yeniden denerdiniz. Burada kusur durumun
 içindedir ve bu döngü her mesajı saklar. Geri almayı *kurabilirsiniz* — bir
 adımdan önce mesaj listesinin anlık görüntüsünü alıp gerekirse listeyi o
-noktaya geri kırpmak ucuzdur ve genellikle yapılmalıdır. Hiçbir anlık görüntünün geri
-almadığı şey yan etkilerdir: giden e-posta, silinen kayıt, geçen ödeme. İkisini
+noktaya geri kırpmak ucuzdur. Ama yalnızca mesaj listesini geri almak yeterli
+değildir; hiçbir anlık görüntünün geri almadığı şey yan etkilerdir: giden e-posta,
+silinen kayıt, geçen ödeme. Yan etkili araçlar için idempotency anahtarı,
+işlem (transaction) ya da telafi mekanizması gerekir. İkisini
 kafanızda ayrı tutun, çünkü yalnızca biri sizin denetiminizde; "yeniden
 dene"nin bir ajan için bir HTTP isteğine göre çok daha pahalı bir öneri
 olmasının nedeni de budur.
@@ -359,13 +364,13 @@ olmasının nedeni de budur.
 Karesel terimi hafifleten tek bir şey var ve başka bir şeyi eniyilemeden önce
 bunu bilmekte yarar var. Bir ajan döngüsündeki her istek, bir önceki isteğin
 tamamıyla, hiç değişmeden *başlar* — prompt önbellekleme (prompt caching) tam
-da bu desen için tasarlandı: bugünkü fiyat listelerinde önbellekten okuma çoğu
-zaman taze okumanın kabaca onda birine mal olur. Kesin indirim sağlayıcıya ve
-modele göre değişir, bazı sağlayıcılar önbelleğe yazmak için ek ücret alır ve
-bir önbellek kaydı varsayılan olarak birkaç dakika kullanılmayınca silinir.
-Karesel terim kaybolmuyor; sabiti küçülüyor, en fazla bir büyüklük mertebesi
-kadar. Bunun rahatsız edici bir sonucu da var: bir transkripti sıkıştırmak
-ön eki yeniden yazar ve önbelleği geçersiz kılar. @sec-baglam-muhendisligi'in
+da bu desen için tasarlandı: değişmeyen ön ekin tekrar işlenmesini ve bazı
+sağlayıcılarda girdi bedelini azaltabilir. Destek, fiyat ve yaşam süresi
+sağlayıcıya ve modele özgüdür; bazı sağlayıcılar önbelleğe yazmak için ek ücret
+alır ve kayıtlar bir süre kullanılmayınca silinir. Karesel terim kaybolmuyor;
+sabiti küçülebilir. Bunun bir sonucu da var: bir transkripti sıkıştırmak,
+değiştirdiği bloktan sonraki ön eki yeniden yazar ve önbellek isabetini
+azaltabilir. Gerçek maliyeti önbellek okuma/yazma sayaçlarından ölçün. @sec-baglam-muhendisligi'in
 sıkıştırması bu yüzden bedava değil; ayrıntılı mekanizma @sec-servis'de.
 :::
 

@@ -297,8 +297,11 @@ wants a loop at all.
 
 ## The state is a transcript, and that is the whole problem {#sec-agent-anatomy-state}
 
-Ask what this agent's state *is* and the honest answer is uncomfortable: it is
-the list of messages, and nothing else. There is no working memory, no variable
+Ask what this agent's state *is* and the honest answer is uncomfortable: in this
+minimal loop, the **conversation state** carried to the model's next decision
+is the list of messages, and nothing else. The tools' external state — a
+database, files, the clock — stays separate; but the run context the model can
+reach is the transcript. There is no working memory, no variable
 bindings, no scratch space the model can address. Everything the agent knows at
 step 7 is whatever survived into the transcript by step 6.
 
@@ -309,29 +312,42 @@ and @sec-multi-agent hands sub-tasks to workers with transcripts of their own.
 Read the three consequences below as what you get *by default*, and as the
 reason those chapters exist.
 
+::: {.column-margin}
+With reasoning models (@sec-reasoning) one more thing can enter the
+transcript: the thinking content. Providers carry it differently, and the
+resend rules depend on the client schema and the data-retention policy.
+Anthropic's extended thinking asks that the last assistant message's
+`thinking` blocks be sent back unmodified within a tool turn; Ollama returns
+the thinking in a `thinking` field separate from `content`, and a loop that
+writes only `content` to the transcript drops it without noticing. Check which
+fields your client returns before appending the message.
+:::
+
 Three consequences fall directly out of that, and they explain most of what
 goes wrong in practice.
 
-**Cost grows with the number of *model calls*, not the number of tool calls.**
-Each model call re-sends the whole transcript, so a genuinely sequential run of
-*n* steps costs roughly the sum of the first *n* context lengths — quadratic
-rather than linear. The saving grace, measured in @sec-agent-anatomy-decay, is
-that a model which emits several tool calls at once collapses many steps into
-one, and in this chapter's measurement that is the largest lever on what the
-agent costs.
+**Cost depends more on the number of *model calls*, and each call's tokens,
+than on the number of tool calls.** Each model call re-sends the whole
+transcript, so a genuinely sequential run of *n* steps, each adding a similar
+amount, costs roughly the sum of the first *n* context lengths — quadratic
+rather than linear. Compute agent cost from the number of model calls together
+with each call's input and output tokens, cache hits and external tool fees. In
+this experiment the five independent lookups were batched into one tool turn,
+so model calls stayed at two (@sec-agent-anatomy-decay).
 
 **Nothing is ever forgotten, including the mistakes.** A wrong tool call and
 its error message stay in context for the rest of the run, and the model
-continues to condition on them. This is why an agent that goes wrong often
-keeps going wrong in the same direction — the evidence of its earlier
-confusion is now part of what it is reasoning from.
+continues to condition on them. That can cut both ways: the model may recover
+from the earlier mistake, or keep going wrong in the same direction.
 
 **There is no rollback of the transcript by default.** In ordinary software you
 would retry a failed step from a clean state. Here the failure is in the state,
 and this loop keeps every message. You *can* build the rollback — snapshot the
-message list before a step and truncate back to it — and that is cheap and
-worth doing. What no snapshot undoes is the side effects: the email that went
-out, the row that was deleted, the payment that cleared. Keep the two apart in
+message list before a step and truncate back to it — and that is cheap. But
+rolling back the message list alone is not enough; what no snapshot undoes is
+the side effects: the email that went out, the row that was deleted, the
+payment that cleared. Side-effecting tools need idempotency keys, transactions
+or a compensation mechanism. Keep the two apart in
 your head, because only one of them is under your control, and it is why "just
 retry it" is a more expensive suggestion for an agent than for an HTTP
 request.
@@ -340,13 +356,13 @@ request.
 One thing softens the quadratic term and it is worth knowing before you
 optimise anything else. Every request in an agent loop *begins with* the whole
 previous request, unchanged, which is the pattern prompt caching was built
-for: on current price sheets a cached read often costs around a tenth of a
-fresh one. The exact discount varies by provider and model, some providers
-charge extra to write the cache, and by default a cache entry expires after a
-few idle minutes. The quadratic does not go away; its constant shrinks, by up to an
-order of magnitude — and the
-corollary is uncomfortable, because compacting a transcript rewrites the
-prefix and invalidates the cache. @sec-context-engineering's compaction is
+for: it can cut the reprocessing of the unchanged prefix and, with some
+providers, the input cost. Support, price and lifetime are specific to the
+provider and model; some providers charge extra to write the cache, and
+entries expire after a period of disuse. The quadratic does not go away; its
+constant can shrink. And there is a corollary: compacting a transcript
+rewrites the prefix after the block it changes and can reduce cache hits.
+Measure the real cost from the cache read and write counters. @sec-context-engineering's compaction is
 therefore not free, and @sec-serving has the mechanics.
 :::
 
