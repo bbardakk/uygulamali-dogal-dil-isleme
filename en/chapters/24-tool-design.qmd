@@ -1066,40 +1066,42 @@ error texts, the raw calls from each run, the class of the two missing
 
 ## What to remember {#sec-tool-design-summary}
 
-- **A tool schema is prompt text, not documentation.** The model gets one shot
-  from it, cannot read your source, and cannot check a guess. Whatever the
-  schema does not say, it invents.
-- **Enumerate before you describe.** Moving one parameter from a free string
-  to an enumerated list took correct calls from **25% to 100%**; prose on top
-  added nothing observable once the enum had reached 60/60. Prose *without* an
-  enum was not tested, and for parameters you cannot enumerate it is the only
-  bridge you have.
-- **A bad schema produces no call, not a wrong call.** The opaque variant went
-  uncalled **41.7%** of the time and answered from parametric memory instead —
-  a confident invented paragraph, which is worse than an error because it looks
-  like an answer.
+- **A tool schema is both an interface definition and prompt text.** The
+  schema shapes the model's first decision, and the text returned after an
+  error shapes the next. The model cannot read your source; whatever the schema
+  does not say, it guesses.
+- **For fixed values, enumerate before you describe.** In this three-field run,
+  moving one parameter from a free string to an enumerated list took correct
+  calls from **15/60 to 60/60**; the extra effect of descriptions is unknown
+  because of the ceiling. Descriptions *without* an enum were not tested, and
+  for parameters you cannot enumerate they are the bridge you have.
+- **An opaque schema produced two failures at once.** The opaque variant went
+  uncalled on **41.7%** of requests (25/60), where the model wrote a confident
+  invented paragraph without the tool, and none of its other 35/60 calls was
+  correct. Report the two failure kinds separately.
 - **Without constraints the model echoes the user's vocabulary into your API.**
   *mali buyukluk*, *ekip mevcudu*, *takvim* — and `bütçe` where the API wanted
-  `butce`, which is @sec-turkish-nlp's problem arriving inside a function
-  signature.
-- **The error string made the largest single difference measured here.** Recovery
-  went from **1.7% to 100%** by naming the invalid value and listing the valid
-  ones. Write what *would* have worked; the rest is optional.
+  `butce`. Use an explicit alias map at the boundary; this is
+  @sec-turkish-nlp's problem arriving inside a function signature.
+- **The error text that listed the options made the largest difference in this
+  experiment.** With the first call rejected unconditionally, naming the
+  invalid value and listing the three valid ones took correct second calls from
+  **1.7% to 100%**. The real-error condition needs its own test; write error
+  text by error class.
 - **A stack trace is a half-written error message.** It names the value that
-  failed and never what would have worked. It produced the fewest retries of
-  any style, yet of the three incomplete styles its retries were the most often
-  correct, 7 of 9 — both descriptive patterns that do not survive a test at
-  n = 60. Do not read it as *worse than nothing*. Read it as unfinished, and add the third sentence.
-- **The dominant failure after an error is giving up, not looping.** Three of
-  four error styles made the model stop calling tools and answer without the
-  data — a quieter failure than a retry loop and a worse one.
-- **What a tool returns is a write to the agent's state.** Return the fields
-  the task needs, state the pagination in the result, and summarise on the tool
-  side. A 50,000-token result can consume context later steps need and is
-  carried into every later call; judge it against the task's context and cost
-  budgets. Never return secrets or records the user may not see.
-- **A tool that acts must survive being called twice.** Make it idempotent,
-  give it a dry run, and put the confirmation gate in the runtime, not the
-  prompt.
-
-
+  failed and not what would work. In the `traceback` condition retries plus
+  abandonments total 58, not 60; until the item-level record fixes that, the
+  row's rates are an uncertain observation. It could not be told apart from a
+  bare `"Error"`; read it as unfinished, and add the third sentence.
+- **In this experiment the dominant failure after an error was giving up.**
+  Three of four error styles mostly made the model stop calling tools and answer
+  without the data — a quieter failure than a retry loop.
+- **What a tool returns is a write to the context.** Return the fields the task
+  needs, state the pagination in the result, summarise on the tool side, and
+  keep permitted access to the full data by source id. Bound tool output by the
+  task's needs and the user's permissions; never return secrets or records the
+  user may not see.
+- **A tool that acts must survive being called twice.** Reuse the same
+  idempotency key across retries of one logical action; decide whether a dry
+  run and human confirmation are needed by the operation's reversibility and
+  error cost, and put the confirmation gate in the runtime, not the prompt.
