@@ -798,13 +798,16 @@ Two document types where fixed-size chunking simply fails:
 
 ### So what should you do?
 
-**One boundary on all of this first: every number above is BM25.** The mechanism
-behind condition B — short chunks winning because they are almost entirely about
-the query — *is* BM25's length normalisation, which is a property of the scorer
-as much as of the cutting. A dense retriever has no length normalisation. It has
-a maximum sequence length that truncates, and a pooling step (often a mean over
-tokens) that squeezes a long chunk into one vector and dilutes its signal, and those produce a different optimum. The direction is probably
-similar; the numbers are not transferable, and the pipeline diagram at the top of
+**One boundary on all of this first: every number above is BM25.** The likely
+mechanism behind condition B — short chunks pulling ahead because they are
+largely about the query — has to do with BM25's length normalisation, so it may
+be a property of the scorer as much as of the cutting. A dense retriever may
+have no explicit length normalisation like BM25's `b`, but length still
+matters: a maximum sequence length that truncates, a pooling step (often a mean
+over tokens) that squeezes a long chunk into one vector, and the lengths the
+model was trained on can all produce different behaviour. Do not assume either
+the direction or the optimum without re-evaluating the same strategies with the
+dense model you choose, and the pipeline diagram at the top of
 this chapter shows an embedding stage, so a reader is entitled to assume
 otherwise unless we say this.
 
@@ -813,15 +816,30 @@ ones you will get. But if you need a starting point before you have that:
 
 - Chunk on **structure** — sentences, paragraphs, sections, clauses, rows — and
   pack to a target size rather than cutting at one.
-- Target **roughly 100–200 words** if your questions are about specific facts,
-  and larger, up to whole documents, if they are about what a document covers.
-- Add **overlap only for fact-shaped questions**, and treat it as a boundary
-  repair rather than a default.
+- Measure size and overlap on your real queries together with evidence-chunk
+  coverage, answer accuracy and cost. In this experiment's proxy conditions,
+  fact queries did well at roughly 100–200 words and queries about what a
+  document covers did well with larger chunks, up to whole documents; that
+  range is not a general optimum.
+- Treat **overlap** as a boundary repair to measure, not a default; in this
+  experiment it came with a gain only on fact-shaped queries.
 - If your questions are genuinely both kinds, consider indexing at two
   granularities rather than compromising at one. Measure first: on this corpus
   the best compromise (200 words, 50 overlap) was only about a point behind the
-  best configuration in each condition, which is within noise, but the gap is
-  not guaranteed to be that small on yours.
+  best configuration in each condition; without paired results that gap cannot
+  be resolved, and it is not guaranteed to be that small on yours.
+- **Try retrieving small and generating big.** One method to try for the
+  trade-off between targeting and context is *small-to-big* (or
+  *parent-document*) retrieval: search small chunks in the index, but hand the
+  generator the section around the matching chunk or the whole document;
+  frameworks such as LangChain and LlamaIndex have ready versions. It can raise
+  token cost and distraction; compare the tokens sent, evidence coverage and
+  answer quality against passing the small chunk directly. A sibling method
+  prepends the document title, or a short context sentence placing the chunk
+  in its document, to every chunk
+  ([contextual retrieval](https://www.anthropic.com/news/contextual-retrieval)),
+  so a chunk that is ambiguous on its own introduces itself. Neither was
+  measured in this chapter.
 
 ## Failure modes, and attributing them {#sec-rag-failures}
 
