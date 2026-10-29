@@ -71,12 +71,14 @@ None of these are visible without counting.
 
 ### The one thing that changes the arithmetic {#sec-context-engineering-cache}
 
-One qualifier before any of that arithmetic gets applied. Providers cache the
-**prefix** of a prompt: an unchanged system prompt and tool block, re-sent on
-the next call, is billed at a fraction of its first-call price and skips most
-of the *prefill* (the pass that reads the prompt before the first output token)
-— @sec-serving measured warm prefill flat at 12–16 ms whatever the prompt
-length. So "every token is re-sent on every call" is exactly true of the
+One qualifier before any of that arithmetic gets applied. Many providers can
+cache the **prefix** of a prompt: an unchanged system prompt and tool block,
+re-sent on the next call, may be billed at a lower price and skip most of the
+*prefill* (the pass that reads the prompt before the first output token) —
+@sec-serving measured warm prefill flat at 12–16 ms whatever the prompt length,
+on its own serving setup. The discount, minimum prefix, lifetime and cache
+breakpoint depend on the provider; log the cache tokens read and written and
+the time to first token on your own requests. So "every token is re-sent on every call" is exactly true of the
 *tokens* and only partly true of the bill.
 
 Why only a *prefix*? Because attention is causal: the keys and values stored
@@ -91,21 +93,23 @@ premium to write it.
 
 A worked example makes the size of the effect concrete. Take a 10-call agent
 run whose system prompt and tool definitions total 5,000 tokens, and use
-multipliers that are typical of 2026 price sheets (they vary by provider and
-model): a cache write costs 1.25× the normal input price, a cache read 0.1×.
-Uncached, the fixed part costs what 10 × 5,000 = 50,000 input tokens cost.
-Cached, it costs what 1.25 × 5,000 + 9 × 0.1 × 5,000 = 10,750 cost — about
-4.7 times less, for exactly the same tokens.
+hypothetical multipliers (real ones vary by provider and model): a cache write
+costs 1.25× the normal input price, a cache read 0.1×. Uncached, the fixed part
+costs what 10 × 5,000 = 50,000 input tokens cost. Cached, it costs what
+1.25 × 5,000 + 9 × 0.1 × 5,000 = 10,750 fresh-input-equivalent tokens cost —
+about 4.65 times less. That is not a price but an example built with
+provider-specific multipliers.
 
 Two consequences follow, and both make cutting tokens worth less than the raw
 count suggests. Fixed costs are cheaper than they look, so pruning the system
-prompt returns less than multiplying it by the step count suggests. And
-**compaction invalidates the cache**: rewriting the middle of a context
+prompt can return less than multiplying it by the step count suggests. And
+**compaction can reduce cache hits**: rewriting the middle of a context
 invalidates the cached prefix from that point on, so the first call after you
 compact pays full price — plus any write premium — for everything after the
-rewritten point. Design the context to be append-only where you can — stable
-prefix, growing suffix, the task restated at the end — and compact rarely in
-large steps rather than often in small ones.
+rewritten point. Keeping a stable prefix (stable prefix, growing suffix) can
+help; but choose the interval and size of compaction on real tasks by weighing
+cache hits, the context limit and fact loss for the accuracy/cost balance — a
+rare, large summary can lose more facts.
 
 **What we will look at.** First whether long contexts really do degrade, where
 this chapter's own measurement finds nothing and the published benchmarks find
