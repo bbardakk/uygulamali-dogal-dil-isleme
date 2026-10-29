@@ -446,29 +446,37 @@ avoids polluting it.
 
 ::: {#gloss-context-isolation .column-margin .term-gloss}
 **Context isolation** — running a read-heavy sub-task in its own window and
-returning only its conclusion, so the parent's context never carries what it
-read. The reading is still paid for, once, by the sub-agent.
+returning only its conclusion, so the parent's context does not carry what it
+read. The reading is still paid for, in the sub-agent's window — and again on
+each of its turns if it takes several.
 [↩](#term-context-isolation){.term-back}
 :::
 
-The idea is simple and it is the single largest lever in this chapter: a
+The idea is simple and it may be one of the strongest levers in this chapter: a
 sub-task that needs to read a great deal — search fifty documents, scan a log,
 try six queries — runs in **its own context**, and returns only its
-conclusion. The parent never sees the fifty documents. It sees one paragraph.
+conclusion. The parent does not see the fifty documents (unless it read them
+earlier); it sees a short result and source pointers. This chapter did not
+measure isolation: measure the sub-run's own turns and tokens, and whether the
+answer it returns agrees with the evidence, separately.
 
 ```text
   without isolation           with isolation
   ─────────────────           ──────────────
   parent reads 50 docs        sub-agent reads 50 docs in a fresh window
   parent context: 40k         sub-agent returns 200 tokens
-  and stays 40k forever       parent context: +200
+  and carries 40k on later calls  parent context: +200
 ```
 
 The saving is not the 40k. On the parent's side it is roughly
 $(40{,}000 - 200) \times M$ **over the $M$ model calls left in its loop**. That
 is a gross figure. The sub-agent's own 40k of reading, its fixed prompt and
-output, and any cache pricing still have to be subtracted, so treat the sketch
-as illustrative rather than as a bill. How large $M$ is depends on
+output, and any cache pricing still have to be subtracted. For example, if 10
+calls remain in the parent's loop *after* the reading, and the 40,000 tokens of
+documents would stay in context on each of them, a 200-token summary changes
+the gross tokens sent by $(40{,}000 - 200) \times 10 = 398{,}000$. The net
+difference on the bill subtracts the sub-run's input and output, cache hits and
+any extra calls, so treat the sketch as illustrative rather than as a bill. How large $M$ is depends on
 something @sec-agent-anatomy measured rather than assumed. When the steps are
 independent the model batches its tool calls: five lookups collapsed into 2.0
 model calls there, and the growth was nowhere near quadratic. When the steps
@@ -481,7 +489,8 @@ What it costs is equally real and usually understated:
 - **The parent cannot see what the sub-agent saw.** If the returned paragraph
   is wrong or incomplete, the parent has no way to notice — it has lost the
   evidence. Return a short result *and* a pointer to where the full material
-  lives.
+  lives: the source's id, its version, and a path the parent is authorised to
+  re-read. A pointer the parent cannot dereference is useless.
 - **Coordination is not free.** Every isolated call is at least one extra
   round trip, and the specialist has to be given enough context to do its job,
   which is a prompt you now maintain.
@@ -492,7 +501,12 @@ What it costs is equally real and usually understated:
 The heuristic worth applying: **isolate when the sub-task's inputs are large
 and its output is small.** Searching, scanning, filtering, verifying. Do not
 isolate when the parent will need the detail — you will only pay the round
-trip and then ask for it again.
+trip and then ask for it again. @sec-multi-agent shows with a cost model where
+the rule can flip: six steps with 200-token results cost **1.20×** as three
+agents, because the per-agent fixed cost is paid extra, while twenty-four
+steps with 3,000-token results save two thirds. Those are model calculations,
+and this chapter's 40k/200 example is hypothetical; measure isolation's net
+benefit on your own tasks in accuracy, latency and total cost.
 
 ## Just-in-time retrieval beats eager loading {#sec-context-engineering-jit}
 
