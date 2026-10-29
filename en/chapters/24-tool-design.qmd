@@ -776,75 +776,80 @@ selected become visible without looking at the tool server's logs.
 
 ## Intuition checks {#sec-tool-design-intuition}
 
-Answer each one before you open it. Four are questions this chapter settled
-with a measurement rather than an argument; the other two are design decisions
-it argues for and cannot measure.
+Answer each one before you open it. The chapter approached four of them with a
+measurement; the other two are design decisions it argues for and cannot
+measure.
 
 ::: {.callout-note collapse="true"}
 ## 1. Where should you spend your time on a tool schema?
 
-On enums, before prose. Measured here, moving one parameter from a free string
-to an enumerated list took correct calls from **25% to 100%**, and adding
-careful descriptions on top added nothing observable. Be exact about why: the
-runtime here did not enforce the enum, so listing the values supplied
-vocabulary the model followed, and the experiment never tested prose without
-the enum. A decoder that *does* enforce it guarantees only that the value is in
-the set — not that it is the right one.
+On enums first, for fixed values. In this three-field task, moving one
+parameter from a free string to an enumerated list took correct calls from
+**15/60 to 60/60**; no gain was observed from descriptions on top, but C was
+already at the ceiling. Be exact about why: the runtime here did not enforce
+the enum, so listing the values supplied vocabulary the model followed, and the
+experiment never tested descriptions without the enum. On your own tools, test
+descriptions without the enum and on harder conditions too. A decoder that
+*does* enforce it guarantees only that the value is in the set — not that it is
+the right one.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Your tool has a badly named, undocumented schema. What is the failure?
 
-Usually not a wrong call — **no call**. With an opaque schema the model here
-invoked the tool only 58.3% of the time and otherwise answered from parametric
-memory, producing a confident paragraph about something it could not know. A
-wrong call raises an error you can see; an unused tool produces a plausible
-answer and no signal at all.
+Two failures at once. With an opaque schema the model here produced no tool
+call at all on 25/60 requests and wrote a confident paragraph about something
+it could not know without the tool; on the other 35 it called the tool but
+never correctly. Report the two separately: a wrong call often raises an error
+you can see; an unused tool produces a plausible answer and no signal on the
+tool side.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. Why does a model pass "mali buyukluk" where your API wants "butce"?
 
 Because nothing told it otherwise, so it echoes the user's vocabulary into your
-parameter. In this chapter's measurement only two phrasings worked, and neither contains
-the API's word: the model mapped their meaning onto a field name and landed on
-the API's own. One case
-is worth noticing specially: the model wrote `bütçe` where the API expects
-`butce` — correct Turkish, wrong identifier, and a failure waiting inside any
-API whose values are ASCII-folded words.
+parameter. In this chapter's measurement only two phrasings worked, and neither
+contains the API's word: the model mapped their meaning onto a field name and
+landed on the API's own. One case is worth noticing specially: the model wrote
+`bütçe` where the API expects `butce` — correct Turkish, wrong identifier. Use
+an explicit alias map at the boundary for ASCII field names.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. What should a tool return when it fails?
 
-What would have worked. Measured across four styles, recovery went from **1.7%
-to 100%** purely by naming the invalid value and listing the valid ones. The
-stack trace names the value that failed and never what would have worked: a
-half-written error message. Here it could not be told apart from a bare
-`"Error"` — its retry and abandonment gaps do not survive a test — so it is not
-worse than nothing, only unfinished. Catch it and add the missing sentence.
+What would work, by error class. For an invalid field value, show the allowed
+safe options: in this run, naming the invalid value and listing the three valid
+ones took correct second calls from **1.7% to 100%**. For a permission or
+network error give a different, suitable direction; a value list could leak
+there. The stack trace names the value that failed and not what would work: a
+half-written error message. In this record it could not be told apart from a
+bare `"Error"` (and the traceback row is missing two tasks). Translate the raw
+exception and add the missing sentence.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. A tool returns the full record — 8,000 tokens. Is that a problem?
 
-Yes, and it is a problem for the whole run rather than that step. The return
-value goes into the transcript, which @sec-agent-anatomy showed *is* the
-agent's state, so it is re-sent on every subsequent model call and it crowds
-out what later steps need. Return the fields the task needs, paginate with the
-pagination stated in the result, and summarise on the tool side when the raw
-form is unusable.
+Probably, and for the whole run rather than that step. In the minimal loop the
+return value is appended to the message list and re-sent on every later model
+call; the effect depends on the task and the context window, but it takes room
+later steps need. Select the fields the task needs, paginate with the
+pagination stated in the result, and keep permitted access to the full data by
+source id.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. When do you stop adding tools and expose an interpreter instead?
 
 When the tools are mostly small transformations that users want to *compose* —
-filter, then sum, then join — because composition is exactly what a fixed list
-makes awkward and what code makes free. Be explicit about the price: you have
-replaced a whitelist you can read with a sandbox you have to build and keep
-trusting. That is a security decision made in this chapter and paid for in
-@sec-agent-security.
+filter, then sum, then join — consider exposing typed tools in code mode;
+composition is what a fixed list makes awkward and code makes easier. Be
+explicit about the price: you have to set the sandbox's file, network and tool
+permissions, resource limits and traces, and measure task success and cost
+against the flat list. That is a security decision made in this chapter and
+paid for in @sec-agent-security.
 :::
 
 ## Interview questions {#sec-tool-design-interview}
