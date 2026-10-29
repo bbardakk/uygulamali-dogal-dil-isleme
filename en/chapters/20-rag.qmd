@@ -26,33 +26,51 @@ need them published.
 
 ## Why not just paste everything into the prompt? {#sec-rag-longcontext}
 
-First, what the name means. **Retrieval-augmented generation (RAG)** is a
-simple recipe: when a question arrives, *search* your own documents for the few
+First, what the name means. **Retrieval-augmented generation (RAG)** is the
+general name for systems that fetch relevant content to support generation
+with external knowledge. Its most common form is a simple recipe: when a question arrives, *search* your own documents for the few
 passages most likely to contain the answer, *paste* those passages into the
 prompt, and *ask* the model to answer from them. The search is @sec-retrieval's
 subject; this chapter is about everything around it. The original formulation
-[@lewis2020rag] trained the retriever and the generator together; the version
-almost everyone builds today keeps them separate, and that is the version here.
+[@lewis2020rag] trained the retriever and the generator together. This chapter
+covers the common two-stage implementation that keeps them separate, indexing
+documents in advance and handing selected passages to the generator at query
+time; variants with query rewriting, multiple retrievals or retrieval during
+generation also exist.
 
 RAG exists because [models are frozen and your knowledge is not]{.hl}. That
-is the permanent reason. But context windows kept growing, and every time
+is the permanent reason, and three related reasons stand beside it. **Private
+data:** your organisation's documents and long-tail facts the model rarely saw
+in training are absent from its parameters or weakly represented. **Citation:**
+each retrieved chunk can carry a source id, which makes the answer checkable —
+but whether the cited source actually supports the claim has to be checked
+separately. **Less hallucination:** retrieving the right evidence can reduce
+hallucination by helping the model build its answer from the text in front of
+it rather than from memory — something to measure in your own system — but it
+does not eliminate it: retrieval can fetch the wrong chunk, the model can
+ignore what arrived, and the chunk itself can be wrong; @sec-rag-failures
+separates these cases. But context windows kept growing, and every time
 they did, somebody argued the problem had gone away: if the whole corpus fits,
 why retrieve?
 
-There are three answers everyone gives — **cost**, because you pay for every
-input token on every request; **access control**, because a prompt cannot
+There are three common answers — **cost**, because every input token is
+processed on every request, and most services bill for it; **access control**, because a prompt cannot
 enforce who may see which document; and **recency**, because a cached prompt
-goes stale. All three are true, with one qualification worth making now: the
+goes stale. All three hold depending on the application, with one qualification worth making now: the
 second and third are things retrieval *lets you build*, not properties the
 label confers. A retrieval layer gives you a place to filter by permission and
 a place to re-index. But an index that does not filter out documents a user may
 not read still leaks them, just through one more step, and an index nobody refreshes is
-as stale as the prompt it replaced. The fourth answer, the one repeated most confidently, is
+as stale as the prompt it replaced. The fourth answer, also often repeated, is
 that **a model does not use a long context evenly**.
 
-That fourth claim is the only one of the four that is a factual assertion about
-model behaviour rather than about your infrastructure, so it is the one worth
-measuring. I measured it and [did not reproduce it]{.hl}.
+All four can be measured: token and latency cost with prices and timing,
+permission boundaries with access tests, recency with index freshness, and
+context use with the model's behaviour. Each needs its own test under the
+chosen system's conditions. The first three depend on your infrastructure, the
+fourth on the model; this chapter measured the fourth with a simple needle test.
+On the model and task used, [I saw no position-dependent drop]{.hl}; the result
+does not generalise to harder evidence-finding tasks.
 
 ### The needle test
 
