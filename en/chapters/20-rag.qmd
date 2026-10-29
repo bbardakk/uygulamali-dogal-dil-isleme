@@ -843,51 +843,60 @@ ones you will get. But if you need a starting point before you have that:
 
 ## Failure modes, and attributing them {#sec-rag-failures}
 
-A RAG system gives a wrong answer. There are three different causes and they
-have three different fixes, so the first job is **not** to tune anything — it
-is to find out which stage failed.
+A RAG system gives a wrong answer. Wrong answers usually show up at one of
+three stages — retrieval, use of the retrieved evidence, or combining the
+evidence — and each has a different fix; parsing, source and label faults need
+checking separately too. So the first job is **not** to tune anything — it is
+to locate the failure among these stages.
 
 | failure | what happened | how you detect it |
 |:--|:--|:--|
-| **Retrieval miss** | the right chunk was never returned | check whether it is in the top-k at all; if not, nothing downstream matters |
+| **Retrieval miss** | the required evidence is not in the chunks passed to the generator (because of retrieval, chunking or parsing) | check whether the passed chunks hold evidence supporting the expected answer; if not, no grounded answer can be expected downstream |
 | **Grounding miss** | the right chunk was returned and the model ignored it, or contradicted it | the chunk is in the context and the answer is not in the chunk |
 | **Synthesis miss** | everything needed was there, spread across chunks, and the model combined it wrongly | all facts present, conclusion wrong |
 
 : Three failures, one symptom {tbl-colwidths="[20,42,38]"}
 
-The diagnostic is mechanical and takes an afternoon to build:
+The first step of the diagnostic can be built as a short loop:
 
 ```python
-for q, gold_doc, expected in evaluation_set:
+for q, expected in evaluation_set:
     hits = retrieve(q, k=10)                   # the same k the generator reads
     answer = generate(q, hits)
-    if answer == expected:
+    if matches(answer, expected):
         continue                               # correct: nothing to attribute
-    if gold_doc not in {h.doc_id for h in hits}:
-        bucket["retrieval miss"] += 1          # fix retrieval
-    elif not answer_supported_by(answer, hits):
-        bucket["grounding miss"] += 1          # fix the prompt, or the model
+    if not evidence_for(expected, hits):
+        bucket["evidence missing"] += 1        # retrieval, chunking or parsing
+    elif not claims_supported_by(answer, hits):
+        bucket["grounding miss"] += 1          # inspect the prompt, or the model
     else:
-        bucket["synthesis miss"] += 1          # fix decomposition, or the task
-                                               # (or a bad source/label: inspect)
+        bucket["inspect: source, label or synthesis"] += 1   # look by hand
 ```
 
-Read the three tests in order. Only wrong answers are attributed. If the gold
-document never arrived, nothing downstream could have saved it. If it arrived
-but the answer is not supported by the retrieved text, the model ignored or
+Read the three tests in order. Only wrong answers are attributed. If the
+chunks passed to the generator hold no evidence for the expected answer —
+because the document never arrived, the needed passage sat in another chunk,
+or parsing lost it — nothing downstream could produce a grounded answer.
+Checking the document id is not enough: the needed sentence may not be in the
+returned chunk, and another document may carry the evidence. If the evidence
+arrived but the generated claims are not supported by it, the model ignored or
 contradicted its evidence. If every claim is supported and the conclusion is
-still wrong, the facts were usually combined wrongly. But the last bucket also
-collects two other causes: the retrieved document itself may be wrong, stale or
-contradicted by another document (a corpus error), or the reference answer may
-be wrong (a label error). Their fixes differ from a synthesis fix, so inspect
-this bucket by hand; a supported but wrong answer drawn from a single chunk
-points at the source rather than at synthesis. In practice `==` becomes a
-normalised match or a judge, and `answer_supported_by` is the faithfulness
-check defined at the end of this section.
+still wrong, the last bucket collects three possible causes: the facts were
+combined wrongly (synthesis), the retrieved document is wrong, stale or
+contradicted by another document (a corpus error), or the reference answer is
+wrong (a label error). Do not declare a synthesis error before checking the
+document's currency and the reference's correctness; inspect this bucket by
+hand. A supported but wrong answer drawn from a single chunk points at the
+source rather than at synthesis. In practice `matches` is a normalised match or
+a validated judge; `evidence_for` is an evidence label or a judge asking
+whether evidence for the expected answer is in the passed chunks; and
+`claims_supported_by` is the faithfulness check defined at the end of this
+section.
 
 [Do this before touching the embedding model.]{.hl} The default reflex when a
 RAG system disappoints is to swap the embeddings, and the measurement in
-@sec-retrieval says that is often not the biggest lever — the choice of
+@sec-retrieval's two synthetic conditions suggests it is not always the
+biggest lever — the choice of
 embedding model was worth 2.4 points on easy queries and 25.3 on hard ones,
 while the choice between lexical and dense was worth *sixty to seventy*, in
 whichever direction the query type dictated. And an embedding swap can only

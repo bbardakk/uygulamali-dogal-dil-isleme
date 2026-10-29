@@ -858,52 +858,59 @@ Kendi derleminizde, kendi retriever'ınızla, alacağınız sorulara benzer sorg
 
 ## Kusur biçimleri ve onları atfetmek {#sec-rag-kusurlar}
 
-Bir RAG sistemi yanlış bir cevap veriyor. Bunun üç farklı nedeni ve üç farklı
-düzeltmesi var; dolayısıyla ilk iş herhangi bir şeyi ayarlamak **değil** —
-hangi aşamanın bozulduğunu bulmak.
+Bir RAG sistemi yanlış bir cevap veriyor. Yanlış cevaplar çoğu zaman üç
+aşamadan birinde belirginleşir — erişim, getirilen kanıtın kullanımı ya da
+kanıtların birleştirilmesi — ve her birinin düzeltmesi farklıdır; ayrıştırma,
+kaynak ve etiket kusurları da ayrıca denetlenmeli. Dolayısıyla ilk iş herhangi
+bir şeyi ayarlamak **değil** — hatayı bu aşamalarda konumlandırmak.
 
 | kusur | ne oldu | nasıl saptanır |
 |:--|:--|:--|
-| **Retrieval miss** (erişim kaçırması) | doğru parça hiç döndürülmedi | ilk k içinde olup olmadığını kontrol edin; değilse aşağı akıştaki hiçbir şeyin önemi yok |
+| **Retrieval miss** (erişim kaçırması) | gerekli kanıt üreticiye geçen parçalarda yok (erişim, parçalama ya da ayrıştırma yüzünden) | geçen parçalarda beklenen cevabı destekleyen kanıt var mı bakın; yoksa aşağı akışta dayandırılmış bir cevap beklenemez |
 | **Grounding miss** (dayandırma kaçırması) | doğru parça döndürüldü ve model onu yok saydı ya da çelişti | parça bağlamda ve cevap parçada değil |
 | **Synthesis miss** (sentez kaçırması) | gerekli her şey oradaydı, parçalara yayılmıştı ve model onları yanlış birleştirdi | olguların hepsi mevcut, sonuç yanlış |
 
 : Üç kusur, tek belirti {tbl-colwidths="[20,42,38]"}
 
-Teşhis mekaniktir ve kurması bir öğleden sonra sürer:
+Teşhisin ilk adımı kısa bir döngüyle kurulabilir:
 
 ```python
-for q, gold_doc, expected in evaluation_set:
+for q, expected in evaluation_set:
     hits = retrieve(q, k=10)                   # üreticinin okuduğu k ile aynı
     answer = generate(q, hits)
-    if answer == expected:
+    if matches(answer, expected):
         continue                               # doğru: atfedilecek bir şey yok
-    if gold_doc not in {h.doc_id for h in hits}:
-        bucket["retrieval miss"] += 1          # erişimi düzelt
-    elif not answer_supported_by(answer, hits):
-        bucket["grounding miss"] += 1          # prompt'u ya da modeli düzelt
+    if not evidence_for(expected, hits):
+        bucket["evidence missing"] += 1        # erişim, parçalama ya da ayrıştırma
+    elif not claims_supported_by(answer, hits):
+        bucket["grounding miss"] += 1          # prompt'u ya da modeli incele
     else:
-        bucket["synthesis miss"] += 1          # soruyu alt sorulara bölmeyi ya da görevi düzelt
-                                               # (ya da kaynak/etiket hatası: elle bakın)
+        bucket["inspect: source, label or synthesis"] += 1   # elle bakın
 ```
 
-Üç testi sırayla okuyun. Yalnızca yanlış cevaplar atfedilir. Referans belge hiç
-gelmediyse aşağı akıştaki hiçbir şey onu kurtaramazdı. Geldiyse ama erişilen
-metin cevabı desteklemiyorsa, model kanıtını yok saymış ya da onunla
-çelişmiştir. Her iddia destekleniyor ama sonuç yine de yanlışsa, çoğu zaman
-olgular yanlış birleştirilmiştir. Ama son kova iki başka nedeni de toplar:
-erişilen belgenin kendisi yanlış, eskimiş ya da başka bir belgeyle çelişiyor
-olabilir (derlem hatası) ya da referans cevap hatalı olabilir (etiket hatası).
-Bunların düzeltmesi sentezinkinden farklıdır; bu yüzden bu kovaya düşen örneklere
-elle bakın. Cevabın tek bir parçadan geldiği, desteklenmiş ama yanlış bir cevap
-sentezden çok kaynağı düşündürür. Pratikte `==` normalleştirilmiş bir eşleşmeye ya da bir hakem
-modele dönüşür; `answer_supported_by` ise bu bölümün sonunda tanımlanan sadakat
-denetimidir.
+Üç testi sırayla okuyun. Yalnızca yanlış cevaplar atfedilir. Üreticiye geçen
+parçalarda beklenen cevabın kanıtı yoksa — belge hiç gelmediği, gerekli pasaj
+başka bir parçada kaldığı ya da ayrıştırmada kaybolduğu için — aşağı akıştaki
+hiçbir şey dayandırılmış bir cevap üretemezdi. Belge kimliğine bakmak yetmez:
+gerekli cümle dönen parçada olmayabilir, kanıtı başka bir belge de taşıyabilir.
+Kanıt geldiyse ama üretilen iddialar onunla desteklenmiyorsa, model kanıtını yok
+saymış ya da onunla çelişmiştir. Her iddia destekleniyor ama sonuç yine de
+yanlışsa, son kova üç olası nedeni toplar: olguların yanlış birleştirilmesi
+(sentez), erişilen belgenin yanlış, eskimiş ya da başka bir belgeyle çelişiyor
+olması (derlem hatası) ya da referans cevabın hatalı olması (etiket hatası).
+Belge güncelliği ve referans doğruluğu denetlenmeden sentez hatası ilan
+etmeyin; bu kovaya düşen örneklere elle bakın. Cevabın tek bir parçadan geldiği,
+desteklenmiş ama yanlış bir cevap sentezden çok kaynağı düşündürür. Pratikte
+`matches` normalleştirilmiş bir eşleşme ya da doğrulanmış bir hakemdir;
+`evidence_for`, beklenen cevabı destekleyen kanıtın geçen parçalarda olup
+olmadığını soran bir kanıt etiketi ya da hakem; `claims_supported_by` ise bu
+bölümün sonunda tanımlanan sadakat denetimidir.
 
 [Bunu embedding modeline dokunmadan önce yapın.]{.hl} Bir RAG sistemi hayal
 kırıklığı yarattığında varsayılan refleks embedding'leri değiştirmektir ve
-@sec-erisim'daki ölçüm bunun çoğu zaman en büyük kaldıraç olmadığını söylüyor —
-embedding modeli seçimi kolay sorgularda 2,4, zor sorgularda 25,3 puan ederken,
+@sec-erisim'un iki yapay koşulundaki ölçüm bunun her zaman en büyük kaldıraç
+olmadığını düşündürüyor — embedding modeli seçimi kolay sorgularda 2,4, zor
+sorgularda 25,3 puan ederken,
 sözcüksel ile yoğun arasındaki seçim, sorgu türünün dikte ettiği yönde
 *altmış ile yetmiş* puan ediyordu. Üstelik embedding modelini değiştirmek üç gruptan
 yalnızca birincisini düzeltebilir.
