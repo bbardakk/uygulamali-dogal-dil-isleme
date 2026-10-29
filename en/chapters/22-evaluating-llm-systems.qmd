@@ -268,11 +268,17 @@ picked from. The
 comparison there was **paired** — the same 150 reviews through every prompt —
 and pairing is the standard advice.
 
-The advice is right and it is not unconditional, because McNemar's test throws
-away every item the two systems agree on. It looks only at the items where
+The advice is right and it is not unconditional, because McNemar's test infers
+the direction of the difference only from the items where the two systems
+disagree; items both get right or both get wrong do not enter the test's
+conditional p-value directly (though the disagreement rate still matters for
+planning). It looks only at the items where
 exactly one of the two systems is right, and asks whether those split 50/50
 between them, as they would if neither system were better. So what pairing buys depends on how
-often they disagree, which is an empirical property of *your* systems:
+often they disagree, which is an empirical property of *your* systems. (Cost
+comes in two kinds: the unpaired design uses 2n distinct labelled items and 2n
+model calls, the paired design n distinct labelled items and still 2n model
+calls; the power comparison depends on which budget binds.)
 
 ```text
 power to detect a 5-point difference: 80% baseline against 85%,
@@ -299,21 +305,29 @@ Fisher's exact test on the unpaired side would give 0.04, 0.06, 0.11, 0.22
 and 0.52 for the first five rows.
 ```
 
-**Pairing pays more the more the two systems agree, and the
-threshold is one you can compute.** Write $\Delta = p_B - p_A$ for the true
+**Pairing pays more the more the two systems agree; in the
+large-sample approximation the threshold can be computed.** Write $\Delta = p_B - p_A$ for the true
 accuracy difference, $\bar{p} = (p_A + p_B)/2$ for the average accuracy and
 $\bar{q} = 1 - \bar{p}$. McNemar's asymptotic statistic is roughly
 $\sqrt{n}\,\Delta/\sqrt{\delta}$, where $\delta$ is the disagreement rate;
 the two-arm unpaired statistic is roughly $\sqrt{n}\,\Delta/\sqrt{2\bar{p}\bar{q}}$.
 So pairing wins, to this approximation, when $\delta < 2\bar{p}\bar{q}$, which for an 80%
-system against an 85% one is **28.9%** — and it wins while using half the
-items. That number is not arbitrary either: it is almost exactly the disagreement rate two
+system against an 85% one is about **28.9%** — and it wins while using half the
+labelled items. In finite samples and with an exact test the crossing can
+differ (about 27% in the plot below); for planning, use the disagreement in
+pilot data and the test you will run. That number is not arbitrary either: it is almost exactly the disagreement rate two
 *independent* systems would show,
 $p_A(1-p_B) + (1-p_A)p_B = 0.80 \times 0.15 + 0.20 \times 0.85 = 0.29$ (the
 two differ by $\Delta^2/2$, here 0.00125). Below
 it your systems are positively correlated and pairing exploits the
 correlation. Above it they are anti-correlated, which is rare between two
-versions of the same system.
+versions of the same system. The same approximation gives a sample-size
+formula for the paired design (Connor's approximation):
+
+$$n \approx \frac{\bigl(z_{1-\alpha/2}\sqrt{\delta} + z_{1-\beta}\sqrt{\delta - \Delta^2}\bigr)^2}{\Delta^2}$$
+
+For a 5-point difference at 10% disagreement that is about 310 paired items at
+80% power, consistent with the table's 0.54 at 200 items and 0.94 at 500.
 
 Read the table row by row and the practical rule falls out. At 10%
 disagreement, 200 paired items reach 0.54 where 200 items in each of two arms
@@ -329,16 +343,16 @@ have. An LLM eval is paired *whenever you run both systems on the same items*.
 That is the normal design, but check it rather than assume it: a
 comparison against a number from someone else's run, or against a different
 sample, is not paired and cannot be analysed as if it were. When the items
-*are* shared, analysing them as two independent samples looks more
-powerful past the independence point, but only because the test no longer has
-the error rate it claims. Computed exactly at n = 500 under a true null of 80%
+*are* shared, a test that treats the shared results as independent can be
+overly conservative (under positive correlation) or inflate false positives
+(under negative correlation); which way it goes shows in the pilot
+disagreement. Computed exactly at n = 500 under a true null of 80%
 against 80%, where independence sits at 32% disagreement, the unpaired
 analysis rejects 0.05% of the time at 10% disagreement, 5.0% at 32%, and
 **6.4%** at 36% — it buys the extra power with false positives. McNemar's
 exact test stays between 3.7% and 4.2% across the same range, conservative in
-the way an exact test on a discrete statistic is. On a fixed eval set the
-paired test is never the wrong choice. It is only sometimes not much of a
-gain.
+the way an exact test on a discrete statistic is. If both systems ran on the same items, analyse the difference with the paired
+results; the paired test is only sometimes not much of a gain.
 
 ::: {.anlp-widget}
 ```{=html}
@@ -410,7 +424,10 @@ did not.`
 :::
 
 ::: {.column-margin}
-I got this backwards twice. First I fixed the disagreement rate at
+The lesson first: measure the disagreement rate for the two specific systems —
+how often any of twelve variants disagree is not that rate — and check the
+range of disagreement the chosen marginal accuracies allow. I skipped both
+checks and got this backwards twice. First I fixed the disagreement rate at
 @sec-prompting's 30.7%, found that pairing bought nothing, and briefly believed
 I had refuted a textbook result. What I had actually found is that 30.7% sits
 just above 28.9%, the rate two independent systems at these accuracies would
