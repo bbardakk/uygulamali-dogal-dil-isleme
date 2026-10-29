@@ -39,13 +39,15 @@ Audio is processed in 30-second windows, padded if shorter; each window's
 positions per window — an idea similar to the image encoder's fixed budget
 below.
 
-## An image is a fixed number of tokens {#sec-multimodal-tokens}
+## In this model, an image becomes a fixed number of vectors {#sec-multimodal-tokens}
 
 A transformer takes a sequence of vectors. @sec-transformers never cared where
 those vectors came from, and that is the whole trick: cut an image into
-patches, project each patch to the model's hidden size
+patches, project each patch to the vision encoder's vector size
 ([**patch embedding**](#gloss-patch-embedding){#term-patch-embedding .term-ref}),
-and you have a sequence the same machinery can read [@dosovitskiy2021image].
+and you have a sequence a transformer can read [@dosovitskiy2021image]. In a
+vision–language model, the encoder's output is then carried to the language
+model's hidden size by a separate projection layer (the projector).
 That paper's model, the **Vision Transformer (ViT)**, is the template for
 the vision encoders in this chapter. Each patch also gets a position
 embedding, as words do in @sec-transformers, so the model knows *where* on the
@@ -53,21 +55,25 @@ image a patch came from.
 
 ::: {#gloss-patch-embedding .column-margin .term-gloss}
 **Patch embedding** — an image cut into fixed squares, each projected to the
-model's hidden size, so a picture becomes a sequence of vectors a transformer
-can read alongside text. [↩](#term-patch-embedding){.term-back}
+vision encoder's vector size, so a picture becomes a sequence of vectors a
+transformer can read. In a vision–language model those vectors are carried to
+the language model's size by a separate projection after the encoder. [↩](#term-patch-embedding){.term-back}
 :::
 
-Text tokens and image patches sit in one stream, and attention runs over both.
-The usual causal mask still applies: a text token can attend to every image
-vector before it, but an image vector cannot look ahead at text that comes
-later. (Gemma 3, this chapter's model, additionally lets the vectors of one
-image attend to each other in both directions.)
+In a single-stream design like Gemma 3, this chapter's model, image vectors and
+text tokens meet in the language model's sequence, and attention runs over
+both. The usual causal mask still applies: a text token can attend to every
+image vector before it, but an image vector cannot look ahead at text that
+comes later. How image vectors attend among themselves is model-specific
+(Gemma 3 lets the vectors of one image attend to each other in both
+directions). Cross-attention designs such as Flamingo present the image
+through a separate path instead.
 
 :::: {.anlp-fig}
 ```{=html}
 <div class="fig-title">How a page joins the same sequence as the question</div>
 <svg viewBox="0 0 764 250" style="max-width:744px" role="img"
-     aria-label="A diagram showing an image and a question entering one token sequence. On the left, a page of text is cut into a grid of patches. An arrow labelled vision encoder maps the whole grid to a fixed block of 256 vectors, with a note that the count does not depend on what is on the page. Below, the question text is tokenized into a variable number of vectors. Both blocks feed into a single sequence, drawn as one row of vectors, which enters the transformer. A label states that this is the same transformer stack, unmodified, and that the text tokens attend to the image vectors that come before them in the row. A second label notes that the image block is a flat 256 vectors whether the page holds one sentence or fourteen lines.">
+     aria-label="A diagram showing an image and a question entering one token sequence. On the left, a page of text is cut into a grid of patches. An arrow labelled vision encoder maps the whole grid to a fixed block of 256 vectors, with a note that the count does not depend on what is on the page. Below, the question text is tokenized into a variable number of vectors. Both blocks feed into a single sequence, drawn as one row of vectors, which enters the transformer. A label states that this is the language model's transformer stack, with no separate cross-attention path, and that the text tokens attend to the image vectors that come before them in the row. A second label notes that in Gemma 3 the image block is 256 vectors whether the page holds one sentence or fourteen lines.">
 
   <text x="10" y="16" class="t-xs t-b t-muted">THE PAGE</text>
   <rect x="10" y="26" width="150" height="104" rx="4" class="box"/>
@@ -85,7 +91,7 @@ image attend to each other in both directions.)
 
   <rect x="216" y="56" width="196" height="44" rx="6" class="box-accent"/>
   <text x="314" y="74" class="t-xs t-mid t-b t-accent">256 VECTORS</text>
-  <text x="314" y="90" class="t-xs t-mid t-muted">always 256, whatever is on the page</text>
+  <text x="314" y="90" class="t-xs t-mid t-muted">in Gemma 3, 256 whatever the page holds</text>
 
   <text x="10" y="180" class="t-xs t-b t-muted">THE QUESTION</text>
   <rect x="10" y="190" width="150" height="30" rx="6" class="chip"/>
@@ -112,7 +118,7 @@ image attend to each other in both directions.)
   <text x="663" y="114" class="t-xs t-mid t-warm">text</text>
 
   <path d="M466 166 L 466 176 L 706 176 L 706 166" class="ln"/>
-  <text x="586" y="194" class="t-xs t-mid t-b">the same transformer stack, unmodified</text>
+  <text x="586" y="194" class="t-xs t-mid t-b">the LM's stack; no separate cross-attention</text>
   <text x="586" y="210" class="t-xs t-mid t-muted">text attends to the image vectors before it</text>
 </svg>
 ```
@@ -120,17 +126,18 @@ image attend to each other in both directions.)
 ::: {.fig-cap}
 There is no separate cross-attention pathway inside the decoder **in this design** — @sec-multimodal-contrastive
 describes the alternative, where a frozen language model attends into the image
-through cross-attention instead. Patches become vectors, the question
-becomes vectors, and one sequence goes into the same stack — which is why a
-model that can read text can be taught to read pages without changing its
-architecture.
+through cross-attention instead. Image vectors, after the projector, and the
+question, as tokens, join the language model's sequence. This single-stream
+layout needs no separate cross-attention path; the vision encoder, the
+projector and the image-specific masking are still the model's multimodal
+components.
 :::
 ::::
 
-The consequence people skip is what this does to your bill, and it is
-measurable in one line. Every image in this chapter's experiment — 320 of
-them, four font sizes, two languages, large type and tiny type — cost
-**exactly the same 290 prompt tokens**:
+One consequence shows in the input token count, in one line. For every image
+in this chapter's experiment — 320 of them (40 sentences × four font sizes ×
+two languages), large type and tiny type — the server reported **the same 290
+prompt tokens**. Font sizes are in pixels:
 
 ```text
   font size  prompt tokens   lines the page can hold at this size
@@ -152,36 +159,49 @@ Two token counts appear in this chapter, and they measure different things.
   There the instruction is identical in both arms, so it cancels out.
 
 Wherever this chapter says "as an image, 260", it means this *marginal* cost of
-attaching the picture. It matches Gemma 3's published prompt format: 256 image
-vectors plus four marker tokens around them (the delimiters — a start-of-image
-and an end-of-image token, each with a line break). Do not try to rebuild the
+attaching the picture. Gemma 3 reduces an image to 256 image vectors; that the
+remaining four are the published prompt format's marker tokens (a
+start-of-image and an end-of-image token, each with a line break) is a
+plausible explanation, but the raw prompt and token dump were not kept, so we
+make no firm breakdown. Do not try to rebuild the
 290 from parts: 260 plus the 34-token instruction would come to 294, not 290,
 so the two measurements count the delimiters or the instruction differently,
 and this run did not keep the raw tokenizer output that would say which. Each
 figure is what its own measurement reported.
 
-[For this model, an image costs a flat rate.]{.hl} The vision encoder resizes
+[In this run the server reported the same prompt token count for every image.]{.hl} Gemma 3's vision encoder resizes
 every image to 896×896 pixels and cuts it into 14×14-pixel patches: 896 / 14 =
 64 patches per side, so 64 × 64 = 4,096 patches. Average pooling over each 4×4
 block of patches then shrinks that 64×64 grid to 16×16 = 256 vectors. These are
 *soft tokens*: vectors fed straight into the language model rather than looked
-up in its vocabulary, but they occupy sequence positions and are billed like
-tokens. So 256 image tokens plus the prompt is what you pay whether the page
-holds a sentence or a spreadsheet — provided the image is roughly square and
-the model's crop-and-tile path does not fire. A wide screenshot split into crops sends each
-crop through the encoder separately and costs a multiple of this.
+up in its vocabulary, but they occupy sequence positions like tokens and may be
+billed like tokens by a paid API. So on the single 896×896 image path, 256
+image vectors plus the prompt take up the sequence whether the page holds a
+sentence or a spreadsheet — provided the model's crop-and-tile path (*Pan &
+Scan* in the Gemma 3 report; an inference-time option that can be switched
+off) does not fire. That every image reported the same token count suggests the
+path was off, but the setting and raw request were not recorded, so it does not
+prove it. If extra crops such as Pan & Scan fire, each crop goes through the
+encoder separately and the vector count and compute grow. Nor does this local
+measurement determine a real price.
 
 **Do not generalise the flat rate.** It is a property of one encoder design, not
-of vision-language models. The dominant 2025–2026 families do the opposite:
-dynamic-resolution encoders map a native-resolution image to a *variable*-length
-token sequence, and tiling designs cut a page into fixed crops and scale the
-number of crops with the input, so image cost grows with megapixels and the
-budgeting lesson inverts. Measure your own model with one image at two
-resolutions before you plan a bill around either behaviour.
+of vision-language models. Many common families behave differently:
+dynamic-resolution encoders map an image to a *variable*-length token sequence
+depending on its processed size, and tiling designs cut a page into fixed crops
+and scale the number of crops with the input, so the number of image tokens can
+change with the processed image size. In Qwen2.5-VL, for example, each image
+token covers roughly a 28×28-pixel area: an 896×896 image takes (896 / 28)² =
+1,024 tokens while a 1,792×896 page takes twice that, 2,048 (excluding
+delimiter tokens) — an estimate valid only for the chosen resizing settings
+(the minimum and maximum pixel limits). Tiling models such as InternVL and
+LLaVA-NeXT cut the page into fixed-size crops and charge for each crop
+separately. Measure your own model with one image at two resolutions, with the
+same settings, before you plan a budget around either behaviour.
 
 Two things follow, and the second one predicts the rest of the chapter.
 
-**Pixels are an expensive way to send text.** Measured on the same sentences,
+**Sending text as pixels used more input tokens in this run.** Measured on the same sentences,
 sent both ways:
 
 ```text
@@ -190,18 +210,20 @@ sent both ways:
   Turkish         233      62.4        260     4.17x
 ```
 
-If you already have the text, photographing it costs four to five times more
-for the same content — a premium paid by every pipeline that screenshots a
-page it has already parsed.
+If you already have the text, presenting it as an image used 5.57 times the
+input tokens in English and 4.17 times in Turkish for the same content in this
+run — a premium carried by a pipeline that screenshots a page it has already
+parsed. That is not a billing ratio; the real cost has to be worked out from
+pricing, caching and output length.
 
 Look at the two rows together, though, because they say something less
-obvious. The image rate is flat, so **the premium is smaller for Turkish** —
+obvious. The image's token count is fixed, so **the premium is smaller for Turkish** —
 not because pixels are cheaper there, but because @sec-turkish-nlp's tokenizer
 penalty makes the *text* expensive: 62.4 tokens against English's 46.6 for the
 same sentence, a 1.34× ratio that falls inside the 1.2–1.6× range that chapter
 estimates for matched content.
 
-A flat-rate encoder partially absorbs an agglutinative language's token tax.
+An encoder that emits a fixed number of vectors partly offsets an agglutinative language's token gap.
 Hold that thought until @sec-multimodal-ocr, which measures what you give up to
 collect it.
 
@@ -211,28 +233,32 @@ about the information on the page changes. What changes is *sampling*. The
 encoder resizes every page to 896×896 and cuts it into patches, and below some
 glyph height a character does not survive that resize with enough pixels to be
 told apart from its neighbours. So if transcription accuracy falls with font
-size, that is not the model getting confused; it is a sampling limit you can
-compute in advance from your canvas size and the encoder's input resolution.
+size, a plausible explanation is a sampling limit you can roughly compute from
+your canvas size and the encoder's input resolution; this experiment did not
+prove it is the only cause.
 A worked example: a page 1,792 pixels wide is shrunk by a factor of two to fit
 896, so 11-pixel type arrives at the encoder about 5.5 pixels tall — less than
 half the height of one 14-pixel patch.
 
 The fixed token budget makes it worse in a second and separate way: because the
 encoder emits the same 256 vectors per image regardless, you cannot ask it for
-more detail within one image. The levers are to crop the page into pieces and
-send each piece as its own image (paying 256 vectors for each), or to render or
-scan at a larger size — the fix the rest of this chapter keeps returning to.
+more detail within one image. Rendering or scanning the same page at a higher
+resolution does not help if the model shrinks it back to the same input size.
+To raise the effective detail, test cropping the relevant region and sending it
+as its own image (256 vectors each), a multi-crop path, or larger type in the
+same area.
 
 **What we will look at.** First where the alignment comes from, because a
 projected patch means nothing to a language model until something teaches the
 two spaces to agree — along the way we meet the kind of encoder whose fixed,
 pooled output makes the image cost flat. Then
 the chapter's real experiment: the same sentences rendered at four sizes in two
-languages, which turns that bottleneck into a threshold and puts the threshold
-in a different place for Turkish than for English. Then a control that asks
-whether the model is reading the image at all, which returns an answer sharp
-enough to settle the practical question the chapter closes on — whether you
-want a vision–language model or an OCR engine.
+languages, comparing character error rates. Those points can show in which
+range a usage tolerance is crossed; a sharp threshold or a claim of superiority
+over OCR would need more measurement. Then a control that asks whether the
+model is reading the image at all. The chapter closes on what to look at when
+choosing between a vision–language model and an OCR engine; we did not compare
+the two directly on the same pages.
 
 ## Where the alignment comes from {#sec-multimodal-contrastive}
 
