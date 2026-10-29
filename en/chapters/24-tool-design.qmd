@@ -551,10 +551,10 @@ fields cannot cause collisions.
 
 ## What a tool returns is part of its design {#sec-tool-design-results}
 
-A tool's return value goes straight into the transcript, which
-@sec-agent-anatomy established *is* the agent's state. So a return value is not
-output — it is a write to shared memory that every subsequent step will read
-and pay for.
+In the minimal loop a tool's return value is appended to the message list and
+can be used in later model turns; as @sec-agent-anatomy showed, that list is
+the run context the model sees. So a return value is not just output — it is a
+write to the context that later steps will read and pay for.
 
 Three rules follow, and all three are routinely broken by tools that were
 written for humans first.
@@ -568,26 +568,32 @@ less well (@sec-context-engineering measures that), and a higher price on every
 remaining model call. Return what the *task* needs: the
 three fields, not the whole record; the matching rows, not the table.
 
-**Paginate, and say so in the result.** `"showing 10 of 247 matches; call again
-with offset=10 for more"` is a sentence the model can act on. Silently
-truncating to ten is a tool that lies, and the model has no way to find out.
+**Paginate, and say so in the result.** Give the total match count, the range
+shown and a continuation token: `"showing 1–10 of 247 matches; call again with
+cursor=... for more"`. On changing lists `offset=10` can skip rows; use a
+stable cursor or snapshot. Silently truncating to ten is a tool that lies, and
+the model has no way to find out.
 
 **Summarise on the tool side when the raw form is unusable.** A tool that
 wraps a 40-page PDF should not return 40 pages. What it returns is a design
 decision about what the agent is for, and making it inside the tool keeps it
-out of every prompt that uses the tool.
+out of every prompt that uses the tool. Leave the source id beside the summary,
+and where needed a permitted path to the full record; a summary must not hide
+evidence the user needs.
 
 **And some things a tool must never return.** Everything a tool returns is
 read by the model and, in most products, can end up in front of the user. So a
 tool never returns secrets — API keys, passwords, access tokens, internal
 connection strings — and never returns records the current user is not
 entitled to see; filter by permission *inside* the tool, before the text
-reaches the transcript, because the model cannot be trusted to keep a secret it
-has read. The reverse direction matters too: text a tool fetches from outside
-(a web page, an email, a ticket) is data, not instructions, and a model cannot
-reliably tell the two apart. @sec-agent-security treats this as *indirect
-prompt injection*; the tool author's part is to mark where fetched text begins
-and ends, and never to pass it off as the system's own words.
+reaches the transcript, and send secrets to no model and no visible log field —
+logs, user interfaces and other tool chains can leak data too. The reverse
+direction matters too: text a tool fetches from outside (a web page, an email,
+a ticket) is data, not instructions, and a model cannot reliably tell the two
+apart. @sec-agent-security treats this as *indirect prompt injection*. The tool
+author should mark fetched text with its source and trust level and never pass
+it off as the system's own words; but that mark is not a security boundary —
+apply permission checks separately on side-effecting tools.
 
 ### Actions need different semantics from lookups
 
