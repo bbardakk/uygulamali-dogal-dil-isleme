@@ -954,82 +954,88 @@ system is @sec-production-eval's subject.
 
 ## Intuition checks {#sec-llm-eval-intuition}
 
-Answer each one before you open it. All six are questions this chapter settled
-with a measurement rather than an argument.
+Answer each one before you open it. Most are questions this chapter approached
+with a measurement or a calculation rather than an argument.
 
 ::: {.callout-note collapse="true"}
 ## 1. Your model scores 91 on a public benchmark. What have you learned?
 
-That it is not obviously unfit, and little else. You have not learned whether
-the benchmark was in its training data — @sec-sequence-labeling found **13.06%
-of one benchmark's test set duplicated in its own training split** — nor
-whether the benchmark is saturated, nor whether it measures your task.
-Benchmarks are a screen for picking three candidates. Your eval decides
-between them.
+That it is not obviously unfit, and on its own little else. You have not learned
+whether the benchmark was in its training data — @sec-sequence-labeling found
+**13.06% of one benchmark's test set duplicated in its own training split** —
+nor whether the benchmark is saturated, nor whether it measures your task.
+Benchmarks narrow the candidates; in the final choice, the benchmark's
+similarity to your task and its uncertainty are weighed together with your own
+eval.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 2. Is a 30-item eval set worth building?
 
-Yes, for the right question — but not for comparing systems. At thirty items
-there is **no** difference detectable at 80% power against an 80%-accurate
-baseline: even a replacement that is right every single time reaches only
-**57%**, on an exact test. (The normal approximation says 75% and should not
-be believed at *p* = 1.00, where its variance term is zero.)
-What thirty items is excellent at is *finding failure modes*: read all thirty outputs by hand and
-you will find categories of wrongness that no aggregate score would surface.
-Use small sets to learn what breaks, large sets to decide what ships.
+Yes, for the right question — but not for comparing systems on small
+differences. Under an 80% baseline, a two-sided 5% test and an 80% power
+target, thirty items cannot tell small improvements apart: even a replacement
+that is right every single time reaches only **57%**, on an exact test. (The
+normal approximation says 75% and should not be believed at *p* = 1.00, where
+its variance term is zero.) Thirty items are useful as a pilot set for finding
+*failure modes* in real examples and spotting large breakages: read all thirty
+outputs by hand and you can find categories of wrongness no aggregate score
+would show. Use small sets to learn what breaks, large sets to decide what
+ships.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 3. Should you always use a paired test?
 
-Yes, on data you already have — but know what it buys. McNemar discards every
-item the systems agree on, so its *gain* depends on the disagreement rate, and
-the threshold is computable: pairing on n items beats an unpaired study with n
-in each arm roughly when the disagreement rate is below
-$2\bar{p}\bar{q}$, which for 80% against 85% is **28.9%** — almost exactly
-the rate two independent systems would show. Comparing two prompts, which agree on most
-items, pairing wins on half the labelling. Comparing two very different
-systems it buys little, and a bigger eval set is the honest fix. What it never
-does is cost you power: the unpaired analysis of paired data only looks
-stronger above the independence point because its false-positive rate has
-drifted to about 6%.
+If both systems were tested on the same items, yes: keep the paired results and
+use a paired test — but know what it buys. McNemar infers the direction of the
+difference only from the items where the two systems disagree, so its *gain*
+depends on the disagreement rate. In the large-sample approximation, pairing on
+n items beats an unpaired study with n in each arm roughly when the
+disagreement rate is below $2\bar{p}\bar{q}$, which for 80% against 85% is
+about **28.9%** — almost exactly the rate two independent systems would show
+(the exact-test crossing differs a little). Comparing two prompts that agree on
+most items, pairing wins on half the labelling; comparing two very different
+systems it buys little, and a bigger eval set is the honest fix. Treating
+shared items as independent can be overly conservative or inflate false
+positives depending on the correlation, and old numbers from different samples
+cannot be analysed as if they were paired.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Your LLM judge gives two identical texts a tie every time. Is it reliable?
 
-You have learned that it passes the easiest possible check, and nothing more.
-Both judges here scored **100%** on that probe and then diverged sharply: one
-flipped its verdict on 38% of items when the order was swapped and preferred
-the professional summary 51.7% of the time; the other flipped on 15% and
-preferred it 74.2% of the time. Those are preference rates, not accuracies —
-which summary *should* win is a question for a human rubric. The
-control everyone runs is the one that discriminates least.
+You have learned that it passes a basic sanity check; it is not a reliability
+certificate. Both judges here scored **100%** on that probe and then diverged
+sharply: one flipped its verdict on 38% of items when the order was swapped
+and preferred the professional summary 51.7% of the time; the other flipped
+on 15% and preferred it 74.2% of the time. Those are preference rates, not
+accuracies. Audit the judge separately for position, padding, real human
+preferences and the task's critical errors.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Two prompts score 84% and 79% on your 100-item eval. Is the first better?
 
-You cannot tell from those numbers. A 100-item eval detects about **13 points**
-at 80% power, and this is 5. Pairing does not rescue it. If the same 100
-items went through both prompts, McNemar's exact test on the disagreements is
-the right test, but a 5-item gap is at best 5 disagreements against 0, which
-gives a two-sided $p = 2 \times 0.5^5 = 0.0625$; more disagreements in both
-directions only raise it. Paired or not, the honest report is "no detectable
-difference at this sample size", which is a different statement from "no
-difference".
+Those numbers are not enough to confirm it. This eval observed 84 against 79
+correct on 100 items; a 100-item eval detects about **13 points** at 80% power,
+and this is 5. Pairing does not rescue it: if the same 100 items went through
+both prompts, McNemar's exact test on the disagreements is the right test, and
+even the most favourable 5-against-0 split gives a two-sided
+$p = 2 \times 0.5^5 = 0.0625$; more disagreements in both directions only raise
+it. Report the observed difference with its uncertainty: "not confirmed at this
+sample size" is a different statement from "no difference".
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. Your eval harness reports 93.75% accuracy. What do you check first?
 
-The parse rate. That exact number came from a run where a reasoning model
-spent its whole token budget in a `thinking` field, every answer failed to
-parse, and each failure defaulted to the majority class — so the harness was
-reporting the **majority baseline** as a result. A bad number gets
-investigated and a good one gets published, so a suspiciously good number
+The parse and missing-output rates first, then the class distribution and the
+majority baseline. In this chapter's example, 93.75% came from a run where a
+reasoning model spent its whole token budget in a `thinking` field, every
+answer failed to parse, and each failure defaulted to the majority class — so
+the harness was reporting the **majority baseline** as a result. On another
+dataset the same rate could be legitimate; but a suspiciously good number
 deserves the same scrutiny a bad one gets automatically.
 :::
 
