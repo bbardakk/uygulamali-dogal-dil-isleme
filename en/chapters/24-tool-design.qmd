@@ -378,7 +378,10 @@ for; the score is on the *second* call. One artefact comes with holding the
 string fixed: a model that sent `butce` correctly is still told that `'bütçe'`
 was invalid. That keeps the four conditions comparable, which is the point,
 but every condition is slightly less coherent than a real error would be, and
-the traceback condition — which quotes the value — suffers most from it.
+the traceback condition — which quotes the value — suffers most from it. So the
+experiment measures the response to four texts carrying the same option
+information, not recovery from a real error; assessing that would need a
+separate condition that returns an error only for invalid calls.
 
 ```text
 qwen3.5:9b, 60 tasks, first call always rejected, four error styles
@@ -397,8 +400,10 @@ qwen3.5:9b, 60 tasks, first call always rejected, four error styles
 
  The traceback row does not reconcile: 9 retried plus 49 abandoned is 58, not
  60. Two of that condition's tasks are unaccounted for, so one of its three
- figures is off by up to two tasks. It is flagged rather than quietly patched,
- and re-running that condition is the first thing on this chapter's list.
+ figures is off by up to two tasks. It is flagged rather than quietly patched;
+ until the item-level logs resolve those two tasks, no exact p-value is given
+ for this row, and re-running that condition is the first thing on this
+ chapter's list.
 ```
 
 The four strings were:
@@ -417,14 +422,15 @@ The four strings were:
               Gecerli alanlar sunlardir: butce, personel, sure."
 ```
 
-The scope of that 100%, stated honestly: the valid set here has three
-elements, so the actionable error could list all of it, and a ceiling that
-high is close to guaranteed once the model reads it. What this measures is the
+The scope of that 100%, stated honestly: for this model and 60 requests, 60/60
+correct second calls followed the actionable error that listed the three valid
+fields. A short option list is a strong hint on this task; another model, a
+larger enum or a real-error condition is not guaranteed the same rate. What this measures is the
 *presence* of a recovery instruction, not how well one scales. The interesting
 untested case is a set of two hundred values, where all you can offer is the
 nearest few — measure that on your own tool before assuming the same jump.
 
-[One sentence took recovery from 1.7% to 100%.]{.hl} The system prompt and the
+[In this run one sentence took correct second calls from 1.7% to 100%.]{.hl} The system prompt and the
 model were unchanged; the only difference was the text the tool returned on
 failure. Which is the section's point rather than an exception to it: that
 returned string *is* prompt, written by the tool author instead of the prompt
@@ -456,9 +462,11 @@ missing tasks). Against a bare `"Error"` the gap is 9 retries against 14, and
 49/60 abandoned against 46/60, with intervals of [70.1, 89.4] and [64.6, 85.6].
 On the same 60 requests the right test is paired, and even the most favourable
 pairing — every changed request moving in one direction — gives exact McNemar
-$p \approx 0.06$ for retries and $p = 0.25$ for abandonment. This experiment
-cannot resolve that
-comparison, and an earlier draft of this chapter called the ordering a result
+$p \approx 0.06$ for retries and $p = 0.25$ for abandonment (setting aside the
+traceback row's two missing tasks). Until those two results are filled in, no
+reliable paired comparison with the bare error is possible; the observed gaps
+are small, and the right statement is "not distinguishable from this record",
+not "the effects are equal". This experiment cannot resolve that comparison, and an earlier draft of this chapter called the ordering a result
 six separate times. What the four rows *do* separate, unambiguously, is the
 actionable string from all three others.
 
@@ -466,16 +474,18 @@ This fits, and complements, a known result. @huang2024large found that
 models cannot reliably correct their own reasoning from *intrinsic* feedback —
 being told to try again does not help. What this experiment adds is the
 boundary: the same model recovers 1.7% of the time from feedback that carries
-no content and 100% of the time from feedback that names the answer set. The
-difference is not the model's capacity for self-correction. It is whether the
-feedback contains information.
+no content and makes a correct second call 100% of the time after feedback that
+names the answer set. The error that listed the correct options did far better
+than the other three; whether that came from the outside information, the
+format, or an interaction with the earlier schema was not separated by further
+conditions. Feedback carrying information is a plausible explanation.
 
-**Giving up is the dominant failure, not looping.** Three of the four styles
+**In this experiment giving up was the dominant failure, not looping.** Three of the four styles
 produced abandonment in the majority of cases — the model stopped calling tools
 and answered without the data. That is worse than a retry loop, which at least
 announces itself in the transcript. @sec-agent-anatomy found the opposite
 failure, an agent that would not stop; here the same architecture will not
-*continue*, and the deciding factor is a sentence.
+*continue*, and what made the difference was one sentence in the error text.
 
 **"Invalid" is barely distinguishable from nothing.** The `vague` style names
 the problem in words and still recovered 3.3% of the time, against 1.7% for the
@@ -498,12 +508,14 @@ log line, not a tool.
 
 Two corollaries worth building in:
 
-- **Enumerate the valid options in the error**, exactly as you would in an
-  enum. If the set is too large to list, list the nearest few — `did you mean
-  butce?` is a complete recovery instruction.
-- **Never return a raw exception.** Catch it, and translate. The translation is
-  a one-line function and, on this evidence, it bought the largest single
-  improvement measured in this chapter.
+- **Let the error text state the error class first.** For an invalid enum
+  value, list the valid options — the nearest few if the set is large (`did you
+  mean butce?`); for a transient failure, the retry condition; for a permission
+  error, a safe refusal reason. For permission, quota or hidden-record cases a
+  value list can be unnecessary or leak information.
+- **Do not return a raw exception to the model or the user.** Catch it,
+  translate it, and keep the detail in a protected log. In this experiment the
+  largest improvement came with a translated error that listed the options.
 
 ## What a tool returns is part of its design {#sec-tool-design-results}
 
