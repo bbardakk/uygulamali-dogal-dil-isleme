@@ -82,8 +82,11 @@ the field literally** — *how much money was allocated* has to become
 `alan="butce"`. So the schema is the only thing that can carry the mapping.
 Nothing is executed; what is scored is the call the model emits.
 
-Two of the four differ by four words. Here they are in full, variant B (named,
-free string) first:
+The only design change between two of the four is adding an `enum` that lists
+the three valid values for the `alan` parameter. The questions are limited to
+those three fields too; the effect for other schemas and field counts has to be
+measured separately. Here they are in full, variant B (named, free string)
+first:
 
 ```json
 {"name": "veri_getir",
@@ -122,17 +125,17 @@ qwen3.5:9b, 60 questions, one tool, four descriptions
  D. described           100.0%         100.0%       100.0%   [94.0, 100.0]          100.0%
 ```
 
-[Listing the accepted values did all of the measurable work.]{.hl} Going from
+[On these 60 requests, the measurable effect came from listing the accepted values.]{.hl} Going from
 free strings to an enumerated list took field accuracy from **25% to 100%** —
 15/60 against 60/60 on the *same* 60 requests, so the data are paired and
 McNemar is the test. Because variant C got every request right, the pairing is
 forced: 45 requests improved and none got worse, and exact McNemar gives
 $p = 2 \times 2^{-45} \approx 5.7 \times 10^{-14}$. (An earlier draft quoted
 Fisher's $p < 10^{-19}$, which treats the variants as independent samples: the
-conclusion is the same, the number is not.) Careful prose descriptions on top
-of the enum added **nothing observable** — though with C already at 60/60 there
-was no room left to add anything. That is the opposite of where most effort
-goes: people write the description and leave the parameter as a string.
+conclusion is the same, the number is not.) No gain was observed from careful
+prose descriptions on top of the enum — but C was already at 60/60, so that is
+a ceiling effect. Concluding that enums generally beat descriptions would need
+a described-without-enum condition and harder requests.
 The paired test is what the close comparisons later in the chapter need, and it
 is what you should run on your own tool.
 
@@ -143,8 +146,11 @@ personel, sure` in the schema and using them. That matters, because it makes
 this finding and the error-message finding later in the chapter the *same*
 finding: what fixed both was putting the API's vocabulary where the model could
 see it. If your runtime *does* constrain decoding — hosted APIs call this a
-schema-enforced or `strict` mode (@sec-decoding) — the enum becomes a
-guarantee and this experiment tells you nothing about the model at all. Say
+schema-enforced or `strict` mode (@sec-decoding) — the enum guarantees only
+set membership; choosing the right one of the three valid values is still the
+model's job and still needs measuring. In this run the enum was not
+grammar-constrained, and the observed 60/60 is a descriptive result of the
+model choosing from visible options. Say
 which case you are in before you generalise.
 
 **And one cell is missing — the one that decides how far this generalises.**
@@ -160,13 +166,15 @@ a measurement.
 Two rows deserve their own explanation, because each teaches something the
 totals hide.
 
-**The opaque schema did not make wrong calls. It made no calls.** With a tool
-named `f1` taking `a` and `b`, the model called it 58.3% of the time and,
-when it did not, answered from parametric memory (what it absorbed in training)
-instead — inventing a
-paragraph about what `ZRG-14` supposedly is. That is a far worse failure than a
-malformed call: a wrong call errors, and an invented answer looks like an
-answer.
+**The opaque schema both made wrong calls and often made no call.** With a tool
+named `f1` taking `a` and `b`, the model called it 58.3% of the time (35/60),
+and none of those calls had the right project or field; on the other 25/60 it
+produced an answer the database did not support without calling the tool at
+all — a paragraph about what `ZRG-14` supposedly is. Where that answer came
+from (training knowledge or an on-the-spot guess) this run cannot say; the
+finding is that it answered without using the tool. That can be a more
+insidious failure than a malformed call: a wrong call often errors, and an
+invented answer looks like an answer.
 
 **Without the enum, the model echoes the user's vocabulary into your API.**
 Here is the whole of variant B, one row per phrasing (the rows summarise
@@ -198,8 +206,12 @@ real words has this failure waiting in it, and an enum removes it here.
 
 Not everywhere, though, and the difference is worth being precise about. An
 enum in a schema is a hint your model usually follows; normalising at the tool
-boundary is a guarantee you control. Do both: apply NFC, then fold diacritics
-through an explicit alias table (`bütçe → butce`) *before* you validate. And
+boundary is a guarantee you control. Do both: define the accepted aliases for
+the fixed `alan` enum in an explicit dictionary
+(`{"bütçe": "butce", "butce": "butce"}`) and apply it *before* schema
+validation, with the permission check on the canonical field. Do not put
+project ids or free user data through a general diacritic fold; distinct ids
+can collide. And
 do not leave the folding to Python's `.lower()` or `.casefold()`, which take no
 locale and know nothing of Turkish casing — `"IŞIK".lower()` is `işik`, not the
 Turkish `ışık`, and `"İSTANBUL".lower()` picks up a combining dot. Map the
@@ -268,10 +280,10 @@ does and does not establish: it shows that putting the API's vocabulary in the
 schema is worth far more than describing it in prose *on top of* that. It does
 not rank constraints against prose in general, because the prose-only rung was
 never run. What generalises is that the vocabulary has to reach the model
-somehow — not the exact numbers, and not an ordering the design cannot see. A larger model
-might infer `butce` from context; a schema with twelve fields would make the
-enum matter more, not less. Run the variant sweep on your own tools; it is an
-afternoon and it is the highest-yield afternoon in this chapter.
+somehow — not the exact numbers, and not an ordering the design cannot see. How the
+enum's effect changes with model size and field count was not tested here;
+the same kinds of question need re-testing under those conditions. Run the
+variant sweep on your own tools.
 :::
 
 ::: {.anlp-widget}
@@ -326,7 +338,7 @@ Plot.plot({
 ```{ojs}
 //| echo: false
 md`${toolWhich === "schema"
-  ? "The jump is entirely between **B** and **C** — free string to enum, 25% to 100%. The prose descriptions added in **D** added nothing observable once **C** had reached 60/60. And **A** shows the failure worth fearing: it did not call the tool at all on 41.7% of tasks, and answered from memory instead."
+  ? "Each bar is a percentage of the 60 requests: 'tried at all' counts requests with a tool call, 'did the right thing' calls with the right project and field; requests with no call do not count as correct. The jump is between **B** and **C** — free string to enum, 25% to 100%. No gain was observed from **D**'s descriptions, but **C** was already at the ceiling. In **A** none of the calls was right, and on 41.7% of tasks it answered without calling the tool."
   : "One sentence separates the last row from the other three. The stack trace — close to what most tools return by default — produced the fewest retries of any style, but among the three incomplete styles the highest share of *correct* ones: 7 of its 9 retries found the right field."}`
 ```
 :::
