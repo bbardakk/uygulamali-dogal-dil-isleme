@@ -245,7 +245,7 @@ standard metrics for scoring each half of the system.
 
 ## The canonical pipeline {#sec-rag-pipeline}
 
-If retrieval is what stops you paying for 79 documents you did not need, the
+If retrieval is how you select a few chunks relevant to the question, the
 next question is what the machinery actually consists of. A typical RAG system
 has seven stages (some, such as reranking, are not present in every system). Naming them separately is what makes @sec-rag-failures
 possible, because each one can fail on its own.
@@ -254,7 +254,7 @@ possible, because each one can fail on its own.
 ```{=html}
 <div class="fig-title">The seven stages, and which of them can fail on its own</div>
 <svg viewBox="0 0 764 336" style="max-width:744px" role="img"
-     aria-label="A diagram of a retrieval-augmented generation pipeline in two rows. The upper row runs left to right and happens offline: documents, then parse, then chunk, then embed, then index. A note under parse says this is where tables, columns and scanned pages are destroyed, and that the failure is silent. The lower row happens at query time: query, then retrieve, then rerank, then generate, then answer. A dashed elbow runs from the index box down and to the left into the retrieve box, showing that the index built offline is what retrieval reads. A bracket spans the retrieve, rerank and generate boxes and is labelled: recall at k is a ceiling on everything to its right. Three labels beneath the lower row name the three failure modes: a retrieval miss at the retrieve stage, a grounding miss at the generate stage, and a synthesis miss also at the generate stage.">
+     aria-label="A diagram of a retrieval-augmented generation pipeline in two rows. The upper row runs left to right and happens offline: documents, then parse, then chunk, then embed, then index. A note under parse says table rows, page layout and scanned pages can be lost here, that the failure is often silent, and that the output should be inspected on a sample. The lower row happens at query time: query, then retrieve, then rerank, then generate, then answer. A dashed elbow runs from the index box down and to the left into the retrieve box, showing that the index built offline is what retrieval reads. A bracket spans the retrieve, rerank and generate boxes and is labelled: coverage of the evidence passed to the generator bounds everything to its right. Three labels beneath the lower row name the three failure modes: a retrieval miss at the retrieve stage, a grounding miss at the generate stage, and a synthesis miss also at the generate stage.">
 
   <text x="10" y="18" class="t-xs t-b t-muted">OFFLINE — BUILT ONCE, REBUILT WHEN DOCUMENTS CHANGE</text>
 
@@ -281,8 +281,8 @@ possible, because each one can fail on its own.
   <text x="689" y="45" class="t-xs t-mid t-b t-navy">4. INDEX</text>
   <text x="689" y="60" class="t-xs t-mid t-muted">ANN or exhaustive</text>
 
-  <text x="204" y="88" class="t-xs t-mid t-rose t-b">where tables and scans die</text>
-  <text x="204" y="101" class="t-xs t-mid t-muted">silently — nothing downstream errors</text>
+  <text x="204" y="88" class="t-xs t-mid t-rose t-b">table rows, layout, scans can be lost</text>
+  <text x="204" y="101" class="t-xs t-mid t-muted">often silent — inspect a sample of output</text>
 
   <path d="M689 70 L 689 128 L 180 128 L 180 178" class="ln-thin ln-dash"/>
   <path d="M176 178 l 4 8 l 4 -8 z" class="head"/>
@@ -313,7 +313,7 @@ possible, because each one can fail on its own.
   <text x="689" y="195" class="t-sm t-mid t-b">answer</text>
 
   <path d="M142 224 L 142 232 L 584 232 L 584 224" class="ln-rose"/>
-  <text x="363" y="248" class="t-xs t-mid t-b t-rose">recall@k is a ceiling on everything to its right</text>
+  <text x="363" y="248" class="t-xs t-mid t-b t-rose">coverage of passed evidence bounds what follows</text>
 
   <rect x="142" y="266" width="124" height="46" rx="6" class="box"/>
   <text x="204" y="283" class="t-xs t-mid t-b">retrieval miss</text>
@@ -340,7 +340,11 @@ possible, because each one can fail on its own.
 The upper row is built once; the lower row runs on every request. The three
 failure modes along the bottom — one at retrieval, two at generation — all
 produce the *same* symptom, a wrong answer, which is why @sec-rag-failures is
-about telling them apart before tuning anything.
+about telling them apart before tuning anything. Coverage of the required
+evidence passed to the generator bounds answers grounded in that evidence; that
+bound equals recall@k numerically only with complete relevance judgements and
+a single required piece of evidence. Parsing and chunking errors can also
+happen before retrieval.
 :::
 ::::
 
@@ -361,22 +365,24 @@ subject, and they only make sense once this fixed pipeline is working and
 measured.
 :::
 
-**Stage 1 is where most real projects actually lose.** A PDF table becomes a
-column of disconnected numbers; a two-column layout interleaves; a scanned
-page produces nothing at all. No amount of embedding quality recovers text
+**Stage 1 failures are easy to miss.** A PDF table can become a column of
+disconnected numbers; a two-column layout can interleave; a scanned page may
+produce no text at all without OCR. No amount of embedding quality recovers text
 that was destroyed on the way in, and the failure is invisible downstream —
 the pipeline runs, the numbers look plausible, and the answer is wrong for a
-reason nobody is looking at. Read fifty parsed documents by hand before
-tuning anything else.
+reason nobody is looking at. Read the parsed output of a chosen sample of
+documents by hand before tuning anything else.
 
-**Stage 5 sets a ceiling on stage 7.** @sec-retrieval showed this and it is
-the single most useful fact in the chapter: if recall@k is 80% for the *k* you
-pass to the model, then 20% of questions cannot be answered *from the retrieved
-text* before generation starts, and no prompt engineering reaches them. (The
-model may still answer some of them from its own memory, but those answers are
-not grounded in anything you retrieved; and when the same fact appears in
-several documents, the bound is looser — @sec-retrieval states the exact
-conditions.)
+**Stage 5 sets a bound on stage 7.** What to measure is how often the chunks
+passed to the generator carry the required evidence (*evidence coverage*). For
+questions that need a single, completely marked piece of evidence, 80%
+evidence coverage means at most an 80% chance of an answer grounded in *the
+retrieved text*; no prompt engineering reaches the other 20%. (The model may
+still answer some of them from its own memory, but those answers are not
+grounded in anything you retrieved.) A document-level hit is not the same
+rate: the document may arrive while the needed passage sits in another chunk,
+and the same fact may appear in another document — @sec-retrieval separates
+these conditions.
 
 ::: {.column-margin}
 Which is why the two halves of a RAG system want different metrics and
