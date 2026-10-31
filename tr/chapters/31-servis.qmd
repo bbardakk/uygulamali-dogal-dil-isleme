@@ -777,14 +777,16 @@ html`<p style="font-size:0.88rem; color:var(--fig-muted); margin-top:0.5rem;">
 
 ## Kollar, başvurulacak sırayla {#sec-servis-kollar}
 
-Sıra listeden daha önemli, çünkü ucuz kollar aynı zamanda kalite maliyeti
-olmayanlar ve ekipler çoğu zaman listenin en altından başlıyor.
+İlk iki kol çıktıyı değiştirmez; bu yüzden önce onlara bakmak mantıklıdır. Kalan
+kolları kendi p50/p99 gecikmenizle, işlem hacminizle, aylık maliyetinizle ve
+görev kalitenizle sıralayın — tablodaki katlar bu ölçüme ya da iş yüküne aittir,
+tasarım vaadi değildir.
 
 | kol | ne kazandırır | neye mal olur | ne zaman başvurulur |
 |:--|:--|:--|:--|
 | **Daha az token göndermek** | prefill süresinde ve faturada doğrusal kazanç | prompt'lar ve erişim üzerinde mühendislik zamanı | [her zaman, ilk]{.pro} |
-| **Prompt önbellekleme** | prefill'de 153 kata kadar (yukarıda ölçüldü) | kararlılığa göre sıralanmış bir prompt | [her zaman, ilk]{.pro} |
-| **Daha küçük model** | her şeyde 3–10 kat | kalite, ölçülebilir biçimde | değerlendirme kalitenin korunduğunu gösterdiğinde |
+| **Prompt önbellekleme** | bu ölçümde, ardışık özdeş isteklerde prefill'de 153 kat; iş yüküne bağlı | kararlılığa göre sıralanmış bir prompt | [her zaman, ilk]{.pro} |
+| **Daha küçük model** | model ve iş yüküne bağlı hız ve maliyet kazancı | kalite, ölçülebilir biçimde | değerlendirme kalitenin korunduğunu gösterdiğinde |
 | **Nicemleme** | bellek ve bant genişliği | bir miktar kalite, göreve bağlı | bağlayıcı kısıt bellek olduğunda |
 | **Spekülatif kod çözme** | öncelikle decode gecikmesi; maliyet servis verimliliğine ve fiyatlandırmaya bağlı | barındırılacak bir taslak model | yavaş yarı *decode* olduğunda — uzun cevaplar; prefill baskınken yararı az (ayrıntısı aşağıda) |
 | **Sürekli batchleme** | işlem hacmi | kullanıcı başına gecikme | sunucu meşgulken, öncesinde değil |
@@ -800,15 +802,17 @@ tavanını da yükseltir; kısa bağlamda tavan kabaca bant genişliği ÷ ağı
 baytıdır (uzun bağlamda her adımda okunan KV önbelleği baytları da paydaya
 eklenir — decode'un 7.400 token'da saniyede 141 token'a düşmesinin başlıca nedeni). Bölüm
 başındaki not 380 GB/s'yi, 2,0 GB'lık dosyada saniyede 190 token'dan tam böyle
-çıkardı; aynı çip 6,4 GB'lık fp16 ağırlıklarda saniyede 60 token civarında tavan
-yapardı. Modern eğitim sonrası nicemleme yöntemleri her ağırlığı aynı biçimde
+çıkardı; aynı kaba tahminle, aynı çip 6,4 GB'lık fp16 ağırlıklarda saniyede 60
+token civarında kalırdı. KV trafiği ve nicemlemeyi açan (dequantization)
+çekirdek nedeniyle hız, ağırlık boyutuyla aynı oranda artmayabilir. Modern eğitim sonrası nicemleme yöntemleri her ağırlığı aynı biçimde
 yuvarlamak yerine *hangi* ağırlıkların hassas kalacağını seçiyor: GPTQ katman
 düzeyinde bir yeniden kurma problemi çözüyor [@frantar2023gptq], AWQ ise
 aktivasyon dağılımına göre en önemli olan küçük ağırlık kesimini koruyor
 [@lin2024awq]. İkisi de naif yuvarlamadan çok daha az bozulma bildiriyor, ama
 ikisinde de bozulma hâlâ var. Bu, kalite maliyeti olan bir bellek optimizasyonu
 ve maliyet göreve bağlı — yani yeri bir blog yazısındaki benchmark (kıyaslama)
-tablosu değil, sizin değerlendirme setiniz.
+tablosu değil, sizin değerlendirme setiniz: kaliteyi ve gecikmeyi aynı görev
+setinde karşılaştırın.
 
 **Spekülatif kod çözme** doğrudan seri kısmı hedef alıyor. Küçük bir taslak
 model birkaç token öneriyor; büyük model hepsini tek bir paralel geçişte
@@ -822,9 +826,12 @@ başkenti Ankara'dır ve" sonrası için beş token önerir; büyük model tek g
 ilk dördünü kendi seçimiyle aynı bulup kabul eder, beşincisini reddeder ve
 yerine kendi token'ını koyar: büyük modelin tek geçişinden beş token. Örnekleme açıkken bu resim yalnızca
 yaklaşık olarak doğru: kabul olasılıksaldır ve akla yatkın bir taslak token
-bile reddedilebilir. Buna karşın çıktı dağılımının değişmediği kanıtlanmıştır
-— bu bir yaklaşıklama değildir — ve wall-clock süresindeki kazanç, taslak model
-büyük modelle sık sık aynı token'ı seçtiğinde tipik olarak 2–3 kat. *Yapmadığı*
+bile reddedilebilir. Buna karşın özgün ret örneklemeli algoritmanın koşulları sağlandığında çıktı
+dağılımının değişmediği kanıtlanmıştır; uygulamalar ve örnekleme ayarları bu
+koşullardan sapabilir. Wall-clock kazancı kabul oranına, taslak modelin
+maliyetine, batch'e ve uygulamaya bağlıdır; özgün çalışma taslak model büyük
+modelle sık sık aynı token'ı seçtiğinde 2–3 kat civarı bildirdi, ama bunu
+garanti saymayın ve aynı örnekleme ayarlarıyla kendiniz ölçün. *Yapmadığı*
 şeye dikkat edin: büyük model hâlâ her token'ı işliyor, üstelik reddedilen
 taslakları da puanlıyor; dolayısıyla FLOP sayısı düşmüyor, biraz artıyor. Token
 başına API fiyatlandırmasında fatura da düşmüyor. Kendi barındırdığınız
@@ -834,8 +841,7 @@ tamamlanan cevap başına maliyeti düşürebilir. Bunu kendi servis yükünüzd
 
 Tüm bunların büyük ölçekteki aritmetiği için — model boyutu, batch boyutu ve
 çipin bellek bant genişliğinin ulaşılabilir hızı birlikte nasıl belirlediği —
-Pope ve arkadaşlarının çalışması konuyu derli toplu işliyor
-[@pope2023efficiently]; @sec-on-egitim'deki $6ND$ ise eğitim tarafındaki
+Pope ve arkadaşlarının çalışmasına bakın [@pope2023efficiently]; @sec-on-egitim'deki $6ND$ ise eğitim tarafındaki
 karşılığı.
 
 ## Sezgi kontrolleri {#sec-servis-sezgi}

@@ -726,14 +726,16 @@ html`<p style="font-size:0.88rem; color:var(--fig-muted); margin-top:0.5rem;">
 
 ## The levers, in the order to reach for them {#sec-serving-levers}
 
-The order matters more than the list, because the cheap levers are also the
-ones with no quality cost, and teams routinely start at the bottom.
+The first two levers leave the output unchanged, which is why they come first.
+Rank the rest by your own p50/p99 latency, throughput, monthly cost and task
+quality — the multiples in the table belong to this measurement or workload,
+not a design promise.
 
 | lever | what it buys | what it costs | reach for it |
 |:--|:--|:--|:--|
 | **Send fewer tokens** | linear on prefill and on the bill | engineering time on prompts and retrieval | [first, always]{.pro} |
-| **Prompt caching** | up to 153× prefill, measured above | a prompt ordered by stability | [first, always]{.pro} |
-| **Smaller model** | 3–10× on everything | quality, measurably | when the eval says it holds |
+| **Prompt caching** | 153× prefill in this measurement, consecutive identical requests; workload-dependent | a prompt ordered by stability | [first, always]{.pro} |
+| **Smaller model** | speed and cost gains that depend on model and workload | quality, measurably | when the eval says it holds |
 | **Quantization** | memory and bandwidth | some quality, task-dependent | when memory is the binding constraint |
 | **Speculative decoding** | decode latency, primarily; cost depends on serving efficiency and pricing | a draft model to host | when *decode* is the slow half — long answers; little help when prefill dominates (details below) |
 | **Continuous batching** | throughput | per-user latency | when the server is busy, not before |
@@ -747,15 +749,17 @@ this chapter is Q4_K_M, about five bits per weight on average. Because decode
 reads every weight once per step, fewer bytes per weight also raise the decode
 ceiling, roughly bandwidth ÷ weight bytes at short context (at long context the
 KV-cache bytes read each step add to the denominator): that is how the opening note got
-380 GB/s from 190 tokens per second on a 2.0 GB file, and the same chip would
-top out near 60 tokens per second on the 6.4 GB fp16 weights. Modern post-training methods
+380 GB/s from 190 tokens per second on a 2.0 GB file, and by the same rough
+estimate the same chip would sit near 60 tokens per second on the 6.4 GB fp16
+weights. Because of KV traffic and dequantization kernels, speed need not rise
+in proportion to weight size. Modern post-training methods
 choose *which* weights to keep precise rather than rounding uniformly: GPTQ
 solves a layer-wise reconstruction problem [@frantar2023gptq], AWQ protects the
 small fraction of weights that the activation distribution says matter most
 [@lin2024awq]. Both report far less degradation than naive rounding, and both
 are still degradation. It is a memory optimisation with a quality cost, and the
 cost is task-dependent — which means it belongs in your eval suite, not in a
-blog post's benchmark table.
+blog post's benchmark table: compare quality and latency on the same task set.
 
 **Speculative decoding** attacks the serial part directly. A small draft model
 proposes several tokens; the large model scores them all in a single parallel
@@ -763,11 +767,19 @@ pass and a modified rejection-sampling step decides how many to keep, resampling
 the first rejected position from a corrected distribution
 [@leviathan2023speculative]. "Accepts the longest correct prefix" is the useful
 picture, and at temperature 0 it is exactly the mechanism: keep draft tokens
-while they match the large model's own greedy choice. With sampling it is only
+while they match the large model's own greedy choice. For example, the draft
+model proposes five tokens after "The capital of Türkiye is Ankara, and"; in
+one pass the large model finds the first four match its own choice, accepts
+them, rejects the fifth and puts its own token there: five tokens from one pass
+of the large model. With sampling it is only
 approximately so: acceptance is stochastic, and a plausible draft token can
-still be rejected. The
-output distribution is provably unchanged — this is not an approximation — and
-the win is in wall-clock, typically 2–3× when the draft model agrees often.
+still be rejected. When the conditions of the original rejection-sampling
+algorithm hold, the output distribution is provably unchanged; implementations
+and sampling settings can depart from them. The wall-clock win depends on the
+acceptance rate, the draft model's cost, batching and the implementation; the
+original work reported around 2–3× when the draft model agrees often, but do
+not treat that as guaranteed, and measure it yourself with the same sampling
+settings.
 Note what it does *not* do: the large model still processes every token, and
 also scores the rejected drafts, so FLOPs rise slightly rather than fall; on
 per-token API pricing the bill does not fall either.
@@ -776,8 +788,8 @@ cost per completed answer — measure it on your own serving load. What it buys
 first is latency.
 
 For the arithmetic underneath all of this at scale — how model size, batch
-size and chip memory bandwidth combine to set what is achievable — Pope et al.
-work it through properly [@pope2023efficiently], and @sec-pretraining's $6ND$
+size and chip memory bandwidth combine to set what is achievable — see Pope et
+al. [@pope2023efficiently], and @sec-pretraining's $6ND$
 gives the training-side counterpart.
 
 ## Intuition checks {#sec-serving-intuition}
