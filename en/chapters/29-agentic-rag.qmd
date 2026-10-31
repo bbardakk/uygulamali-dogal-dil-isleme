@@ -505,8 +505,10 @@ here, a retriever that scored **100%** on single-hop questions scored **0%** on
 the two-hop versions of the same facts. For this one-shot top-3 pipeline the
 likely cause is structural rather than ranking — the term that finds the
 second document exists only in the first — though the second document's rank
-was not recorded, so a failure to join the two is not ruled out. Either way a
-reranker over the same candidates does not touch it. A different retriever, a larger *k* or a
+was not recorded, so a failure to join the two is not ruled out. If document 2
+never reached the top 3, a reranker over the same candidates cannot add it; if
+it was among them, ranking or how the evidence is presented could matter.
+Separate the causes with retrieval traces. A different retriever, a larger *k* or a
 different index might find the second document on the first query; this
 experiment did not test those.
 :::
@@ -516,9 +518,11 @@ experiment did not test those.
 
 It removes the ceiling without clearing it. From **0% to 30%** — a
 30-percentage-point gain from an observed zero, and still wrong seven times in
-ten — at **6.6× the tokens** on that cell, which is a blended 1.43× if two-hop
-questions are 5% of your traffic. The loop can now express the second query; the model often fails to formulate it or to use
-what came back, which is @sec-agent-anatomy's aggregation failure again.
+ten — at **6.6× the counted tokens** on that cell, which is a blended 1.43× if
+two-hop questions are 5% of your traffic. Because the round counter contradicts
+the three-round cap, treat these results as exploratory and re-check them with
+execution traces. The loop can now express the second query; what causes the
+misses cannot be separated without traces.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -526,16 +530,18 @@ what came back, which is @sec-agent-anatomy's aggregation failure again.
 
 **1.15× for nothing.** On single-hop questions both systems scored 100%, and
 the agentic version spent 15% more tokens on a sufficiency check that always
-came back sufficient. Since single-hop questions are usually the majority in
-production, this is the case that dominates a real workload — which is the
-argument for routing rather than replacing.
+came back sufficient — 24 counted tokens on average. This experiment did not
+measure the production type mix; if single-hop questions dominate your
+traffic, this is the case that dominates a real workload, which is the argument
+for routing rather than replacing. Measure your own mix.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Plan the sub-questions, or retrieve and decide?
 
-Plan when they are independent, iterate when they are dependent. Be careful
-with "cannot be planned": the two-hop example can be written down as a plan
+Plan independent sub-questions up front. Dependent ones can run in sequence
+under a plan with variables, or in a loop that decides again after each
+retrieval. Be careful with "cannot be planned": the two-hop example can be written down as a plan
 with a variable in it — `s = find_successor("ZRG-14"); get_budget(s)` — and a
 system whose plans support bindings can express that fine. What cannot be
 written in advance is the *literal* second query, so a planner that emits
@@ -547,11 +553,13 @@ parallel, which is @sec-multi-agent's read-heavy case.
 ::: {.callout-note collapse="true"}
 ## 5. How do you stop the loop running forever?
 
-Four bounds, and the fourth is the one people skip: a round cap of two or
-three; a token budget checked between rounds; a repeat check, because
+By applying round, token, time and repeat bounds together, with the one people
+skip last: a round cap set from the task distribution (two or three for two-hop
+questions like these); a token budget checked between rounds; a repeat check, because
 @sec-agent-anatomy watched a loop re-issue a query it already had the answer
-to until its budget ran out; and **a floor on the answer** — when the cap is
-reached without one, say so. A loop that exhausts its budget and answers anyway
+to until its budget ran out; and **a floor on the answer** — when evidence is
+short or the cap is reached, do not guess; say which search could not be
+completed, since hitting the cap does not prove the fact is absent. A loop that exhausts its budget and answers anyway
 has converted a detectable failure into an undetectable one.
 :::
 
@@ -562,10 +570,14 @@ Route once if the sources are clearly distinct — cheap and predictable. Give
 the agent one tool per source when the needs are genuinely mixed, in which case
 @sec-tool-design's rules decide whether it works, since the description is what
 says when each source applies. Search-everything-and-merge is the tempting
-option and @sec-retrieval measured its cost in a related setting: fusing two
+option, and @sec-retrieval showed, with two retrievers over one corpus rather
+than four different indexes, that equal-weight fusion can hurt in some
+conditions: fusing two
 retrievers of unequal quality lost 32.8 and 46.8 recall@1 points against the
 better one, though at recall@10 the loss was almost nil, so the cost depends
-on how much the first rank matters. And keep provenance:
+on how much the first rank matters. Compare routing once, searching everything
+and agent choice on the same question set over your own sources. And keep
+provenance:
 sources do not have equal trust, and concatenation destroys the distinction.
 :::
 

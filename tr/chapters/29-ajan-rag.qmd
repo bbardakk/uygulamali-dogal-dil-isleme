@@ -539,8 +539,10 @@ sorularda **%100** alan bir retriever, aynı olguların iki adımlı sürümleri
 **%0** aldı. Bu tek atışlık top-3 hat için olası neden sıralama değil, yapısal
 bir sınırdır: ikinci belgeyi bulan terim yalnızca birincinin içinde. Yine de
 ikinci belgenin sırası kaydedilmedi; dolayısıyla modelin iki belgeyi
-birleştirememiş olması dışlanamaz. Her iki durumda da aynı adaylar üzerinde
-çalışan bir yeniden sıralayıcı bunu düzeltmez. Farklı bir retriever, daha büyük
+birleştirememiş olması dışlanamaz. İkinci belge ilk üçe hiç girmediyse aynı
+adaylar üzerinde çalışan bir yeniden sıralayıcı onu ekleyemez; adaylar
+arasındaysa sıralama ya da kanıt sunumu etkili olabilir. Nedeni erişim
+izleriyle ayırın. Farklı bir retriever, daha büyük
 bir *k* ya da farklı bir indeks ikinci belgeyi ilk sorguda bulabilirdi; bu
 deney onları sınamadı.
 :::
@@ -550,10 +552,10 @@ deney onları sınamadı.
 
 Tavanı aşmadan kaldırıyor. Doğruluk **%0'dan %30'a** çıkıyor: gözlenen sıfırdan
 30 puanlık bir kazanç, ama sistem hâlâ on sorunun yedisinde yanılıyor. Bedeli o
-hücrede **6,6 kat token**; iki adımlı sorular trafiğinizin %5'iyse harmanlanmış
-maliyet 1,43 kat olur. Döngü artık ikinci sorguyu ifade edebiliyor; ama model
-sıklıkla onu kuramıyor ya da geleni kullanamıyor. Bu, @sec-ajan-anatomisi'te
-gördüğümüz toplama kusurunun tekrarı.
+hücrede **6,6 kat** sayılan token; iki adımlı sorular trafiğinizin %5'iyse
+harmanlanmış oran 1,43 kat olur. Tur sayacı üç turluk sınırla çeliştiği için bu
+sonuçlar keşifsel; akış izleriyle yeniden doğrulayın. Döngü artık ikinci
+sorguyu ifade edebiliyor; yanlışların nedeni ise izler olmadan ayrıştırılamıyor.
 :::
 
 ::: {.callout-note collapse="true"}
@@ -561,16 +563,19 @@ gördüğümüz toplama kusurunun tekrarı.
 
 **Hiçbir kazanç olmadan 1,15 kat.** Tek adımlı sorularda iki sistem de %100
 aldı ve ajan tabanlı sürüm, her seferinde "yeterli" cevabı dönen bir yeterlilik
-kontrolü için %15 daha fazla token harcadı. Üretimde soruların çoğu genellikle
-tek adımlı olduğundan gerçek iş yüküne hâkim olan durum budur; klasik hattı
-değiştirmek yerine yönlendirme yapmanın gerekçesi de budur.
+kontrolü için ortalama 24 (%15) daha fazla sayılan token harcadı. Bu deney
+üretimdeki soru türü dağılımını ölçmedi; tek adımlı sorular trafiğinizde
+baskınsa gerçek iş yüküne hâkim olan durum budur ve klasik hattı değiştirmek
+yerine yönlendirme yapmanın gerekçesi de budur. Kendi dağılımınızı ölçün.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 4. Alt soruları planlamalı mı, erişip karar mı vermeli?
 
-Bağımsızlarsa planlayın, bağımlılarsa yineleyin. Bağımlı alt sorular için
-"planlanamaz" demek aceleci olur: iki adımlı örnek, içinde bir değişken olan
+Bağımsız alt soruları önceden planlayın. Bağımlı alt soruları değişkenli bir
+planla ardışık yürütebilir ya da erişim sonucuna göre yeniden karar veren bir
+döngü kullanabilirsiniz. Bağımlı alt sorular için "planlanamaz" demek aceleci
+olur: iki adımlı örnek, içinde bir değişken olan
 bir plan olarak yazılabilir —
 `a = ardili_bul("ZRG-14"); butceyi_getir(a)` — ve planlarında değişken
 bağlamayı (binding: bir adımın sonucunu sonraki adımın değişkenine atama)
@@ -585,11 +590,14 @@ durumudur.
 ::: {.callout-note collapse="true"}
 ## 5. Döngünün sonsuza kadar çalışmasını nasıl durdurursunuz?
 
-Dört sınırla; en sık atlanan dördüncüsüdür. İki ya da üç turluk bir tur
-sınırı; turlar arasında kontrol edilen bir token bütçesi; bir tekrar kontrolü,
+Tur, token, süre ve tekrar sınırlarını birlikte uygulayarak; en sık atlanan
+sonuncusu, cevap eşiğidir. Görev dağılımına göre seçilmiş bir tur sınırı (bu
+türden iki adımlı sorularda iki ya da üç); turlar arasında kontrol edilen bir token bütçesi; bir tekrar kontrolü,
 çünkü @sec-ajan-anatomisi bir döngünün cevabı zaten elindeyken aynı sorguyu
 bütçesi bitene kadar yeniden gönderdiğini gözlemledi; ve **bir cevap
-eşiği**: sınıra cevapsız ulaşıldığında bunu söyleyin. Bütçesini tüketip yine
+eşiği**: kanıt yetersizse ya da sınır dolduysa cevabı tahmin etmeyin, hangi
+aramanın tamamlanamadığını açıkça söyleyin; sınırın dolması olgunun
+olmadığını kanıtlamaz. Bütçesini tüketip yine
 de cevaplayan bir döngü, saptanabilir bir kusuru saptanamaz bir kusura
 çevirmiştir.
 :::
@@ -601,10 +609,13 @@ Kaynaklar açıkça farklıysa bir kez yönlendirin; bu ucuz ve öngörülebilir
 İhtiyaçlar gerçekten karışıksa ajana kaynak başına bir araç verin; o durumda
 işe yarayıp yaramayacağına @sec-arac-tasarimi'ün kuralları karar verir, çünkü
 her kaynağın ne zaman uygun olduğunu söyleyen şey araç açıklamasıdır. Her şeyi
-arayıp birleştirmek cazip seçenektir; @sec-erisim bunun bedelini benzer bir
-ortamda ölçtü: kalitesi farklı iki retriever'ı birleştirmek, daha iyi olana
+arayıp birleştirmek cazip seçenektir; @sec-erisim tek bir derlemde iki
+retriever'la — dört farklı indeksle değil — eşit ağırlıklı birleştirmenin bazı
+koşullarda zarar verebileceğini gösterdi: kalitesi farklı iki retriever'ı birleştirmek, daha iyi olana
 karşı 32,8 ve 46,8 recall@1 puanı kaybettirdi, ama recall@10'da kayıp
-neredeyse sıfırdı; bedel, ilk sıranın ne kadar önemli olduğuna bağlıdır.
+neredeyse sıfırdı; bedel, ilk sıranın ne kadar önemli olduğuna bağlıdır. Kendi
+kaynaklarınızda tek yönlendirmeyi, her şeyi aramayı ve ajan seçimini aynı soru
+kümesinde karşılaştırın.
 Provenance'ı da saklayın:
 kaynaklar aynı derecede güvenilir değildir ve içerikleri art arda eklemek bu
 ayrımı yok eder.
