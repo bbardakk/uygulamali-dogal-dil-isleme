@@ -628,15 +628,18 @@ cevaplanıyor; diğer beşi bölümün savunduğu tasarım kararlarıyla ilgili 
 ::: {.callout-note collapse="true"}
 ## 1. Bellek bir vektör veritabanına mı konmalı?
 
-Epizotlar evet, olgular hayır. Benzerlik araması *buna benzer bir şeyi konuştuk
-mu* için doğru, *bu kullanıcının mevcut tercihi nedir* için yanlıştır. Nedeni
+Epizotlar için çoğu zaman evet; güncel olgular için tek başına hayır. Benzerlik
+araması *buna benzer bir şeyi konuştuk mu* için doğru, *bu kullanıcının mevcut
+tercihi nedir* için yanlış araçtır. Nedeni
 konusunda net olun: neden "vektör deposundan silemezsiniz" değil — kimliğe göre
 silebilirsiniz. Bir vektör indeksinin vermediği şey bir *anahtar*: aynı tercihin
 birbiriyle çelişen iki embedding'inin bir arada durmasını hiçbir şey engellemez ve en
 yakın komşu aramasının hangisinin güncel olduğuna dair bir kavramı yoktur.
 Olgular `(kullanıcı, anahtar)` ile anahtarlanmış satırlara gider — orada bir
-upsert çelişkiyi imkânsız kılar; epizotlar, kayda geri işaretçileri olan bir
-indekse. Olguları anahtarsız biçimde vektörlere koymak bu alanda sık görülen
+upsert aynı anahtarda iki etkin değeri imkânsız kılar; bu satırlar ilişkisel
+bir tabloda da vektör sütunu olan bir tabloda da durabilir, belirleyici olan
+aynı tercihin eski ve yeni sürümlerini ayırt edebilmektir. Epizotlar ise kayda
+geri işaretçileri olan bir indekse gider. Olguları anahtarsız biçimde vektörlere koymak bu alanda sık görülen
 bir üretim hatasıdır; bedelini, bir kullanıcı sizden belirli tek bir olguyu
 düzeltmenizi ya da unutmanızı ilk istediğinde ödersiniz.
 :::
@@ -644,11 +647,14 @@ düzeltmenizi ya da unutmanızı ilk istediğinde ödersiniz.
 ::: {.callout-note collapse="true"}
 ## 2. İki bellek çelişiyor. Model bunu çözer mi?
 
-Güvenilir biçimde hayır. Burada ölçüldü: iki olgu da mevcutken ve zaman damgası
-yokken model daha yenisini cevapların **%0'ında** seçti, %83,3'ünde kaçamak yaptı.
-Zaman damgaları eklemek onu %33,3'e çıkardı. Açık bir "en günceli tercih et"
-kuralı eklemek %83,3'e çıkardı — daha iyi, ama cevapların altıda biri hâlâ kaçamak.
-Erişim katmanında çözün ve tek bir olgu enjekte edin.
+Bu testte güvenilir biçimde hayır. Tarihsiz kontrol koşulunda model
+cevapların %83,3'ünde tek bir değer seçmedi; kronoloji görünmediği için bu
+beklenen bir belirsizlik cevabıdır. Zaman damgaları eklemek daha yeni değeri
+seçme oranını %33,3'e çıkardı. Açık bir "en günceli tercih et"
+kuralı eklemek %83,3'e çıkardı — daha iyi, ama cevapların altıda biri hâlâ
+kaçamak. Tek model ve 30 maddelik bu ölçüm genellenemez, ama sıralaması
+nettir: güncel değer soruları için erişim katmanında çözün ve tek bir olgu
+enjekte edin.
 :::
 
 ::: {.column-margin}
@@ -674,7 +680,9 @@ bellek, ilgili olanla yarışır.
 ::: {.callout-note collapse="true"}
 ## 4. Hangi bellek türü en tehlikeli biçimde bozulur?
 
-Anlamsal. Çalışma belleği kendini belli ederek bozulur — pencerenin sınırına dayanırsınız ve bir şey hata verir. Epizodik
+Çoğu zaman anlamsal. Çalışma belleği sınırı aşıldığında kendini belli ederek
+bozulabilir — pencerenin sınırına dayanırsınız ve bir şey hata verir — ama
+uzun bir bağlamın içinde sessizce bilgi de kaçırabilir. Epizodik
 bellek yavaş bozulur — erişim kötüleşir ve maliyetler artar. Anlamsal bellek
 **sessizce** bozulur: martta kaydedilmiş bir olgu temmuzda kendinden emin
 döndürülür ve sistemde hiçbir şey süresinin dolduğunun farkında değildir. Bu
@@ -688,8 +696,10 @@ olmasının nedenidir.
 Yalnızca yanlış bir yazmanın ucuz olduğu yerde. Modelin kararıyla yapılan
 yazmalar esnektir ve sizin seçmeyeceğiniz şeyleri hatırlar; tutmanıza izin
 verilmeyenler dâhil. Kural tabanlı bilgi çıkarma öngörülebilir ve
-denetlenebilirdir, önemli olan her şey için de doğru varsayılandır; kullanıcı
-onaylı yazmalar bir etkileşime mal olur ve gerçek rıza veren tek mekanizmadır.
+denetlenebilirdir, denetlenmesi gereken alanlar için iyi bir varsayılandır;
+kullanıcı onaylı yazmalar bir etkileşime mal olur ve kullanıcının denetimini
+artırır, ama hukuki dayanak, bilgilendirme ve saklama koşulları ayrıca
+değerlendirilmelidir. Yazma kararını riske ve veri türüne göre seçin.
 Çoğu sistemin ihtiyacı, okumayı altyapıya bırakmak ve yazmayı açık bir eylem
 hâline getirmektir.
 :::
@@ -698,9 +708,12 @@ hâline getirmektir.
 ## 6. Ajanınız çalıştırmanın ortasında çöktü. Ne sağ kalmalı?
 
 Transkript; yalnızca en sonda değil her adımdan sonra checkpoint alınmış ve
-yalnızca araç çağrıları değil araç *sonuçları* da saklanmış olarak. Bir
-çalıştırmayı araçlarını yeniden yürüterek tekrar oynatmak, yan etkisi olan her
-araç için yanlıştır. Devam da
+yalnızca araç çağrıları değil araç *sonuçları* ve çağrı kimlikleri de
+dayanıklı biçimde saklanmış olarak. Bir çalıştırmayı araçlarını yeniden
+yürüterek tekrar oynatmak, yan etkisi olan her araç için yanlıştır; sonucu
+saklamak da araç ile checkpoint arasındaki bir çökmede çift yürütmeyi tek başına
+önlemez. Yan etkili çağrıları idempotent yapın ya da tekrar denemeden önce
+önceki sonucu sorgulayın ve bu yarış durumunu sınayın. Devam da
 başlatmayla aynı kod yolu olmalıdır, çünkü ayrı bir devam yolu test
 edilmeyecek ikinci bir uygulamadır.
 :::

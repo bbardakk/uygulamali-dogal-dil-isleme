@@ -594,14 +594,18 @@ them come down to a schema choice that costs nothing on day one.
 ::: {.callout-note collapse="true"}
 ## 1. Should memory go in a vector database?
 
-Episodes yes, facts no. Similarity search is right for *have we discussed
-something like this* and wrong for *what is this user's current preference*.
+Episodes, usually yes; current facts, not on their own. Similarity search is
+right for *have we discussed something like this* and the wrong tool for *what
+is this user's current preference*.
 Be precise about why, because "you cannot delete from a vector store" is not
 it — you can, by id. What a vector index does not give you is a *key*: nothing
 stops two contradictory embeddings of the same preference coexisting, and
 nearest-neighbour search has no notion of which is current. Facts go in rows
-keyed by `(user, key)`, where an upsert makes the contradiction impossible;
-episodes go in an index with pointers back to the record. Putting facts in
+keyed by `(user, key)`, where an upsert makes two active values on one key
+impossible; those rows can live in a relational table or in a table that also
+has a vector column — what matters is telling the old and new versions of the
+same preference apart. Episodes go in an index with pointers back to the
+record. Putting facts in
 vectors without a key is a common production mistake in this area, and you pay
 for it the first time a user asks you to correct or forget one specific fact.
 :::
@@ -609,11 +613,13 @@ for it the first time a user asks you to correct or forget one specific fact.
 ::: {.callout-note collapse="true"}
 ## 2. Two memories contradict. Will the model sort it out?
 
-Not reliably. Measured here: with both facts present and no timestamps, the
-model chose the newer one **0%** of the time and hedged on 83.3%. Adding
-timestamps got it to 33.3%. Adding an explicit "prefer the most recent" rule
-got it to 83.3% — better, and still one answer in six hedging. Resolve in
-the retrieval layer and inject one fact.
+Not reliably, in this test. In the undated control condition the model picked
+no single value in 83.3% of answers; with no chronology visible, that is the
+expected uncertain answer. Adding timestamps raised the rate of choosing the
+newer value to 33.3%. Adding an explicit "prefer the most recent" rule
+got it to 83.3% — better, and still one answer in six hedging. One model and
+thirty items do not generalise, but the ordering is clear: for current-value
+questions, resolve in the retrieval layer and inject one fact.
 :::
 
 ::: {.column-margin}
@@ -639,7 +645,8 @@ quality: every irrelevant memory competes with the relevant one.
 ::: {.callout-note collapse="true"}
 ## 4. Which memory type fails most dangerously?
 
-Semantic. Working memory fails loudly — you hit the window. Episodic memory
+Usually semantic. Working memory can fail loudly when you hit the window, but
+it can also quietly miss information inside a long context. Episodic memory
 fails slowly — retrieval gets worse and costs rise. Semantic memory fails
 **silently**: a fact recorded in March is returned confidently in July, with
 nothing in the system aware it expired. That asymmetry is why TTLs belong at
@@ -651,9 +658,11 @@ write time rather than on a cleanup backlog.
 
 Only where a wrong write is cheap. Model-decided writes are flexible and will
 remember things you would not have chosen, including things you are not
-allowed to keep. Rule-based extraction is predictable and auditable and is the
-right default for anything that matters; user-confirmed writes cost an
-interaction and are the only mechanism that gives real consent. Most systems
+allowed to keep. Rule-based extraction is predictable and auditable, a good
+default for fields that need auditing; user-confirmed writes cost an
+interaction and increase the user's control, but the legal basis, notice and
+retention terms still have to be assessed separately. Choose the write path by
+risk and data type. Most systems
 want read-as-infrastructure and write-as-an-explicit-act.
 :::
 
@@ -661,8 +670,11 @@ want read-as-infrastructure and write-as-an-explicit-act.
 ## 6. Your agent crashed mid-run. What should survive?
 
 The transcript, checkpointed after every step rather than at the end, with
-tool *results* stored and not just the calls — replaying a run by re-executing
-its tools is wrong for anything that writes. And resume should be the same code
+tool *results* and call ids stored durably, not just the calls — replaying a
+run by re-executing its tools is wrong for anything that writes, and storing
+results alone does not stop a double execution after a crash between the tool
+and the checkpoint. Make side-effecting calls idempotent, or look up the
+previous result before retrying, and test that race. And resume should be the same code
 path as start, because a separate resume path is a second implementation that
 will not get tested.
 :::
