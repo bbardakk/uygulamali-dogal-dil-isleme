@@ -433,9 +433,16 @@ tepe FLOP/s bölü tepe bant genişliği) üstünde hesap sınırlı olur; H100 
 bir çip için bu kabaca
 $989 \text{ TFLOP/s} \div 3{,}35 \text{ TB/s} \approx 295$ FLOP/bayt. Yani
 fp16'da decode yaklaşık $B = 295$'e kadar bellek sınırlı kalıyor; dört bitlik
-ağırlıkla yaklaşık $B = 74$'e kadar.
+ağırlıkla yaklaşık $B = 74$'e kadar. Bunlar, ağırlıkların bir kez okunup
+batch'te paylaşıldığı ideal bir matris çarpımı için kaba eşiklerdir; KV
+trafiği, attention, nicemlemeyi açan çekirdekler ve erişilen donanım verimi
+gerçek kırılma batch'ini değiştirir. 295 ve 74 ölçülmüş servis sınırları
+değildir.
 
-Prefill için formül aynı; yalnızca $B$'nin yerine prompt uzunluğu geçer.
+Prefill'de uzun bir prompt ağırlık matris çarpımlarını daha iyi doyurur: kabaca
+aynı formülde $B$'nin yerine prompt uzunluğu geçer — ama bu yaklaşım
+attention'ın uzunlukla karesel büyüyen maliyetini ve parçalı prefill'i
+içermez.
 Yukarıdaki 4.247 token'lık prompt için bu, fp16'da 4.247'lik bir yoğunluk
 demek — ridge'in bir büyüklük mertebesinden fazla ötesi. (Bu ridge H100 için
 hesaplandı; ölçümlerin yapıldığı Apple Silicon çipinde tepe hesap gücünün bant
@@ -446,12 +453,13 @@ bu kadar farklı davrandığının cevabı da bu.
 
 Bu ridge sayısı, aşağıdaki iddianın geçerli olduğu sınırı da çiziyor.
 
-Decode bellek sınırlıdır: donanım zamanını çarpma yaparak değil, ağırlıkları
-taşıyarak geçirir. Bu da ikinci bir isteğin *neredeyse hiç ek maliyeti olmaması*
-demektir, çünkü bir dizi için taşınan ağırlıklar aynı anda birkaç diziye hizmet
-edebilir. Batchleme bu boşluğu işlem hacmine çevirir — ve ikinci istek neredeyse
-bedava, ellincisi de öyle; üç yüzüncü civarında ise artık değil, çünkü batch
-ridge'i geçmiştir ve aritmetik de maliyet yaratmaya başlar.
+Küçük batch'te decode bellek sınırlıdır: donanım zamanını çarpma yaparak değil,
+ağırlıkları taşıyarak geçirir. Bir dizi için taşınan ağırlıklar aynı anda
+birkaç dizinin matris çarpımında paylaşılabildiğinden toplam token/s artabilir;
+batchleme bu boşluğu işlem hacmine çevirir. Ek bir istek yine de KV belleği,
+hesaplama ve kuyruk yükü getirir: bu ideal modelde ağırlık okuması açısından ek
+maliyeti küçüktür, ama batch ridge'i geçince aritmetik de maliyet yaratmaya
+başlar. Marjinal maliyeti ve gecikmeyi gerçek batch boyutlarında ölçün.
 
 Pratikte sınır daha erken gelir; formülün dışarıda bıraktığı iki nedenle. Her
 dizi her adımda *kendi* KV önbelleğini de okur ve bu trafik batch içinde
@@ -460,8 +468,9 @@ Ayrıca her dizinin önbelleği belleğe sığmak zorundadır: gerçek kartlarda
 çoğunlukla ridge değil bellek sınırlar.
 
 ::: {#gloss-continuous-batching .column-margin .term-gloss}
-**continuous batching** (sürekli batchleme) — yeni istekler, tüm batch'in bitmesini beklemek yerine
-yer açıldıkça çalışan bir batch'e katılır. Her modern sunucudaki işlem hacmi kolu.
+**Sürekli batchleme** (continuous batching) — biten dizileri batch'ten çıkarıp
+yeni istekleri sonraki yinelemelerde ekleyerek sunucunun çalışma birimlerini
+dolu tutan çizelgeleme yöntemi; yaygın sunucularda başlıca işlem hacmi kolu.
 [↩](#term-continuous-batching){.term-back}
 :::
 
@@ -488,10 +497,16 @@ Akılda tutulması gereken kat sayısı değil, ödünleşimdir:
 | Statik batchleme | daha iyi | [en kötü — en yavaş diziyi bekler]{.con} |
 | Sürekli batchleme | [en iyi]{.pro} | batchlemesizden biraz kötü, statikten çok daha iyi |
 
-: Batchlemenin iki sayıya etkisi {tbl-colwidths="[28,24,48]"}
+: Batchlemenin iki sayıya etkisi — belirli bir trafik yoğunluğu, batch boyutu ve istek uzunluğu dağılımı için olası eğilim {tbl-colwidths="[28,24,48]"}
 
-[Batchleme, bedelini tek tek kullanıcıların gecikmeyle ödediği bir işlem hacmi
-optimizasyonudur.]{.hl} Her istek makineyi batch arkadaşlarıyla paylaşır;
+Bu bir eğilimdir, evrensel bir sıralama değil: statik batch'in sonucu bütün
+dizileri birlikte bitirme politikasına ve raporlanan gecikmenin tanımına
+bağlıdır; sürekli batchleme bazı yüklerde kuyruk beklemesini de azaltabilir.
+Toplam token/s ile p50/p99 TTFT ve tamamlanma gecikmesini aynı iş yükünde
+ölçün.
+
+[Batchleme, bedelini çoğu zaman tek tek kullanıcıların gecikmeyle ödediği bir
+işlem hacmi optimizasyonudur.]{.hl} Her istek makineyi batch arkadaşlarıyla paylaşır;
 dolayısıyla meşgul bir sunucu, istek başına daha ucuz bir sunucu olduğu hâlde
 istek başına daha yavaş bir sunucudur. Ürününüzün bir gecikme SLO'su (hizmet
 düzeyi hedefi) varsa, bu
@@ -505,9 +520,10 @@ parçalara bölüp her adımda decode adımlarıyla karıştırır; böylece hi�
 adımı koca bir prefill'in arkasında beklemez (vLLM ve SGLang bunu destekliyor).
 *Ayrıştırılmış servis* (prefill/decode disaggregation) ise iki yarıyı ayrı
 makinelere koyar: hesap sınırlı prefill bir havuzda, bellek sınırlı decode
-başka bir havuzda çalışır ve KV önbelleği aralarında aktarılır. İkisi de
-ödünleşimi ortadan kaldırmaz; yalnızca p99 gecikmesini uzun prompt'lara ve
-batch boyutuna daha az duyarlı hâle getirir.
+başka bir havuzda çalışır ve KV önbelleği aralarında aktarılır. İkisi de kuyruk
+girişimini azaltmayı hedefler ama ödünleşimi ortadan kaldırmaz: KV aktarımı ve
+yeni kuyruklar nedeniyle p99 üzerindeki etkileri topolojiye bağlıdır ve iş
+yükünüzde ölçülmelidir.
 
 ## Prompt önbellekleme: ilk başvurulacak kol {#sec-servis-onbellek}
 

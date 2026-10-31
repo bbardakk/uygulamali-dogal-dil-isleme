@@ -395,9 +395,15 @@ precision only. A chip is compute-bound above its *ridge point*, peak FLOP/s
 divided by peak bandwidth — for an H100-class part, roughly
 $989 \text{ TFLOP/s} \div 3.35 \text{ TB/s} \approx 295$ FLOP/byte. So at fp16
 decode stays bandwidth-bound until about $B = 295$; at four-bit weights, until
-about $B = 74$.
+about $B = 74$. These are rough thresholds for an idealised matrix multiply in
+which the weights are read once and shared across the batch; KV traffic,
+attention, dequantization kernels and achievable hardware efficiency all move
+the real break-even batch. 295 and 74 are not measured serving limits.
 
-Prefill is the same formula with the prompt length in place of $B$. For the
+In prefill a long prompt saturates the weight matrix multiplies better: roughly
+the same formula with the prompt length in place of $B$ — though that
+approximation leaves out attention's cost, which grows with the square of the
+length, and chunked prefill. For the
 4,247-token prompt above, at fp16, that is an intensity of 4,247 — more than an order of
 magnitude past the ridge. (That ridge is for an H100; on the Apple Silicon chip
 measured here peak compute is far lower relative to bandwidth, and four-bit
@@ -406,13 +412,14 @@ decode is not, and why the two halves of the table behave so differently.
 
 That number is also the honest boundary on the claim that follows.
 
-Decode is memory-bound: the hardware spends its time moving weights, not
-multiplying them. That means a second request costs *almost nothing extra*,
-because the weights being moved for one sequence can serve several at once.
-Batching converts that slack into throughput — and the second request is nearly
-free, and so is the fiftieth, and somewhere around the three-hundredth it is
-not, because the batch has crossed the ridge and the arithmetic starts to
-cost.
+At small batch sizes decode is memory-bound: the hardware spends its time
+moving weights, not multiplying them. Because the weights moved for one
+sequence can be shared by several sequences' matrix multiplies, total tokens
+per second can rise; batching converts that slack into throughput. Each extra
+request still brings KV memory, compute and queueing load: in this idealised
+model its extra cost in weight reads is small, but once the batch crosses the
+ridge the arithmetic starts to cost too. Measure marginal cost and latency at
+real batch sizes.
 
 In practice the limit arrives sooner, for two reasons the formula leaves out.
 Each sequence also reads its *own* KV cache at every step, and that traffic is
@@ -422,8 +429,8 @@ it is usually memory, not the ridge, that caps the batch.
 
 ::: {#gloss-continuous-batching .column-margin .term-gloss}
 **continuous batching** — new requests join a running batch as slots free,
-instead of waiting for the whole batch to finish. The throughput lever in
-every modern server. [↩](#term-continuous-batching){.term-back}
+instead of waiting for the whole batch to finish. A main throughput lever in
+common servers. [↩](#term-continuous-batching){.term-back}
 :::
 
 Naive batching waits for a full batch and then runs it to completion, so one
@@ -449,13 +456,31 @@ The part worth internalising is the trade, not the multiple:
 | Static batching | better | [worst — waits for the slowest sequence]{.con} |
 | Continuous batching | [best]{.pro} | slightly worse than none, far better than static |
 
-: What batching does to each number {tbl-colwidths="[28,24,48]"}
+: What batching does to each number — a likely tendency for a given traffic level, batch size and request-length distribution {tbl-colwidths="[28,24,48]"}
 
-[Batching is a throughput optimisation that individual users pay for in
+That is a tendency, not a universal ranking: static batching's result depends
+on the policy of finishing all sequences together and on how latency is
+defined, and continuous batching can also cut queueing delay under some loads.
+Measure total tokens per second together with p50/p99 TTFT and completion
+latency on the same workload.
+
+[Batching is a throughput optimisation that individual users often pay for in
 latency.]{.hl} Every request shares the machine with its batch-mates, so a
 busy server is a slower server per request even when it is a cheaper server per
 request. If your product has a latency SLO, it is a constraint on batch size,
 and somebody has to own that number.
+
+The chapter's thesis — the two halves have different bottlenecks — shows up in
+p99 latency too: the prefill of a long prompt that joins the batch delays the
+next token of every sequence decoding at that moment. Modern servers soften
+this two ways. *Chunked prefill* splits long prompts into pieces and mixes
+them with decode steps, so no decode step waits behind a whole prefill (vLLM
+and SGLang support it). *Disaggregated serving* puts the two halves on
+separate machines: compute-bound prefill in one pool, bandwidth-bound decode
+in another, with the KV cache transferred between them. Both aim to reduce
+queue interference, but neither removes the trade: because of KV transfer and
+new queues, their effect on p99 depends on topology and has to be measured on
+your workload.
 
 ## Prompt caching: the lever to reach for first {#sec-serving-cache}
 
