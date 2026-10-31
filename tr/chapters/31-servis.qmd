@@ -1226,56 +1226,56 @@ bildiğinizde çok daha kolay değerlendirilir.
 
 ## Akılda kalması gerekenler {#sec-servis-ozet}
 
-- **Bir istek tek değil, iki işlemdir.** Prefill prompt'u tek bir paralel geçişte
-  okur; decode cevabı seri biçimde teker teker token yazar. Burada kabaca
-  **saniyede 2.000'e karşı 190 token** ölçüldü — bir token yazmak, bir token
-  okumaktan yaklaşık **on bir kat** uzun sürüyor. Her servis kararı isteklerinizin
-  hangi yarıdan yapıldığından çıkar.
+- **Bir istek tek değil, iki işlemdir.** Prefill prompt'u paralel olarak okur;
+  decode cevabı seri biçimde teker teker token yazar. Bu dizüstü ölçümünde
+  kabaca **saniyede 2.000'e karşı 190 token** ölçüldü — 4.247 token'lık
+  bağlamda bir token yazmak, bir token okumaktan yaklaşık **on bir kat** uzun
+  sürdü. Oran donanıma, modele, bağlama ve batch'e göre değişir; kendi
+  isteklerinizin hangi yarıdan yapıldığını ölçün.
 
-- **Gecikme genellikle prompt'tur.** 7.427 token'lık bağlamda **wall-clock
-  süresinin %91,0'ı ilk karakter belirmeden önce bitmişti**. Akış o sayıyı değiştirmez;
-  yalnızca isteğin geri kalanını görünür kılar. İlk token'a kadar geçen sürenin
-  kolu prompt uzunluğu, ondan sonra da önbelleklemedir.
+- **Uzun prompt'ta gecikmenin büyük kısmı prefill'e gider.** 7.427 token'lık
+  bağlam ve 64 token çıktılık örnekte **ilk token'a kadar geçen süre toplamın
+  %91,0'ıydı**. Akış o sayıyı değiştirmez; isteğin geri kalanını görünür
+  kılar. Kendi iş yükünüzde TTFT, decode ve kuyruk paylarını ayrı ölçün.
 
 - **Uzun bağlamın bedeli iki kez alınır.** Bir kez prefill'de, sonra da üretilen
   her token'ı yavaşlatarak: decode boş bir pencere ile 7.400 token'lık bir pencere
   arasında **saniyede 189'dan 141 token'a** düştü.
 
-- **KV önbelleği modelin kendisinden büyük olabilir.** Token başına 112 KiB'de, 131k'lık
-  bir pencere **14 GiB önbellek** demek — 2,0 GB'lık dört bitlik bir dosyanın
-  7,5 katı, aynı ağırlıkların fp16 hâlinin 2,3 katı; burada fiilen kullanılan
-  sekiz bitlik önbellekle (7,4 GiB) dosyanın 4,0 katı. Kurulumunuza uyan oranı
-  kullanın; ama "sığar mı?" her hâlükârda bir bağlam uzunluğu sorusudur. O
-  sayının 42 değil 14 olması grouped-query attention sayesinde. Bir kartı ağırlıklar + önbellek ×
-  eşzamanlı dizi + pay diye boyutlandırın; uzman karışımı bir modelde etkin
-  değil toplam parametreleri sayın.
+- **KV önbelleği modelin kendisinden büyük olabilir.** Token başına 112 KiB'de,
+  131k'lık tam dolu bir fp16 pencere teorik olarak **14 GiB önbellek** demek;
+  burada fiilen kullanılan q8_0 önbellekle yaklaşık 7,44 GiB. Kurulumunuza
+  uyan oranı kullanın; ama "sığar mı?" her hâlükârda bir bağlam uzunluğu
+  sorusudur. O sayının 42 değil 14 olması grouped-query attention sayesinde.
+  Bir kartı gerçek ağırlık ayak izi + KV türüne göre önbellek × eşzamanlı dizi
+  + çalışma payı diye planlayın; uzman karışımı bir modelde bütün uzmanlar
+  kartta tutulacaksa toplam parametreleri sayın — uzman offload'u GPU
+  belleğini azaltır ama aktarım maliyeti getirir.
 
-- **Prompt önbellekleme ilk koldur ve kazancı küçük değildir.** Sıcak prefill
-  **prompt uzunluğundan bağımsız olarak 12–16 ms'de sabitti**: 4.247 token'da
-  prefill'de 153 kat, tüm istekte 9,0 kat hızlanma. Bayt bayt aynı bir ön ek gerektiriyor;
-  öyleyse prompt'u kararlılığa göre sıralayın ve tepesine yakın oynak hiçbir şey
-  koymayın.
+- **Prompt önbellekleme çıktıyı değiştirmeyen güçlü bir koldur.** Ardışık
+  özdeş isteklerde sıcak prefill **prompt uzunluğundan bağımsız olarak 12–16
+  ms'de sabitti**: 4.247 token'da prefill'de 153 kat, tüm istekte 9,0 kat
+  hızlanma. Üretimdeki kazanç isabet oranına bağlıdır; aynı token dizisinden
+  oluşan bir ön ek gerektirir, öyleyse prompt'u kararlılığa göre sıralayın ve
+  tepesine yakın oynak hiçbir şey koymayın.
 
-- **Batchleme işlem hacmi alır, gecikme öder.** Decode bellek sınırlıdır, dolayısıyla
-  diziler ağırlık taşımasını paylaşabilir; sürekli batchleme en yavaş diziyi
-  beklemek yerine yuvaları dolu tutar [@yu2022orca; @kwon2023pagedattention].
-  İşlem hacmi kazancını gecikme maliyetinden söz etmeden raporlamak, bir
-  değerlendirme toplantısını yanıltmanın tipik yoludur.
+- **Batchleme çoğu zaman işlem hacmi alır, gecikme öder.** Küçük batch'te decode
+  bellek sınırlıdır, dolayısıyla diziler ağırlık taşımasını paylaşabilir;
+  sürekli batchleme en yavaş diziyi beklemek yerine yuvaları dolu tutar
+  [@yu2022orca; @kwon2023pagedattention]. TTFT ve p99 üzerindeki etkisini aynı
+  yük altında ölçün; işlem hacmi kazancını gecikme etkisinden söz etmeden
+  raporlamak, bir değerlendirme toplantısını yanıltmanın tipik yoludur.
 
-- **Ödediğinizin çoğu okumaya gidiyor.** Bu kitabın kendi özetleme ölçümünde 53
-  üretilmiş token'a karşı 890 prompt token'ı — bu bir token oranı; çıktı
-  token'ları daha pahalı fiyatlandığında parada 3'e 1 ya da 4'e 1'e yaklaşır.
-  Daha kısa cevaplar istemek az kazandırır; daha az göndermek çok kazandırır.
-  Kalıp (boilerplate) metni ayıklamak, kalite riski olmayan tek "daha az gönder"
-  biçimidir; model değiştirmek daha çok kazandırabilir ama bir kalite kararıdır —
-  erişilmiş bağlamı ya da few-shot örnekleri atmak gibi, değerlendirmeyle
-  sınanmalıdır.
+- **Token'ların çoğu okumaya gidebilir; faturadaki payı fiyatlarınız belirler.**
+  Bu kitabın kendi özetleme ölçümünde 53 üretilmiş token'a karşı 890 prompt
+  token'ı — bu bir token oranı; çıktı token'ları daha pahalı fiyatlandığında
+  parada 3'e 1 ya da 4'e 1'e yaklaşır. Maliyet payını kendi fiyatlarınızla
+  hesaplayın. Gereksiz görünen token'ları kaldırmak da bazen kaliteyi
+  etkileyebilir; erişilmiş bağlamı ya da few-shot örnekleri atmak bir kalite
+  kararıdır ve değerlendirmeyle sınanmalıdır.
 
-- **Kolları size neye mal olduklarına göre sıralayın.** Gerçekten gereksiz
-  token'ları çıkarmak ve önbellekteki bir ön eki yeniden kullanmak kalite riski
-  taşımaz ve önce gelir; modelin kullandığı bağlamı atmak bir kalite kararıdır. Daha küçük bir model
-  ve nicemleme [@frantar2023gptq; @lin2024awq] kaliteden ödün vererek,
-  spekülatif kod çözme [@leviathan2023speculative] ise barındırılacak ek bir
-  taslak model karşılığında daha düşük gecikme kazandırır; üçünün de yeri
-  başkasının çalıştırdığı bir benchmark tablosu değil, sizin
-  değerlendirmenizdir.
+- **Kolları kendi ölçümlerinizle sıralayın.** Prompt kısaltma, önbellekleme,
+  daha küçük bir model, nicemleme [@frantar2023gptq; @lin2024awq] ve spekülatif
+  kod çözme [@leviathan2023speculative] seçeneklerinin gecikme, maliyet ve
+  kalite etkilerini kendi görev setinizde karşılaştırın; yerleri başkasının
+  çalıştırdığı bir benchmark tablosu değil, sizin değerlendirmenizdir.

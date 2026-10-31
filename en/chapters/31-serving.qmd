@@ -1164,53 +1164,56 @@ once you know your own ratio.
 
 ## What to remember {#sec-serving-summary}
 
-- **A request is two operations, not one.** Prefill reads the prompt in one
-  parallel pass; decode writes the answer one serial token at a time. Measured
-  here at roughly **2,000 against 190 tokens per second** — writing a token
-  takes about **eleven times** as long as reading one. Every serving decision
-  follows from which half your requests are made of.
+- **A request is two operations, not one.** Prefill reads the prompt in
+  parallel; decode writes the answer one token at a time. On this laptop the
+  measurement was roughly **2,000 against 190 tokens per second** — on the
+  4,247-token row, writing a token took about **eleven times** as long as
+  reading one. The ratio changes with hardware, model, context and batch;
+  measure which half your own requests are made of.
 
-- **Latency is usually the prompt.** At 7,427 tokens of context, **91.0% of the
-  wall clock was over before the first character appeared**. Streaming does not
-  change that number; it only makes the rest of the request visible. The lever
-  for time-to-first-token is prompt length, and after that, caching.
+- **On long prompts most of the latency goes to prefill.** In the example with
+  7,427 tokens of context and 64 tokens out, **time to first token was 91.0% of
+  the total**. Streaming does not change that number; it makes the rest of the
+  request visible. Measure TTFT, decode and queueing shares separately on your
+  workload.
 
-- **Long context is charged twice.** It costs prefill once, and then slows every
+- **Long context is charged twice.** Once in prefill, and again by slowing every
   generated token: decode fell from **189 to 141 tokens per second** between an
   empty window and a 7,400-token one.
 
-- **The KV cache can dwarf the model.** At 112 KiB per token, a 131k window is
-  **14 GiB of cache** — 7.5× a 2.0 GB four-bit file, 2.3× the same weights at
-  fp16, 4.0× the file with the eight-bit cache actually used here. Quote
-  whichever matches your setup, but "will it fit?" is a question about context
-  length either way. Grouped-query attention is why the number is 14 and
-  not 42. Size a card as weights + cache × concurrent sequences + a margin,
-  and for a mixture-of-experts model count the total parameters, not the
-  active ones.
+- **The KV cache can be larger than the model.** At 112 KiB per token, a full
+  131k fp16 window is in theory **14 GiB of cache**; with the q8_0 cache
+  actually used here, about 7.44 GiB. Use the ratio that matches your setup,
+  but "will it fit?" is a context-length question either way. Grouped-query
+  attention is why that number is 14 and not 42. Plan a card as the real weight
+  footprint + cache for your KV type × concurrent sequences + working margin;
+  for a mixture-of-experts model count total parameters if every expert stays
+  on the card — expert offload cuts GPU memory but adds transfer cost.
 
-- **Prompt caching is the first lever and it is not subtle.** Warm prefill was
-  **flat at 12–16 ms regardless of prompt length**: 153× on prefill and 9.0× on
-  the whole request at 4,247 tokens. It requires a byte-identical prefix, so
-  order the prompt by stability and put nothing volatile near the top.
+- **Prompt caching is a strong lever that leaves the output unchanged.** For
+  consecutive identical requests, warm prefill was **flat at 12–16 ms regardless
+  of prompt length**: 153× on prefill and 9.0× on the whole request at 4,247
+  tokens. The production gain depends on the hit rate; it needs a prefix made of
+  the same token sequence, so order the prompt by stability and put nothing
+  volatile near the top.
 
-- **Batching buys throughput and spends latency.** Decode is memory-bound, so
-  sequences can share weight movement; continuous batching keeps the slots full
-  instead of waiting for the slowest sequence [@yu2022orca;
-  @kwon2023pagedattention]. Reporting the throughput gain without the latency
-  cost is how a review gets misled.
+- **Batching usually buys throughput and pays in latency.** At small batch sizes
+  decode is memory-bound, so sequences can share weight movement; continuous
+  batching keeps slots full instead of waiting on the slowest sequence
+  [@yu2022orca; @kwon2023pagedattention]. Measure its effect on TTFT and p99
+  under the same load; reporting the throughput gain without the latency effect
+  is the usual way to mislead a review.
 
-- **Most of what you pay for is reading.** 890 prompt tokens against 53
-  generated in this book's own summarization measurement — a token ratio, which
-  becomes nearer 3:1 or 4:1 once output tokens are priced higher. Asking for
-  shorter answers saves little; sending less saves a lot. Boilerplate removal
-  is the one form of "send less" with no quality risk; switching models may save
-  more, but it is a quality decision — as is dropping retrieved context or
-  few-shot examples — and belongs in the eval.
+- **Most of the tokens can be reading; your prices decide their share of the
+  bill.** 890 prompt tokens against 53 generated in this book's own
+  summarization measurement — a token ratio, which in money is nearer 3:1 or
+  4:1 once output tokens are priced higher. Compute the cost share with your own
+  prices. Removing tokens that look unnecessary can affect quality too;
+  dropping retrieved context or few-shot examples is a quality decision to test
+  with an eval.
 
-- **Order the levers by what they cost you.** Removing genuinely redundant
-  tokens and reusing a cached prefix carry no quality risk and go first;
-  dropping context the model uses is a quality decision. A smaller model, quantization
-  [@frantar2023gptq; @lin2024awq] and speculative decoding
-  [@leviathan2023speculative] each trade something specific — quality, quality,
-  and a hosted draft model for latency respectively — and belong in an eval, not in a
-  benchmark table someone else ran.
+- **Rank the levers by your own measurements.** Compare prompt shortening,
+  caching, a smaller model, quantization [@frantar2023gptq; @lin2024awq] and
+  speculative decoding [@leviathan2023speculative] on latency, cost and quality
+  on your own task set; they belong in your eval, not in a benchmark table
+  someone else ran.
