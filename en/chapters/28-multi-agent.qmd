@@ -138,16 +138,19 @@ it usually lacks.
 
 Write *n* for the number of steps (one model call each), *F* for the fixed
 prefix every call carries (system prompt plus tool definitions), and *o* for
-the tokens one observation adds. A single agent re-sends its whole transcript
-on every model call, so call *i* costs *F* + *i*·*o* and the total has a
+the tokens one observation adds. Without truncation, summarising, batched tool
+calls or caching, a single agent re-sends its whole transcript on every model
+call, so call *i* costs *F* + *i*·*o* and the total has a
 quadratic term: *n*·*F* + *o*·*n*(*n*−1)/2. The linear part is the fixed
 prefix paid once per call and the quadratic part is the accumulated
 observations — which is already the answer to why the split *loses* on short
 work with small results, where the linear term still dominates.
 
-A coordinator with specialists fights it by paying a fixed cost in each agent —
-system prompt plus tool definitions, which @sec-mcp measured at 89 tokens per
-tool — in exchange for two things: each specialist starts from a clean window,
+The comparison is between one agent and a **four-agent system of three
+specialists and a coordinator**. A coordinator with specialists fights the
+quadratic by paying a fixed cost in each agent — system prompt plus tool
+definitions, which averaged 89 tokens per tool on the server examined in
+@sec-mcp — in exchange for two things: each specialist starts from a clean window,
 and the coordinator sees summaries instead of raw results.
 
 Take the fixed cost as 1,450 tokens — fourteen tool definitions at 89 each is
@@ -157,7 +160,8 @@ because every conclusion below depends on assumptions that are easier to argue
 with when they are written down:
 
 ```text
-all costs are prompt tokens; output tokens are not counted
+raw prompt tokens; output tokens, caching, extra synthesis and duplicated work excluded;
+3 specialists + 1 coordinator; F and R are this example's parameters only
 
   F = 1,450   fixed prefix per agent (system prompt + 14 tool defs)
   R =   120   a specialist's report back to the coordinator
@@ -165,7 +169,8 @@ all costs are prompt tokens; output tokens are not counted
   n           total steps of work
 
   single = sum_{i=0}^{n-1} (F + i*o)       = n*F + o*n(n-1)/2
-  three  = 3 * sum_{i=0}^{n/3-1} (F + i*o) + sum_{i=0}^{2} (F + i*R)
+  split  = 3 * sum_{i=0}^{n/3-1} (F + i*o) + sum_{i=0}^{2} (F + i*R)
+           (three specialists)               (coordinator)
 
 Five assumptions, and all five flatter the split:
   - the whole transcript is re-sent every call; no truncation, no compaction
@@ -176,9 +181,15 @@ Five assumptions, and all five flatter the split:
   - output tokens are free and every agent is charged at the same rate
 ```
 
-The three observation sizes below bracket what tools actually return: ~200
-tokens is a list of search hits, ~800 a function body or a small API response,
-~3,000 a file read or a fetched page.
+The three observation sizes below are example scenarios for tool outputs of
+different lengths, not measured in this chapter: ~200 tokens is a list of
+search hits, ~800 a function body or a small API response, ~3,000 a file read
+or a fetched page. Measure the distribution in your own workload.
+
+Read the two formulas through one cell: 6 steps with 200-token observations.
+The single agent pays 6 × 1,450 + 200 × 15 = 11,700 tokens (15 = 6·5/2). Each of
+the three specialists takes 2 steps and pays 2 × 1,450 + 200 = 3,100, 9,300 for
+the three; add the coordinator's constant 4,710 and the total is 14,010.
 
 Carry those five assumptions with every ratio you quote from the table. In
 particular, the coordinator never runs a final synthesis and output tokens are
@@ -192,8 +203,12 @@ model calls. When that happens, *n* counts model calls rather than lookups,
 the single agent's quadratic term shrinks, and the case for splitting is weaker
 still. The table is for work whose steps are genuinely sequential.
 
+The columns are the step count, the observation size, the single agent's cost,
+the cost of three specialists plus the coordinator (four agents in all), and
+its ratio to the single agent; below 1, the split is cheaper.
+
 ```text
- steps  obs size   single agent   3 specialists    ratio
+ steps  obs size   single agent  3 spec + coord    ratio
      6       200         11,700          14,010    1.20x
      6       800         20,700          15,810    0.76x
      6     3,000         53,700          22,410    0.42x
@@ -206,7 +221,8 @@ still. The table is for work whose steps are genuinely sequential.
 ```
 
 And the crossover — how large an observation has to be before three
-specialists become cheaper than one agent:
+specialists plus the coordinator become cheaper than one agent, under the same
+formula, F = 1,450, R = 120 and an even split:
 
 ```text
     6 steps  ->    393 tokens per observation
@@ -218,7 +234,7 @@ specialists become cheaper than one agent:
 
 ```{=html}
 <div class="fig-title">Splitting pays on volume, not on difficulty</div>
-<svg viewBox="0 0 764 316" style="max-width:744px" role="img" aria-label="A three by three grid of cost ratios, three agents against one agent. Rows are step counts 6, 12 and 24; columns are observation sizes 200, 800 and 3,000 tokens. Only the top-left cell, 6 steps with 200-token observations, exceeds one at 1.20 times. Every other cell is below one, falling to 0.34 times at 24 steps with 3,000-token observations.">
+<svg viewBox="0 0 764 316" style="max-width:744px" role="img" aria-label="A three by three grid of cost ratios, three specialists and a coordinator against one agent. Rows are step counts 6, 12 and 24; columns are observation sizes 200, 800 and 3,000 tokens. Only the top-left cell, 6 steps with 200-token observations, exceeds one at 1.20 times. Every other cell is below one, falling to 0.34 times at 24 steps with 3,000-token observations.">
   <text x="444" y="20" class="t-xs t-b t-muted t-mid">TOKENS PER OBSERVATION</text>
   <text x="26" y="40" class="t-xs t-b t-muted">STEPS</text>
   <text x="246" y="40" class="t-xs t-b t-muted t-mid">200</text>
@@ -265,10 +281,10 @@ specialists become cheaper than one agent:
   <line x1="26" y1="224" x2="738" y2="224" class="ln-thin"/>
 
   <rect x="26" y="234" width="10" height="10" class="box-rose"/>
-  <text x="42" y="243" class="t-xs t-muted">three agents cost more</text>
+  <text x="42" y="243" class="t-xs t-muted">the split costs more</text>
   <rect x="220" y="234" width="10" height="10" class="box-accent"/>
-  <text x="236" y="243" class="t-xs t-muted">three agents cost less</text>
-  <text x="738" y="243" class="t-xs t-muted t-end">one agent vs three, same work</text>
+  <text x="236" y="243" class="t-xs t-muted">the split costs less</text>
+  <text x="738" y="243" class="t-xs t-muted t-end">3 specialists + coordinator vs 1, same work</text>
 
   <rect x="26" y="260" width="712" height="44" rx="4" class="chip"/>
   <text x="382" y="278" class="t-xs t-b t-mid">THE CROSSOVER MOVES LEFT AS THE WORK GETS LONGER</text>
@@ -277,11 +293,11 @@ specialists become cheaper than one agent:
 ```
 
 ::: {.fig-cap}
-One cell is red, and it is the cheap corner — short work with small results,
-which is exactly where many multi-agent systems get built. Both axes matter,
-but the step axis matters more than it looks: the break-even observation size
-falls with roughly the square of the step count, so doubling the steps cuts it
-by about four (393 → 98 → 25). At the same total material — 4,800 tokens —
+Raw prompt tokens; three specialists and a coordinator against one agent. One
+cell is red, and it is the cheap corner — short work with small results. Both
+axes matter, but the step axis matters more than it looks: with these
+parameters, doubling the steps cuts the break-even observation size by about
+four (393 → 98 → 25) — a result of this model, not a general law. At the same total material — 4,800 tokens —
 twenty-four steps of 200 reach 0.63× while six steps of 800 reach only 0.76×.
 :::
 
@@ -290,16 +306,18 @@ twenty-four steps of 200 reach 0.63× while six steps of 800 reach only 0.76×.
 Two readings, and both matter.
 
 **On short work with small results, splitting is more expensive.** Six steps
-returning 200 tokens each costs **1.20×** as a three-agent system, because you
-paid the fixed per-agent cost three extra times to save transcript you never
-accumulated. This is the case people build anyway, and it is the case where the
-diagram is doing the arguing.
+returning 200 tokens each costs **1.20×** with three specialists and a
+coordinator, because you paid the fixed per-agent cost three extra times to
+save transcript you never accumulated. Built without measuring, this is the
+case where the diagram does the arguing.
 
-**On long work with large results, splitting wins enormously.** Twenty-four
-steps returning 3,000 tokens each is **862,800 tokens as one agent and 291,510
-as three** — 0.34×, a two-thirds saving. The mechanism is the quadratic: the
-single agent carries every observation through every subsequent call, and the
-specialists do not.
+**On long work with large results, splitting cuts raw prompt tokens markedly
+in this model.** Twenty-four steps returning 3,000 tokens each is **862,800
+tokens as one agent and 291,510 as the four-agent setup** — 0.34×, a two-thirds
+saving. The mechanism is the quadratic: the single agent carries every
+observation through every subsequent call, and the specialists do not. For
+real cost and accuracy, measure output tokens, duplicated work, the
+coordinator's synthesis and the provider's cache.
 
 [The dial is not how complex your task is. It is how much material it
 produces.]{.hl} More exactly, it is material multiplied by how many later calls
