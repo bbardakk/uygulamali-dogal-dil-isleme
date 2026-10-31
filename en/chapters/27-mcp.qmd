@@ -583,7 +583,9 @@ in the same review.
 
 ## What it costs, measured {#sec-mcp-cost}
 
-Every tool definition is in the context of every model call. That is not a
+If the host adds the tool definitions to the model's prompt on every model call,
+every definition is in the context of every call; the MCP tool call itself does
+not spend those tokens. That is not a
 criticism of MCP — it is true of any tool-calling system — but MCP makes it
 easy to install a lot of tools without noticing, so the arithmetic is worth
 doing.
@@ -592,7 +594,9 @@ The official filesystem server published 14 tools when this was measured — a
 number that moves between releases, so pin the version before you reuse the
 figure. Serialised as tool definitions and tokenised, it comes to the figures
 below. The rows with more than one server assume every added server is the same
-size as this one:
+size as this one; the last column is a raw sum assuming the definitions are
+re-added to every model call. Caching, progressive loading and which fields the
+host sends change the real cost:
 
 ```text
 official MCP filesystem server, 14 tools
@@ -609,9 +613,10 @@ official MCP filesystem server, 14 tools
 ```
 
 [One tool definition costs about 89 tokens — roughly half a substantial user
-turn — and you pay for all of them on every call.]{.hl} With three servers of
-that size installed, a twenty-step session spends about **75,000 tokens on tool
-definitions alone**, before anybody says anything.
+turn — and if the host sends them all on every call, you pay for all of them on
+every call.]{.hl} With three servers of that size installed, a twenty-step
+session sends about **75,000 raw tokens of tool definitions alone**, before
+anybody says anything.
 
 Three honest caveats before that number is used as an argument.
 
@@ -623,25 +628,30 @@ name, description and input schema pays less than one that also forwards the
 optional `title`, `outputSchema` and annotations fields, which recent releases
 of this same server now publish. The count depends on the tokenizer as well:
 these definitions were counted with `qwen3.5:9b`'s, and another model's
-tokenizer can give a noticeably different number for the same text. Use 89 as a
-low reference point rather than a guaranteed floor, and measure your own; @sec-tool-design cites a published catalogue
+tokenizer can give a noticeably different number for the same text. Treat 89
+not as a floor or a general "low end" but as one measurement of this server,
+and measure the definitions your host actually sends to the model; @sec-tool-design cites a published catalogue
 costing about 72,000 tokens of definitions (some 77,000 with the rest of the
 starting context) before a single call, which is what the
 other end of the range looks like.
 
-Prompt caching makes a stable prefix much cheaper than the raw count suggests,
-and definitions are the most cacheable thing in the context. Revision
-2026-07-28 leans into that deliberately: list results now carry required
-`ttlMs` and `cacheScope` fields so a client can cache them rather than
-re-fetching, and servers **should** return tools from `tools/list` in a
-deterministic order specifically to improve prompt-cache hit rates. An unstable
-tool ordering is a cache miss on every call, which is a bug with no error
-message.
+There are two separate caches here. In revision 2026-07-28 list results
+carry required `ttlMs` and `cacheScope` fields, which cut how often a client
+re-fetches `tools/list` from the server but do not directly lower the model
+bill. The model provider's prompt cache, on the other hand, can make a stable
+prefix much cheaper than the raw count suggests, and definitions are among the
+most cacheable things in the context. Servers **should** return tools from
+`tools/list` in a deterministic order specifically to improve prompt-cache hit
+rates. If the host writes definitions into the prompt in that order, an
+unstable ordering can cause cache misses — a defect with no error message.
+Measure real hits and charges on your host and provider.
 
 And 89 tokens is small next to what a good tool *saves*.
 
 The point is not that the overhead is ruinous; it is that it is **invisible and
-multiplicative**, and that nobody installing an eighth server is doing this sum.
+multiplicative**. Definition cost grows with the number of tools and the number
+of model calls; for every server you install, measure the raw tokens, the cache
+hit rate and its contribution to task success together.
 
 ### When something else is better
 

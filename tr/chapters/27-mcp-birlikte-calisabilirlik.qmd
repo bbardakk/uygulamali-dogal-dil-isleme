@@ -629,7 +629,9 @@ kodunu ve araç çıktılarını da aynı incelemeye dâhil edin.
 
 ## Neye mal olduğu, ölçülmüş hâliyle {#sec-mcp-maliyet}
 
-Her araç tanımı, her model çağrısında bağlamda yer alır. Bu MCP'ye bir eleştiri
+Host araç tanımlarını her model çağrısında modelin prompt'una ekliyorsa, her
+tanım her çağrıda bağlamda yer alır; MCP üzerinden yapılan araç çağrısının
+kendisi bu token'ları harcamaz. Bu MCP'ye bir eleştiri
 değil — araç çağıran her sistem için geçerlidir — ama MCP farkına varmadan çok
 sayıda araç kurmayı kolaylaştırır; dolayısıyla hesabı yapmak gerekir.
 
@@ -637,7 +639,9 @@ Resmî dosya sistemi sunucusu, bu ölçüm yapıldığında 14 araç yayımlıyo
 sürümler arasında değişen bir sayı, dolayısıyla rakamı yeniden kullanmadan önce
 sürümü sabitleyin. Araç tanımı olarak seri hâle getirilip tokenlaştırıldığında sonuç
 aşağıda. Birden çok sunuculu satırlar, eklenen her sunucunun bununla aynı
-büyüklükte olduğunu varsayıyor:
+büyüklükte olduğunu varsayıyor; son sütun, tanımların her model çağrısına
+yeniden eklendiği varsayımıyla ham toplamdır. Önbellekleme, kademeli yükleme ve
+host'un gönderdiği alanlar gerçek maliyeti değiştirir:
 
 ```text
 official MCP filesystem server, 14 tools
@@ -654,9 +658,10 @@ official MCP filesystem server, 14 tools
 ```
 
 [Bir araç tanımı yaklaşık 89 token'a mal oluyor — uzunca bir kullanıcı
-mesajının kabaca yarısı — ve hepsinin bedelini her çağrıda ödüyorsunuz.]{.hl}
-Bu büyüklükte üç sunucu kuruluyken yirmi adımlık bir oturum, daha kimse bir şey
-söylemeden yalnızca araç tanımlarına yaklaşık **75.000 token** harcıyor.
+mesajının kabaca yarısı — ve host hepsini her çağrıda gönderiyorsa bedelini her
+çağrıda ödüyorsunuz.]{.hl} Bu büyüklükte üç sunucu kuruluyken yirmi adımlık bir
+oturum, daha kimse bir şey söylemeden yalnızca araç tanımları için ham olarak
+yaklaşık **75.000 token** gönderir.
 
 Bu sayıyı bir argüman olarak kullanmadan önce birkaç uyarı.
 
@@ -669,26 +674,30 @@ girdi şemasını ileten bir host daha az öder; isteğe bağlı `title`,
 Aynı sunucunun yeni sürümleri bu alanları artık yayımlıyor. Sayı tokenizer'a
 da bağlı: tanımlar `qwen3.5:9b`'nin tokenizer'ıyla sayıldı ve başka bir modelin
 tokenizer'ı aynı metin için belirgin biçimde farklı bir sayı verebilir. 89'u
-kesin bir alt sınır değil, düşük uçtan bir referans noktası olarak kullanın ve kendi
-sayınızı ölçün. Aralığın öteki ucu için @sec-arac-tasarimi'e bakın: orada
+bir alt sınır ya da genel bir "düşük uç" değil, bu sunucuya ait tek bir ölçüm
+olarak kullanın ve host'unuzun modele gerçekten ilettiği tanımları ölçün. Aralığın öteki ucu için @sec-arac-tasarimi'e bakın: orada
 alıntılanan yayımlanmış bir katalog, daha tek bir çağrı yapılmadan yaklaşık
 72.000 token'lık tanım maliyeti (başlangıç bağlamının geri kalanıyla birlikte
 yaklaşık 77.000) getiriyor.
 
-Prompt önbellekleme, değişmeyen bir ön eki (prefix) ham sayının
-düşündürdüğünden çok daha ucuz kılar ve tanımlar bağlamdaki en kolay
-önbelleklenen şeydir. 2026-07-28 revizyonu bundan bilinçli olarak yararlanıyor:
-liste sonuçları artık zorunlu `ttlMs` ve `cacheScope` alanları taşıyor, böylece
-client listeyi yeniden çekmek yerine önbellekte tutabiliyor; sunucular da
-`tools/list`'ten araçları, tam da prompt önbelleğinin isabet oranını artırmak
-için deterministik bir sırada döndürmeli (**should**). Çağrıdan çağrıya değişen
-bir araç sıralaması, her çağrıda bir önbellek ıskası demektir: hata mesajı
-vermeyen, sessiz bir hata.
+Burada iki ayrı önbellek var. 2026-07-28 revizyonunda liste sonuçları zorunlu
+`ttlMs` ve `cacheScope` alanları taşıyor; bu, client'ın `tools/list`'i
+sunucudan yeniden çekmesini azaltır ama model faturasını doğrudan düşürmez.
+Model sağlayıcısının prompt önbelleği ise değişmeyen bir ön eki (prefix) ham
+sayının düşündürdüğünden çok daha ucuz kılabilir ve tanımlar bağlamdaki en
+kolay önbelleklenen şeylerdendir. Sunucular araçları `tools/list`'ten, tam da
+prompt önbelleğinin isabet oranını artırmak için deterministik bir sırada
+döndürmeli (**should**). Host tanımları o sırayla prompt'a yazıyorsa çağrıdan
+çağrıya değişen bir sıralama önbellek ıskasına yol açabilir: hata mesajı
+vermeyen, sessiz bir kusur. Gerçek isabeti ve ücreti host ile sağlayıcı
+üzerinde ölçün.
 
 Ve 89 token, iyi bir aracın *kazandırdığının* yanında küçüktür.
 
-Mesele ek yükün yıkıcı olması değil; **görünmez ve çarpımsal** olması ve
-sekizinci sunucuyu kuran kimsenin bu hesabı yapmamasıdır.
+Mesele ek yükün yıkıcı olması değil; **görünmez ve çarpımsal** olması. Tanım
+maliyeti araç sayısıyla ve model çağrısı sayısıyla artar; kurduğunuz her
+sunucu için ham token'ı, önbellek isabetini ve görev başarısına katkısını
+birlikte ölçün.
 
 ### Başka bir şeyin daha iyi olduğu durumlar
 
