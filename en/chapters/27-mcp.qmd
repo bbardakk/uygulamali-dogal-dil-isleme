@@ -249,13 +249,27 @@ narrower, and narrower is easier to secure.
 
 Two of the three deprecations above were about a server reaching backwards. The
 change in this section is larger than any of them, and it is about how a
-connection works at all.
+connection works at all. Before the details, a summary of the changes in this
+section and the previous one:
+
+| topic | 2025-11-25 and earlier | 2026-07-28 |
+|:--|:--|:--|
+| connection model | stateful session set up by an `initialize` handshake | stateless, self-contained requests; version and capabilities in `_meta` on every request |
+| learning about the server | during the handshake | optional `server/discover` call |
+| server asking the client for something | server-initiated requests (`elicitation/create`, `sampling/createMessage`, `roots/list`) | multi round-trip requests: an `InputRequiredResult` comes back and the client re-sends the request |
+| state across calls | session and `Mcp-Session-Id` header | a server-minted handle, carried as a tool argument |
+| change notifications | `resources/subscribe` and an HTTP GET endpoint | one `subscriptions/listen` stream |
+| broken stream | resume with `Last-Event-ID` | none; the request is re-sent with a new id |
+| `ping`, `logging/setLevel` | present | removed from the specification |
+| Sampling, Roots, Logging, Dynamic Client Registration | active | deprecated (eligible for removal no earlier than 2027-07-28) |
+
+: What changed from 2025-11-25 to 2026-07-28 {tbl-colwidths="[24,36,40]"}
 
 The base protocol is **JSON-RPC 2.0**: a small, language-neutral convention
 for remote procedure calls in which every message is one JSON object. A
 *request* names a `method`, carries `params` and an `id`; the *response* echoes
-the `id` and carries either a `result` or an `error`. A tool call looks like
-this (the `_meta` block is explained below):
+the `id` and carries either a `result` or an `error`. *Notifications* expect no
+response and carry no `id`. A tool call looks like this (the `_meta` block is explained below):
 
 ```json
 {"jsonrpc": "2.0", "id": 7, "method": "tools/call",
@@ -281,7 +295,11 @@ Those messages travel over one of two transports:
 - **stdio** — the host launches the server as a subprocess and talks over pipes.
   Local, simple, and the right default for anything on the user's machine.
 - **Streamable HTTP** — for remote servers. Every client message is its own
-  HTTP POST, and the server answers either with one JSON object or with a short
+  HTTP POST that mirrors some body fields into headers: `MCP-Protocol-Version`
+  and `Mcp-Method` on every request, and `Mcp-Name` as well on `tools/call`,
+  `resources/read` and `prompts/get`, are required, so load balancers can route
+  without parsing the body, and the server rejects a request whose headers and
+  body disagree. The server answers either with one JSON object or with a short
   **Server-Sent Events (SSE)** stream — a standard way for an HTTP server to
   send a sequence of messages down one response, used here for progress updates
   before the final result. (The older **HTTP+SSE** transport has been deprecated
@@ -299,17 +317,26 @@ RPC that reports its supported versions, capabilities and identity; a client
 **may** call it up front, but does not have to.
 
 The reason is operational, and it is the same reason stateless HTTP won
-generally: **a stateless server scales horizontally**. Any replica can serve
-any request, so a remote MCP server becomes an ordinary web service behind a
-load balancer rather than a thing that has to keep a session pinned to a
-process.
+generally: **a server with no protocol-level session makes horizontal scaling
+easier**. Any replica can serve any request, so a remote MCP server becomes an
+ordinary web service behind a load balancer rather than a thing that has to
+keep a session pinned to a process. Application state across calls, files or
+side effects still need a shared store or a verifiable handle, and horizontal
+scaling depends on those too.
 
 Backward compatibility with the handshake-based revisions (`2025-11-25` and
 earlier) is specified rather than assumed, which is what you would want from a
 protocol people have already deployed. A client that supports both eras first
-sends a modern request (on stdio, a `server/discover` probe); if that fails
-with anything other than a recognised modern error, it falls back to the old
-`initialize` handshake. A client or server that implements only one era has no such
+sends a modern request (on stdio, a `server/discover` probe). If the server is
+modern, that request either succeeds or returns an error the new revision
+defines — for example `UnsupportedProtocolVersionError`, listing the supported
+versions — and the client retries with one of them. Over HTTP, the
+specification asks the client to inspect the body of a `400 Bad Request`: if
+it is empty or not a recognised modern JSON-RPC error, the server is old and
+the client falls back to the `initialize` handshake. Authorization or policy
+errors (`401`, `403`) are not version mismatches; treating them as a fallback
+signal could let a request dodge a security check by dropping to an older
+protocol version. Verify the fallback decision with tests. A client or server that implements only one era has no such
 fallback.
 
 Three consequences land on whoever writes the server, and they are the ones
@@ -322,7 +349,8 @@ that turn "stateless" from an adjective into work:
   which is the point, but it is also a design you now have to write. A handle
   is a name, not a password: the specification says a server that implements
   authorization **must not** treat possession of a handle as proof of identity,
-  so check on every call that the handle belongs to the caller.
+  so on every use check the caller's authorization and the handle's binding to
+  the user, the task and its validity period.
 - **Change notifications moved to one opt-in stream.** `resources/subscribe`
   and the HTTP GET endpoint are replaced by `subscriptions/listen`, a single
   long-lived stream the client opts into by notification type.

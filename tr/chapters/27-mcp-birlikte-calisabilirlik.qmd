@@ -287,8 +287,9 @@ bölümde ve bir öncekinde anlatılan değişikliklerin özeti:
 Temel protokol **JSON-RPC 2.0**'dır: her mesajın tek bir JSON nesnesi olduğu,
 dilden bağımsız, küçük bir uzak yordam çağrısı (remote procedure call)
 kuralı. Bir *istek* bir `method` adlandırır, `params` ve bir `id` taşır;
-*yanıt* aynı `id`'yi geri yollar ve ya bir `result` ya da bir `error` taşır. Bir
-araç çağrısı şöyle görünür (`_meta` bloğu aşağıda açıklanıyor):
+*yanıt* aynı `id`'yi geri yollar ve ya bir `result` ya da bir `error` taşır.
+*Bildirimler* (notification) ise yanıt beklemez ve `id` taşımaz. Bir araç
+çağrısı şöyle görünür (`_meta` bloğu aşağıda açıklanıyor):
 
 ```json
 {"jsonrpc": "2.0", "id": 7, "method": "tools/call",
@@ -315,8 +316,12 @@ Bu mesajlar iki taşıma yönteminden (transport) biri üzerinden gider:
   (pipe) üzerinden konuşur. Yereldir, basittir ve kullanıcının makinesindeki her şey için doğru
   varsayılandır.
 - **Streamable HTTP** — uzak sunucular için. Client'ın her mesajı ayrı bir HTTP
-  POST'tur; sunucu ya tek bir JSON nesnesiyle ya da kısa bir **Server-Sent
-  Events (SSE)** akışıyla cevap verir. SSE, bir HTTP sunucusunun tek bir yanıt
+  POST'tur ve gövdedeki bazı alanları başlıklarda da taşır: her istekte
+  `MCP-Protocol-Version` ve `Mcp-Method`, `tools/call`, `resources/read` ve
+  `prompts/get` isteklerinde ayrıca `Mcp-Name` zorunludur; böylece yük
+  dengeleyiciler gövdeyi ayrıştırmadan yönlendirme yapabilir ve sunucu başlıkla
+  gövde uyuşmazsa isteği reddeder. Sunucu ya tek bir JSON nesnesiyle ya da kısa
+  bir **Server-Sent Events (SSE)** akışıyla cevap verir. SSE, bir HTTP sunucusunun tek bir yanıt
   içinde art arda birden çok mesaj göndermesinin standart yoludur; burada son
   sonuçtan önceki ilerleme bildirimleri için kullanılır. (Eski **HTTP+SSE**
   taşıması, 2025-03-26 revizyonundan beri Streamable HTTP lehine kullanımdan
@@ -334,11 +339,14 @@ kimliğini bildiren bir `server/discover` RPC'sini uygulamak **zorunda**; client
 ise onu önceden çağırabilir (**may**), ama çağırmak zorunda değil.
 
 Bu değişikliğin nedeni operasyoneldir ve durumsuz HTTP'nin genel olarak galip
-gelmesinin nedeniyle aynıdır: **durumsuz bir sunucu yatay ölçeklenir**, yani
-daha güçlü bir makineye geçerek değil, daha çok kopya çalıştırarak büyür.
-Herhangi bir kopya herhangi bir isteğe hizmet edebilir; dolayısıyla uzak bir
-MCP sunucusu, bir yük dengeleyicinin arkasındaki sıradan bir web servisi hâline
-gelir ve bir oturumu belirli bir sürece sabitlemek zorunda kalmaz.
+gelmesinin nedeniyle aynıdır: **protokol katmanında oturum tutmayan bir sunucu
+yatay ölçeklenmeyi kolaylaştırır**, yani daha güçlü bir makineye geçerek değil,
+daha çok kopya çalıştırarak büyüyebilir. Herhangi bir kopya herhangi bir isteğe
+hizmet edebilir; dolayısıyla uzak bir MCP sunucusu, bir yük dengeleyicinin
+arkasındaki sıradan bir web servisi hâline gelir ve bir oturumu belirli bir
+sürece sabitlemek zorunda kalmaz. Çağrılar arası uygulama durumu, dosyalar ya
+da yan etkiler gerekiyorsa onlar yine paylaşılan bir depo ya da doğrulanabilir
+bir handle ister; yatay ölçeklenme bu kaynaklara da bağlıdır.
 
 El sıkışma tabanlı revizyonlarla (`2025-11-25` ve öncesi) geriye dönük uyumluluk
 varsayıma bırakılmamış, şartnamede açıkça tanımlanmış. Zaten yaygın olarak
@@ -347,9 +355,12 @@ bir client önce yeni tarzda bir istek gönderir (stdio'da bir `server/discover`
 yoklaması). Karşısındaki sunucu yeniyse bu istek ya başarılı olur ya da yeni
 revizyonun tanımladığı bir hata döner — örneğin desteklenen sürümleri listeleyen
 `UnsupportedProtocolVersionError`; client o zaman desteklenen bir sürümle yeniden
-dener. Bunun dışındaki her sonuç (tanınmayan bir hata, stdio'da zaman aşımı,
-HTTP'de yeni tarzda bir hata gövdesi taşımayan bir `4xx` yanıtı) eski bir
-sunucuya işaret eder ve client eski `initialize` el sıkışmasına geri döner.
+dener. HTTP'de şartname bir `400 Bad Request` yanıtında gövdeye bakmayı ister:
+gövde boşsa ya da tanınan yeni tarzda bir JSON-RPC hatası değilse, sunucu
+eskidir ve client eski `initialize` el sıkışmasına geri döner. Yetkilendirme ya
+da politika hataları (`401`, `403`) sürüm uyumsuzluğu değildir; bunları geri
+dönüş işareti saymak, güvenlik denetimini eski bir protokol sürümüne düşürerek
+atlatmaya kapı açabilir. Geri dönüş kararını testlerle doğrulayın.
 Yalnızca tek bir dönemi uygulayan bir client ya da sunucunun böyle bir geri
 dönüş yolu yoktur.
 
@@ -364,8 +375,8 @@ dönüş yolu yoktur.
   denetleyebildiğiniz bir tasarım — mesele de bu — ama artık yazmanız gereken
   bir tasarım. Handle bir addır, parola değildir: şartnameye göre yetkilendirme
   uygulayan bir sunucu, bir handle'a sahip olmayı kimlik kanıtı saymamalıdır
-  (**must not**); dolayısıyla her çağrıda handle'ın çağırana ait olduğunu
-  kontrol edin.
+  (**must not**); dolayısıyla her kullanımda çağıranın yetkisini ve handle'ın
+  kullanıcıya, göreve ve geçerlilik süresine bağını denetleyin.
 - **Değişiklik bildirimleri isteğe bağlı (opt-in) tek bir akışa taşındı.**
   `resources/subscribe`'ın ve HTTP GET uç noktasının yerini
   `subscriptions/listen` aldı: client'ın bildirim türüne göre abone olduğu,
