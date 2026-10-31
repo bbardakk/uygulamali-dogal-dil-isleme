@@ -91,24 +91,27 @@ borçlu olduğu; bunların hepsi politika belgesi değil, şema kararı çıkıy
 Üç tür bellek, üç depolama sorusu demektir ve yalnızca biri zordur. Çalışma
 belleği bağlam penceresinde durur, çünkü bağlam penceresi zaten odur. Epizodik
 bellek bir kayıttır (log) ve kayıt tutmak çözülmüş bir problemdir. İlginç olan,
-varsayılan içgüdünün her şeyi gömüp benzerlikle erişmek olduğu anlamsal
-bellektir.
+varsayılan içgüdünün her şeyi embedding'e çevirip benzerlikle erişmek olduğu
+anlamsal bellektir.
 
 Bu yanlış bir varsayılandır ve nedeni, @sec-baglam-muhendisligi'in
-yapılandırılmış veri için gösterdiği nedenle aynıdır: **benzerlik araması,
-belleğin gerçekten ihtiyaç duyduğu işlemleri ifade edemez.**
+yapılandırılmış veri için gösterdiği nedenle aynıdır: **yalnızca benzerlik
+skoruna dayanan erişim, belleğin gerçekten ihtiyaç duyduğu işlemleri ifade
+edemez.**
 
 İşlemler şunlardır: *bu kullanıcının mevcut tercihini getir*, *onu güncelle*,
 *bu kişi hakkındaki her şeyi sil*, *marttan beri neyin değiştiğini listele*.
-Bunlar anahtarlar üzerinde arama ve değiştirmedir. Hiçbiri en yakın komşu
-sorgusu değildir.
+Bunlar anahtarlar üzerinde arama ve değiştirmedir; hiçbiri en yakın komşu
+sorgusu değildir. Bu işlemler için olgu kimliği, meta veri ve güncelleme ile
+silme kuralları gerekir; bir vektör indeksi bunlara ek bir erişim yolu
+olabilir.
 
 | depo | gerçekten neyde iyi | bellek olarak nerede bozulur |
 |:--|:--|:--|
-| **İlişkisel** | tercihler, varlıklar, anahtarlanabilir bir kimliği olan her şey; gerçekten silen güncellemeler ve silmeler | bir şema ister, dolayısıyla modelin hatırlamaya karar verdiği her şeyi soğuramaz |
-| **Vektör** | epizodik hatırlama — *buna benzer bir şeyi daha önce konuştuk mu* | [bir *olgunun* doğal güncellemesi ya da silinmesi yok]{.con}; çelişen iki bellek de sorunsuzca erişilir ve doğruluğa göre değil benzerliğe göre sıralanır |
-| **Çizge** | varlıklar arası ilişkiler, onlar hakkında çok adımlı sorular | işletmesi ağırdır ve çoğu proje buna ihtiyaç duyan bir soruyu hiç sormaz |
-| **Anahtar–değer / belge** | kullanıcı başına küçük, yapılandırılmış ve tek parça okunan bir profil | kullanıcılar arasında sorgulamak istediğinizde kötü ölçeklenir |
+| **İlişkisel** | tercihler, varlıklar, anahtarlanabilir bir kimliği olan her şey; gerçekten silen güncellemeler ve silmeler | bir şema ve işletim maliyeti ister, dolayısıyla modelin hatırlamaya karar verdiği her şeyi soğuramaz |
+| **Vektör** | epizodik hatırlama — *buna benzer bir şeyi daha önce konuştuk mu* | [olgu kimliği ve geçerlilik politikası olmadan bir *olgunun* güncel değerini seçemez]{.con}; çelişen iki bellek de sorunsuzca erişilir ve doğruluğa göre değil benzerliğe göre sıralanır |
+| **Çizge** | varlıklar arası ilişkiler, onlar hakkında çok adımlı sorular | modelleme ve bakım maliyeti yüksek olabilir; birçok proje buna ihtiyaç duyan bir soru sormaz |
+| **Anahtar–değer / belge** | kullanıcı başına küçük, yapılandırılmış ve tek parça okunan bir profil | kullanıcılar arasında ya da birden çok alan üzerinden sorgulamak için ek indeks gerekebilir |
 
 : Dört depo ve her birinin gerçekte ne işe yaradığı {tbl-colwidths="[16,42,42]"}
 
@@ -116,8 +119,8 @@ sorgusu değildir.
 
 ```text
   anlamsal bellek   →  bir tablo.   user_id, key, value, source, written_at
-  epizodik bellek   →  bir kayıt; erişim için gömülür, tam kayda geri
-                       işaretçiler taşır
+  epizodik bellek   →  bir kayıt; erişim için embedding'e çevrilir,
+                       tam kayda geri işaretçiler taşır
 ```
 
 [Olgular satırlara, epizotlar vektörlere gider.]{.hl}
@@ -133,11 +136,16 @@ olmayan, yalnızca ekleme yapılan bir koleksiyondur.
 `preferred_channel` — hiçbir şey dayatmıyorsa, düzeltilmiş bir tercih
 birincisinin yanına oturan ikinci bir embedding olur. İkisi de erişilebilirdir ve
 benzerlik aramasının yenisini yeğlemesi için bir sebep yoktur. Güncelleme de
-silme de "olsa iyi olur" değil, zorunluluk çıkar — biri doğruluk, diğeri yasa
-gereği — ve ikisini de işler kılan, şemada dayatılan olgu kimliğidir.
+silme de "olsa iyi olur" değil, zorunluluk çıkar — biri doğruluk, diğeri
+çoğu zaman veri koruma mevzuatı gereği — ve ikisinin de temeli, şemada
+dayatılan olgu kimliğidir.
 `(user_id, key)` üzerindeki bir tekillik kısıtı, embedding'i de saklayan bir
 `pgvector` tablosunda da aynı derecede iyi çalışır. Mesele vektörün nerede durduğu değil anahtardır; her benzerlik
-indeksi onun üzerinden türetilmiş bir görünümdür.
+indeksi onun üzerinden türetilmiş bir görünümdür. Tekillik kısıtı, aynı
+anahtarda iki etkin değer bulunmasını önler; bir silme talebini ise tek başına
+karşılamaz. Bunun için kaydın yanı sıra indeksteki, geçmiş tablosundaki,
+önbellekteki ve yedeklerdeki kopyaların da saklama politikasına göre ele
+alınması gerekir (@sec-bellek-gizlilik).
 
 ## Yazma politikaları: kimsenin bilerek vermediği karar {#sec-bellek-yazma}
 

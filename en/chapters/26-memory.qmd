@@ -86,19 +86,21 @@ The interesting one is semantic memory, where the default instinct is to embed
 everything and retrieve by similarity.
 
 It is the wrong default, and the reason is the same one
-@sec-context-engineering gave for structured data: **similarity search cannot
-express the operations memory actually needs.**
+@sec-context-engineering gave for structured data: **retrieval by similarity
+score alone cannot express the operations memory actually needs.**
 
 The operations are: *get this user's current preference*, *update it*,
 *delete everything about this person*, *list what changed since March*. Those
-are lookups and mutations on keys. None of them is a nearest-neighbour query.
+are lookups and mutations on keys; none of them is a nearest-neighbour query.
+They need fact identity, metadata, and update and delete rules; a vector index
+can be an extra retrieval path on top of those.
 
 | store | what it is genuinely good for | where it fails as memory |
 |:--|:--|:--|
-| **Relational** | preferences, entities, anything with an identity you can key on; updates and deletes that actually delete | needs a schema, so it cannot absorb whatever the model decides to remember |
-| **Vector** | episodic recall — *have we discussed something like this before* | [no natural update or delete of a *fact*]{.con}; two contradicting memories both retrieve happily, ranked by similarity rather than truth |
-| **Graph** | relationships between entities, multi-hop questions about them | operationally heavy, and most projects never ask a question that needs it |
-| **Key–value / document** | a small structured profile per user, read whole | scales badly once you want to query across users |
+| **Relational** | preferences, entities, anything with an identity you can key on; updates and deletes that actually delete | needs a schema and operating cost, so it cannot absorb whatever the model decides to remember |
+| **Vector** | episodic recall — *have we discussed something like this before* | [cannot pick a *fact's* current value without fact identity and a validity policy]{.con}; two contradicting memories both retrieve happily, ranked by similarity rather than truth |
+| **Graph** | relationships between entities, multi-hop questions about them | modelling and maintenance can be costly, and many projects never ask a question that needs it |
+| **Key–value / document** | a small structured profile per user, read whole | querying across users or several fields may need extra indexes |
 
 : Four stores, and what each is actually for {tbl-colwidths="[16,42,42]"}
 
@@ -122,11 +124,14 @@ If nothing enforces one row per `(user_id, key)` — say, one `preferred_channel
 per user — a corrected preference becomes a second embedding sitting next to
 the first. Both are retrievable, and similarity search has no reason to prefer
 the new one. Both update and delete turn out to be requirements rather than
-nice-to-haves — one for correctness and one for law — and what makes them work
-is fact identity enforced in the schema. A unique constraint on
+nice-to-haves — one for correctness and, often, one for data-protection law —
+and what both rest on is fact identity enforced in the schema. A unique constraint on
 `(user_id, key)` works just as well on a `pgvector` table that also stores the
 embedding. The point is the key, not where the vector lives; any similarity
-index is a derived view over it.
+index is a derived view over it. The unique constraint stops two active values
+sitting on one key; on its own it does not satisfy a deletion request. That
+also needs the copies in the index, the history table, caches and backups to
+be handled according to the retention policy (@sec-memory-privacy).
 
 ## Write policies: the decision nobody makes on purpose {#sec-memory-write}
 
