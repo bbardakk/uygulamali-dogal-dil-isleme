@@ -23,15 +23,15 @@ about what survives *between* them. Software: NumPy 2.5.2 on Python 3.14.5.
 
 ## Three kinds of memory, three different problems {#sec-memory-kinds}
 
-"Memory" in an agent covers three things that share a word and almost nothing
-else. Separating them is most of the design work, because each has a different
+"Memory" in an agent is used for three different functions. Separating them is
+the first step and most of the design work, because each has a different
 lifetime, a different storage answer, and a different failure mode.
 
 | | what it holds | lifetime | where it lives | how it fails |
 |:--|:--|:--|:--|:--|
-| **Working** | the current transcript — the task, recent steps, live tool results | one run | the context window | it fills up. @sec-context-engineering is entirely about this |
-| **Episodic** | what happened, and when: past conversations, actions taken, outcomes | across runs | append-only log, retrievable | it accumulates. Volume grows without bound and old episodes crowd out useful ones |
-| **Semantic** | durable facts: preferences, entities, relationships, learned rules | until contradicted or expired | a store you can update *and* delete from | it goes **stale**, and stale facts are worse than absent ones |
+| **Working** | the current transcript and transient state — the task, recent steps, live tool results | one run, or between two checkpoints | the context window and application state | it fills up, gets truncated or summarised. @sec-context-engineering is entirely about this |
+| **Episodic** | what happened, and when: past conversations, actions taken, outcomes | across runs | a timestamped, append-only event log, with a search index where needed | it accumulates. Volume grows without bound and old episodes crowd out useful ones |
+| **Semantic** | durable facts: preferences, entities, relationships, learned rules | depends on the fact and the retention policy: until contradicted, expired or deleted on request | a store you can update *and* delete from | it goes **stale** or contradicts itself, and a stale fact can do more harm than an absent one |
 
 : One word, three problems {tbl-colwidths="[14,32,12,20,22]"}
 
@@ -58,20 +58,20 @@ to.
 You will also meet a fourth kind in the literature: **procedural memory**,
 knowledge of *how* to do the task. The widely used agent taxonomy
 ([CoALA](https://arxiv.org/abs/2309.02427), Sumers et al.) lists working,
-episodic, semantic and procedural memory. In most systems procedural memory is
-not a store at all: it is the system prompt, the tool definitions and the code,
-and it changes when you deploy. It becomes a memory problem only when the agent
-may rewrite its own instructions — a file of "lessons learned" it edits and
-reads back at every start. Treat that as the most sensitive write path in this
-chapter, because a bad entry there changes every later run, not one answer.
+episodic, semantic and procedural memory. Procedural memory is the agent's
+skills and policies for how to do the work. In most systems much of it is not
+a separate store: it lives in the system prompt, the tool definitions and the
+code, and it changes when you deploy. Guidance the agent updates from its own
+experience — a file of "lessons learned" it edits and reads back at every
+start — needs its own write and review policy. Treat that as the most
+sensitive write path in this chapter, because a bad entry there can change
+many later runs, not one answer.
 
-**What we will look at.** First where each kind of memory should live, where
-the popular answer — embed everything — turns out to be the wrong default for
-exactly one of the three. Then what gets written and who decides, which is a
-policy you have already chosen by not choosing it. Then a measurement of what
-happens when the store holds two facts that disagree, which is the question
-this chapter can answer cheaply and the one most designs assume away. Then
-forgetting, which has to be built at the start. Then three practical
+**What we will look at.** First where each kind of memory should live, and why
+the embed-everything default does not suit semantic memory. Then what gets
+written and who decides: there is a write policy even when nobody chose one.
+Then a small test of what happens when the store holds two facts that
+disagree. Then forgetting, which has to be designed in from the start. Then three practical
 questions: whether memory is a tool the agent calls or infrastructure it never
 sees, what survives a crash, and how you test a memory at all. And finally what
 a system owes the people it remembers, all of which turns out to be schema
