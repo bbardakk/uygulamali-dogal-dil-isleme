@@ -822,12 +822,19 @@ buna kimin karar verdiği, kimlerin erişebileceği ve saklama süresi.
 
 `user_id, key, value, source, valid_from, written_at, expires_at` — `valid_from`
 olgunun ne zaman doğru hâle geldiğini, `written_at` onu ne zaman öğrendiğinizi
-tutar. `(user_id, key)` üzerinde upsert yapın, böylece bir anahtar için iki değer
-var olamasın; üzerine yazmadan önce eski değeri bir geçmiş tablosuna kopyalayın.
+tutar. Tek değerli alanlar için `(user_id, key)` üzerinde upsert yapın, böylece
+bir anahtar için iki etkin değer var olamasın; üzerine yazmadan önce eski
+değeri bir geçmiş tablosuna kopyalayın. Geçmiş tablosu da aynı kullanıcı silme,
+saklama süresi ve erişim denetimine bağlı olmalıdır; yoksa silinen değer orada
+yaşamaya devam eder.
 
-PostgreSQL'de iskelet aşağıdaki gibi görünebilir. Öncelik denetimi (yeni değer
-saklanandan daha zayıf bir kaynaktan geliyorsa üzerine yazmamak) ve TTL
-değerinin seçimi uygulamanıza kalıyor:
+PostgreSQL'de öğretici bir iskelet aşağıdaki gibi görünebilir. Öncelik denetimi
+(yeni değer saklanandan daha zayıf bir kaynaktan geliyorsa üzerine yazmamak) ve
+TTL değerinin seçimi uygulamanıza kalıyor. Kopyalama ile upsert aynı işlemde
+olsa da varsayılan yalıtım düzeyinde iki eşzamanlı yazma aynı eski sürümü
+kopyalayabilir; aşağıdaki kilit aynı anahtara yazmaları sıraya sokar (alternatif
+olarak `SERIALIZABLE` işlemleri yeniden deneyebilirsiniz). Üretimde eşzamanlı
+güncelleme için bir test de ekleyin:
 
 ```sql
 CREATE TABLE facts (
@@ -838,14 +845,17 @@ CREATE TABLE facts (
   valid_from  timestamptz NOT NULL,  -- olgu ne zaman doğru hâle geldi
   written_at  timestamptz NOT NULL DEFAULT now(),  -- biz ne zaman öğrendik
   expires_at  timestamptz,           -- NULL: süresi dolmaz
-  PRIMARY KEY (user_id, key)         -- anahtar başına tek olgu
+  PRIMARY KEY (user_id, key)         -- tek değerli alanda anahtar başına tek olgu
 );
 CREATE TABLE facts_history (LIKE facts);  -- birincil anahtar yok: her sürüm bir satır
 
--- Yazma (tek işlem içinde): eski değeri geçmişe kopyala, sonra upsert
+-- Yazma (tek işlem içinde): aynı anahtara yazmaları sıraya sok,
+-- eski değeri geçmişe kopyala, sonra upsert
 BEGIN;
-INSERT INTO facts_history
-  SELECT * FROM facts WHERE user_id = $1 AND key = $2;
+SELECT pg_advisory_xact_lock(hashtext($1 || '/' || $2));  -- aynı (user_id, key) için tek yazar
+INSERT INTO facts_history (user_id, key, value, source, valid_from, written_at, expires_at)
+  SELECT user_id, key, value, source, valid_from, written_at, expires_at
+  FROM facts WHERE user_id = $1 AND key = $2;
 INSERT INTO facts (user_id, key, value, source, valid_from, expires_at)
   VALUES ($1, $2, $3, $4, $5, $6)
   ON CONFLICT (user_id, key) DO UPDATE
@@ -854,10 +864,18 @@ INSERT INTO facts (user_id, key, value, source, valid_from, expires_at)
       expires_at = EXCLUDED.expires_at;
 COMMIT;
 
--- Okuma: bu kullanıcının güncel ve süresi dolmamış tek olgusu
+-- Okuma: bu kullanıcının güncel ve değerlendirme anında süresi dolmamış tek olgusu
+-- ($3 normalde now(); 4. adımda ileri bir zaman verilir)
 SELECT value FROM facts
 WHERE user_id = $1 AND key = $2
-  AND (expires_at IS NULL OR expires_at > now());
+  AND (expires_at IS NULL OR expires_at > $3);
+
+-- Silme: bir kullanıcının etkin ve geçmiş kayıtları birlikte
+-- (indeks, özet, kayıt, önbellek ve yedekler ayrıca ele alınır; 5. adım)
+BEGIN;
+DELETE FROM facts         WHERE user_id = $1;
+DELETE FROM facts_history WHERE user_id = $1;
+COMMIT;
 ```
 
 ### Adım 3 — bir çelişki yerleştirin
