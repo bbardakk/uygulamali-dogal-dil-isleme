@@ -403,8 +403,10 @@ bilmeniz gereken uzantı Tasks'tır.
 
 ## Sunucu kurmak {#sec-mcp-kurma}
 
-Protokol işin kolay kısmıdır; SDK (yazılım geliştirme kiti) onu halleder. Bir
-sunucuyu iyi yapan şey, @sec-arac-tasarimi'ün zaten ortaya koyduğu her şey ve
+SDK (yazılım geliştirme kiti), temel mesajlaşmanın ve taşımanın önemli bir
+kısmını üstlenir; sürümler ve taşımalar arası uyumluluğu yine de sizin
+sınamanız gerekir. Şema doğrulaması, zaman aşımı, hata ayrımı ve sonuç biçimi
+ise uygulama tasarımında kalır. Bir sunucuyu iyi yapan şey, @sec-arac-tasarimi'ün zaten ortaya koyduğu her şey ve
 bunlara ek olarak, araç başka bir süreçte çalıştığında daha da önemli hâle
 gelen dört kuraldır.
 
@@ -416,13 +418,15 @@ burada çalışma zamanı *sizin sürecinizdir*.
 
 **Zaman aşımı koyun ve bunu söyleyin.** Takılan bir araç çağrısı ajanı da
 kilitler. Her işleme bir süre sınırı koyun; sınır aşıldığında sessizlik değil,
-yapılandırılmış bir hata dönsün. İş gerçekten dakikalar sürüyorsa çözüm,
-kimsenin iptal edemeyeceği uzun bir istek değil, **Tasks** uzantısıdır.
+yapılandırılmış bir hata dönsün; iptal davranışını da tanımlayın. İş gerçekten
+dakikalar sürüyorsa kimsenin iptal edemeyeceği uzun bir istek yerine, host
+destekliyorsa **Tasks** uzantısını ya da ayrı bir iş kuyruğu ile durum
+sorgulama yolunu değerlendirin.
 
 **Modelin gereğini yapabileceği hatalar döndürün — hem de doğru yoldan.**
-@sec-arac-tasarimi bunu ölçtü: actionable bir hata mesajı (modele nasıl
-toparlanacağını söyleyen mesaj) toparlanmayı
-%1,7'den %100'e taşıdı; hiçbir şey yapmadığınızda elde ettiğiniz stack trace
+@sec-arac-tasarimi bunu kendi koşusunda ölçtü: actionable bir hata mesajı
+(modele nasıl toparlanacağını söyleyen mesaj) doğru ikinci çağrıyı %1,7'den
+%100'e taşıdı; hiçbir şey yapmadığınızda elde ettiğiniz stack trace
 (yığın izi) ise başarısız olan değeri adlandırdı ama neyin işe yarayacağını hiç
 söylemedi. Hata bir süreç sınırını aşarken ham istisnayı olduğu gibi iletme
 cazibesi daha güçlüdür; bedeli ise aynıdır. Doğru anlaşılması gereken bir protokol ayrımı da var: başarısız olan
@@ -431,7 +435,9 @@ hata sonucu taşıyan başarılı bir çağrıdır; bir JSON-RPC hatası ise ça
 kendisinin başarısızlığıdır ve model onu hiç görmeyebilir. Şartname, girdi
 doğrulama hatalarını açıkça ilk gruba koyar. Bozuk bir argümanı JSON-RPC hatası olarak geri
 göndermek, toparlanamayan bir model elde etmenin yoludur — çünkü modele neyin
-yanlış olduğu hiç söylenmemiştir.
+yanlış olduğu hiç söylenmemiştir. Bilinmeyen yöntem ya da bozuk mesaj gibi
+iletişim hataları ise JSON-RPC hatası olarak kalır. Kullandığınız SDK'nın bu
+ayrımı nasıl uyguladığını test edin.
 
 **Sonucunuzun bir biçimi varsa bir `outputSchema` yayımlayın.** Bir araç bunu
 bildirip metninin yanında `structuredContent` döndürebilir; böylece host'un
@@ -453,9 +459,11 @@ Sunucu olmaya özgü iki kural daha:
   bir bağlama yazılan bir metindir. Sayfalayın ve sayfaladığınızı sonuçta
   söyleyin.
 
-Bu kurallar küçük bir sunucuda şöyle görünür; örnek `fastmcp` kütüphanesiyle
-yazıldı (bkz. @sec-mcp-araclar) ve `fastmcp` 4.0.9 ile denendi.
-`search_tickets` sizin kendi işlevinizin yerini tutuyor:
+Bu kurallar küçük bir sunucuda şöyle görünür; örnek `fastmcp` 4.0.9 için
+yazıldı (bkz. @sec-mcp-araclar). Bu bir iskelettir: `search_tickets(status,
+limit)` işlevinin uygulamanızda ayrıca tanımlandığını varsayar ve o olmadan
+çalışmaz. Çalıştırılabilir bir örnek için bu işlevin test verisiyle çalışan bir
+uygulamasını, hata ve iptal davranışıyla birlikte ekleyin:
 
 ```python
 import asyncio
@@ -487,9 +495,11 @@ if __name__ == "__main__":
 Tip ipuçları yayımlanan `inputSchema`'ya dönüşür; böylece `status` modele
 serbest metin olarak değil bir enum olarak, `limit` de şemada `minimum: 1`
 ve `maximum: 100` sınırlarıyla ulaşır — model sınırı hata aldıktan sonra değil,
-çağırmadan önce görür. Sınırın dışındaki bir değeri kütüphane, kodunuz hiç
-çalışmadan doğrular ve `isError: true` taşıyan bir sonuçla geri çevirir; mesaj
-hem gönderilen değeri hem de sınırı adlandırır. Docstring açıklamaya dönüşür;
+çağırmadan önce görür. `fastmcp` 4.0.9'da sınırın dışındaki bir değeri
+kütüphane, kodunuz hiç çalışmadan doğrular ve `isError: true` taşıyan bir
+sonuçla geri çevirir; mesaj hem gönderilen değeri hem de sınırı adlandırır.
+Hata gövdesi ve `raise_on_error` davranışı sürümden sürüme değişebilir;
+kullandığınız sürümde ve host'ta doğrulayın. Docstring açıklamaya dönüşür;
 aracın neyi *yapmadığı* da dâhil. Zaman aşımı hatası da modele bir sonraki
 adımı söyler: bir kez yeniden denemek, olmazsa kullanıcıya haber vermek.
 
@@ -508,7 +518,7 @@ async def main():
         print([t.name for t in await client.list_tools()])
         r = await client.call_tool("find_tickets", {"status": "open", "limit": 500},
                                    raise_on_error=False)
-        print(r.is_error, r.content[0].text)          # True ve sınırı adlandıran mesaj
+        print(r.is_error, r.content[0].text)          # 4.0.9'da: True ve sınırı adlandıran mesaj
 
 asyncio.run(main())
 ```

@@ -374,7 +374,10 @@ if anything you expose takes longer than a request should.
 
 ## Building one {#sec-mcp-building}
 
-The protocol is the easy part; the SDK handles it. What makes a server good is
+The SDK takes over much of the basic messaging and transport work, though
+compatibility across revisions and transports is still yours to test. Schema
+validation, timeouts, error separation and result shape stay in your
+application's design. What makes a server good is
 everything @sec-tool-design already established, plus four things that
 matter more once the tool lives in another process.
 
@@ -385,12 +388,13 @@ boundary, and here the runtime is *your process*.
 
 **Time out, and say so.** A hung tool call hangs the agent. Every operation
 gets a deadline, and exceeding it returns a structured error rather than
-silence. If the work legitimately takes minutes, that is what the **Tasks**
-extension is for, rather than a long request nobody can cancel.
+silence; define cancellation too. If the work legitimately takes minutes,
+consider the **Tasks** extension where the host supports it, or a separate job
+queue with a status endpoint, rather than a long request nobody can cancel.
 
 **Return errors the model can act on, and return them the right way.**
-@sec-tool-design measured this: an actionable error message took recovery from
-1.7% to 100%, while a stack trace — the thing you get by doing nothing — named
+@sec-tool-design measured this on its own run: an actionable error message took
+the correct second call from 1.7% to 100%, while a stack trace — the thing you get by doing nothing — named
 the value that failed and never what would have worked. Across a process
 boundary the temptation to pass the raw exception through is stronger, and the
 cost is the same. There is also a protocol distinction worth getting right: a
@@ -399,6 +403,8 @@ cost is the same. There is also a protocol distinction worth getting right: a
 is a failure of the call itself and the model may never see it. The
 specification puts input-validation errors explicitly in the first group. Sending a bad argument back as a JSON-RPC error is
 how you get a model that cannot recover because it was never told.
+Communication errors such as an unknown method or a malformed message stay
+JSON-RPC errors. Test how your SDK applies the distinction.
 
 **Publish an `outputSchema` if your result has a shape.** A tool may declare
 one and return `structuredContent` alongside its text, so the host gets a value
@@ -416,9 +422,11 @@ Two more that are specific to being a server:
   protocol obligation: your return value is a write into a context you cannot
   see. Paginate, and say in the result that you did.
 
-Here is what those rules look like in a small server, sketched with the
-`fastmcp` library (see @sec-mcp-tools); it was checked with `fastmcp` 4.0.9,
-and `search_tickets` stands for your own function:
+Here is what those rules look like in a small server, written for `fastmcp`
+4.0.9 (see @sec-mcp-tools). It is a skeleton: it assumes a
+`search_tickets(status, limit)` function defined elsewhere in your application
+and does not run without it. For a runnable example, add an implementation of
+that function over test data, with its error and cancellation behaviour:
 
 ```python
 import asyncio
@@ -450,11 +458,38 @@ if __name__ == "__main__":
 The type hints become the published `inputSchema`, so `status` reaches the
 model as an enum rather than a free string and `limit` arrives with
 `minimum: 1` and `maximum: 100` — the model sees the bound before it calls, not
-after an error. An out-of-range value is rejected by the library before your
-code runs, as a result with `isError: true` whose message names both the value
-sent and the bound. The docstring becomes the description, including what the
+after an error. In `fastmcp` 4.0.9 an out-of-range value is rejected by the
+library before your code runs, as a result with `isError: true` whose message
+names both the value sent and the bound. The error body and `raise_on_error`
+behaviour can change between versions; check them on the version and host you
+use. The docstring becomes the description, including what the
 tool does *not* do. The timeout error, too, tells the model its next step:
 retry once, then tell the user.
+
+::: {.callout-tip appearance="simple"}
+**Try the server.** Before connecting it to a host you can test the server two
+ways. The MCP Inspector shows the tool list and calls in a browser:
+`npx @modelcontextprotocol/inspector python server.py`. Or a few lines with
+`fastmcp`'s own client:
+
+```python
+import asyncio
+from fastmcp import Client
+
+async def main():
+    async with Client("server.py") as client:        # launches the server over stdio
+        print([t.name for t in await client.list_tools()])
+        r = await client.call_tool("find_tickets", {"status": "open", "limit": 500},
+                                   raise_on_error=False)
+        print(r.is_error, r.content[0].text)          # in 4.0.9: True and a message naming the bound
+
+asyncio.run(main())
+```
+
+In desktop hosts a server is usually added by writing the command to run (here
+`python server.py`) into the host's configuration file; the file's name and
+format vary from host to host.
+:::
 
 ### Authorization, for servers that leave the laptop
 
