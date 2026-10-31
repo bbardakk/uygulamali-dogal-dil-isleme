@@ -477,7 +477,7 @@ discipline.
 | problem | how it shows up here |
 |:--|:--|
 | **Lost update** | two agents read a file, both edit, the second write erases the first. Neither notices, and neither reports an error |
-| **Inconsistent read** | a specialist reads state another is midway through changing, and reasons confidently from a half-written value |
+| **Inconsistent read** | a specialist sees only part of another's related updates and reasons confidently from it; the risk grows with non-transactional file writes or multi-step record updates |
 | **Conflicting conclusions** | two agents reach opposite answers from the same data and the coordinator has no rule for choosing — @sec-memory measured, on a small test, what a model does with contradictions: without dates or a rule it mostly hedged |
 | **Non-determinism** | the run is not reproducible, so the bug you saw yesterday cannot be recreated today |
 
@@ -508,27 +508,36 @@ that with care: a trace shows what an agent said, not what it failed to say,
 so a failure of omission is hard to label, and a low count need not mean a
 rare problem.
 
-The second table has no tidy fix; the paper's own conclusion is that these
+The percentages are the distribution of failures within that labelled set, not
+an expected failure rate for every production task. The second table has no
+tidy fix; the paper's own conclusion is that these
 failures need more than prompt tweaks. The mitigations for the first table are
 the boring ones, and they are boring because they work:
 
 - **Give each agent its own workspace.** A branch, a scratch directory, a
   transaction. Merge deliberately, at a point you chose.
 - **Decide the transaction boundary explicitly.** Is one delegated subtask
-  atomic, or can it half-succeed? If it can, every side effect needs a
-  compensating action — the *saga* pattern — because there is no distributed
-  transaction to roll back for you. @sec-tool-design's idempotency requirement
-  is the other half of this.
-- **Make writes single-threaded.** One agent — usually the coordinator — owns
-  every mutation. Specialists propose; the owner applies.
+  atomic, or can it half-succeed? If it can, decide how each side effect will be
+  detected and, where possible, compensated — the *saga* pattern — because
+  there is no distributed transaction to roll back for you. A saga splits a
+  long operation into steps, each with an undo step: if "take payment"
+  succeeds and "make booking" fails, "refund payment" runs. For steps that
+  cannot be undone, use up-front permission, idempotency and human review.
+  @sec-tool-design's idempotency requirement is the other half of this.
+- **Give a shared resource a single writer**, or split resources into disjoint
+  partitions. On a shared resource one agent — usually the coordinator — owns
+  every mutation: specialists propose, the owner applies.
 - **Make tools idempotent**, per @sec-tool-design, because retries are certain
   and a second `create_invoice` is not a rounding error.
 - **Prefer append-only.** A log of proposals that someone reconciles beats
-  concurrent mutation of shared state, and it leaves a trace you can debug.
+  concurrent mutation of shared state, and it leaves a trace you can debug; but
+  define the reconciliation, retention and deletion policy for that log too.
 - **Name what you are doing.** Keeping state as an append-only log of
   proposals is close to *event sourcing*; one owner making every change is the
   *single-writer principle*; letting each agent work on its own copy and
-  checking for conflicts only at merge time is *optimistic concurrency*. The
+  checking for conflicts at merge time with a version number or a conditional
+  write is *optimistic concurrency* — merging copies at the end without that
+  check does not give the same guarantee. The
   literature on all three is decades old and better than anything an agent
   framework will hand you.
 
