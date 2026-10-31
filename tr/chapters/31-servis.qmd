@@ -4,23 +4,25 @@
 **Bölüm durumu: çevrildi.** Kaynak metin:
 [İngilizce 31. bölüm](../../en/chapters/31-serving.html). Buradaki ölçümler
 bilerek küçük — bir dizüstünde 3B'lik bir modele karşı 150 kadar kısa istek,
-toplam birkaç dakika. Bu kadarı yeterli, çünkü önemli olan, *işareti ve nedeni*
-her makinede aynı kalan bir oran — en azından buradaki gibi tek ya da küçük
-batch'li (batch: birlikte işlenen istek grubu) çıkarımda: prefill, yani
+toplam birkaç dakika. Bu yerel, küçük batch'li (batch: birlikte işlenen istek
+grubu) ölçümde iki aşamanın farklı darboğazlara takıldığı görülüyor: prefill, yani
 prompt'un (istem) okunduğu aşama, hesap sınırlıdır (compute-bound: hızını hesap
 gücü belirler); cevabın token token yazıldığı aşama olan decode ise bellek
 sınırlıdır (bandwidth-bound: hızını aritmetik değil, ağırlıkların bellekten
-okunma hızı belirler). Batch büyüdükçe decode da hesap sınırlı hâle gelebilir;
-bu sınırın nerede olduğunu @sec-servis-batchleme hesaplıyor.
-Oranın büyüklüğü ise makineden makineye değişiyor; bölüm bunu yok saymak
-yerine, sayıların nerede geçerliliğini yitirdiğini açıkça söylüyor. Gözlemlemek
+okunma hızı belirler). Darboğazlar ve iki hızın oranı donanıma, modele,
+bağlama ve batch boyutuna göre değişir: batch büyüdükçe decode da hesap sınırlı
+hâle gelebilir (sınırın kabaca nerede olduğunu @sec-servis-batchleme
+hesaplıyor), çok kısa prompt'larda ise sabit ek yük öne çıkar. Bölüm bunu yok
+saymak yerine, sayıların nerede geçerliliğini yitirdiğini açıkça söylüyor;
+kendi yapılandırmanızda yeniden ölçün. Gözlemlemek
 için bir GPU filosu gereken her şey iddia edilmiyor, kaynak gösteriliyor. Her
 koşul beş kez ölçülüp medyan olarak raporlanıyor; koşullar karışık sırayla
 çalıştırılıyor, böylece zamanla oluşan kayma uzun prompt satırlarında
 birikemiyor; ayrıca denetim için sabit, kısa bir prompt oturum boyunca
 aralıklarla (toplam 11 kez) yeniden ölçülüyor. Burada verilen koşuda bu denetim
-ölçümü tüm oturum boyunca **%2,0** içinde kaldı; tabloların geri kalanını
-güvenilir kılan da bu. Yazılım: `ollama` 0.24.0, `llama3.2:3b` servis ediyor (Q4_K_M, 28 katman,
+ölçümü tüm oturum boyunca **%2,0** içinde kaldı. Bu, oturum içindeki zamansal
+kaymanın sınırlı olduğuna dair bir işarettir; farklı prompt uzunluklarının ve
+ayarların sonuçlarını tek başına doğrulamaz. Yazılım: `ollama` 0.24.0, `llama3.2:3b` servis ediyor (Q4_K_M, 28 katman,
 24 attention head, 8 KV head, head boyutu 128; head: attention (dikkat
 mekanizması) hesabını paralel yürüten birim; Q4_K_M: ağırlık başına ortalama
 yaklaşık beş bitlik bir nicemleme biçimi, @sec-servis-kv'te açıklanıyor),
@@ -30,11 +32,13 @@ sonucunu değiştirmeden, bellek trafiğini azaltarak hesaplayan çekirdek; bkz.
 @sec-attention-maliyeti) ve `OLLAMA_KV_CACHE_TYPE=q8_0`,
 Python 3.14.5 ve Apple Silicon üzerinde. "Apple Silicon" geniş bir aile; hangi
 çip olduğu önemli. Zamanlamalar bu çipin yüksek bant genişlikli sınıftan
-olduğunu gösteriyor: 2,0 GB'lık
-bir ağırlık dosyasına karşı saniyede 190 decode token'ı, yaklaşık **380 GB/s**
-ağırlık akışı demek; bunu ancak bellek bant genişliği yüksek bir çip sürdürebilir. Aynı
-model 120 GB/s'lik bir dizüstünde saniyede 60 token civarında tavan yapar. Hızı
-değil oranı yeniden üretin.
+olduğunu düşündürüyor: 2,0 GB'lık bir ağırlık dosyası ile saniyede 190 decode
+token'ının çarpımı, yaklaşık **380 GB/s** büyüklüğünde kaba bir ağırlık trafiği
+tahmini verir. Bu gerçek bir bant genişliği ölçümü değildir — dosya boyutu
+gerçek bellek trafiğiyle aynı olmayabilir; önbellek hiyerarşisi, nicemleme
+çekirdeği ve KV okuması da işe karışır — ve 120 GB/s'lik bir dizüstünde aynı
+modelin saniyede 60 token civarında kalacağı da yalnızca kaba bir tahmindir.
+Hızı değil, ölçme yöntemini yeniden üretin.
 :::
 
 **Öğrenme hedefleri.** Bu bölümün sonunda:
@@ -46,15 +50,15 @@ değil oranı yeniden üretin.
   hesaplayabilirsiniz;
 - batchlemenin (istekleri bir arada, toplu işlemenin) işletmeciye ne
   kazandırdığını ve tek tek kullanıcıya neye mal olduğunu açıklayabilirsiniz;
-- prompt önbelleklemeyi ilk kol (lever: çekildiğinde gecikmeyi ya da maliyeti
-  değiştiren ayar) olarak kullanabilir ve onu işlevsiz bırakan
-  prompt düzenlerini tanıyabilirsiniz;
+- prompt önbellekleme gibi gecikmeyi ya da maliyeti değiştiren optimizasyon
+  seçeneklerini — bu bölümde *kol* (lever) diyoruz — tanıyabilir ve önbelleği
+  işlevsiz bırakan prompt düzenlerini ayırt edebilirsiniz;
 - bugün ölçebileceğiniz token sayılarından bir istek başına maliyet çizelgesi
   kurabilirsiniz;
 - kalan kolları — daha küçük model, nicemleme (quantization: ağırlıkları daha
   az bitle saklama), spekülatif kod çözme (speculative decoding: küçük bir
-  modelin önerdiği token'ları büyük modelin topluca doğrulaması) — her birinin
-  gerçekte neyi feda ettiğine göre sıralayabilirsiniz.
+  modelin önerdiği token'ları büyük modelin topluca doğrulaması) — kendi kalite
+  ve maliyet ölçümlerinizle karşılaştırabilirsiniz.
 
 ## Bir istek, birbirinden çok farklı iki yarı {#sec-servis-yarilar}
 

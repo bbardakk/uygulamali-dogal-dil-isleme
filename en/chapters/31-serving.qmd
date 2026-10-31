@@ -3,26 +3,32 @@
 ::: {.callout-note appearance="simple" icon="false"}
 **Chapter status: drafted.** The measurements here are small on purpose —
 about 150 short requests against a 3B model on a laptop, a few minutes in
-total. They are enough because what matters is a ratio whose *sign and cause*
-are the same on every machine, at least for single or small-batch inference
-as here — prefill is compute-bound, decode is
-bandwidth-bound (limited by how fast weights can be read from memory, not by
-arithmetic). With large enough batches decode can become compute-bound too;
-@sec-serving-batching works out where. The magnitude does not transfer, and the chapter says where
-it stops transferring rather than pretending otherwise. Everything that needs a GPU fleet to observe is
+total. In this local, small-batch measurement the two phases hit different
+bottlenecks — prefill is compute-bound, decode is bandwidth-bound (limited by
+how fast weights can be read from memory, not by arithmetic). The bottlenecks
+and the ratio between the two rates change with hardware, model, context and
+batch size: with large enough batches decode can become compute-bound too
+(@sec-serving-batching works out roughly where), and very short prompts are
+dominated by fixed overhead. The chapter says where its numbers stop
+transferring rather than pretending otherwise; re-measure on your own setup. Everything that needs a GPU fleet to observe is
 cited rather than claimed. Every condition is measured five times and reported
 as a median; the conditions are run in shuffled order, so drift cannot pile up
 in the long-prompt rows; and a fixed short prompt is re-timed at intervals
 through the session (11 times in all) as a control. On the run printed here that control held to **2.0%** across the
-whole session, which is what makes the rest of the table worth reading.
+whole session — a sign that drift within the session was limited, though it
+does not on its own validate the results for other prompt lengths and
+settings.
 Software: `ollama` 0.24.0 serving `llama3.2:3b` (Q4_K_M, 28 layers, 24
 attention heads, 8 KV heads, head dimension 128), `num_ctx` 8192,
 `temperature` 0, `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0`,
 on Python 3.14.5 and Apple Silicon. The exact chip matters more than that name
-suggests, and the timings say which class it was: 190 decode tokens per second
-against a 2.0 GB weight file is about **380 GB/s** of weight streaming, which
-only a high-bandwidth part sustains. The same model on a 120 GB/s laptop tops
-out near 60 tokens per second. Reproduce the ratio, not the rate.
+suggests, and the timings hint at which class it was: a 2.0 GB weight file times
+190 decode tokens per second gives a rough weight-traffic estimate of about
+**380 GB/s**. That is not a bandwidth measurement — file size need not equal
+real memory traffic, and the cache hierarchy, quantization kernels and KV
+reads all play a part — and that the same model would sit near 60 tokens per
+second on a 120 GB/s laptop is only a rough estimate too. Reproduce the method,
+not the rate.
 :::
 
 **Learning objectives.** After this chapter you can:
@@ -33,11 +39,12 @@ out near 60 tokens per second. Reproduce the ratio, not the rate.
   expensive, and size it in gigabytes before you rent the hardware;
 - explain what batching buys the operator and what it costs the individual
   user;
-- use prompt caching as the first lever, and recognise the prompt layouts that
-  make it do nothing;
+- recognise optimisation options that change latency or cost — this chapter
+  calls them *levers* — such as prompt caching, and the prompt layouts that
+  make caching do nothing;
 - build a cost-per-request worksheet from token counts you can measure today;
-- order the remaining levers — smaller model, quantization, speculative
-  decoding — by what each one actually trades away.
+- compare the remaining levers — smaller model, quantization, speculative
+  decoding — with your own quality and cost measurements.
 
 ## One request, two very different halves {#sec-serving-halves}
 
