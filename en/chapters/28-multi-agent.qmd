@@ -549,10 +549,12 @@ if you did not notice making it.
 
 Direct calls are the default, and they are simple, but they couple the
 caller's lifetime to the callee's: if the specialist crashes or stalls, the
-coordinator waits or fails with it. A queue decouples them and buys the things
-queues always buy — backpressure (a slow consumer makes producers wait instead
-of being flooded), retries, and the ability to restart one side without the
-other.
+coordinator waits or fails with it. A queue decouples their lifetimes and, when
+configured for it, can buy backpressure (a slow consumer makes producers wait
+instead of being flooded — which needs capacity and admission policy;
+unbounded acceptance is not backpressure), retries (with their count, delay,
+idempotency and dead-letter queue configured separately), and the ability to
+restart one side without the other.
 
 Three rules that are ordinary infrastructure practice and get skipped here
 because the payloads look like conversation rather than messages:
@@ -563,17 +565,22 @@ because the payloads look like conversation rather than messages:
   expensively: every retry is a fresh model bill. @sec-agent-anatomy's step
   cap, one level up.
 - **Have a [dead-letter queue](#gloss-dead-letter-queue){#term-dead-letter-queue .term-ref},
-  and read it.** A task that cannot be processed
-  goes somewhere a human looks. Without this, poisoned messages either loop
+  and watch it.** A task that exceeds its retry limit goes to a separate,
+  monitored queue that raises alerts; define a review or automated-fix process
+  there. Without this, poisoned messages either loop
   forever or vanish, and both are worse than an alert.
-- **Make the payload self-contained.** A message that refers to state
-  elsewhere — *continue the analysis we were doing* — cannot be retried or
-  replayed. This is the stateless-specialist rule from
+- **Make the payload self-contained enough to retry.** The message carries the
+  identity, version and authorization context needed to retry the task. Large
+  inputs can stay in an external store, but the pointer should be immutable or
+  versioned and checked on retry. A message that refers to mutable state
+  elsewhere — *continue the analysis we were doing* — cannot safely be retried
+  or replayed. This is the stateless-specialist rule from
   @sec-multi-agent-topologies, enforced by the transport.
 
 ::: {#gloss-dead-letter-queue .column-margin .term-gloss}
-**Dead-letter queue** — where a task that keeps failing lands so a person
-reads it, instead of retrying forever or vanishing.
+**Dead-letter queue** — the separate queue where a task that exceeds its retry
+limit lands to be monitored and reviewed or handled automatically, instead of
+retrying forever or vanishing.
 [↩](#term-dead-letter-queue){.term-back}
 :::
 
