@@ -620,11 +620,13 @@ have built the thing than after.
 ::: {.callout-note collapse="true"}
 ## 1. When does a task need multiple agents?
 
-When one of three structural conditions holds: the work produces more material
-than a window should hold, independent subtasks can genuinely run at once, or
-different subtasks need different tools, permissions or models. "The task is
-complex" is not on that list — complexity is handled by a longer prompt and
-better tools. The single agent is the baseline, and the second agent has to
+When one of the common structural conditions holds: the work produces more
+material than a window should hold, independent subtasks can genuinely run at
+once, different subtasks need different tools, permissions or models, or an
+independent check is needed. "The task is complex" is not a reason on its own
+— complexity is often handled by a better prompt and better tools, though when
+it calls for separated permissions or independent verification it turns into
+one of the reasons above. The single agent is the baseline, and the second agent has to
 beat it on a measurement.
 :::
 
@@ -632,13 +634,14 @@ beat it on a measurement.
 ## 2. Does splitting work across agents save tokens?
 
 It depends on how much material the work produces, and the arithmetic is
-worth running. Six steps with 200-token observations costs **1.20×** as three
-agents — splitting is *more* expensive, because you pay the per-agent fixed
+worth running. Six steps with 200-token observations costs **1.20×** in raw
+prompt tokens in this model with three specialists and a coordinator — splitting is *more* expensive, because you pay the per-agent fixed
 cost three extra times. Twenty-four steps with 3,000-token observations costs
 **0.34×** — a two-thirds saving, because a single agent carries every
 observation through every later call. The dial is material produced, not
-difficulty. Then say what the arithmetic assumes: no prompt caching, and no
-duplicated work between the specialists. Relax either one and the split can
+difficulty. Then say what the arithmetic assumes: no prompt caching, no
+duplicated work between the specialists, and output tokens not counted. Relax
+any one and the split can
 stop paying entirely.
 :::
 
@@ -648,40 +651,47 @@ stop paying entirely.
 Information. The saving exists precisely *because* the coordinator sees a
 summary rather than the observations, so it reasons about a lossy compression
 of what the specialist saw. Errors also compound across a boundary nobody can
-check: three specialists at 90% give about 73% if their errors are independent
-and the system needs all three to be right, and anywhere from 70% to 90% depending on how much their errors overlap. All of
-that is before the coordinator's own synthesis — combining what came back,
+check: on a task that needs all three to be right, three specialists at 90%
+give about 73% jointly if their errors are independent, and anywhere from 70%
+to 90% depending on how much their errors overlap. That is a conditional
+calculation without the coordinator's corrections or added errors — all of it
+before the coordinator's own synthesis — combining what came back,
 which is where @sec-agent-anatomy's agent broke.
 :::
 
 ::: {.callout-note collapse="true"}
-## 4. Why does write-heavy work not parallelise?
+## 4. Why is write-heavy work hard to parallelise?
 
-Because concurrent writes make it a distributed system: lost updates where the
+Concurrent writes to the same shared resource make it a distributed system: lost updates where the
 second write erases the first with no error, inconsistent reads of half-written
 state, conflicting conclusions the coordinator has no rule to resolve, and
-non-determinism that makes yesterday's bug unreproducible. Ten agents reading
-ten documents can approach ten times faster; ten agents editing one codebase is
-a problem you did not intend to take on — unless each owns a disjoint part of
-it.
+non-determinism that makes yesterday's bug unreproducible. If resources can be
+split into disjoint ownership — one agent per file, record or partition —
+writes can run in parallel, with merge and permission rules still needed. Ten
+agents editing one codebase at once, unless each owns a disjoint part, is a
+problem you did not intend to take on.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Handoff or delegation?
 
-Delegation, with stateless specialists. The coordinator keeps the conversation,
-sends a self-contained subtask, and receives a result — which preserves the
-context firewall and makes every specialist retryable. A handoff passes the
-conversation itself, so the second agent's output lands in the same transcript
-with no coordinator left to summarise or reject it, and a specialist that
-remembers previous calls is a distributed cache with no invalidation story.
+For work whose result the coordinator must review, delegation is a good
+default: the coordinator keeps the conversation, sends a self-contained
+subtask, and receives a result — which preserves the context firewall and
+makes the specialist easy to retry. A handoff passes the conversation itself;
+it fits when ownership of the conversation or task genuinely changes hands,
+but unless you design otherwise no coordinator is left to summarise or reject
+the second agent's output. Either way, decide state lifetime, retries and the
+permission boundary explicitly; a specialist that remembers previous calls is
+a distributed cache with no invalidation story unless you design one.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. Which framework should you use?
 
-Build the single agent with no framework first. Each of these opts you into a
-model of control flow — an explicit state machine, roles and tasks,
+Build the smallest single-agent comparison first; if a framework your
+organisation already runs makes that comparison easy and auditable, use it.
+Each of these opts you into a model of control flow — an explicit state machine, roles and tasks,
 conversational agents — and that commitment matters more than the API. Choosing
 after you know what your control flow needs is a different activity from
 adopting someone else's answer before you have the question.
