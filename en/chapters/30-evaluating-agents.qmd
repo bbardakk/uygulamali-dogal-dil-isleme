@@ -173,11 +173,22 @@ So how much does the second axis actually add? The test set is thirty tasks,
 each needing exactly two lookups and one addition, over invented data so that
 nothing is guessable. Outcome passes if the sum is right. Trajectory passes
 if the agent made exactly the two necessary calls, no repeats, no wrong
-targets, and stopped on its own. The two systems are the two loops from
+targets, and stopped on its own. That is a narrow rubric specific to this
+experiment: it does not pass the acceptable alternative paths argued for
+above, so do not equate its results with a general "good trajectory"
+evaluation. The two systems are the two loops from
 @sec-agent-anatomy: the **native loop**, which uses the provider's
 tool-calling API, and a hand-rolled **text protocol**, where the model writes
 its tool calls as plain text that our code parses. This is a separate run with
 its own tasks, so its numbers do not match that chapter's two-lookup row.
+
+Reading the output: the indented four rows are the 2×2 breakdown of outcome
+and trajectory — passed both, outcome only, trajectory only, neither. The rows
+below give tool calls per task (ideal 2), how many of them were repeats, the
+share of runs that hit the step cap, and mean tokens per request. The step
+cap's value, and whether the token column counts input, output or both and
+includes caching, are not recorded in this chapter, so do not carry the cost
+gap below over to another run.
 
 ```text
 qwen3.5:9b, 30 tasks, 2 lookups needed
@@ -200,7 +211,18 @@ qwen3.5:9b, 30 tasks, 2 lookups needed
 The first thing to say is what this measurement *cannot* settle. The
 disagreement everyone argues about — a run that passes on outcome and fails on
 trajectory — happened once. But the denominator for that event is not thirty:
-a run that failed on outcome cannot exhibit it. **One of the eleven runs that
+a run that failed on outcome cannot exhibit it. Writing the text protocol's
+counts as a 2×2 table makes that visible:
+
+| text protocol | trajectory passed | trajectory failed | total |
+|:--|--:|--:|--:|
+| **outcome passed** | 10 | 1 | 11 |
+| **outcome failed** | 0 | 19 | 19 |
+| **total** | 10 | 20 | 30 |
+
+: Thirty runs scored two ways; the disagreement's denominator is the first row {tbl-colwidths="[28,24,24,24]"}
+
+**One of the eleven runs that
 passed on outcome failed on trajectory: 9.1%, Wilson interval [1.6, 37.7].**
 That is too wide to support a claim in either direction. If the true rate
 were near the upper bound, 38%, trajectory evaluation would be worth building
@@ -209,21 +231,26 @@ for that reason alone; if it were near 2%, it would not.
 And the native loop adds little to the estimate, which is the deeper problem.
 It passed 30/30 on both axes, so no disagreement was observed in that arm.
 That is still a measurement, with its own uncertainty: 0/30 is compatible with
-a true disagreement rate up to about 11% (the Wilson upper bound). The regime the usual argument is actually
+a true disagreement rate up to about 11% (the Wilson upper bound), so the
+sample is too small to rule out rare disagreements. The regime the usual argument is actually
 about — a system that is *mostly* right but sometimes gets there badly — is not
 measured here. What this table settles is different, does not depend on that
 count, and is worth more:
 
 **It tells you what the system is doing.** The text protocol made **7.10 tool
-calls for a task needing 2**, and **5.00 of them were repeats** — 70% of all
-its tool calls asked for something it had already been told. The outcome number,
+calls for a task needing 2**, and **5.00 of them were classified as repeats**
+— 70% of all its tool calls. The data here never changed, so a repeat meant
+re-requesting an answer already given; in general, define a repeat as the
+same query on the same data version with the same result, so that useful
+re-verification is not lumped in with wasted work. The outcome number,
 36.7%, contains none of that. You would ship this system knowing it works a
 third of the time and not knowing it spends most of its effort asking the same
 question again.
 
-**It tells you why runs failed.** A 63.3% cap-hit rate says these are not wrong
-answers, they are *unfinished* runs — @sec-agent-anatomy's termination problem,
-and a completely different repair from a reasoning problem. Accuracy alone
+**It points to why runs failed.** A 63.3% cap-hit rate suggests these are
+mostly not wrong answers but *unfinished* runs — though 63.3% is the same
+marginal figure as the "neither" row, and that they are the same runs was not
+shown row by row from the raw log. That is @sec-agent-anatomy's termination problem, and a completely different repair from a reasoning problem. Accuracy alone
 cannot distinguish "answered wrongly" from "never stopped".
 
 That reading has a consequence for the rest of the table. If two runs in three
@@ -234,8 +261,10 @@ such a number. Performance at a larger cap is unmeasured, and not guaranteed
 to be higher: extra steps can also produce wrong answers, repeats or new
 failures.
 
-The experiment that settles it, a sensitivity check on the cap, is one line of
-configuration: double the cap and re-run. Either accuracy climbs, and the text protocol is slow rather than
+The experiment that would settle it is a sensitivity check on the cap: run the
+same tasks repeatedly at several cap values and report success, repeats,
+cap-hit rate and token cost together. The simplest form is doubling the cap,
+though a single doubling does not settle the cause on its own. Either accuracy climbs, and the text protocol is slow rather than
 incapable. Or it does not, and the protocol is stuck in a loop that more budget
 only feeds — the more interesting result, and the more damning one. That run
 has not happened. Until it does, the 5.1× below inherits the same uncertainty,
@@ -244,9 +273,9 @@ the accuracy (the denominator).
 
 **It changes the cost comparison.** On raw tokens the text protocol looks 1.9×
 more expensive. Per *correct answer* it is **5.1×** — 4,246 tokens against 829.
-[The cost metric that ignores outcome understates the real gap by nearly
-three-fold]{.hl}, which is why tokens-per-correct-answer is the only cost
-number worth putting in a comparison.
+[The cost metric that ignores outcome understates this gap by nearly
+three-fold]{.hl}. So report tokens per correct answer alongside tokens per
+request, latency and the termination rate; do not choose on a single ratio.
 
 ::: {.column-margin}
 Small measurement: thirty tasks, one model, one run per task. Wilson 95%
@@ -259,7 +288,9 @@ waste the outcome metric conceals — 7.10 calls against 2, and 70% of them
 repeats — and the direction of the cost correction. The outcome gap itself is
 not in doubt: the two systems ran the same thirty tasks, so the comparison is
 paired, and McNemar's exact test on 19 discordant pairs all one way gives
-p = 4 × 10⁻⁶.
+p = 4 × 10⁻⁶. That tests the outcome gap in this sample; with the raw tasks,
+cap and prompt conditions unpublished, it does not settle which mechanism
+produced it.
 :::
 
 :::: {.anlp-fig}
@@ -337,8 +368,9 @@ p = 4 × 10⁻⁶.
 ::: {.fig-cap}
 The two rose bars are the same system. Against raw tokens it looks 1.9× more
 expensive; against tokens per *correct* answer — the same numerator, divided by
-the share that were right — it is 5.1×. Neither figure appears in an accuracy
-report, and the top panel shows where the difference went: five of every seven
+the share that were right — it is 5.1×; the second accounts for the success
+gap, but neither shows latency, charges or side effects on its own. Neither
+figure appears in an accuracy report, and the top panel shows where the difference went: five of every seven
 calls it made asked for something it had already been told.
 :::
 
