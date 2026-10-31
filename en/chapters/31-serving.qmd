@@ -936,32 +936,37 @@ speculative-decoding work; none is attributed to a particular company.
 **Q: Walk me through what happens when a request hits an LLM server.**
 
 Two phases with different characteristics. Prefill reads the whole prompt in
-one parallel, compute-bound pass. Decode produces output tokens one at a time,
+parallel; at small batch sizes it is usually compute-bound. Decode produces output tokens one at a time,
 each a separate memory-bound pass over the model, reusing the KV cache so
 earlier tokens are not recomputed. Name the rate difference — about eleven to
 one per token in this chapter's measurements — and say which half dominates for
-the request shape you are being asked about. Candidates who describe one
-undifferentiated "inference" have not looked.
+the request shape you are being asked about. Add that the bottleneck shifts
+with batch, context, model and hardware, and say which measurement would
+separate TTFT from inter-token time.
 
-**Q: Why is the KV cache the thing that limits concurrency?**
+**Q: Why is the KV cache a major limit on concurrency?**
 
 Because it grows with tokens times sequences, while the weights are a fixed
-cost. Weights are
+cost. It is not the only limit — plan it together with weights, transient
+memory and compute budget. Weights are
 loaded once and shared by every request on the card; the cache is per-sequence
 and grows with every prompt and generated token. Give the arithmetic —
 $2 \times L \times H_{kv} \times d_{\text{head}}$ values per token, times the
 bytes per value — and note that
 grouped-query attention exists largely to shrink it. PagedAttention is the
 systems answer: manage it in blocks so a sequence that reserved 2,000 tokens
-and used 200 does not waste the rest.
+and used 200 does not waste the rest. PagedAttention cuts allocation waste;
+the KV data itself still takes up memory.
 
 **Q: Where does batching help and where does it hurt?**
 
-It helps throughput because decode is memory-bound and the weight movement is
-shared. It hurts per-request latency because each sequence now shares the
-machine. Continuous batching removes the worst version of the trade — the
+It usually helps throughput, because at small batch sizes decode is
+memory-bound and the weight movement is shared. It can hurt per-request
+latency, because each sequence now shares the machine — but the effect depends
+on queueing, the request-length distribution and scheduling, and has to be
+measured. Continuous batching removes the worst version of the trade — the
 head-of-line blocking in static batching — but does not remove the trade
-itself. A candidate who says batching is free has not run a latency SLO.
+itself. In the answer, separate TTFT, inter-token time and completion time.
 
 ### Testing whether you have shipped one
 
