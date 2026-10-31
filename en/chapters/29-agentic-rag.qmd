@@ -121,10 +121,24 @@ linked the pair in advance" option above.
 
 ### Measured
 
-Thirty two-hop questions of exactly that shape, with the facts planted among
-660 documents of real Turkish news. And — because a chapter that only measures
-the case its subject wins is not measuring — thirty **single-hop** controls,
-where the question does contain the key.
+Thirty two-hop questions of exactly that shape, with invented facts planted
+among 660 documents of real Turkish news. And — because a chapter that only
+measures the case its subject wins is not measuring — thirty **single-hop**
+controls, where the question does contain the key.
+
+The setup is the same for both systems: the retriever is a BM25 index written
+in NumPy over Snowball-stemmed Turkish text (@sec-agentic-rag-tools); each
+retrieval gives the model the top three documents; the model is `qwen3.5:9b`
+in both conditions. The classic pipeline retrieves once and generates; the
+agentic system calls the same retriever as a tool, with a budget of three
+rounds.
+
+Each row below is one cell (question type × system); the columns are the
+question type (`1-hop`, `2-hop`), the system (`classic`, `agentic`), accuracy,
+the 95% confidence interval, and the mean tokens per request. This chapter
+does not record whether that token column counts input, output or both, or
+whether it includes every model turn and tool result, so read its ratios as
+the relative size of the counted tokens, not as cost or billing.
 
 ```text
 qwen3.5:9b, 30 questions per cell, 660 documents, top-3 retrieval
@@ -142,6 +156,15 @@ qwen3.5:9b, 30 questions per cell, 660 documents, top-3 retrieval
  would say which were not kept. A number that breaks its own cap is not a
  measurement.
 ```
+
+::: {.callout-warning appearance="simple"}
+**What this measurement does not show.** Because it is unclear how the cap was
+actually applied, it is also uncertain which execution policy the 1,043 tokens
+and the 30% accuracy belong to; treat the measurement as exploratory, and
+repeat the architectural comparison with a consistent counter. Two more
+caveats: the rank of the second document was not recorded (why that matters is
+below), and with thirty questions per cell the intervals are wide.
+:::
 
 :::: {.anlp-fig}
 
@@ -206,10 +229,12 @@ qwen3.5:9b, 30 questions per cell, 660 documents, top-3 retrieval
 ```
 
 ::: {.fig-cap}
-The two-hop classic bar has no length at all — 0 of 30 — and its interval
-reaches only 11.4%, so whatever the true rate is, it is small. Note how wide the agentic two-hop interval is: thirty questions puts
-the true value somewhere between 16.7% and 47.9%, which is enough to establish
-that the ceiling moved and not enough to call the system usable.
+The two-hop classic bar has no length at all — 0 of 30 — and its 95% Wilson
+interval ends at 11.4%, so with this sample the rate is probably small. Note how
+wide the agentic two-hop interval is: for 9 correct out of 30 it runs from
+16.7% to 47.9%, so the success rate cannot be estimated precisely. That is
+enough to establish that the ceiling moved and not enough to call the system
+usable; that needs a larger, representative evaluation.
 :::
 
 ::::
@@ -232,36 +257,41 @@ over the same top-3 candidates addresses it — the reading above. If it sometim
 could not join it to document 1, the failure is aggregation, a reranker is
 irrelevant for a different reason, and the honest sentence is a different one.
 Exercise 2 asks the reader to run exactly this check; the chapter should run it
-too. Until it does, read "structural" as the likely explanation rather than the
+too: for each question, record whether both gold documents reached the top 3
+and whether the model used both. A reranker's value can only be tested after
+that split. Until it does, read "structural" as the likely explanation rather than the
 established one.
 
 **On single-hop questions the loop buys nothing and costs 1.15×.** Identical
 accuracy, and 15% more tokens (179 against 155) for the sufficiency check that
-always came back sufficient. In most deployments the majority of questions are
-single-hop — step 1 of the lab measures yours — so this is usually the case that
-dominates a real workload, and it is the case where the architecture is pure
-overhead.
+always came back sufficient. This chapter did not measure the type mix of
+production traffic. In many deployments most questions are expected to be
+single-hop — step 1 of the lab measures yours — and if so this is the case that
+dominates a real workload, and in this experiment it is the case where the
+architecture is pure overhead.
 
 **Breaking the ceiling is not the same as clearing it.** Agentic retrieval went
 from 0% to **30%** — a 30-percentage-point gain from an observed baseline of
 zero, where the relative version is undefined rather than infinite — and a
-system that is still wrong seven times in ten. It cost **6.6× the
-tokens** on that cell. Per *correct* answer that is about 3,475 tokens, against
+system that is still wrong seven times in ten. It cost **6.6× the counted
+tokens** on that cell. Per *correct* answer that is about 3,477 tokens
+(1,043 / 0.30), against
 a classic pipeline that produces none at any price.
 
 [Agentic RAG removed the ceiling. It did not deliver a working system.]{.hl}
-The loop can now express the second query; the model frequently fails to
-formulate it, or fails to use what came back — which is @sec-agent-anatomy's
-finding again, where call counts and formats held while accuracy fell.
+The loop can now express the second query; whether the misses come from failing
+to formulate it, from retrieval, or from failing to combine what came back
+cannot be separated without traces. In shape it resembles @sec-agent-anatomy's
+finding, where call counts and formats held while accuracy fell.
 
 ::: {.column-margin}
 Small measurement, one model, thirty questions per cell, intervals around ±15
 points. What it establishes is the *ordering* and the shape: the one-shot
 pipeline scored 0/30 on two-hop questions, iteration lifts that, cost
-multiplies, and the single-hop control loses. A larger model would very likely
-score higher than 30%. The cost and single-hop findings would not change,
-because neither is about model capability; the zero would hold too if the
-unrun rank check shows document 2 never reached the top 3.
+multiplies, and the single-hop control loses. These results hold for one model
+and thirty-question cells; accuracy, round counts and token cost have to be
+re-measured on another model. Without the second document's retrieval rank,
+the cause of the zero cannot be settled.
 :::
 
 ### What this means for what you build
