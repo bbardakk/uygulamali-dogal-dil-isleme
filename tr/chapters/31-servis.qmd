@@ -620,10 +620,12 @@ saptamak gerekiyor.
 
 @sec-ozetleme'te 300 kelimelik bir haber metni özetlenirken **890 prompt
 token'ına karşı 53 üretilmiş token** ölçülmüştü — neredeyse 17'ye 1'lik bir
-oran. Sistem prompt'u, şema ve erişimle getirilmiş bağlam içeren her iş yükü bu
-biçimdedir; üretimdeki LLM özelliklerinin çoğu da böyledir.
+oran. Sistem prompt'u, şema ve erişimle getirilmiş bağlam içeren iş yükleri
+çoğu zaman bu biçime yakındır, ama bu tek örnek temsilî bir trafik istatistiği
+değildir.
 
-[Bu tür bir iş yükünde ödediğinizin çoğu okumaya gidiyor]{.hl} ve bu, nerede
+[Bu tür bir iş yükünde token'ların çoğu okumaya gidiyor]{.hl}; faturadaki pay ise
+girdi ve çıktı birim fiyatlarına ve önbellek isabetine bağlıdır. Bu, nerede
 optimizasyon yapılacağına dair alışıldık sezgiyi tersine çeviriyor. Buna göre
 hareket etmeden önce bir dönüştürme gerekiyor: sağlayıcılar çıktı token'larını
 girdinin birkaç katına faturalandırır, dolayısıyla 17'ye 1'lik bir token oranı
@@ -653,15 +655,16 @@ dolar — örnek şöyle çıkıyor:
 | satır | aylık token | milyon başına fiyat | aylık maliyet |
 |:--|--:|--:|--:|
 | önbelleksiz girdi (890'ın %40'ı) | 712 M | 1,00 dolar | 712 dolar |
-| önbellekli girdi (890'ın %60'ı) | 1.068 M | 0,10 dolar | 107 dolar |
+| önbellekli girdi (890'ın %60'ı) | 1.068 M | 0,10 dolar | 106,8 dolar |
 | çıktı (53) | 106 M | 4,00 dolar | 424 dolar |
-| **toplam** | | | **1.243 dolar** |
+| **toplam** | | | **1.242,8 dolar (≈ 1.243)** |
 
 : Çizelgenin çarpılmış hâli, örnek fiyatlarla {tbl-colwidths="[34,22,22,22]"}
 
-Önbellek olmadan aynı trafik 2.204 dolar tutuyor; bunun 1.780 doları girdi.
-Buradan iki şey okunuyor: isabet oranı, çıktı tarafındaki her değişiklikten daha
-değerli; ve önbellek çalışmaya başladığında girdi, *token'ların* %94'ü olduğu
+Önbellek olmadan aynı trafik 2.204 dolar tutuyor; bunun 1.780 doları girdi, yani
+%60 önbellek isabeti bu örnekte 961,2 dolar tasarruf sağlıyor. Buradan iki şey
+okunuyor: bu fiyatlarla ve bu çıktı uzunluğunda isabet oranı, çıktı tarafındaki
+değişikliklerden daha değerli — başka fiyatlarda öncelik değişebilir; ve önbellek çalışmaya başladığında girdi, *token'ların* %94'ü olduğu
 hâlde *faturanın* ancak üçte ikisi kadar.
 
 Kendi barındırdığınız bir sistemde fiyat listesi yerine bir saat ücreti vardır
@@ -674,7 +677,10 @@ $$
 Paydadaki saatlik işlem hacmi, batchlemenin yükselttiği sayıdır; aynı kartın
 meşgulken token başına daha ucuz olmasının nedeni bu. Prefill ve decode
 token'larının süresi çok farklı olduğu için girdi ve çıktı token'larını ayrı
-saymak daha doğrudur.
+saymak daha doğrudur: saat maliyetini gerçek iş yükünde tamamlanan isteklere ya
+da girdi ve çıktı token'larına bölün; doluluğu, kuyruğu, önbellek isabetini, KV
+kapasitesini ve operasyon payını ayrıca gösterin. Tek bir toplam token/s oranı
+farklı istek karışımlarını karşılaştırmaya yetmez.
 
 Aşağıdaki araç bu çizelgenin zaman tarafını hesaplıyor: dolar değil, istek
 başına saniye ve aylık makine saati üretiyor. Prompt ve isabet oranı
@@ -683,7 +689,8 @@ modeline bağlandı; dolar karşılığını yukarıdaki tabloyu kendi fiyatlar�
 çarparak ya da saat ücretinizi makine saatiyle çarparak bulun. Ölçülen
 hızları sabit tutuyor; bu yüzden uzun bağlamdaki decode yavaşlamasını yok sayıyor
 ve gerçekte ölçülen 7.400 token'ın ötesine ekstrapolasyon (dışdeğerleme)
-yapıyor. Uzun prompt tarafındaki sonuçları bir alt sınır olarak okuyun.
+yapıyor. Uzun prompt tarafındaki sonuçları belirsiz bir senaryo hesabı olarak
+okuyun; bunlara "alt sınır" demek için o uzunluklarda bağımsız ölçüm gerekir.
 
 ::: {.anlp-widget}
 ```{=html}
@@ -705,7 +712,7 @@ viewof srvOutput = Inputs.range([16, 2000], {
 ```{ojs}
 //| echo: false
 viewof srvHit = Inputs.range([0, 1], {
-  value: 0.6, step: 0.05, label: "prompt önbelleği isabet oranı"})
+  value: 0.6, step: 0.05, label: "tam ön ek isabetli istek payı"})
 ```
 
 ```{ojs}
@@ -716,16 +723,15 @@ srvRates = ({prefill: 2025, decode: 190, warm: 0.015})
 ```{ojs}
 //| echo: false
 srvCalc = {
-  const uncached = srvPrompt * (1 - srvHit);
-  const prefill  = uncached / srvRates.prefill + srvRates.warm;
+  const coldPrefill = srvPrompt / srvRates.prefill;
+  const prefill  = (1 - srvHit) * coldPrefill + srvHit * srvRates.warm;
   const decode   = srvOutput / srvRates.decode;
   return ({
-    uncached,
     prefill,
     decode,
     total: prefill + decode,
     share: prefill / (prefill + decode),
-    coldPrefill: srvPrompt / srvRates.prefill
+    coldPrefill
   });
 }
 ```
@@ -754,17 +760,17 @@ Plot.plot({
 html`<p style="font-size:0.88rem; color:var(--fig-muted); margin-top:0.5rem;">
   İstek başına
   <b style="color:var(--fig-ink);">${srvCalc.total.toFixed(2).replace(".", ",")} s</b>
-  — prefill payı %${(srvCalc.share * 100).toFixed(0)} ve okuyucunun ilk
-  karakterden önce beklediği kısım bu.
+  — tahmini prefill payı %${(srvCalc.share * 100).toFixed(0)}; bu TTFT'nin
+  yerine geçmez (kuyruk, ilk decode adımı ve ağ dâhil değil).
   ${srvHit > 0 ? html`Önbellekleme,
-  ${(srvPrompt * srvHit).toLocaleString("tr-TR")} prompt token'ını atlayarak
+  istek başına ortalama ${Math.round(srvPrompt * srvHit).toLocaleString("tr-TR")} prompt token'ını atlayarak
   <b style="color:var(--fig-ink);">${(srvCalc.coldPrefill - srvCalc.prefill).toFixed(2).replace(".", ",")} s</b>
   kazandırıyor.`
   : html`Önbellek yokken tüm prompt her seferinde yeniden hesaplanıyor.`}
   Ayda 2 milyon istekte bu,
   <b style="color:var(--fig-ink);">${((srvCalc.total * 2e6) / 3600).toLocaleString("tr-TR",
-  {maximumFractionDigits: 0})} makine saati</b> servis demek — istekler teker
-  teker işlenirse; batch'leme bunu böler.
+  {maximumFractionDigits: 0})} saatlik seri işleme eşdeğeri</b> — istekler teker
+  teker işlenirse; gerçek GPU saati için ölçülen batch işlem hacmini kullanın.
 </p>`
 ```
 :::

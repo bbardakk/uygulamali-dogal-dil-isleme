@@ -572,11 +572,13 @@ both are made of the same tokens — which is why the first thing to establish i
 *which* tokens.
 
 From @sec-summarization, summarizing a 300-word news article measured
-**890 prompt tokens against 53 generated** — a ratio of nearly 17 to 1. That
-shape is typical of anything with a system prompt, a schema and retrieved
-context, which is to say most production LLM features.
+**890 prompt tokens against 53 generated** — a ratio of nearly 17 to 1.
+Workloads with a system prompt, a schema and retrieved context are often close
+to that shape, but this one example is not a representative traffic statistic.
 
-[On this shape of workload, most of what you pay for is reading]{.hl}, and that
+[On this shape of workload, most of the tokens are reading]{.hl}; their share of
+the bill depends on input and output unit prices and the cache hit rate, and
+that
 inverts the usual intuition about where to optimise. One conversion step before
 you act on it: providers bill output tokens at several times input, so a 17:1
 token ratio is nearer 3:1 or 4:1 in money, and a cache hit discounts the input
@@ -604,24 +606,41 @@ the example works out as:
 | line | tokens per month | price per million | cost per month |
 |:--|--:|--:|--:|
 | uncached input (40% of 890) | 712 M | \$1.00 | \$712 |
-| cached input (60% of 890) | 1,068 M | \$0.10 | \$107 |
+| cached input (60% of 890) | 1,068 M | \$0.10 | \$106.80 |
 | output (53) | 106 M | \$4.00 | \$424 |
-| **total** | | | **\$1,243** |
+| **total** | | | **\$1,242.80 (≈ \$1,243)** |
 
 : The worksheet multiplied out, at illustrative prices {tbl-colwidths="[34,22,22,22]"}
 
-Without the cache the same traffic costs \$2,204, of which input is \$1,780.
-Two things to read off it: the hit rate is worth more than any change on the
-output side, and once the cache works, input is about two thirds of the *bill*
+Without the cache the same traffic costs \$2,204, of which input is \$1,780,
+so the 60% hit rate saves \$961.20 here. Two things to read off it: at these
+prices and this output length the hit rate is worth more than changes on the
+output side — other prices can change the priority — and once the cache works, input is about two thirds of the *bill*
 even though it is 94% of the *tokens*.
+
+A self-hosted system has an hourly rate instead of a price list, and getting to
+cost per token is one division:
+
+$$
+\text{cost per million tokens} \;=\; \frac{\text{hourly rate}}{\text{tokens processed per hour} \,/\, 10^6}
+$$
+
+The hourly throughput in the denominator is the number batching raises, which
+is why the same card is cheaper per token when it is busy. Prefill and decode
+tokens differ so much in time that counting input and output tokens separately
+is more accurate: divide the hourly cost by the completed requests, or input
+and output tokens, of the real workload, and show utilisation, queueing, cache
+hit rate, KV capacity and operational overhead separately. A single total
+tokens-per-second figure cannot compare different request mixes.
 
 The widget below computes the time side of that worksheet — seconds per
 request and machine-hours per month, not dollars — wired to the latency model
 from @sec-serving-halves so both move together; multiply by your own prices for
 the bill. It holds the measured rates
 fixed, so it ignores the decode slowdown at long context and extrapolates
-beyond the 7,400 tokens actually measured; read its long-prompt end as a lower
-bound.
+beyond the 7,400 tokens actually measured; read its long-prompt end as an
+uncertain scenario calculation — calling it a lower bound would need
+independent measurement at those lengths.
 
 ::: {.anlp-widget}
 ```{=html}
@@ -643,7 +662,7 @@ viewof srvOutput = Inputs.range([16, 2000], {
 ```{ojs}
 //| echo: false
 viewof srvHit = Inputs.range([0, 1], {
-  value: 0.6, step: 0.05, label: "prompt-cache hit rate"})
+  value: 0.6, step: 0.05, label: "share of requests with a full prefix hit"})
 ```
 
 ```{ojs}
@@ -654,16 +673,15 @@ srvRates = ({prefill: 2025, decode: 190, warm: 0.015})
 ```{ojs}
 //| echo: false
 srvCalc = {
-  const uncached = srvPrompt * (1 - srvHit);
-  const prefill  = uncached / srvRates.prefill + srvRates.warm;
+  const coldPrefill = srvPrompt / srvRates.prefill;
+  const prefill  = (1 - srvHit) * coldPrefill + srvHit * srvRates.warm;
   const decode   = srvOutput / srvRates.decode;
   return ({
-    uncached,
     prefill,
     decode,
     total: prefill + decode,
     share: prefill / (prefill + decode),
-    coldPrefill: srvPrompt / srvRates.prefill
+    coldPrefill
   });
 }
 ```
@@ -691,16 +709,17 @@ Plot.plot({
 //| echo: false
 html`<p style="font-size:0.88rem; color:var(--fig-muted); margin-top:0.5rem;">
   <b style="color:var(--fig-ink);">${srvCalc.total.toFixed(2)} s</b> per request
-  — ${(srvCalc.share * 100).toFixed(0)}% of it prefill, and that share is what
-  the reader waits through before the first character.
+  — an estimated ${(srvCalc.share * 100).toFixed(0)}% of it prefill; that is not
+  TTFT (queueing, the first decode step and the network are not included).
   ${srvHit > 0 ? html`Caching saves
   <b style="color:var(--fig-ink);">${(srvCalc.coldPrefill - srvCalc.prefill).toFixed(2)} s</b>
-  by skipping ${(srvPrompt * srvHit).toLocaleString("en-US")} prompt tokens.`
+  by skipping ${Math.round(srvPrompt * srvHit).toLocaleString("en-US")} prompt tokens per request on average.`
   : html`With no cache the whole prompt is recomputed every time.`}
   At 2 million requests a month that is
   <b style="color:var(--fig-ink);">${((srvCalc.total * 2e6) / 3600).toLocaleString("en-US",
-  {maximumFractionDigits: 0})} machine-hours</b> of serving, if requests are
-  served one at a time; batching divides it.
+  {maximumFractionDigits: 0})} hours of serial-processing equivalent</b>, if
+  requests are served one at a time; for real GPU hours use measured batch
+  throughput.
 </p>`
 ```
 :::
