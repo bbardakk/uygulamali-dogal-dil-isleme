@@ -511,7 +511,10 @@ prompt tokens   cold prefill   warm prefill   speedup   cold total   warm total
 
 Warm prefill is **flat at 12–16 milliseconds regardless of prompt length**,
 because nothing is being recomputed. At 4,247 tokens that is 153× on the
-prefill and **9.0× on the whole request**.
+prefill and **9.0× on the whole request**. Those figures belong to this server
+and the favourable pattern of consecutive identical requests; short prompts,
+partial hits, eviction and load all change the result. For production, measure
+the prefix hit rate and p50/p99 times separately.
 
 The longer the prefix, the larger the win — which is the opposite of how most
 optimisations scale, and it is why this is the first thing to try.
@@ -519,8 +522,12 @@ optimisations scale, and it is why this is the first thing to try.
 Three conditions, and all three are design decisions rather than
 configuration:
 
-**The prefix must be byte-identical.** A timestamp, a user name, or a session
-id near the top of the prompt invalidates everything after it. Cached prefixes
+**The prefix must be the same token sequence.** It has to match as the same
+token sequence the server produces, under the same model and template
+settings. A timestamp, a user name, or a session id near the top of the prompt
+invalidates everything after it; move volatile data to the end of the shared
+prefix, and check by measurement whether the tool schema or chat template
+reorders things. Cached prefixes
 match by prefix, so one changing token at position 12 discards the other 4,000.
 
 **Order the prompt by stability.** System instructions, then tool schemas, then
@@ -538,11 +545,13 @@ and the next request happens to share its prefix. That is the same *mechanism*
 a hosted API uses, but not the same *system*, and three differences change the
 number you will see in production.
 
-Eviction is the big one. `ollama` keeps one slot per model by default
-(`OLLAMA_NUM_PARALLEL=1`), so
-a single interleaved request from another user discards the prefix — and the
-measurement above sent the same prompt twice in a row, which is the friendliest
-case that exists. Two users alternating would have shown nothing. Servers
+Eviction is the big one. In this experiment two identical requests in a row
+reused the same prefix, which is the friendliest case that exists.
+Interleaved requests, the number of slots and the eviction policy all change
+the hit: with one slot per model (`OLLAMA_NUM_PARALLEL=1`), a single
+interleaved request without the shared prefix can discard it. Check
+`OLLAMA_NUM_PARALLEL` and prefix reuse on your installed `ollama` version; what
+two alternating users see depends on them. Servers
 built on paged blocks, such as vLLM and SGLang, keep many cached prefixes at
 once and share them between requests, which softens this but does not remove
 it. Control is
@@ -552,8 +561,9 @@ Price is the third: hosted cached input tokens are billed at a discount rather
 than skipped, and some providers charge extra for the request that writes the
 cache. That discount is the line the worksheet in @sec-serving-cost depends on.
 
-Take 153× as an upper bound on the mechanism, and instrument the real hit rate
-on the real system.
+Read 153× as the favourable result of a long, identical prefix in this
+measurement, and measure the hit rate and end-to-end latency on your own
+service.
 
 ## The cost worksheet {#sec-serving-cost}
 
