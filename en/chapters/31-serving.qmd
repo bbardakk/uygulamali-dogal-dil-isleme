@@ -271,8 +271,9 @@ pull against each other.
 Decode would be far worse than 5.2 ms per token if each step recomputed the
 whole prompt. It does not, because of the
 [**KV cache**](#gloss-kv-cache){#term-kv-cache .term-ref}: the keys and values
-computed for every previous token are kept, so step *n+1* computes one new
-column and reads the rest.
+computed at every layer for every previous token are kept, so at step *n+1*
+each layer computes only the new token's keys and values and reuses the
+earlier ones, without re-running the layer computations for past tokens.
 
 ::: {#gloss-kv-cache .column-margin .term-gloss}
 **KV cache** — the stored keys and values from earlier tokens, so generation
@@ -298,7 +299,7 @@ per token**. Multiply by the window:
 | 32,768 | 3.50 GiB | 1.86 GiB | 0.59× | [1.9×]{.con} |
 | 131,072 | **14.00 GiB** | **7.44 GiB** | [2.3×]{.con} | [**7.5×**]{.con} |
 
-: What the window costs in memory, llama3.2:3b
+: What the window costs in memory, llama3.2:3b — the theoretical KV tensor size of a full window; the real allocation policy, block and scale metadata, concurrent requests and runtime margin come on top
 {tbl-colwidths="[14,14,14,29,29]"}
 
 ::: {.column-margin}
@@ -323,15 +324,19 @@ size a card with, and which one depends on what you are running.
 
 This is why "can I run a 3B model?" is the wrong
 question and "at what context length?" is the right one, and why the default
-`num_ctx` in a local server matters so much: ask for the full 131k window and
-you have committed 14 GiB (about 15 GB) before the first request.
+`num_ctx` in a local server matters so much: the full 131k window needs 14 GiB
+(about 15 GB) of fp16 KV in theory. When that memory is allocated — before the
+first request, or block by block — depends on the server's KV allocation
+policy; check `num_ctx` against actual memory use.
 
 The 8 KV heads against 24 attention heads in that arithmetic are
-**grouped-query attention**, and they are the reason the number is 14 GiB
-rather than 42 — three heads share each key-value pair. It shrinks the
+**grouped-query attention**, and they are the reason that, at the same
+precision and window, the theoretical fp16 KV size is 14 GiB rather than 42 —
+three heads share each key-value pair. It shrinks the
 per-request KV cache (and the cache bytes decode reads each step);
 @sec-attention-cost does the same arithmetic for a 70B-class model, 10.7 GB per
-request at 32k instead of 85.9 GB under hypothetical full multi-head attention.
+request at 32k instead of 85.9 GB under hypothetical full multi-head attention
+(a different architecture and context; that chapter uses GB, this one GiB).
 It is a recurring shape: architecture choices from @sec-transformers reappear here as
 line items.
 

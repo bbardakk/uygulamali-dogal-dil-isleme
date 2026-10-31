@@ -298,8 +298,10 @@ sayısı. İşletmecinin parasını ödediği sayı odur ve ikisinin neden birbi
 Her adım tüm prompt'u yeniden hesaplasaydı decode'un token başına süresi 5,2
 ms'den çok daha kötü olurdu. Öyle olmuyor, çünkü
 [**KV önbelleği**](#gloss-kv-cache){#term-kv-cache .term-ref} var: önceki her
-token için hesaplanan anahtarlar ve değerler saklanıyor, böylece *n+1*'inci adım
-tek bir yeni sütun hesaplayıp gerisini okuyor.
+token için her katmanda hesaplanan anahtarlar ve değerler saklanıyor; böylece
+*n+1*'inci adımda her katmanda yalnızca yeni token'ın anahtar ve değerleri
+hesaplanıyor, öncekilerinki yeniden kullanılıyor ve geçmiş token'ların katman
+hesapları yeniden yürütülmüyor.
 
 ::: {#gloss-kv-cache .column-margin .term-gloss}
 **KV önbelleği** — önceki token'lardan saklanan anahtarlar ve değerler; böylece
@@ -325,7 +327,7 @@ başına 112 KiB** eder. Pencereyle çarpın:
 | 32.768 | 3,50 GiB | 1,86 GiB | 0,59 kat | [1,9 kat]{.con} |
 | 131.072 | **14,00 GiB** | **7,44 GiB** | [2,3 kat]{.con} | [**7,5 kat**]{.con} |
 
-: Pencerenin bellekte maliyeti, llama3.2:3b
+: Pencerenin bellekte maliyeti, llama3.2:3b — tam dolu pencerenin teorik KV tensörü boyutu; gerçek ayırma politikası, blok ve ölçek üstverisi, eşzamanlı istekler ve çalışma zamanı payı ayrıca eklenir
 {tbl-colwidths="[14,14,14,29,29]"}
 
 ::: {.column-margin}
@@ -353,17 +355,20 @@ sayı bunlardan yalnızca biri; hangisi olduğu da neyi çalıştırdığınıza
 "3B'lik bir model çalıştırabilir miyim?" sorusunun yanlış, "Hangi bağlam
 uzunluğunda?" sorusunun doğru soru olmasının nedeni bu; yerel bir sunucudaki
 varsayılan `num_ctx` değerinin bu kadar önemli olmasının nedeni de: 131k'lık tam
-pencereyi isterseniz daha ilk istek gelmeden 14 GiB (yaklaşık 15 GB) bellek
-ayırmış olursunuz.
+pencere fp16 KV için teorik olarak 14 GiB (yaklaşık 15 GB) gerektirir. Bu
+belleğin ne zaman ayrıldığı — ilk istekten önce mi, blok blok mu — sunucunun
+KV tahsis politikasına bağlıdır; `num_ctx` ile gerçek bellek kullanımını
+birlikte kontrol edin.
 
 O hesaptaki 24 attention head'e karşılık 8 KV head,
 **grouped-query attention**'ın (GQA; gruplanmış sorgu dikkati) sonucu ve
-sayının 42 değil 14 GiB olmasının nedeni de bu: her anahtar-değer çiftini üç
-head paylaşıyor. Bu, istek başına KV önbelleğinin boyutunu (ve decode'un her
+aynı hassasiyet ve pencere altında teorik fp16 KV boyutunun 42 değil 14 GiB
+olmasının nedeni de bu: her anahtar-değer çiftini üç head paylaşıyor. Bu, istek başına KV önbelleğinin boyutunu (ve decode'un her
 adımda okuduğu önbellek baytını) küçülten bir optimizasyon;
 @sec-attention-maliyeti aynı hesabı 70B sınıfı bir model için yapıyor: 32k
 bağlamda istek başına, varsayımsal tam multi-head attention'daki 85,9 GB
-yerine 10,7 GB. Bu, kitapta sık rastlanan bir
+yerine 10,7 GB (farklı bir mimari ve bağlam; o bölüm GB, burası GiB
+kullanıyor). Bu, kitapta sık rastlanan bir
 örüntü: @sec-transformerlar'deki mimari seçimler burada faturada birer kalem
 olarak yeniden karşımıza çıkıyor.
 
