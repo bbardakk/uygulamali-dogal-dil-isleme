@@ -201,9 +201,11 @@ prompts; streaming does not shorten it, it makes it the wait the user feels.
 [↩](#term-time-to-first-token-ttft){.term-back}
 :::
 
-Users do not experience total latency. They experience
-[**time to first token (TTFT)**](#gloss-time-to-first-token-ttft){#term-time-to-first-token-ttft .term-ref}
-and then a stream. Measuring it with streaming on, at four context lengths,
+Users feel more than total latency: first the
+[**time to first token (TTFT)**](#gloss-time-to-first-token-ttft){#term-time-to-first-token-ttft .term-ref},
+then a stream. TTFT here was measured from the start of the request to the
+first generated token or first server chunk; the first visible character on
+screen and the time to completion should be tracked as well. Measuring it with streaming on, at four context lengths,
 each generating 64 tokens:
 
 ```text
@@ -216,14 +218,19 @@ context tokens    TTFT     total    TTFT share
 
 [At 7,427 tokens of context, 91% of the request is over before the first
 character appears.]{.hl} The model is not "slow"; the prompt is long, and the
-user is waiting on prefill.
+user is waiting on prefill. These measurements were taken on an idle server,
+so TTFT's queueing component is near zero here; under load, the time a
+request waits its turn can grow until it outweighs prefill.
 
 Two consequences that get missed.
 
-**Streaming does not fix TTFT.** It fixes everything *after* it. Streaming
-converts a 5.2-second wait into a 4.7-second wait followed by text arriving at
-reading speed, which is a large perceived improvement — but the 4.7 seconds is
-untouched, and no amount of front-end work will touch it. The lever for TTFT
+**Streaming does not shorten the model's prefill.** It shows output tokens as
+they are ready. Streaming converts a 5.2-second wait into a 4.7-second wait
+followed by text arriving at reading speed, which is a large perceived
+improvement — but the 4.7 seconds of prefill is untouched. The first network
+chunk and the first character on screen can still vary with protocol,
+buffering and client; measure server TTFT, first network chunk and first
+on-screen character separately. The lever for TTFT
 is the prompt, and @sec-serving-cache is the cheapest version of that lever.
 
 **A long context makes decode slower too, not just prefill.** Every generated
@@ -249,8 +256,11 @@ with this table's 3,731-token row (161), not with the 7,414-token one (141). A
 number taken from the wrong row is still a wrong number; it just looks sourced.
 
 Two names for what these tables measure, because dashboards use them. The
-right-hand column — milliseconds per generated token — is the
-**time per output token (TPOT)**, also called inter-token latency; together with
+right-hand column — milliseconds per generated token — is an average derived
+from the server's decode time divided by the tokens generated, close to the
+**time per output token (TPOT)**, also called inter-token latency. When you
+report TPOT, say whether the first token is excluded and whether timestamps
+were taken on the server or the client; together with
 TTFT it describes what *one* user feels. **Throughput** is the other axis:
 tokens per second summed over every request the server is handling at once. It
 is what the operator pays for, and @sec-serving-batching shows why the two
