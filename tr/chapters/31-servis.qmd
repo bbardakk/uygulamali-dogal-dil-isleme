@@ -74,21 +74,25 @@ okunur, sonra çıktı token'ları her biri bir öncekine bağlı olarak teker t
 
 Bu iki yarının adı
 [**prefill / decode**](#gloss-prefill-decode){#term-prefill-decode .term-ref}.
-**Prefill** prompt'u okur. Her token aynı anda elde olduğu için tüm prompt
-modelden tek bir toplu (batch'li) matris çarpımı olarak geçer — donanım
-meşguldür ve iş hesap sınırlıdır.
+**Prefill** prompt'u okur. Her token aynı anda elde olduğu için prompt
+katmanlar boyunca paralel olarak işlenir ve KV durumu oluşturulur; bazı
+sunucular bunu parçalara böler (chunked prefill). Donanım meşguldür ve bu
+ölçümde iş hesap sınırlıydı.
 
 **Decode** cevabı yazar. *n+1*'inci token, *n*'inci token var olmadan
-hesaplanamaz; dolayısıyla her biri modelin tamamı üzerinden ayrı bir geçiştir ve
-— batch küçük olduğu sürece — makine zamanının çoğunu çarpma yapmaktan çok
-ağırlıkları bellekten taşımakla geçirir.
+hesaplanamaz; dolayısıyla her yeni token için modelin tamamı üzerinden yeni bir
+adım yürütülür ve — batch küçük olduğu sürece — makine zamanının çoğunu çarpma
+yapmaktan çok ağırlıkları ve KV durumunu bellekten taşımakla geçirir.
 
 Bu asimetri bölümün temeli ve ölçmesi kolay: altı farklı uzunlukta prompt,
 önbelleğe hiçbir şey düşmesin diye her biri kendi metniyle, her birinde 32
 token üretiliyor. Bu bölümdeki çıktı blokları ölçüm betiğinin yazdırdığı
 biçimde bırakıldı: sayılar İngilizce biçimde (ondalık ayırıcı nokta, binlik
 ayırıcı virgül; `1,433` bin dört yüz otuz üç demek). Sütunlar sırasıyla prompt
-token'ı, prefill süresi, saniyede prefill token'ı ve saniyede decode token'ı:
+token'ı, prefill süresi, saniyede prefill token'ı ve saniyede decode token'ı;
+her sütun beş tekrarın ayrı medyanıdır, bu yüzden görünen prompt sayısını
+görünen süreye bölmek raporlanan hızla birebir örtüşmeyebilir (ilk satırda
+96 / 0,064 = 1.500, raporlanan 1.433):
 
 ```text
 prompt tokens   prefill   prefill tok/s      decode tok/s
@@ -105,8 +109,9 @@ hızında çalışıyor. [Bu donanımda token başına prefill süresi, token ba
 decode süresinden yaklaşık on bir kat kısaydı]{.hl} — 4.247 token'lık satırda
 0,54 milisaniyeye karşı 6,2. Bu, *süre* hakkında bir ifade; sağlayıcıların fiyat
 listesiyle ilgisi yok (orada çıktı token'ları genellikle girdinin birkaç katına
-faturalanır). Donanım değiştiğinde de geçerli kalan şey mutlak sayılar değil,
-bu orandır. İki rakamı da aynı satırdan alın:
+faturalanır). Bu oran da bu yapılandırmaya aittir: başka bir donanım, model,
+batch ya da bağlamda iki hızı ve oranı yeniden ölçün. İki rakamı da aynı
+satırdan alın:
 bağlam büyüdükçe decode yavaşlıyor (96 token'da 5,2 ms, 4.247'de 6,2 ms), yani
 en iyi prefill'i en kötü decode'la eşleştirmek farkı şişirir. Prefill de en uzun
 satırda biraz düşüyor; büyük olasılıkla benzer bir nedenle: her prompt token'ı
@@ -114,9 +119,11 @@ kendinden önceki bütün token'lara attention uyguladığı için prefill'in at
 kısmı prompt uzunluğundan daha hızlı büyüyor.
 
 ::: {.column-margin}
-İlk satırdaki 1.433 tok/s daha yavaş bir prefill değil; 96 token'lık bir
-prompt'un amorti edemediği, istek başına sabit bir ek yük. Beş yineleme bunu
-doğruluyor ve aynı zamanda onu tablonun en gürültülü satırı yapıyor — her yerde
+İlk satırdaki 1.433 tok/s'nin daha yavaş bir prefill'den çok, 96 token'lık bir
+prompt'un amorti edemediği istek başına sabit bir ek yükten geldiği
+düşünülebilir. Beş yineleme bununla uyumlu, ama kesin bir ayrım için prompt
+uzunluğu ve sunucu içi zaman bileşenleri ayrıca ölçülmeli; aynı zamanda bu
+satır tablonun en gürültülüsü — her yerde
 %2–7 iken burada %34,5 yayılım, çünkü bu kadar küçük bir prompt'ta sabit maliyet
 baskın. Bu tablonun tek ölçümle yapılmış daha önceki bir sürümü son satırda
 **105 decode tok/s** bildiriyordu; ölçüm beş kez yinelendiğinde sonuç 161,
@@ -189,22 +196,25 @@ piksel kaplarlardı. Alttaki çubuk *ölçekli* ve akılda tutulması gereken bi
 o. Prefill 4.247 token üzerinden tek bir geçiş; decode ise model üzerinden,
 çıktı token'ı başına bir tane olmak üzere 32 ayrı geçiş. O çubuk başka bir
 isteğe ait: 7.427 token bağlam, 64 token çıktı; akış (streaming: cevabın
-üretildikçe parça parça gönderilmesi) açıkken ölçüldü. Üretimdeki isteklerin
-çoğu bu biçimdedir: wall-clock süresinin neredeyse tamamı ilk karakter
-belirmeden önce harcanır.
+üretildikçe parça parça gönderilmesi) açıkken ölçüldü. Bu istekte sunucunun
+ilk token süresi toplamın yaklaşık %91'iydi; kullanıcının ilk görünür
+karaktere kadar beklediği süre buna ağ ve istemci işleme süresini de ekler. Bu
+tek örnek, üretimdeki isteklerin dağılımı olarak okunmamalı.
 :::
 ::::
 
-**Neye bakacağız.** Önce wall-clock süresinin gerçekte nereye gittiğine — ki üretim
-prompt uzunluklarında bu neredeyse tümüyle prefill'dir — ve akışın buna neden
-dokunamadığına. Sonra decode'u hızlandıran ve uzun bağlamı pahalılaştıran KV
+**Neye bakacağız.** Önce yerel ölçümde wall-clock süresinin prefill ile decode
+arasında nasıl dağıldığına — uzun prompt'larda büyük kısmı prefill'e gidiyor —
+ve akışın buna neden dokunamadığına. Sonra decode'u hızlandıran ve uzun bağlamı pahalılaştıran KV
 önbelleğine: boyutunu hiçbir şey kiralamadan önce gigabayt cinsinden
 hesaplayacak, ağırlıklarla birlikte bir kartın ihtiyaç duyduğu belleği nasıl
 oluşturduğunu göreceğiz. Sonra işletmeciye işlem hacmi kazandıran ve bunun
-bedelini tek tek kullanıcıya ödeten batchlemeye. Sonra kalite maliyeti
-olmayan tek kola ve bu bölümde ölçülen en büyük kazanca: prompt önbelleklemeye. Sonra dört
+bedelini tek tek kullanıcıya ödetebilen batchlemeye. Sonra çıktıyı
+değiştirmeden çalışan ve bu bölümde ölçülen en büyük kazancı veren kola:
+prompt önbelleklemeye. Sonra dört
 sayı ve bir çarpmadan ibaret olan maliyet çizelgesine. Ve en sonunda kalan
-kollara — önerildikleri sıraya göre değil, başvurulması gereken sıraya göre.
+kollara. Her birinin etkisini kendi prompt ve çıktı dağılımınızda sınamanız
+gerekecek.
 
 ## Wall-clock süresi gerçekte nereye gidiyor {#sec-servis-ttft}
 

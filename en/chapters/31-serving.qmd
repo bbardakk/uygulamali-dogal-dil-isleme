@@ -61,17 +61,20 @@ on the last. [↩](#term-prefill-decode){.term-back}
 
 [**Prefill / decode**](#gloss-prefill-decode){#term-prefill-decode .term-ref}
 is the split. **Prefill** reads the prompt. Every token is available at once,
-so the whole prompt goes through the network as one batched matrix
-multiplication — the hardware is busy and the work is compute-bound.
+so the prompt is processed in parallel through the layers and the KV state is
+built; some servers split it into chunks (chunked prefill). The hardware is
+busy, and in this measurement the work was compute-bound.
 
 **Decode** writes the answer. Token *n+1* cannot be computed until token *n*
-exists, so each one is a separate pass over the whole model, and — as long as
-the batch is small — the machine spends most of its time moving weights from
-memory rather than multiplying them.
+exists, so each new token runs another step over the whole model, and — as long
+as the batch is small — the machine spends most of its time moving weights and
+KV state from memory rather than multiplying them.
 
 That asymmetry is the chapter's foundation, and it is easy to measure. Six
 prompt lengths, each with its own text so nothing is cached, generating 32
-tokens:
+tokens. Each column is a separate median over five repeats, so dividing the
+printed prompt count by the printed time need not match the printed rate (on
+the first row 96 / 0.064 = 1,500, against 1,433 reported):
 
 ```text
 prompt tokens   prefill   prefill tok/s      decode tok/s
@@ -87,18 +90,20 @@ Prefill runs at roughly **2,000 tokens per second**; decode at roughly **190**.
 [On this hardware, prefill time per token was about eleven times lower than
 decode time per token]{.hl} — on the 4,247-token row, 0.54 milliseconds against
 6.2. That is a statement about *time*, not about a provider's price list, where
-output tokens usually cost several times input — and it is the ratio rather
-than the absolute numbers that survives a change of hardware. Take both figures
-from the same row: decode slows as the context grows (5.2 ms at 96 tokens,
+output tokens usually cost several times input — and the ratio, too, belongs to
+this configuration: re-measure both rates and their ratio on other hardware,
+models, batches or contexts. Take both figures from the same row: decode slows as the context grows (5.2 ms at 96 tokens,
 6.2 ms at 4,247), so pairing the best prefill with the worst decode inflates
 the gap. Prefill also dips a little on the longest row, most likely for a
 related reason: each prompt token attends to every token before it, so the
 attention part of prefill grows faster than the prompt does.
 
 ::: {.column-margin}
-The 1,433 tok/s on the first row is not a slower prefill; it is a fixed
-per-request overhead that a 96-token prompt cannot amortise. Five repetitions
-confirm it, and they also make it the noisiest row in the table — 34.5% spread
+The 1,433 tok/s on the first row is more plausibly a fixed per-request overhead
+that a 96-token prompt cannot amortise than a slower prefill. Five repetitions
+are consistent with that, though separating it cleanly would need prompt
+length and the server's internal timing components measured separately; it is
+also the noisiest row in the table — 34.5% spread
 against 2–7% everywhere else, because the fixed cost dominates a prompt that
 small. An earlier single-shot version of this table reported **105 decode
 tok/s** on the last row; repeated five times it is 161, with 0.7% spread. That
@@ -170,21 +175,22 @@ against prefill's 286. The bar underneath *is* to scale, and it is the shape
 worth remembering. Prefill is one pass over 4,247 tokens; decode is 32
 separate passes over the model, one per output token. That bar is a different
 request — 7,427 tokens of context, 64 tokens out —
-measured with streaming on, and it is the shape most production requests
-have: almost all of the wall clock is spent before the first character
-appears.
+measured with streaming on. In it the server's time to first token was about
+91% of the total; the wait until the user sees the first character adds
+network and client time on top. This one example should not be read as the
+distribution of production requests.
 :::
 ::::
 
-**What we will look at.** First where the wall clock actually goes, which at
-production prompt lengths is almost entirely prefill — and why streaming cannot
-touch that. Then the KV cache, which is what makes decode fast and what makes a
+**What we will look at.** First how the wall clock splits between prefill and
+decode in the local measurement — on long prompts most of it goes to prefill —
+and why streaming cannot touch that. Then the KV cache, which is what makes decode fast and what makes a
 long context expensive, in gigabytes you can compute before renting anything,
-and how it adds up with the weights to the memory a card needs. Then batching, which buys the operator throughput and charges the individual
-user for it. Then prompt caching, the one lever with no quality cost and the
-largest measured win in this chapter. Then the cost worksheet, which is four
-numbers and a multiplication. And finally the remaining levers, in the order to
-reach for them rather than the order they get proposed in.
+and how it adds up with the weights to the memory a card needs. Then batching, which buys the operator throughput and can charge the individual
+user for it. Then prompt caching, a lever that leaves the output unchanged and
+gave the largest measured win in this chapter. Then the cost worksheet, which is four
+numbers and a multiplication. And finally the remaining levers, each of which
+you will need to test on your own prompt and output distribution.
 
 ## Where the wall clock actually goes {#sec-serving-ttft}
 
