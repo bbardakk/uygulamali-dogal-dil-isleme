@@ -804,12 +804,15 @@ for quantization.
 ::: {.callout-note collapse="true"}
 ## 1. Your feature is "too slow". Where do you look first?
 
-At the ratio of prompt tokens to output tokens, before you look at the model.
+At the timing components before the model: TTFT, inter-token time, total time
+and the queueing share. Then at the ratio of prompt tokens to output tokens;
+that ratio alone does not explain queueing, network, tool waits or server
+load.
 
 Prefill and decode run at very different rates — measured here, about 2,000
 against 190 tokens per second — so a request with a long prompt and a short
-answer spends nearly all its time reading. At 7,427 tokens of context, 91% of
-the wall clock was over before the first character appeared.
+answer spent nearly all its time reading in this measurement. At 7,427 tokens
+of context, 91% of the server time was over before the first token.
 
 If that is your shape, the levers are prompt length and prompt caching, and
 speculative decoding in particular has limited end-to-end benefit — it speeds up decode.
@@ -823,11 +826,14 @@ the ratio is the first thing to measure rather than the last.
 ::: {.callout-note collapse="true"}
 ## 2. Does streaming reduce latency?
 
-No. It reduces *perceived* latency after the first token, and changes nothing
-before it.
+It does not reduce the model's compute time. Its aim is to show output as it is
+ready and cut the *perceived* wait after the first token.
 
-Streaming cannot start until prefill finishes, so TTFT is identical with it and
-without it. What streaming buys is that the remaining seconds are spent reading
+Streaming cannot start until prefill finishes, so the server's prefill time is
+identical with it and without it — though first- and last-chunk times on the
+client can vary with buffering and the network. Report server TTFT, the first
+visible character on the client, and full response time separately under the
+same conditions. What streaming buys is that the remaining seconds are spent reading
 rather than waiting — a real and large product improvement, and not a
 performance one.
 
@@ -838,14 +844,16 @@ at the first chunk instead of the last one.
 :::
 
 ::: {.callout-note collapse="true"}
-## 3. Why can a 2 GB model need more than 16 GB of memory?
+## 3. Why can a 2 GB model need more than 16 GB of memory if it allocates a full 131,072-token fp16 KV window?
 
 Because the weights are not the whole footprint. The KV cache holds a key and a
 value for every token in the window, for every layer and every KV head.
 
 For this model at fp16 — 28 layers, 8 KV heads, head dimension 128 — that is
 112 KiB per token, so a 131,072-token window is 14 GiB (about 15 GB) of cache
-on top of a 2.0 GB model file. Say what that ratio compares, though: four-bit weights
+on top of a 2.0 GB model file — before runtime margin, and if the whole window
+is allocated. With the q8_0 cache this chapter actually ran it is about 10 GB
+in total. Say what that ratio compares, though: four-bit weights
 against a sixteen-bit cache. At matched precision the cache is 2.3× the
 weights. An 8-bit cache roughly halves the cache side, which is a lever worth
 knowing about and one that is off by default.
@@ -858,7 +866,10 @@ as a convenience setting.
 ::: {.callout-note collapse="true"}
 ## 4. Your prompt cache hit rate is near zero and you cannot see why.
 
-Something volatile is near the top of the prompt.
+First check that the tokenised prefix really matches and that the hit metric
+measures what you think. A common cause is something volatile near the top of
+the prompt; capacity and eviction, a model or template change, configuration
+and a minimum prefix length can also push the hit rate down.
 
 Prefix caches match by prefix: one differing token at position 12 invalidates
 everything after it. A timestamp, a user id, a session identifier or a
@@ -867,41 +878,46 @@ performance bug.
 
 The fix is to order the prompt by stability — instructions, then schemas, then
 examples, then retrieved context, then the user's turn — and the check is to
-send the same request twice and compare prefill times. Cold and warm should
+send the same request twice and compare prefill times — a check for that
+request pattern only. Cold and warm should
 differ by an order of magnitude or more; measured here, 2.290s against 0.015s.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 5. Continuous batching raised throughput 3×. Did latency improve?
 
-Almost certainly not, and it probably got slightly worse per request.
+That alone does not tell you the direction. Batching changes resource sharing
+and queueing together: per-request time can get slightly worse, but under light
+load or good scheduling queueing delay can fall.
 
 Batching exploits the fact that decode is memory-bound: several sequences can
 share the weight movement that one sequence needs. That raises tokens per
 second across the server while each individual sequence advances no faster —
 and it now shares the machine.
 
-So the two numbers move in opposite directions, and reporting only the one that
-improved is a common way to mislead a review. If you have a latency SLO, it is
+So the two numbers can move in opposite directions, and reporting only the one
+that improved is a common way to mislead a review. Measure p50/p99 TTFT,
+inter-token time and total latency on the same traffic. If you have a latency SLO, it is
 a ceiling on batch size, and somebody must own it.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. When is quantization the wrong answer?
 
-When memory is not your binding constraint, or when nobody has evaluated it on
-your task.
+When nobody has evaluated it on your task, or when what it saves — memory, and
+in some conditions bandwidth and energy — is not your constraint.
 
-Quantization trades quality for memory and bandwidth. Modern methods lose much
+Quantization lowers memory and, in some conditions, bandwidth load; its effect
+on quality has to be measured per task and method. Modern methods lose much
 less than naive rounding — GPTQ and AWQ both choose which weights to protect
 rather than scaling everything uniformly — but "much less" is not "none", and
 the loss is task-dependent in ways a general benchmark will not tell you.
 
 If your constraint is prompt length, weight quantization does not shrink the
 problem: the KV cache is a separate allocation with its own lever (the 8-bit
-cache above), although memory freed from the weights can hold more cache.
-Reach for weight quantization when the model
-does not fit, and put it through the same eval you would use for a model swap.
+cache above), although memory freed from the weights can hold more cache. Weigh capacity,
+latency, energy and quality together — do not wait for the model not to fit —
+and put it through the same eval you would use for a model swap.
 :::
 
 ## Interview questions {#sec-serving-interview}

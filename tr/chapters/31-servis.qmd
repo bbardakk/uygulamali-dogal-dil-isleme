@@ -856,12 +856,14 @@ yanlış alet.
 ::: {.callout-note collapse="true"}
 ## 1. Özelliğiniz "çok yavaş". Önce nereye bakarsınız?
 
-Modele bakmadan önce, prompt token'larının çıktı token'larına oranına.
+Modele bakmadan önce zaman bileşenlerine: TTFT, token'lar arası süre, toplam süre
+ve kuyruk payı. Sonra prompt token'larının çıktı token'larına oranına; bu oran
+tek başına kuyruğu, ağı, araç beklemesini ya da sunucu yükünü açıklamaz.
 
 Prefill ve decode çok farklı hızlarda çalışıyor — burada ölçüldüğü hâliyle
 saniyede yaklaşık 2.000'e karşı 190 token — dolayısıyla uzun prompt'lu ve kısa
-cevaplı bir istek zamanının neredeyse tamamını okuyarak geçirir. 7.427 token
-bağlamda wall-clock süresinin %91'i, ilk karakter belirmeden önce bitmişti.
+cevaplı bir istek bu ölçümde zamanının neredeyse tamamını okuyarak geçirdi.
+7.427 token bağlamda sunucu süresinin %91'i ilk token'dan önce bitmişti.
 
 Biçiminiz buysa kollar prompt uzunluğu ve prompt önbellekleme olur; özellikle
 spekülatif kod çözmenin uçtan uca yararı sınırlı kalır, çünkü yalnızca
@@ -876,11 +878,13 @@ binlerce token üretiyorsanız cevap tam tersi olur — oranın en son değil en
 ::: {.callout-note collapse="true"}
 ## 2. Akış gecikmeyi azaltır mı?
 
-Hayır. İlk token'dan *sonraki* algılanan gecikmeyi azaltır ve öncesinde hiçbir
-şeyi değiştirmez.
+Modelin hesap süresini azaltmaz. Akışın hedefi, çıktıyı hazır oldukça gösterip
+ilk token'dan *sonraki* algılanan beklemeyi azaltmaktır.
 
-Akış, prefill bitmeden başlayamaz; dolayısıyla TTFT akışla da akışsız da
-aynıdır. Akışın kazandırdığı şey, kalan saniyelerin beklenerek değil okunarak
+Akış, prefill bitmeden başlayamaz; dolayısıyla sunucunun prefill süresi akışla da
+akışsız da aynıdır — ama istemcideki ilk ve son parça süreleri tamponlamaya ve
+ağa göre değişebilir. Aynı koşullarda sunucu TTFT'sini, istemcide ilk görünür
+karakteri ve tam yanıt süresini ayrı raporlayın. Akışın kazandırdığı şey, kalan saniyelerin beklenerek değil okunarak
 geçmesi — gerçek ve büyük bir ürün iyileştirmesi, ama bir performans
 iyileştirmesi değil.
 
@@ -891,14 +895,16 @@ ilk parçada durduruyordur.
 :::
 
 ::: {.callout-note collapse="true"}
-## 3. 2 GB'lık bir model neden 16 GB'tan fazla belleğe ihtiyaç duyabilir?
+## 3. 2 GB'lık bir model, 131.072 token'lık fp16 KV penceresini tümüyle ayırırsa neden 16 GB'tan fazla belleğe ihtiyaç duyabilir?
 
 Çünkü ayak izi ağırlıklardan ibaret değil. KV önbelleği penceredeki her token
 için, her katmanda ve her KV head'inde bir anahtar ve bir değer tutuyor.
 
 Bu model fp16'da — 28 katman, 8 KV head, head boyutu 128 — token başına
 112 KiB eder; yani 131.072 token'lık bir pencere, 2,0 GB'lık model dosyasının
-üstüne 14 GiB (yaklaşık 15 GB) önbellek. Ama o oranın neyi neyle
+üstüne 14 GiB (yaklaşık 15 GB) önbellek — çalışma zamanı payı eklenmeden ve
+pencere tümüyle ayrılırsa. Bu bölümde fiilen kullanılan q8_0 önbellekte toplam
+kabaca 10 GB'tır. O oranın neyi neyle
 karşılaştırdığını belirtin: dört bitlik
 ağırlıklara karşı on altı bitlik bir önbellek. Eşit hassasiyette önbellek
 ağırlıkların 2,3 katı. 8 bitlik bir önbellek, önbellek tarafını kabaca yarıya
@@ -912,7 +918,10 @@ girmiş bir bellek kararı olmasının nedeni bu.
 ::: {.callout-note collapse="true"}
 ## 4. Prompt önbelleği isabet oranınız sıfıra yakın ve nedenini göremiyorsunuz.
 
-Prompt'un tepesine yakın oynak bir şey var.
+Önce tokenlaştırılmış ön ekin gerçekten eşleştiğini ve isabet metriğinin doğru
+ölçtüğünü kontrol edin. Sık bir neden, prompt'un tepesine yakın oynak bir
+şeydir; kapasite ve tahliye, model ya da şablon değişikliği, yapılandırma ve
+asgari ön ek uzunluğu da isabeti düşürebilir.
 
 Ön ek önbellekleri eşleştirmeyi baştan itibaren yapar: 12. konumdaki tek bir
 farklı token kendinden sonraki her şeyi geçersiz kılar. Bir zaman damgası, bir
@@ -922,7 +931,8 @@ hatasına benzemez.
 
 Çözüm prompt'u kararlılığa göre sıralamak — talimatlar, sonra şemalar, sonra
 örnekler, sonra erişilmiş bağlam, sonra kullanıcının mesajı — ve kontrol, aynı
-isteği iki kez gönderip prefill sürelerini karşılaştırmak. Soğuk ile sıcak bir
+isteği iki kez gönderip prefill sürelerini karşılaştırmak — bu, yalnızca o istek
+düzeni için bir kontroldür. Soğuk ile sıcak bir
 büyüklük mertebesi ya da daha fazla farklı olmalı; burada ölçüldüğü hâliyle
 2,290 s'ye karşı 0,015 s.
 :::
@@ -930,25 +940,29 @@ büyüklük mertebesi ya da daha fazla farklı olmalı; burada ölçüldüğü h
 ::: {.callout-note collapse="true"}
 ## 5. Sürekli batchleme işlem hacmini 3 kat artırdı. Gecikme iyileşti mi?
 
-Neredeyse kesinlikle hayır ve muhtemelen istek başına biraz kötüleşti.
+Yalnızca bu bilgiyle yönü bilinmez. Batchleme kaynak paylaşımını ve kuyruk
+beklemesini birlikte değiştirir: istek başına süre biraz kötüleşebilir, ama az
+yükte ya da uygun çizelgelemede kuyruk beklemesi azalabilir.
 
 Batchleme, decode'un bellek sınırlı olmasından yararlanıyor: tek bir dizinin
 ihtiyaç duyduğu ağırlık taşımasını birkaç dizi paylaşabiliyor. Bu, sunucu
 genelinde saniyedeki token sayısını yükseltiyor; her bir dizi ise daha hızlı
 ilerlemiyor — üstelik artık makineyi paylaşıyor.
 
-Yani iki sayı zıt yönlerde hareket ediyor ve yalnızca iyileşenini raporlamak,
-bir değerlendirme toplantısını yanıltmanın yaygın bir yolu. Bir gecikme SLO'nuz
+Yani iki sayı zıt yönlerde hareket edebilir ve yalnızca iyileşenini raporlamak,
+bir değerlendirme toplantısını yanıltmanın yaygın bir yolu. Aynı trafikte p50/p99
+TTFT'yi, token'lar arası süreyi ve toplam gecikmeyi ölçün. Bir gecikme SLO'nuz
 varsa, o batch boyutu üzerinde bir tavandır ve birinin sahibi olması gerekir.
 :::
 
 ::: {.callout-note collapse="true"}
 ## 6. Nicemleme ne zaman yanlış cevaptır?
 
-Bağlayıcı kısıtınız bellek değilken ya da nicemlenmiş model sizin görevinizde
-değerlendirilmemişken.
+Nicemlenmiş model sizin görevinizde değerlendirilmemişken ya da kazandırdığı şey
+— bellek, bazı koşullarda bant genişliği ve enerji — sizin kısıtınız değilken.
 
-Nicemleme, kaliteden ödün vererek bellek ve bant genişliği kazandırır. Modern yöntemler naif
+Nicemleme bellek ve kimi koşullarda bant genişliği yükünü düşürür; kalite
+değişimi görev ve yönteme göre ölçülmelidir. Modern yöntemler naif
 yuvarlamadan çok daha azını kaybediyor — GPTQ da AWQ da her şeyi aynı biçimde
 ölçeklemek yerine hangi ağırlıkların korunacağını seçiyor — ama "çok daha azı"
 "hiç" değildir ve kayıp, genel bir benchmark'ın size söylemeyeceği biçimlerde
@@ -956,9 +970,10 @@ göreve bağlıdır.
 
 Kısıtınız prompt uzunluğuysa ağırlık nicemlemesi sorunu küçültmez: KV
 önbelleği kendi kolu olan (yukarıdaki 8 bitlik önbellek) ayrı bir tahsistir;
-yine de ağırlıklardan boşalan bellek daha fazla önbellek tutabilir. Ağırlık
-nicemlemesine model sığmıyorsa başvurun ve bir
-model değişimi için kullanacağınız değerlendirmenin aynısından geçirin.
+yine de ağırlıklardan boşalan bellek daha fazla önbellek tutabilir. Kapasiteyi,
+gecikmeyi, enerjiyi ve kaliteyi birlikte karşılaştırın — yalnızca modelin
+sığmamasını beklemeyin — ve nicemlenmiş modeli bir model değişimi için
+kullanacağınız değerlendirmenin aynısından geçirin.
 :::
 
 ## Mülakat soruları {#sec-servis-mulakat}
