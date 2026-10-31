@@ -144,9 +144,9 @@ than the one you remember, and the difference is not cosmetic.
 
 | primitive | the spec's description | who it is for |
 |:--|:--|:--|
-| **Tools** | "Functions for the AI model to execute" | the model. Everything in @sec-tool-design applies unchanged |
-| **Resources** | "Context and data, for the user or the AI model to use" | data the host can read and attach — a file, a record, a query result |
-| **Prompts** | "Templated messages and workflows for users" | the *user*, not the model: slash-commands and workflows the host surfaces |
+| **Tools** | "Functions for the AI model to execute" | the model, under the host's permission and execution control. Everything in @sec-tool-design applies unchanged |
+| **Resources** | "Context and data, for the user or the AI model to use" | data the host can read and attach — a file, a record, a query result; for example a resource with the URI `file:///project/README.md` |
+| **Prompts** | "Templated messages and workflows for users" | chosen by the *user*: slash-commands and workflows the host surfaces, for example `/summarise`; the messages they produce are added to the model's conversation through the host |
 
 : Server features, revision 2026-07-28 {tbl-colwidths="[16,50,34]"}
 
@@ -160,7 +160,8 @@ for example as a slash-command).
 parameter can ask for it, through the host, rather than failing. (Roots and
 Sampling were client features too; as the warning box below says, they are
 still in the specification but deprecated, and the current overview lists only
-Elicitation.)
+Elicitation. That holds for the core revision; older protocol versions and
+optional extensions can carry different capabilities.)
 
 *How* it asks is the part a 2025 tutorial will get wrong. In revision
 2026-07-28 there is no longer any such thing as a server-initiated JSON-RPC
@@ -173,6 +174,43 @@ and `inputResponses` attached. Every result now carries a required
 `resultType`, `"complete"` for ordinary ones, and a client must treat a missing
 field from an older server as `"complete"`.
 
+An abridged example (from the specification's own; `_meta` fields removed). It
+was chosen only to show the shape — asking for a GitHub username to get the
+weather is not a realistic application; follow only how `input_required`,
+`requestState` and the re-sent fields relate. For a call to the `get_weather`
+tool (`id: 2`), the server returns this instead of a result:
+
+```json
+{"jsonrpc": "2.0", "id": 2,
+ "result": {"resultType": "input_required",
+            "inputRequests": {"github_login": {
+                "method": "elicitation/create",
+                "params": {"mode": "form",
+                           "message": "Please provide your GitHub username",
+                           "requestedSchema": {"type": "object",
+                               "properties": {"name": {"type": "string"}},
+                               "required": ["name"]}}}},
+            "requestState": "eyJsb2NhdGlvbiI6Ik5ldyBZb3JrIn0..."}}
+```
+
+The client asks the user and re-sends the same call with a new `id`, attaching
+the answer and the server's `requestState` unchanged:
+
+```json
+{"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+ "params": {"name": "get_weather",
+            "arguments": {"location": "New York"},
+            "inputResponses": {"github_login": {"action": "accept",
+                                                "content": {"name": "octocat"}}},
+            "requestState": "eyJsb2NhdGlvbiI6Ik5ldyBZb3JrIn0..."}}
+```
+
+`requestState` is an opaque string the server hands to the client instead of
+holding the state in its own memory; the specification asks the server to
+treat it as input an attacker can modify and to protect its integrity.
+Integrity protection does not hide the content: if the server puts anything
+secret in it, it must encrypt it as well.
+
 That is worth pausing on, because it is the strongest evidence for the claim
 this chapter opened with. The one channel by which a server could reach back
 towards the host has been turned into a return value that the host chooses
@@ -183,7 +221,9 @@ In practice, implement the revision your counterpart actually speaks. A client
 that speaks only 2026-07-28 cannot talk to a server that speaks only the older,
 handshake-based pattern, and the reverse fails too. The backward-compatibility
 rules in the next section are what let an implementation that supports *both*
-eras detect which one it is talking to and fall back.
+eras detect which one it is talking to and fall back. Do not expect automatic
+fallback between endpoints that support only one era; test both sides'
+version support together when you deploy.
 
 ::: {.callout-warning appearance="simple"}
 **What a 2025 tutorial will still teach you that is now deprecated.**
