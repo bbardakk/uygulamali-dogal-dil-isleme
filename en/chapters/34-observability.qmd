@@ -914,63 +914,69 @@ re-checking the current document.
 ## What to remember {#sec-observability-summary}
 
 - **An agent trace is a distributed trace, with three differences.** The payload
-  is text and dominates volume; cost is an attribute rather than an afterthought,
-  because token counts convert to money and roll up; and failure is often not an
-  error, so a span with `status=OK` can hold a confidently wrong answer or a run
-  that hit its ceiling.
+  is text and dominates volume when content is recorded; cost is an attribute
+  rather than an afterthought, because token counts convert to money and roll
+  up; and failure is often not an error, so a span with `status=OK` can hold a
+  confidently wrong answer or a run that hit its ceiling.
 
 - **The GenAI conventions moved, and most of them are unstable.** They now live
   in `open-telemetry/semantic-conventions-genai`, split out of the main
-  semantic-conventions repository, which still carries forwarding notices at the
-  old paths. Of the marked items in the span document as counted for this
-  chapter, **286 are `Development` against 22 `Stable`**, and at that snapshot
-  the new repository had no tagged release; no `gen_ai.*` attribute is among
-  the stable ones. Use them — they are the only shared vocabulary — but pin the
-  version and record the pin.
+  semantic-conventions repository. In a count made on 27 August 2026 without
+  recording the commit, **286 of the marked items in the span document were
+  `Development` against 22 `Stable`**, and no `gen_ai.*` attribute was among the
+  stable ones; the repository still has no tagged release. Use them — they are
+  the only shared vocabulary — but pin the commit or release you use, and record
+  it.
 
-- **Span names are formulaic, not free text.** `{operation} {model}` for a model
-  call, `execute_tool {tool.name}` for a tool call, `invoke_agent {agent.name}`
-  for an agent. Getting this right is what
-  makes someone else's dashboard work on your traces.
+- **Span names are formulaic, not free text.** In the revision examined,
+  `{operation} {model}` for a model call, `execute_tool {tool.name}` for a tool
+  call, `invoke_agent {agent.name}` for an agent. Naming to the revision you
+  implement is what makes someone else's dashboard work on your traces.
 
 - **Record the responded model as well as the requested one.** When the version
   behind an alias silently changes, the requested model stays the same and the
-  responded one changes — @sec-gateway's problem — and two attributes turn an invisible dependency change into a
-  visible one.
+  responded one can change — @sec-gateway's problem — if the provider fills that
+  field with a real version. Read the fields at the level of detail your
+  provider gives.
 
-- **@sec-serving's measurements are standard metrics.**
-  `gen_ai.server.time_to_first_token` and
-  `gen_ai.server.time_per_output_token` are in the specification, so the
-  prefill/decode split is a dashboard rather than a one-off experiment — on a
-  model server you run yourself; against a hosted API you see only the client
-  side.
+- **The user-visible sides of @sec-serving's measurements are standard
+  metrics.** `gen_ai.server.time_to_first_token` and
+  `gen_ai.server.time_per_output_token` are in the specification, so you can
+  watch TTFT and time per token as a dashboard. But they do not give the
+  prefill/decode split — TTFT includes queueing — and they come only from a
+  model server you run yourself; prefill and queue need extra server
+  measurements, and against a hosted API you see only the client side.
 
 - **Estimate telemetry volume before you turn content recording on.** Measured
-  here: **4.8 spans and 3,167 bytes per run**, of which **48.3% was prompt and
-  completion text** — and that was on 301-token prompts. Holding the structure
-  fixed and scaling the text to @sec-summarization's realistic 890 tokens gives
-  6,163 bytes and **73.4% content**; at @sec-serving's 4,247-token prompt,
-  **93.0%**. [Whether you log prompts is a four- to fourteen-fold decision
-  about your monitoring bill.]{.hl}
+  on five short runs: **4.8 spans and 3,167 bytes per run**, of which **48.3% was
+  prompt and completion text** — and that was on 301-token prompts. As a
+  scenario outside the measurement, holding the structure fixed and scaling the
+  text to @sec-summarization's realistic 890 tokens gives 6,163 bytes and
+  **73.4% content**; at @sec-serving's 4,247-token prompt, **93.0%**.
+  [Whether you log prompts can change trace volume four- to fourteen-fold;]{.hl}
+  measure the real bill on your own traffic.
 
-- **Sampling content is a cost control and a privacy control at once.**
-  Structure on every run, content on a small share and on every error; since a
-  sampler keeps or drops whole traces, that takes a content-stripped path for
-  everything plus a tail-sampled full path. Redact
-  before export, in a wrapper around the exporter or on a Collector inside your
-  network, so it happens once rather than five times
-  differently — and remember that telemetry inherits the same residency and
-  retention obligations as the database it copies from.
+- **Sampling content is a cost measure and a privacy measure, but it does not
+  remove the privacy obligation.** Content-free structure on every run; content
+  only on a limited share, with an explicit purpose, access rule and retention
+  period. Since a sampler keeps or drops whole traces, that takes a
+  content-stripped path for everything plus a tail-sampled, redacted path. If
+  you compute cost from traces, the content-free path must keep every trace, or
+  use unsampled counters and the bill. Keep content logging off by default and
+  redact in one shared place before export — but test the log, exception and
+  baggage channels too. Telemetry inherits the same residency and retention
+  obligations as the database it copies from.
 
 - **Your own dimensions have to reach every span, not just the root.** Span
-  attributes are not inherited, so user, team and feature written on the root
-  never reach the model spans you group by. Copy them onto every span with a span
-  processor, and keep anything identifying out of baggage, which travels on
-  outbound calls. Environment goes on the Resource, the outcome on the root span.
-  You cannot group by a dimension you did not record, and the number a budget
-  review needs is cost per *resolved task*, not cost per session.
+  attributes are not inherited; copy them onto every span with a span processor.
+  Carry low-sensitivity dimensions such as team, feature and environment, and
+  put in baggage only fields approved to leave. Keep the user id, if needed,
+  pseudonymised and access-restricted, and only low-cardinality dimensions in
+  metric labels. Environment goes on the Resource; the task outcome can be
+  written on the root span or linked later through the run id. Take total spend
+  and cost per *resolved task* to a budget review together.
 
-- **Tracing tells you what happened, not whether it was any good.** Quality,
-  faithfulness and safety belong to the evaluation layer and attach to traces as
-  scores. A dashboard full of green spans is entirely compatible with a product
-  that is confidently wrong.
+- **Tracing tells you what happened, not by itself whether it was any good.**
+  Quality, faithfulness and safety belong to the evaluation layer and attach to
+  traces as scores. A dashboard full of green spans is entirely compatible with
+  a product that is confidently wrong.
