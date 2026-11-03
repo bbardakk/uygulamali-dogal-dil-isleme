@@ -928,63 +928,66 @@ chapter cites for batch invariance.
 
 ## What to remember {#sec-deployment-summary}
 
-- **An agent loop is not a request handler.** It takes minutes, so a platform
-  with an execution ceiling will kill it mid-run, after some tools have already
-  fired. Once tasks outlive a request the shape is queue-backed: accept,
-  enqueue, return an id, and add progress, cancellation and a dead-letter path
-  while it is still cheap to add them.
+- **An agent loop is not a request handler.** It can take minutes, so a
+  platform with an execution ceiling can kill it mid-run, after some tools have
+  already fired. If a task outlives a request's safe lifetime, provide a
+  durable job record, progress, cancellation and a dead-letter path — while
+  they are still cheap to add.
 
-- **Where the conversation lives is an operational and trust decision, not a
-  token-cost one.** In-process pins a user to an instance and loses sessions on
-  deploy. A session store is the default, with its latency on every turn. A
-  client-held history makes the server stateless and lets the client edit it.
-  Wherever it lives, the model receives the whole history each turn, so prompt
-  tokens grow every turn — @sec-serving's arithmetic, and prefill dominates
-  latency long before it dominates the bill.
+- **Where the conversation lives is mainly an operational and trust
+  decision.** In-process pins a user to an instance in a multi-instance
+  deployment and can lose sessions on restart. A session store is the default
+  for most cases, with its latency on every turn. A client-held history makes
+  the server stateless and lets the client edit it. Compute conversation cost
+  from the tokens actually sent to the model, not from where history is stored;
+  if the whole history is sent every turn, prompt tokens grow every turn —
+  @sec-serving's arithmetic.
 
-- **Durable execution imposes determinism on your workflow code.** Replay re-runs
-  the function and returns recorded results for completed steps, so clocks,
-  random ids and direct API calls inside workflow code break it. The LLM call is
-  the least deterministic thing you have, so it belongs in a recorded *step*,
-  not in workflow code. Adopting an engine later usually means rewriting the
-  loop. And a step that was running at the crash runs again, so the tools still
-  need to be idempotent.
+- **Replay-based durable execution imposes determinism on your workflow
+  code.** Replay re-runs the function and returns recorded results for completed
+  steps, so clocks, random ids and direct API calls inside workflow code break
+  it. LLM and remote tool calls belong in recorded *steps*. A step can run again
+  in the window between its external effect and its completion record, so the
+  tools still need to be idempotent.
 
 - **Retrying a step is not retrying a request.** @sec-gateway's retry problem is
-  amplification; this one is duplication. And the retry may not even repeat the
-  same action: asked to *notify whoever needs to know*, a model produced **five
-  different recipient addresses across eight retries** at temperature 0.7.
+  amplification; this one is duplication. And regenerating the same step may not
+  even give the same action: asked to *notify whoever needs to know*, a local
+  model produced **five different recipient addresses across eight independent
+  generations** at temperature 0.7.
 
-- **Temperature 0 is variance reduction, not idempotency.** All eight retries
-  were byte-identical at temperature 0 in this measurement — including the run
-  that deterministically invented an address. Reproducible is not correct, and
-  hosted APIs do not promise bit-identical output at temperature 0 anyway,
-  because batching and reduction order vary with what else is in flight.
+- **Temperature 0 is variance reduction, not idempotency.** In this local
+  measurement all eight generations were byte-identical at temperature 0 —
+  including the run that deterministically invented an address. Reproducible is
+  not correct, and many hosted APIs do not promise bit-identical output at
+  temperature 0.
 
-- **Derive the idempotency key from upstream, never from the model's output.**
-  Hashing tool arguments fails exactly when it is needed — five argument sets
-  means five hashes means five emails. Use `(session id, step index)` or the
-  request id, commit the record together with the effect — via an outbox when
-  the effect is a remote call, because an HTTP request cannot join your
-  transaction — and give it a retention window longer than your longest retry.
+- **Build the idempotency key from a durable job and action id, not from the
+  model's payload.** Hashing tool arguments fails as a key exactly when it is
+  needed — five argument sets, five hashes, five emails — but stored next to the
+  key as a fingerprint it catches the same key arriving with different content.
+  Record the intent to send atomically with a local outbox; the outbox is not
+  atomic with the remote effect, so the receiver must dedupe or you must
+  reconcile. Keep the retention window longer than your longest retry.
 
-- **Write the compensation table before shipping the tool.** A record can be
-  deleted, a charge refunded, a booking cancelled. Deleting a posted message
-  cannot undo its having been read, and a sent email cannot be undone at all.
-  [Where the compensation column says "none", the control moves earlier]{.hl} —
-  an approval gate rather than an undo — and that is a decision for somebody
-  outside engineering.
+- **Write the compensation table before shipping the tool.** A compensation
+  does not turn back time; it offsets the business effect. A record can be
+  deleted, a charge refunded, a booking cancelled; deleting a posted message
+  cannot undo its having been read, and a sent email can only be followed by a
+  correction. [Where there is no full undo, the control moves earlier]{.hl} — an
+  approval, a permission limit or a check, depending on impact — and that is a
+  decision for somebody outside engineering too.
 
-- **Set all three ceilings, because each is blind to the others.** A step cap
-  does not stop a hanging tool; a timeout does not stop sixty cheap steps
-  burning a budget; a token cap does not stop a loop reading the same file
-  forever. Hitting one is a *result*: it belongs in the response, the trace and
-  the evaluation, and @sec-agent-eval's termination rate is where an agent that
-  looks accurate while capping out gets caught.
+- **Set all three ceilings, because each is blind to some of the others'
+  failures.** A step cap does not stop a hanging tool; a timeout does not bound
+  cost itself; a token cap is slow to stop a loop reading the same file. Hitting
+  one is a distinct "unfinished" *result*: it belongs in the response, the trace
+  and the evaluation, with answer correctness reported separately.
 
 - **Ship a change as one versioned release, to a slice first.** Code, prompts,
   pinned model, tool definitions and settings share one release id on every
-  trace. A canary with a rollback trigger taken from the SLO's error budget
-  catches a release that breaks badly; a shadow agent needs its tools in dry-run
-  mode; and a rollback restores the code, not the effects the bad release
-  already had.
+  trace, and the actual model and tool versions are logged too. A canary with
+  its sample size thought through in advance catches a release that breaks badly
+  but can miss a small regression; a shadow agent's access to real
+  side-effecting tools must be blocked technically; and a rollback restores the
+  code, not the effects the bad release already had.
