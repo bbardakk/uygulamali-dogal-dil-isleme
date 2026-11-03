@@ -170,6 +170,34 @@ Temporal's vocabulary — whose result is recorded and replayed, not a decision
 made inside workflow code. The workflow orchestrates; the non-determinism lives
 in the steps it records.
 
+In pseudo-code close to Temporal's Python SDK the split looks like this:
+
+```python
+@workflow.defn
+class FailureNotice:
+    @workflow.run
+    async def run(self, task: str) -> str:
+        # the LLM call is an activity: its result is recorded and not re-run on replay
+        decision = await workflow.execute_activity(
+            llm_call, task, start_to_close_timeout=timedelta(minutes=2))
+        # time.time(), uuid.uuid4() or a direct HTTP call are forbidden here:
+        # on replay they return different values and send the workflow down another path.
+        # If you need the clock, use workflow.now(); the engine reads it from history.
+        # The activity can be retried; the key comes from the workflow id and the
+        # logical action, so it stays the same on every attempt.
+        key = f"{workflow.info().workflow_id}/failure-notice"
+        return await workflow.execute_activity(
+            send_email, args=[decision, key],
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=3))
+```
+
+`llm_call` and `send_email` are ordinary functions defined outside the workflow
+with `@activity.defn`. This is pseudo-code, not production-ready: `send_email`
+must pass a stable idempotency key, built from the workflow id and the logical
+action id, to the receiving system; decide separately whether that system
+supports the key and what the activity's retry policy is.
+
 That is a real constraint on tool design (@sec-tool-design), and adopting a
 durable engine after the fact usually means rewriting the loop rather than
 wrapping it.

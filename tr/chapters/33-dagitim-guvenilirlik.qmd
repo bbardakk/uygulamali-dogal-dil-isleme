@@ -193,13 +193,20 @@ class ArizaBildirimi:
         # time.time(), uuid.uuid4() ya da doğrudan bir HTTP çağrısı burada yasak:
         # tekrar oynatmada farklı değer döndürüp iş akışını farklı bir yola sokarlar.
         # Saat gerekiyorsa workflow.now() kullanılır; motor onu geçmişten okur.
+        # Etkinlik yeniden denenebilir; anahtar iş akışı kimliğinden ve mantıksal
+        # eylemden türetilir, böylece her denemede aynı kalır.
+        anahtar = f"{workflow.info().workflow_id}/ariza-bildirimi"
         return await workflow.execute_activity(
-            send_email, karar, start_to_close_timeout=timedelta(seconds=30))
+            send_email, args=[karar, anahtar],
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=3))
 ```
 
 `llm_call` ve `send_email`, iş akışının dışında `@activity.defn` ile tanımlanmış
-sıradan işlevlerdir. Etkinlikler yeniden denenebildiği için `send_email` yine de
-bir idempotency anahtarı taşımalıdır.
+sıradan işlevlerdir. Bu bir sözde kod, üretime hazır değil: `send_email`, iş
+akışı kimliğinden ve mantıksal eylem kimliğinden üretilen sabit bir idempotency
+anahtarını alıcıya iletmeli; alıcının anahtarı destekleyip desteklemediğini ve
+etkinliğin yeniden deneme politikasını ayrıca belirleyin.
 
 Bu, araç tasarımına (@sec-arac-tasarimi) gerçek bir kısıt getiriyor; dayanıklı
 bir motoru sonradan benimsemek de genellikle döngüyü sarmalamak değil, yeniden
