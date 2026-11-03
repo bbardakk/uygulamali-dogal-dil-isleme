@@ -1047,61 +1047,67 @@ products; choose by maintenance, security and workload requirements.
 
 ## What to remember {#sec-gateway-summary}
 
-- **A gateway buys attribution and a choke point, nothing else.** It does not
-  make a request faster — that is @sec-serving — and it adds a hop whose
-  availability becomes a ceiling on everyone's. Build it when the second team,
-  the second provider or the first loop-capable agent arrives, and not before.
+- **A gateway gives a common point for identity, attribution, budgets,
+  routing and policy.** It does not by itself make a request faster — that is
+  @sec-serving — and it adds a hop. Building one means weighing the need for
+  central controls against network and operating cost; the second team, the
+  second provider or the first loop-capable agent are the typical triggers.
 
-- **You cannot price a request before you run it.** Input tokens are countable
-  at admission, output tokens only at completion, and output is usually dearer.
-  So a budget is enforced pessimistically, or it overshoots by about one
-  request's worth of output per concurrent caller — unless you cap `max_tokens`
-  per key, which is the control most often left unset.
+- **You cannot price a request exactly before you run it.** Input tokens are
+  approximately countable at admission, output tokens only at completion, and
+  output is usually dearer. A budget needs a pre-request input estimate, a
+  reservation for maximum output and extra fees, an atomic check and a
+  reconciliation afterwards; under optimistic admission the overshoot depends on
+  the actual cost of the requests admitted at the same moment. A per-key
+  `max_tokens` is the control most often left unset.
 
-- **Retries turn a degradation into an outage.** Backoff *with jitter*, because
-  plain backoff re-synchronises the fleet; a circuit breaker; and a retry budget
-  as a fraction of traffic. Google runs a three-attempt per-request cap *and* a
-  per-client rule that stops retrying once retries pass 10% of that client's
-  requests — the first still allows nearly 3× load in the worst case, the
-  second brings it to about 1.1×. Retry only retryable errors, and at one
-  layer only.
+- **Retries can turn a degradation into an outage.** Use backoff *with jitter*,
+  a circuit breaker, and a retry budget as a fraction of traffic. In the Google
+  SRE book's example, a three-attempt per-request cap still allows nearly 3×
+  load in the worst case, while a per-client retry ratio of about 10% brings it
+  to about 1.1×; verify your own ratio under load. Retry only errors confirmed
+  to be transient, within a total attempt budget and deadline, at one layer
+  only.
 
-- **A failover is a model swap, so it is an evaluation problem.** Different
-  format, different tool-call syntax, different refusals; a parser tuned on the
-  primary may reject the fallback. Either evaluate the fallback path on the same
-  suite, or fail closed with a clear error. Silently serving an untested model is
-  the option nobody chose and many ship.
+- **A failover is a model swap, so it is an evaluation problem.** Assess the
+  fallback in advance on format, task quality, permissions, data region and
+  cost; if it cannot safely continue, return a clear error. Silently serving an
+  untested model is the option nobody chose and many ship.
 
 - **Routing is a claim about a signal, not about an architecture.** Published
   cascades and learned routers report real savings [@chen2023frugalgpt;
   @ong2024routellm], but every one of those results depends on knowing which
-  requests are hard. The most tempting signal — asking the model how sure it is
-  — was measured in @sec-classification at **AUROC 0.667** against 0.843 for a
-  fine-tuned classifier's own score. Always report the random-escalation baseline; if the
-  policy does not beat it, the escalation *rate* is doing the work.
+  requests are hard. In @sec-classification verbal confidence scored **AUROC
+  0.667** against 0.843 for a classifier's score — a cautionary example from
+  another task. Measure your signal on your own task and always report the
+  random-escalation baseline; if the policy does not beat it, the escalation
+  *rate* is doing the work.
 
-- **Exact-match caching is nearly free money once the key is right; semantic
-  caching is a correctness decision.** Measured on fifteen labelled pairs, the
-  most similar pair in the set was **a sentence and its negation at 0.982**,
-  while a genuinely identical question scored **0.609**. The classes overlap
-  so heavily that no single threshold separates them: the cut with the fewest
-  errors is to cache nothing at all, missing all five genuine repeats.
+- **Both exact-match and semantic caching carry risk; the semantic one is a
+  correctness decision.** For exact-match caching, verify permissions,
+  freshness, deletion and TTL. On fifteen labelled pairs the most similar pair
+  was **a sentence and its negation at 0.982**, while a genuinely identical
+  question scored **0.609**. On this set no single similarity threshold
+  separated right from wrong matches; a production threshold needs a larger set
+  drawn from real hits and a cost for false hits.
 
-- **Check the embedder before trusting the cache.** In this chapter's setup,
-  `nomic-embed-text` under `ollama` 0.24.0 mapped every capitalised word to one
-  constant token: *Monday*, *Cat*, *Ankara* and *XYZZY* all produced
-  byte-identical vectors, and *Cat sat on the mat* equalled *Dog sat on the
-  mat*. Lowercase text was fine. The same symptom is reported upstream and
-  fixed in later `ollama` releases — and that fix changes the vectors too. A
-  cache built on it would answer Sunday's question with Monday's answer at
-  similarity 1.000 and log nothing. It surfaced only because a pair that had to
-  score low scored highest.
+- **Check the embedder before trusting the cache.** In this chapter's setup, the
+  capitalised words tested with `nomic-embed-text` under `ollama` 0.24.0 all
+  produced the same vector: *Monday*, *Cat*, *Ankara* and *XYZZY* gave identical
+  vectors, and *Cat sat on the mat* equalled *Dog sat on the mat*. Lowercase
+  text was fine. The same symptom was reported upstream, and the issue records
+  it as apparently resolved in the 0.30 series; the cause and other versions
+  need checking separately. A cache built on it would answer Sunday's question
+  with Monday's answer at similarity 1.000. It surfaced only because a pair that
+  had to score low scored highest.
 
-- **Pin the version; an alias is a dependency that changes without a deploy.**
-  A silent provider upgrade bypasses every gate you own, and it also makes every
-  historical evaluation unreproducible, because the score belongs to a model you
-  can no longer name.
+- **Pin the version and log the actual model identifier.** A floating alias is
+  a dependency that changes without a deploy: it bypasses every gate you own
+  and, unless the real identifier is logged, leaves it unclear which model a
+  past score belongs to.
 
-- **Policy belongs at one choke point.** Redaction, audit, residency and
-  retention must hold for every call, and five implementations guarantee drift.
-  A policy you cannot enforce in one place is a policy you are hoping about.
+- **A gateway can be the common enforcement point for policy.** Redaction,
+  audit, residency and retention must hold for every call, and five
+  implementations guarantee drift. But bind direct calls, logs, caches and the
+  provider chain to the same data and access rules too. A policy you cannot
+  enforce in one place is a policy you are hoping about.
