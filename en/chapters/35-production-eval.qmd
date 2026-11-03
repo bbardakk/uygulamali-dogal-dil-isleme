@@ -1080,60 +1080,66 @@ eval gate in practice.
 ## What to remember {#sec-production-eval-summary}
 
 - **A prompt change is a code change, and an eval score is not a unit test.**
-  The suite lives in the repository, runs on every prompt change, and blocks the
-  merge — but the assertion is statistical, so the gate needs a threshold, and
-  the threshold needs a number almost nobody measures.
+  The suite lives in the repository, runs on every prompt change and blocks the
+  merge — but the assertion is statistical, so the gate needs a threshold and the
+  threshold needs a number almost nobody measures.
 
-- **Measure your noise floor; it is a twenty-minute experiment.** Five identical
-  runs of the same 100-item suite gave a run-to-run **`sd` of 0.26 points** of
-  field accuracy, with an observed range of **0.60**. That is small enough to
-  gate on, which contradicts the folklore. Set the threshold from the `sd`
-  (about 4 × `sd`), not from the range, which later runs will exceed — and
-  without a measured floor no later delta is interpretable.
+- **Measure your noise floor.** In this setup five unchanged runs of the same
+  100-item suite gave a field-accuracy **`sd` of 0.26 points** and an observed
+  range of **0.60 points** — small enough to gate on for this suite and task.
+  It is a starting measure: choose the threshold not from the range but by
+  calibrating it on independent A/A comparisons against a target false-block
+  rate; without a measured floor no later delta can be read.
 
-- **A cosmetic prompt edit is not a cosmetic change.** Reordering six rules with
-  nothing added, removed or reworded cost **3.40 points of field accuracy and
-  9.20 points of exact match** — about six times the noise floor — and the entire
-  regression sat in one field, `day` falling from 91 to 74. [A prompt has no
-  interface, so no edit to it is provably local.]{.hl}
+- **A cosmetic prompt edit may not be a cosmetic change.** Reordering six rules
+  — nothing added, removed or reworded — lowered the five-run average **field
+  accuracy by 3.40 points and exact match by 9.20** in this experiment — about six
+  times the observed range — with the drop concentrated almost entirely in `day`
+  (91 to 74). [A prompt has no interface, so no edit to it is provably
+  local.]{.hl} Because per-item pairing was not stored, this gap cannot be given a
+  McNemar p-value; store it next time.
 
-- **Report per-field numbers, not only an aggregate.** Across a 40-item probe,
-  every wrong `day` under both prompts was the leading digits of the *amount*: the model bleeds one
-  field into another, and moving the `amount` rule above the `day` rule tripled
-  how often it did. The aggregate showed a wobble; the breakdown showed a
-  mechanism, and only a mechanism becomes a test.
+- **Report per-field numbers, not only an aggregate.** In a separate 40-item
+  probe every wrong `day` under both prompts was the leading digits of the
+  *amount* — a digit-copying pattern. It is a hypothesis whose scope has to be
+  tested on new examples. The aggregate showed a wobble; the breakdown showed a
+  pattern, and a named pattern becomes a test.
 
-- **A gate with no threshold gets worse as your suite grows.** Blocking whenever
-  the new score is lower falsely blocked **22.9%** of no-op changes at 20 items
-  and **42.5%** at 100, because exact ties vanish and the comparison converges on
-  a coin flip. A 1-point threshold at 100 items gives **4.3%** false blocks and
-  still catches the reordered prompt **99.4%** of the time.
+- **A gate with no threshold is prone to false blocks.** In this chapter's item
+  resampling, blocking whenever the new score was lower blocked **42.5%** of
+  no-op changes at 100 items; a 1-point threshold brought that to **4.3%** and
+  caught the reordered prompt in **99.4%** of draws. Those are resampling rates;
+  measure your real gate with independent repeats.
 
-- **Temperature 0 buys reproducibility, not correctness.** Two runs were
-  byte-identical per item — but greedy decoding scored **95.20**, below the whole
-  sampled range of 95.40–96.00, and the leading-digit bug was still there. It is
-  also a configuration you probably do not serve.
+- **Temperature 0 bought reproducibility in this setup, not correctness.** The
+  two runs were identical item by item, and the leading-digit bug was still
+  there. Do not read a lasting accuracy difference into the small gap between
+  95.20 and the sampled runs' 95.40–96.00; measure the configuration you serve
+  separately.
 
-- **The golden set has a lifecycle, and staleness is silent.** It is born from
-  real failures, stratified rather than conveniently sampled, and it carries
-  personal data. It gets easier as you fix what is in it and the traffic moves
-  out from under it, so a set that has not changed in six months is not stable,
-  it is stale — and it still produces a green check.
+- **The golden set has a lifecycle.** It is born from real failures, sampled
+  deliberately, and carries personal data. Keep two sets: a **regression** set
+  that only grows, whose stability is a virtue, and a **representative** set
+  refreshed by probability sampling as traffic moves; a representative set's
+  staleness is silent and produces a green check.
 
 - **Score live traffic in layers.** Free signals on everything — parse rate,
-  refusals, latency, tool errors, ceiling hits — then a judge on three
-  overlapping samples: a fixed uniform slice, everything that already looks
-  wrong, and a stratified slice of the rare. Audit that judge, and pin and record
-  its version, because a judge upgrade shifts the whole series.
+  refusals, latency, tool errors, ceiling hits — then a judge on three samples: a
+  fixed uniform slice (where the quality estimate comes from), everything that
+  already looks wrong, and a stratified slice of the rare. Compute judge cost
+  from tokens and price; audit the judge, and pin and record its version.
 
-- **User feedback samples; it does not measure. A/B tests measure, slowly.**
-  Thumbs come from a self-selected minority and reward pleasing answers, so use
-  them to route cases, not as the score. An A/B test randomises users, fixes one
-  primary metric, guardrail metrics and a stopping rule in advance, and is large:
-  a one-point change from 20% needs about 24,600 users per arm, and peeking
-  daily at ten looks turns a 5% false-positive rate into about 19%.
+- **User feedback is a biased but useful secondary signal; A/B tests measure,
+  slowly.** Votes come from a self-selected minority; use them to find cases and
+  as a secondary outcome in randomised experiments. An A/B test fixes one
+  primary metric, guardrail metrics and a stopping rule in advance and needs a
+  large sample: a one-point change from 20% needs about 24,600 users per arm,
+  and ten interim looks pushed a 5% false-positive rate to about 19% in
+  simulation.
 
-- **Three drifts look identical on a dashboard.** The model moved, the inputs
-  moved, or the system moved — distinguishable only with the responded model and
-  the input distribution, both of which must be recorded in advance. Rule out the
-  fourth possibility first: that nothing moved and the metric is noisy.
+- **Narrow down drifts that look alike on a dashboard with evidence collected in
+  advance.** The model, the inputs or the system may have moved — or nothing
+  did and the metric is noisy; rule that out first. Then examine the input
+  distribution, the reported model name and the prompt, tool, data and
+  deployment versions together; that evidence narrows the causes, it is not
+  causal proof on its own.
