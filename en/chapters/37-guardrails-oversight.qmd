@@ -986,64 +986,68 @@ is @sec-agent-security, and its sources are there.
 ## What to remember {#sec-guardrails-summary}
 
 - **A guardrail is not a security boundary.** It reduces harm from a system
-  behaving normally; it fails probabilistically and quietly, and an adversary
-  gets unlimited retries against it. [Guardrails go in front of permission
-  systems, never instead of them]{.hl} — any limit that matters is enforced in
-  code, outside the model.
+  behaving normally; it often fails probabilistically and quietly, and it cannot
+  enforce a permission limit on its own. [Guardrails go in front of permission
+  systems, never instead of them]{.hl} — permission for high-impact actions is
+  enforced in a service outside the model.
 
-- **Report precision *and* recall, and price both errors.** An eleven-digit
-  regex found 100% of planted Turkish national IDs and **60% of its hits were
-  not national IDs**, because a Turkish mobile written without spaces is also
-  eleven digits. A missed identifier is a leak; an unnecessary redaction is a
-  support agent who cannot see the order number. Recall is the number that looks
-  finished, and precision is usually the one that decides whether the people who
-  have to use the guardrail keep it switched on.
+- **Report precision *and* recall, and price both errors.** In this synthetic
+  corpus an eleven-digit regex found 100% of the planted national IDs, and
+  **540 of its 900 hits were not national IDs**, because a Turkish mobile number
+  written without spaces is also eleven digits. A missed ID is a leak; a needless
+  mask is a support agent who cannot see the order number — though some false
+  positives, such as phone numbers, may still be personal data to redact.
 
-- **Validation buys precision and deletes real personal data.** The TCKN checksum
-  took precision from **40.0% to 99.0%** and recall from 100% to **84.7%** — and
-  the 15.3-point loss is mechanically equal to the corpus's typo rate, because
-  every typo was a single-digit substitution, which the check always catches. [A
-  mistyped national ID is still a national ID in your logs.]{.hl}
+- **Validation buys precision and costs something too.** In this corpus the TCKN
+  checksum took precision from **40.0% to 99.0%** and recall from 100% to
+  **84.7%**: all 55 single-digit-typo targets were dropped. [A mistyped national
+  ID tied to someone's record can still be personal data;]{.hl} do not drop an
+  unvalidated hit automatically.
 
-- **Use a checksum to rank confidence, not to filter.** Validated hits redact
-  automatically; unvalidated pattern hits still redact, flagged lower-confidence,
-  and get reviewed rather than dropped. A random eleven-digit string passes the
-  TCKN check about **1 time in 100**.
+- **For redaction, use a checksum to rank confidence, not to filter.** Validated
+  hits redact automatically; unvalidated pattern hits still redact, flagged as
+  lower confidence, and get reviewed rather than dropped. Passing the check is
+  not proof of assignment; about **1 in 100** uniformly sampled eleven-digit
+  strings pass it.
 
-- **Combine signals that fail differently.** The checksum misses mistyped
-  identifiers; a context word misses unlabelled ones. Their union reached
-  **99.1% precision at 93.6% recall** — nearly all of the checksum's precision
-  with three-fifths of its recall loss recovered: 8.9 of the 15.3 points.
+- **Combine signals that fail differently.** In this corpus the checksum missed
+  mistyped identifiers and a context word missed unlabelled ones; their union
+  reached **99.1% precision at 93.6% recall** — 8.9 of the 15.3 points
+  recovered. Re-measure the overlap of errors on real traffic.
 
-- **Do not validate where the pattern is unambiguous.** `TR` + 24 digits was
-  already **100% precise**, so the IBAN checksum bought nothing and discarded
-  **12.5%** of real IBANs. Uniform rigour is pure loss here.
+- **Do not validate for redaction where the pattern is already unambiguous.**
+  This corpus's `TR`-plus-24-digits pattern was already **100%** precise, so the
+  IBAN checksum bought nothing and discarded **12.5%** of the targets. That
+  sample format is only a subset of the official IBAN format; cover the official
+  format in production.
 
-- **Against a rare bad case, false positives dominate.** With 0.1% violations,
-  90% recall and a 1% false-positive rate, only 8.3% of what a policy classifier
-  blocks is a real violation. Put both numbers in front of whoever sets the
-  threshold.
+- **Against a rare bad case, false positives dominate.** Hypothetically, with
+  0.1% violations, 90% recall and a 1% false-positive rate, only
+  900 / 10,890 ≈ 8.3% of what a policy classifier blocks is a real violation. Put
+  both numbers in front of whoever sets the threshold.
 
-- **Redact reversibly, and know what you have created.** Stable per-conversation
-  tokens keep the product working where destructive masking breaks it — but the
-  token mapping is now the sensitive asset, and it is a worse breach than the
-  original if it leaks with the transcripts. Redact once, at one boundary.
+- **Redact reversibly, and know what you created.** Stable per-conversation
+  tokens can keep the product working — but the token mapping is now the
+  sensitive asset; assess separately what its leaking alongside the transcripts
+  would mean. Apply one shared redaction component at model, tool and telemetry
+  egress, and test for leaks.
 
-- **Classify actions by reversibility, in the tool rather than the prompt.** The
-  line that does the work is bounded versus unbounded, enforced by a number
-  checked in code. New tools land in the strictest class and are relaxed
-  deliberately.
+- **Classify actions in the tool, not the prompt, on two axes:** data and action
+  permission, and reversibility. The line that does the work is bounded versus
+  unbounded; per-action and total limits are enforced in code together. New
+  tools land in the strictest class and are relaxed deliberately.
 
-- **Oversight decays quietly.** [An approval queue that approves 99% of what
-  reaches it may be oversight or a delay, and only planted errors tell you
-  which]{.hl} — reviewers drift into automation bias precisely because the agent
-  is usually right. Seed known-wrong items and count how many reviewers catch, track
-  the rejection rate, show reviewers the pending call and the trace rather than a
-  model-written summary,
-  and watch guardrail trigger rate in both directions, since a collapse means it
-  broke and no error rate will tell you.
+- **Oversight can decay quietly.** [An approval queue that approves 99% of what
+  reaches it may be oversight or a delay]{.hl} — reviewers can slide into
+  automation bias precisely because the agent is usually right. Judge the
+  approval rate with side-effect-free cases labelled right and wrong, review
+  time and real incidents; show reviewers the pending call and the trace rather
+  than a model-written summary; and watch the guardrail trigger rate in both
+  directions, comparing changes with traffic and version changes.
 
-- **Every postmortem finding must outlive the document.** An eval case, a tool
-  reclassified, a limit in code, a measured threshold, an alert. "Improve the
-  prompt" is not on the list — @sec-production-eval measured a prompt reordering
-  moving accuracy by nearly six times the noise floor.
+- **Every postmortem finding must outlive the document.** An eval case, a
+  reclassified tool, a limit in code, a measured threshold, an alert. A vague
+  "improve the prompt" is not on the list — but a prompt change that is
+  versioned and measured at the regression gate counts as an eval case;
+  @sec-production-eval measured an ungated reordering moving accuracy by nearly
+  six times the observed run range.
