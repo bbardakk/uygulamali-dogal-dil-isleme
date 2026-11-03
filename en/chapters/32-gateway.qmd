@@ -224,14 +224,20 @@ may be unclear whether the provider finished and billed the earlier request.
 Do not retry a 400 for a malformed request or a prompt longer than the context
 window, which will fail identically every time. And **retry at one layer
 only** — this does not happen by itself; bound the total attempts across SDK,
-gateway and application together. Provider SDKs already retry by default (the OpenAI and Anthropic
-Python clients make two retries), so an SDK, a gateway and an application each
-allowing three attempts can turn one request into $3^3 = 27$ attempts; the SRE book calls
-this a combinatorial explosion [@beyer2016sre]. Timeouts need the same care: an
+gateway and application together. Provider SDKs often retry by default (at the time of writing the OpenAI and
+Anthropic Python clients make two retries; defaults can change with version
+and error type, so check the version you use and how to disable them). In a
+setup where each layer allows three attempts, for example, an SDK, a gateway
+and an application can turn one request into up to $3^3 = 27$ provider
+attempts; the SRE book calls this a combinatorial explosion [@beyer2016sre]. Timeouts need the same care: an
 LLM response can legitimately take a minute, so a single short total timeout
 cuts off long answers, while a generous one hides a hung provider. With
 streaming, time out on the wait for the first token and, separately, on the
-gap between tokens.
+gap between tokens. Streaming also limits failover: once tokens have started
+flowing to the user, a provider failure cannot be handed to another model
+transparently, because half an answer has already gone. Failover after the
+first token is possible only by regenerating the answer from the start and
+telling the client so.
 
 There is also a failure mode specific to LLM gateways, and it is not a
 reliability problem at all:
