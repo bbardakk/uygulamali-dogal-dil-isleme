@@ -72,9 +72,7 @@ KV state from memory rather than multiplying them.
 
 That asymmetry is the chapter's foundation, and it is easy to measure. Six
 prompt lengths, each with its own text so nothing is cached, generating 32
-tokens. Each column is a separate median over five repeats, so dividing the
-printed prompt count by the printed time need not match the printed rate (on
-the first row 96 / 0.064 = 1,500, against 1,433 reported):
+tokens. Each column is a separate median over five repeats:
 
 ```text
 prompt tokens   prefill   prefill tok/s      decode tok/s
@@ -90,10 +88,9 @@ Prefill runs at roughly **2,000 tokens per second**; decode at roughly **190**.
 [On this hardware, prefill time per token was about eleven times lower than
 decode time per token]{.hl} — on the 4,247-token row, 0.54 milliseconds against
 6.2. That is a statement about *time*, not about a provider's price list, where
-output tokens usually cost several times input — and the ratio, too, belongs to
-this configuration: re-measure both rates and their ratio on other hardware,
-models, batches or contexts. Take both figures from the same row: decode slows as the context grows (5.2 ms at 96 tokens,
-6.2 ms at 4,247), so pairing the best prefill with the worst decode inflates
+output tokens usually cost several times input. Take both figures from the
+same row: decode slows as the context grows (5.2 ms at 96 tokens, 6.2 ms at
+4,247), so pairing the best prefill with the worst decode inflates
 the gap. Prefill also dips a little on the longest row, most likely for a
 related reason: each prompt token attends to every token before it, so the
 attention part of prefill grows faster than the prompt does.
@@ -189,8 +186,20 @@ long context expensive, in gigabytes you can compute before renting anything,
 and how it adds up with the weights to the memory a card needs. Then batching, which buys the operator throughput and can charge the individual
 user for it. Then prompt caching, a lever that leaves the output unchanged and
 gave the largest measured win in this chapter. Then the cost worksheet, which is four
-numbers and a multiplication. And finally the remaining levers, each of which
-you will need to test on your own prompt and output distribution.
+numbers and a multiplication. And finally the remaining levers.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Each column of the first table is a separate median, so dividing the printed
+  prompt count by the printed time need not match the printed rate (on the
+  first row 96 / 0.064 = 1,500, against 1,433 reported).
+- The roughly elevenfold prefill-to-decode time ratio belongs to this
+  configuration: re-measure both rates and their ratio on other hardware,
+  models, batches or contexts.
+- Each lever in this chapter needs testing on your own prompt and output
+  distribution.
+:::
 
 ## Where the wall clock actually goes {#sec-serving-ttft}
 
@@ -204,9 +213,8 @@ prompts; streaming does not shorten it, it makes it the wait the user feels.
 Users feel more than total latency: first the
 [**time to first token (TTFT)**](#gloss-time-to-first-token-ttft){#term-time-to-first-token-ttft .term-ref},
 then a stream. TTFT here was measured from the start of the request to the
-first generated token or first server chunk; the first visible character on
-screen and the time to completion should be tracked as well. Measuring it with streaming on, at four context lengths,
-each generating 64 tokens:
+first generated token or first server chunk. Measuring it with streaming on,
+at four context lengths, each generating 64 tokens:
 
 ```text
 context tokens    TTFT     total    TTFT share
@@ -218,19 +226,14 @@ context tokens    TTFT     total    TTFT share
 
 [At 7,427 tokens of context, 91% of the request is over before the first
 character appears.]{.hl} The model is not "slow"; the prompt is long, and the
-user is waiting on prefill. These measurements were taken on an idle server,
-so TTFT's queueing component is near zero here; under load, the time a
-request waits its turn can grow until it outweighs prefill.
+user is waiting on prefill (measured on an idle server).
 
 Two consequences that get missed.
 
 **Streaming does not shorten the model's prefill.** It shows output tokens as
 they are ready. Streaming converts a 5.2-second wait into a 4.7-second wait
 followed by text arriving at reading speed, which is a large perceived
-improvement — but the 4.7 seconds of prefill is untouched. The first network
-chunk and the first character on screen can still vary with protocol,
-buffering and client; measure server TTFT, first network chunk and first
-on-screen character separately. The lever for TTFT
+improvement — but the 4.7 seconds of prefill is untouched. The lever for TTFT
 is the prompt, and @sec-serving-cache is the cheapest version of that lever.
 
 **A long context makes decode slower too, not just prefill.** Every generated
@@ -265,6 +268,18 @@ TTFT it describes what *one* user feels. **Throughput** is the other axis:
 tokens per second summed over every request the server is handling at once. It
 is what the operator pays for, and @sec-serving-batching shows why the two
 pull against each other.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- TTFT here was measured on the server. The first network chunk, the first
+  visible character on screen and the time to completion can vary with
+  protocol, buffering and client; measure server TTFT, first network chunk and
+  first on-screen character separately.
+- The TTFT measurements were taken on an idle server, so TTFT's queueing
+  component is near zero here; under load, the time a request waits its turn
+  can grow until it outweighs prefill.
+:::
 
 ## The KV cache, and why context has a price in gigabytes {#sec-serving-kv}
 
@@ -396,15 +411,11 @@ divided by peak bandwidth — for an H100-class part, roughly
 $989 \text{ TFLOP/s} \div 3.35 \text{ TB/s} \approx 295$ FLOP/byte. So at fp16
 decode stays bandwidth-bound until about $B = 295$; at four-bit weights, until
 about $B = 74$. These are rough thresholds for an idealised matrix multiply in
-which the weights are read once and shared across the batch; KV traffic,
-attention, dequantization kernels and achievable hardware efficiency all move
-the real break-even batch. 295 and 74 are not measured serving limits.
+which the weights are read once and shared across the batch.
 
 In prefill a long prompt saturates the weight matrix multiplies better: roughly
-the same formula with the prompt length in place of $B$ — though that
-approximation leaves out attention's cost, which grows with the square of the
-length, and chunked prefill. For the
-4,247-token prompt above, at fp16, that is an intensity of 4,247 — more than an order of
+the same formula with the prompt length in place of $B$. For the 4,247-token
+prompt above, at fp16, that is an intensity of 4,247 — more than an order of
 magnitude past the ridge. (That ridge is for an H100; on the Apple Silicon chip
 measured here peak compute is far lower relative to bandwidth, and four-bit
 weights raise the intensity further, so the gap is larger still.) That is exactly why prefill is compute-bound and
@@ -418,8 +429,7 @@ sequence can be shared by several sequences' matrix multiplies, total tokens
 per second can rise; batching converts that slack into throughput. Each extra
 request still brings KV memory, compute and queueing load: in this idealised
 model its extra cost in weight reads is small, but once the batch crosses the
-ridge the arithmetic starts to cost too. Measure marginal cost and latency at
-real batch sizes.
+ridge the arithmetic starts to cost too.
 
 In practice the limit arrives sooner, for two reasons the formula leaves out.
 Each sequence also reads its *own* KV cache at every step, and that traffic is
@@ -440,9 +450,7 @@ long generation holds the whole batch hostage.
 since — lets a finished sequence leave and a queued one take its slot at the
 next step.
 
-I did not measure this, and should say so plainly: a single-stream local server
-is the wrong instrument, and inventing a number here would be worse than
-citing one. What the literature reports is large: Orca's authors measure order-
+I did not measure this; what the literature reports is large: Orca's authors measure order-
 of-magnitude throughput gains over naive batching at the same latency budget
 [@yu2022orca], and vLLM reports 2–4× over the serving systems that preceded it
 by combining continuous batching with paged cache management
@@ -458,12 +466,6 @@ The part worth internalising is the trade, not the multiple:
 
 : What batching does to each number — a likely tendency for a given traffic level, batch size and request-length distribution {tbl-colwidths="[28,24,48]"}
 
-That is a tendency, not a universal ranking: static batching's result depends
-on the policy of finishing all sequences together and on how latency is
-defined, and continuous batching can also cut queueing delay under some loads.
-Measure total tokens per second together with p50/p99 TTFT and completion
-latency on the same workload.
-
 [Batching is a throughput optimisation that individual users often pay for in
 latency.]{.hl} Every request shares the machine with its batch-mates, so a
 busy server is a slower server per request even when it is a cheaper server per
@@ -478,9 +480,31 @@ them with decode steps, so no decode step waits behind a whole prefill (vLLM
 and SGLang support it). *Disaggregated serving* puts the two halves on
 separate machines: compute-bound prefill in one pool, bandwidth-bound decode
 in another, with the KV cache transferred between them. Both aim to reduce
-queue interference, but neither removes the trade: because of KV transfer and
-new queues, their effect on p99 depends on topology and has to be measured on
-your workload.
+queue interference, but neither removes the trade.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- 295 and 74 are not measured serving limits; KV traffic, attention,
+  dequantization kernels and achievable hardware efficiency all move the real
+  break-even batch.
+- The prefill approximation (prompt length in place of $B$) leaves out
+  attention's cost, which grows with the square of the length, and chunked
+  prefill.
+- Measure the marginal cost and latency of a request added to the batch at
+  real batch sizes.
+- Continuous batching was not measured in this chapter: a single-stream local
+  server is the wrong instrument, and inventing a number here would be worse
+  than citing one.
+- The batching table is a tendency, not a universal ranking: static batching's
+  result depends on the policy of finishing all sequences together and on how
+  latency is defined, and continuous batching can also cut queueing delay under
+  some loads. Measure total tokens per second together with p50/p99 TTFT and
+  completion latency on the same workload.
+- Because of KV transfer and new queues, the effect of chunked prefill and
+  disaggregated serving on p99 depends on topology and has to be measured on
+  your workload.
+:::
 
 ## Prompt caching: the lever to reach for first {#sec-serving-cache}
 
@@ -511,10 +535,8 @@ prompt tokens   cold prefill   warm prefill   speedup   cold total   warm total
 
 Warm prefill is **flat at 12–16 milliseconds regardless of prompt length**,
 because nothing is being recomputed. At 4,247 tokens that is 153× on the
-prefill and **9.0× on the whole request**. Those figures belong to this server
-and the favourable pattern of consecutive identical requests; short prompts,
-partial hits, eviction and load all change the result. For production, measure
-the prefix hit rate and p50/p99 times separately.
+prefill and **9.0× on the whole request**; those figures belong to this server
+and the favourable pattern of consecutive identical requests.
 
 The longer the prefix, the larger the win — which is the opposite of how most
 optimisations scale, and it is why this is the first thing to try.
@@ -549,10 +571,8 @@ Eviction is the big one. In this experiment two identical requests in a row
 reused the same prefix, which is the friendliest case that exists.
 Interleaved requests, the number of slots and the eviction policy all change
 the hit: with one slot per model (`OLLAMA_NUM_PARALLEL=1`), a single
-interleaved request without the shared prefix can discard it. Check
-`OLLAMA_NUM_PARALLEL` and prefix reuse on your installed `ollama` version; what
-two alternating users see depends on them. Servers
-built on paged blocks, such as vLLM and SGLang, keep many cached prefixes at
+interleaved request without the shared prefix can discard it. Servers built
+on paged blocks, such as vLLM and SGLang, keep many cached prefixes at
 once and share them between requests, which softens this but does not remove
 it. Control is
 the second: some hosted APIs cache automatically above a minimum prefix length,
@@ -561,9 +581,16 @@ Price is the third: hosted cached input tokens are billed at a discount rather
 than skipped, and some providers charge extra for the request that writes the
 cache. That discount is the line the worksheet in @sec-serving-cost depends on.
 
-Read 153× as the favourable result of a long, identical prefix in this
-measurement, and measure the hit rate and end-to-end latency on your own
-service.
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Short prompts, partial hits, eviction and load all change the 153× and the
+  9.0×. Read 153× as the favourable result of a long, identical prefix in this
+  measurement, and measure the prefix hit rate, p50/p99 times and end-to-end
+  latency on your own service.
+- Check `OLLAMA_NUM_PARALLEL` and prefix reuse on your installed `ollama`
+  version; what two alternating users see depends on them.
+:::
 
 ## The cost worksheet {#sec-serving-cost}
 
@@ -751,8 +778,7 @@ ceiling, roughly bandwidth ÷ weight bytes at short context (at long context the
 KV-cache bytes read each step add to the denominator): that is how the opening note got
 380 GB/s from 190 tokens per second on a 2.0 GB file, and by the same rough
 estimate the same chip would sit near 60 tokens per second on the 6.4 GB fp16
-weights. Because of KV traffic and dequantization kernels, speed need not rise
-in proportion to weight size. Modern post-training methods
+weights. Modern post-training methods
 choose *which* weights to keep precise rather than rounding uniformly: GPTQ
 solves a layer-wise reconstruction problem [@frantar2023gptq], AWQ protects the
 small fraction of weights that the activation distribution says matter most
@@ -774,23 +800,33 @@ them, rejects the fifth and puts its own token there: five tokens from one pass
 of the large model. With sampling it is only
 approximately so: acceptance is stochastic, and a plausible draft token can
 still be rejected. When the conditions of the original rejection-sampling
-algorithm hold, the output distribution is provably unchanged; implementations
-and sampling settings can depart from them. The wall-clock win depends on the
-acceptance rate, the draft model's cost, batching and the implementation; the
-original work reported around 2–3× when the draft model agrees often, but do
-not treat that as guaranteed, and measure it yourself with the same sampling
-settings.
+algorithm hold, the output distribution is provably unchanged. The wall-clock
+win depends on the acceptance rate, the draft model's cost, batching and the
+implementation; the original work reported around 2–3× when the draft model
+agrees often.
 Note what it does *not* do: the large model still processes every token, and
 also scores the rejected drafts, so FLOPs rise slightly rather than fall; on
 per-token API pricing the bill does not fall either.
 Self-hosted, cost follows GPU time and throughput, so the speedup can lower
-cost per completed answer — measure it on your own serving load. What it buys
-first is latency.
+cost per completed answer. What it buys first is latency.
 
 For the arithmetic underneath all of this at scale — how model size, batch
 size and chip memory bandwidth combine to set what is achievable — see Pope et
 al. [@pope2023efficiently], and @sec-pretraining's $6ND$
 gives the training-side counterpart.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- With quantization, KV traffic and dequantization kernels mean speed need not
+  rise in proportion to weight size.
+- That speculative decoding leaves the output distribution unchanged is proven
+  only under the original algorithm's conditions; implementations and sampling
+  settings can depart from them.
+- Do not treat speculative decoding's 2–3× as guaranteed; measure the speedup
+  with the same sampling settings, and its effect on cost on your own serving
+  load.
+:::
 
 ## Intuition checks {#sec-serving-intuition}
 
