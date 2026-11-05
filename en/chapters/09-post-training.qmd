@@ -419,10 +419,7 @@ state that training them brings.
 
 Count the bytes one parameter costs during mixed-precision AdamW training in
 a common *example setup* — bf16 compute weights and gradients, an fp32 master
-copy and two fp32 Adam moments. Check which copies your implementation actually
-keeps, and the activations and temporary buffers, separately. Other configurations exist and cost
-differently: 8-bit optimizer states, fused fp32-free schemes and sharded
-optimizers all change this table. The 16 is a default, not a law.
+copy and two fp32 Adam moments.
 
 | what is stored | bytes per parameter | why it exists |
 |:--|--:|:--|
@@ -471,9 +468,8 @@ $$
 65 \times 10^9 \;\text{params} \times 12 \;\text{bytes} = 780 \;\text{GB}
 $$
 
-Twelve bytes per parameter — and the paper does not itemise its memory, so
-this product is a possible decomposition, not the paper's own. One reading
-against the table above is the three fp32 rows, master weight, $m$ and $v$;
+Twelve bytes per parameter. One reading against the table above is the three
+fp32 rows, master weight, $m$ and $v$;
 in the 16-byte setup the bf16 weight and gradient bring parameter-related state
 to $65 \times 16 = 1{,}040$ GB, before activations and buffers, consistent with
 "more than". A second reading fits the same twelve exactly: bf16 weight, bf16
@@ -498,16 +494,30 @@ $$
 is the raw size of the frozen bf16 weights. The starting point is less clean.
 1.2 TB across 175B parameters is about 6.9 bytes each, well under the 16 the
 table predicts, so that figure was measured under a setup the paper does not
-spell out. Either cheaper per-parameter state (8-bit or 16-bit optimizer
-moments, no fp32 master copy) or keeping part of the state off the GPU (CPU
-offloading, for instance) could explain it; the paper does not say which.
-Sharding across many cards and activation checkpointing do not explain it on
-their own: sharding spreads the same bytes over more GPUs, and checkpointing
-trims activations, not the per-parameter state. The 350 GB, too, matches the
-raw size of the frozen bf16 weights; the adapter and activations also take
-room, so the equality does not account for every item in the paper. Quote both
-figures as *their* report: you can recompute what the 350 GB corresponds to,
-but you cannot recover the 1.2 TB's itemisation from the two totals.
+spell out.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The 16-byte table is one example setup: check which copies your
+  implementation actually keeps, and measure activations and temporary
+  buffers separately.
+- Other configurations cost differently: 8-bit optimizer states, fused
+  fp32-free schemes and sharded optimizers all change the table. The 16 is a
+  default, not a law.
+- QLoRA does not itemise its memory, so the 12-byte product is a possible
+  decomposition of the 780 GB, not the paper's own.
+- The LoRA paper does not say what made its 1.2 TB cheap: cheaper
+  per-parameter state (8-bit or 16-bit optimizer moments, no fp32 master copy)
+  or CPU offloading could explain it. Sharding and activation checkpointing do
+  not on their own: sharding spreads the same bytes over more GPUs, and
+  checkpointing trims activations, not per-parameter state.
+- The 350 GB matches the raw size of the frozen bf16 weights, but the adapter
+  and activations also take room, so the equality does not account for every
+  item in the paper.
+- Quote both LoRA figures as *their* report: you can recompute what the 350 GB
+  corresponds to, but you cannot recover the 1.2 TB's itemisation.
+:::
 
 ### The low-rank hypothesis
 
@@ -761,9 +771,7 @@ The arithmetic above is for one configuration. Yours will differ, and the
 numbers move faster than intuition does — so rather than trusting a rule of
 thumb, put your own model size and rank in. The widget gives an **approximate
 subtotal of weights, gradients and optimizer state** for the parameter count
-and storage scheme you choose; the GPU memory a run needs also depends on
-activations, sequence and batch length, temporary buffers and the
-implementation. Do not use the result as a guarantee that a run fits.
+and storage scheme you choose.
 
 ```{ojs}
 //| echo: false
@@ -830,9 +838,8 @@ The defaults are Llama 3.1 8B (8.03B parameters) with an $r{=}16$ adapter on
 attention and MLP — 41,943,040 parameters, or 0.52% of the model. The
 widget's *static-state-only* sums: full fine-tune **119.7 GiB**, past every
 common 24–80 GB single-GPU configuration; LoRA on a bf16 base **15.5 GiB**;
-QLoRA on a raw 4-bit base **4.3 GiB**. Without activations, temporary buffers
-and QLoRA's scaling metadata you cannot say which card they fit; the caution
-below shows why that matters.
+QLoRA on a raw 4-bit base **4.3 GiB**. The caution below shows what these sums
+leave out.
 
 ::: {.callout-warning appearance="simple"}
 **What this widget leaves out is the part that will surprise you.** It counts
@@ -852,6 +859,16 @@ widget's numbers are a subtotal rather than an estimate. Before choosing a
 card, run a short pilot on the target setup and measure peak memory. It is also why
 the lab at the end of this chapter measures a much less dramatic ratio than the
 arithmetic here predicts.
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The GPU memory a run needs also depends on activations, sequence and batch
+  length, temporary buffers and the implementation; do not use the widget's
+  result as a guarantee that a run fits.
+- Without activations, temporary buffers and QLoRA's scaling metadata you
+  cannot say which card the default sums (119.7, 15.5 and 4.3 GiB) fit.
 :::
 
 ### QLoRA: quantize the part you are not training
@@ -874,17 +891,14 @@ work:
   non-trivial share of the total;
 - **paged optimizers**, which, on supported unified-memory setups, let
   optimizer state spill to CPU memory during memory spikes and so manage some
-  of them; the gain and the speed cost have to be measured on the
-  implementation.
+  of them.
 
 The headline result: fine-tuning a 65B model goes from ">780 GB of GPU memory
 to &lt;48 GB without degrading the runtime or predictive performance compared to
-a 16-bit fully finetuned baseline" [@dettmers2023qlora] — a result reported for
-the paper's own task comparisons. Their Guanaco 65B, trained this way in 24
-hours on a single GPU, reached 99.3% of ChatGPT's score on the 80-question
-Vicuna benchmark, as scored by GPT-4 acting as judge rather than by humans;
-that ratio is not a general accuracy or human-preference measure (on the limits
-of LLM judges see @sec-llm-eval-judge).
+a 16-bit fully finetuned baseline" [@dettmers2023qlora]. Their Guanaco 65B,
+trained this way in 24 hours on a single GPU, reached 99.3% of ChatGPT's score
+on the 80-question Vicuna benchmark, as scored by GPT-4 acting as judge rather
+than by humans.
 
 ::: {.callout-warning appearance="simple"}
 **"Without degrading" is measured against full fine-tuning, not plain LoRA.**
@@ -896,6 +910,17 @@ small card; on a card where plain LoRA already fits, measure the step time of
 both on the same hardware and batch.
 :::
 
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The gain and the speed cost of paged optimizers have to be measured on the
+  implementation.
+- QLoRA's "without degrading" is a result reported for the paper's own task
+  comparisons.
+- Guanaco's 99.3% of ChatGPT's score is not a general accuracy or
+  human-preference measure; on the limits of LLM judges see @sec-llm-eval-judge.
+:::
+
 ### The payoff nobody mentions until they are on call
 
 LoRA has an operational property that matters more, in a company, than any of
@@ -903,8 +928,7 @@ the training savings: an adapter can be **merged back into the base weights**.
 Since $h = W_0x + \frac{\alpha}{r}BAx = (W_0 + \frac{\alpha}{r}BA)x$, you can
 compute that sum once, in a suitable linear layer, and ship an ordinary model;
 the separate adapter multiply goes away — the paper's "no additional inference
-latency" [@hu2022lora]. Real latency still depends on the serving stack,
-precision and quantization; measure it. It is a significant advantage over
+latency" [@hu2022lora]. It is a significant advantage over
 bottleneck adapters [@houlsby2019parameter], which insert extra layers.
 
 Or you can *not* merge, keep the base shared in memory, and swap adapters per
@@ -925,14 +949,21 @@ dtype when you quote an adapter size]{.hl}; on its own the rank tells you
 almost nothing.
 
 Even at the generous end, the weights of a thousand customers' private
-fine-tunes — one bf16 base and a thousand adapters — come to 93.1 GiB. That is
-a *weight-storage* sum; it does not show that one node can serve a thousand
-tenants at the concurrency and latency you need: KV caches, adapter loading,
-workspace and traffic have to be budgeted separately. Still, it is one reason
-"fine-tuning" can be a product at all, rather than a research technique —
-and it is worth noticing that the paper made the same point about GPT-3 in
-2021: 100 adapted models cost 350 GB + 35 MB × 100 ≈ 354 GB, against 35 TB for
-100 separate copies [@hu2022lora].
+fine-tunes — one bf16 base and a thousand adapters — come to 93.1 GiB of
+*weight storage*. That is one reason "fine-tuning" can be a product at all,
+rather than a research technique — and it is worth noticing that the paper
+made the same point about GPT-3 in 2021: 100 adapted models cost 350 GB +
+35 MB × 100 ≈ 354 GB, against 35 TB for 100 separate copies [@hu2022lora].
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Merging removes the separate adapter multiply, but real latency still
+  depends on the serving stack, precision and quantization; measure it.
+- The 93.1 GiB is a weight-storage sum; it does not show that one node can
+  serve a thousand tenants at the concurrency and latency you need. KV caches,
+  adapter loading, workspace and traffic have to be budgeted separately.
+:::
 
 ## Preference and reward optimization {#sec-preference}
 
@@ -1670,22 +1701,15 @@ autoregressive perplexity in @sec-language-models.
 
 One methodological point decides whether the numbers mean anything. In the
 LoRA row the adapter is *active*: here it was probed **merged into the base
-weights**. (Merging is not required; in the re-run the merged model and the
-model with the adapter active differed by at most $4.8\times10^{-6}$ in any
-logit, in fp32.) Deleting the adapter would recover the starting model and the
+weights**. Deleting the adapter would recover the starting model and the
 measurement would be a tautology. What is being asked is: *when you deploy the
 LoRA-adapted model, has that model's grip on Turkish loosened?*
 
 One limit of the probe, stated before the numbers rather than after. The
 masked-language head is frozen at its pretrained weights while the encoder
 underneath moves, so a rising loss measures *the encoder drifting away from
-that head* — which mixes genuine loss of linguistic information with a
-representation the old head can no longer read. Those are not the same thing,
-and this design cannot separate them. What would separate them is a freshly
-fitted probe on top of each encoder, or a downstream Turkish task the encoder
-has not been tuned on. Read the table as a change in fit seen through the
-existing frozen head, not as a measurement of how much Turkish knowledge was
-lost.
+that head*. Read the table as a change in fit seen through the existing frozen
+head, not as a measurement of how much Turkish knowledge was lost.
 
 Two probe sets, because they answer different questions. **General Turkish** is
 1,826 sentences of ordinary prose from a parallel corpus [@zhang2020improving] —
@@ -1693,8 +1717,7 @@ nothing to do with reviews, nothing to do with sentiment. **Held-out reviews**
 is the test split from the lab below (@sec-lora-lab): same domain as the fine-tune, included so
 that nobody can dismiss the result as a domain-shift artefact. The masked
 tensors are generated once and reused for all three encoders, which removes
-sampling differences; the evaluation mode, the MLM head and the numerical
-precision should be held equal too.
+sampling differences.
 
 | encoder | general TR loss | top-1 | reviews loss | top-1 |
 |:--|--:|--:|--:|--:|
@@ -1709,19 +1732,6 @@ single best guess is the token that was actually there. Lower loss and higher
 top-1 are both better, and the base row is the model as the Hub ships it.
 :::
 
-The probe's code had not been saved; we rewrote it from the text and ran it
-(re-run, October 2026). For general Turkish we used the Turkish side of the
-OPUS-100 `en-tr` test split (1,976 deduplicated sentences, 2,860 masked
-positions), for reviews the first 2,000 reviews of the test split (9,753
-positions); the full fine-tune is our 2e-5 run (85.34 macro-F1), and LoRA
-$r=8$ is the run that reproduces the book's lab row exactly. The pretrained
-model scored 2.897 loss and 47.0% top-1 on general Turkish, 2.602 and 49.1% on
-reviews. After the full fine-tune the loss rose **+9.7%** on general Turkish
-(top-1 44.1%) and **+55.5%** on reviews (35.0%); with merged LoRA the rises were
-**+1.7%** (46.2%) and **+25.9%** (42.2%). Because the text and the full
-fine-tune's settings differ, the magnitudes differ from the book's table; the
-ordering and the in-domain pattern are the same.
-
 Three things in that table are worth more than the paragraph that introduced
 them.
 
@@ -1731,9 +1741,7 @@ loss increases* measured through a frozen head, not a measurement that one model
 forgot 4.6 times as much Turkish. On text that has nothing to do with the task,
 a full fine-tune raises the masked-language loss measured through the frozen
 head by 12.5% and costs four points of top-1 accuracy. That is not catastrophic
-in the dramatic sense, but it is a meaningful regression under this probe; it
-does not show that the model's general Turkish ability fell by the same share.
-Test the product abilities you want to keep separately.
+in the dramatic sense, but it is a meaningful regression under this probe.
 
 **In this experiment LoRA's loss increase is smaller than the full fine-tune's,
 but not zero.** +2.7% is small, but it is not zero, and the merged model reads measurably worse through the head it started
@@ -1743,12 +1751,11 @@ the reversibility argument and calling it the forgetting argument.
 **The regression is larger on the in-domain probe.** This is the row that
 surprises people: the full fine-tune's loss rises 12.5% on general Turkish and
 **71.6%** on held-out reviews — nearly six times as much on the domain it was
-trained on (9.7% against 55.5% in the re-run). One possible reading: the model
+trained on. One possible reading: the model
 reorganises, for the task, the representations your data touched most — review
 text shifts from *"everything a sentence can mean"* towards *"which of two
 buttons to press"* — and the masked-language head can no longer read it as
-well. How much of that is representational change and how much a mismatch with
-the old head, this design cannot separate. The practical point stands: in this
+well. The practical point stands: in this
 experiment the probe most sensitive to regression was the in-domain one, which
 is exactly the kind of probe that looks redundant next to the task test set and
 so does not get built.
@@ -1781,6 +1788,33 @@ constrains it is that the update is confined to a rank-$r$ subspace of two
 projections per layer, so there is far less room to move than a full fine-tune
 has. That is a plausible mechanism, not a proof — which is exactly why the row
 above is measured rather than asserted.
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Merging is not required for the probe: in the re-run the merged model and
+  the model with the adapter active differed by at most $4.8\times10^{-6}$ in
+  any logit, in fp32.
+- A rising loss under the frozen head mixes genuine loss of linguistic
+  information with a representation the old head can no longer read; this
+  design cannot separate them, on either probe set. A freshly fitted probe on
+  each encoder, or a downstream Turkish task the encoder has not been tuned
+  on, would.
+- The masked tensors are shared across the three encoders; the evaluation
+  mode, the MLM head and the numerical precision should be held equal too.
+- The 12.5% rise does not show that the model's general Turkish ability fell
+  by the same share; test the product abilities you want to keep separately.
+- The probe's code had not been saved; we rewrote it from the text and ran it
+  (re-run, October 2026): the Turkish side of the OPUS-100 `en-tr` test split
+  for general Turkish (1,976 deduplicated sentences, 2,860 masked positions),
+  the first 2,000 test reviews (9,753 positions), our 2e-5 full fine-tune
+  (85.34 macro-F1), and the LoRA $r=8$ run that reproduces the lab row exactly.
+- In the re-run the pretrained model scored 2.897 loss and 47.0% top-1 on
+  general Turkish, 2.602 and 49.1% on reviews. The full fine-tune raised the
+  loss **+9.7%** (top-1 44.1%) and **+55.5%** (35.0%); merged LoRA **+1.7%**
+  (46.2%) and **+25.9%** (42.2%). Text and settings differ, so the magnitudes
+  differ from the table; the ordering and the in-domain pattern are the same.
 :::
 
 ### What to do about it

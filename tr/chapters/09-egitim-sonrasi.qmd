@@ -438,13 +438,7 @@ değil, onları eğitmenin getirdiği ek durumdur.
 
 Karma hassasiyetli AdamW eğitimi sırasında tek bir parametrenin kaç bayta mal
 olduğunu yaygın bir *örnek düzende* sayalım: bf16 hesap ağırlıkları ve
-gradyanlar, fp32 ana kopya ve iki fp32 Adam momenti. Kullandığınız uygulamanın
-hangi kopyaları gerçekten tuttuğunu, aktivasyonları ve geçici tamponları ayrıca
-denetleyin. Başka
-düzenler de var ve maliyetleri farklı: 8 bitlik optimizer durumları, fp32
-kullanmayan birleştirilmiş (fused) şemalar ve parçalanmış optimizer'lar bu
-tabloyu değiştirir. 16 bir varsayılandır, bir yasa
-değil.
+gradyanlar, fp32 ana kopya ve iki fp32 Adam momenti.
 
 | ne saklanıyor | parametre başına bayt | neden var |
 |:--|--:|:--|
@@ -494,8 +488,7 @@ $$
 $$
 
 Parametre başına on iki bayt; yukarıdaki tablodaki on altı baytın büyük kısmı.
-Makale bellek kalemlerinin dökümünü vermiyor; bu çarpım olası bir ayrıştırma,
-makalenin kendi dökümü değil. Aşağıdaki iki olası okumada da [manşet rakamın
+Aşağıdaki iki olası okumada da [manşet rakamın
 büyük kısmı, yalnızca parametre eğitildiği için var olan durum.]{.hl} LoRA makalesinin GPT-3 rakamı da aynı mantıkla
 okunabilir; iki rakamın ayrıntılı ayrıştırması aşağıdaki kutuda.
 
@@ -537,6 +530,19 @@ denk geliyor; adaptör ve aktivasyonlar da yer tuttuğundan bu eşitlik makaleni
 bütün kalemlerini açıklamaz. İki rakamı da *onların* raporu olarak aktarın;
 350 GB'ın neye denk geldiğini yeniden hesaplayabilirsiniz, 1,2 TB'ın dökümünü
 ise bu iki toplamdan çıkaramazsınız.
+:::
+
+::: {.callout-note collapse="true"}
+## Bu kısmın sınırları
+
+- 16 baytlık tablo bir örnek düzen: kullandığınız uygulamanın hangi kopyaları
+  gerçekten tuttuğunu denetleyin; aktivasyonları ve geçici tamponları ayrıca
+  ölçün.
+- Başka düzenlerin maliyeti farklı: 8 bitlik optimizer durumları, fp32
+  kullanmayan birleştirilmiş (fused) şemalar ve parçalanmış optimizer'lar
+  tabloyu değiştirir. 16 bir varsayılandır, bir yasa değil.
+- QLoRA makalesi bellek kalemlerinin dökümünü vermiyor; 12 baytlık çarpım
+  780 GB'ın olası bir ayrıştırması, makalenin kendi dökümü değil.
 :::
 
 ### Düşük ranklılık hipotezi
@@ -794,9 +800,7 @@ Yukarıdaki aritmetik tek bir yapılandırma için. Sizinki farklı olacak ve
 sayılar, sezginin yetişebileceğinden hızlı değişiyor. Bu yüzden pratik bir
 kurala güvenmek yerine kendi model boyunuzu ve rankınızı girin. Araç,
 seçtiğiniz parametre sayısı ve saklama düzeni için **ağırlık, gradyan ve
-optimizer durumunun yaklaşık alt toplamını** verir; gereken GPU belleği
-aktivasyonlara, dizi ve batch uzunluğuna, geçici tamponlara ve uygulamaya da
-bağlıdır. Sonucu bir sığma garantisi olarak kullanmayın.
+optimizer durumunun yaklaşık alt toplamını** verir.
 
 ```{ojs}
 //| echo: false
@@ -863,10 +867,8 @@ Varsayılanlar, attention ve MLP katmanları üzerinde $r{=}16$ adaptörü olan
 Llama 3.1 8B (8,03B parametre) — 41.943.040 parametre, yani modelin %0,52'si.
 Aracın *yalnızca statik durum* hesabı: tam fine-tuning **119,7 GiB**, yaygın
 24–80 GB'lık tek GPU yapılandırmalarının tamamının ötesinde; bf16 tabanlı LoRA
-**15,5 GiB**; 4 bit ham tabanlı QLoRA **4,3 GiB**. Bu sayılara aktivasyonlar,
-geçici tamponlar ve QLoRA'nın ölçek bilgisi eklenmeden belirli bir karta
-sığacakları söylenemez; aşağıdaki uyarı bunun neden önemli olduğunu
-gösteriyor.
+**15,5 GiB**; 4 bit ham tabanlı QLoRA **4,3 GiB**. Bu toplamların neyi
+dışarıda bıraktığını aşağıdaki uyarı gösteriyor.
 
 ::: {.callout-warning appearance="simple"}
 **Bu aracın dışarıda bıraktığı şey sizi şaşırtacak olan kısım.** Ağırlıkları,
@@ -889,6 +891,17 @@ Bölümün sonundaki labın, buradaki aritmetiğin öngördüğünden çok daha 
 çarpıcı bir oran ölçmesinin sebebi de aynı.
 :::
 
+::: {.callout-note collapse="true"}
+## Bu kısmın sınırları
+
+- Bir koşunun gerektirdiği GPU belleği aktivasyonlara, dizi ve batch
+  uzunluğuna, geçici tamponlara ve uygulamaya da bağlıdır; aracın sonucunu bir
+  sığma garantisi olarak kullanmayın.
+- Aktivasyonlar, geçici tamponlar ve QLoRA'nın ölçek bilgisi eklenmeden
+  varsayılan toplamların (119,7, 15,5 ve 4,3 GiB) hangi karta sığacağı
+  söylenemez.
+:::
+
 ### QLoRA: eğitmediğiniz kısmı nicemleyin
 
 Son adım için bir fikir daha gerekiyor. Yukarıdaki LoRA satırında 15,5 GiB'lık
@@ -909,17 +922,14 @@ gerektiği anda bf16'ya geri açıyor. Üç parça işi yürütüyor:
 - **paged optimizer'lar** (sayfalanmış optimizer'lar), desteklenen birleşik
   bellek düzeninde, bellek kullanımı sıçramaları (memory spikes) sırasında
   optimizer durumunun CPU belleğine taşmasına izin vererek bu sıçramaların bir
-  kısmını yönetir; kazancı ve hız bedeli uygulamaya göre ölçülmelidir.
+  kısmını yönetir.
 
 Öne çıkan sonuç: 65B'lik bir modeli fine-tune etmek için gereken bellek, "16
 bitlik, tamamen fine-tune edilmiş bir baseline'a (karşılaştırma koşusu) kıyasla çalışma süresini ya da
 tahmin başarımını düşürmeden >780 GB GPU belleğinden &lt;48 GB'a" iniyor
-[@dettmers2023qlora]; bu, makalenin kendi görev karşılaştırmaları için
-bildirilen bir sonuç. Yazarların bu şekilde, tek bir GPU'da 24 saatte eğittiği
+[@dettmers2023qlora]. Yazarların bu şekilde, tek bir GPU'da 24 saatte eğittiği
 Guanaco 65B, 80 soruluk Vicuna benchmark'ında ChatGPT'nin skorunun %99,3'üne
-ulaştı; bu puanları insanlar değil, hakem olarak GPT-4 verdi ve bu oran genel
-bir doğruluk ya da insan tercihi ölçüsü değil (LLM hakemliğinin
-sınırları için bkz. @sec-llm-degerlendirme-hakem).
+ulaştı; bu puanları insanlar değil, hakem olarak GPT-4 verdi.
 
 ::: {.callout-warning appearance="simple"}
 **"Düşürmeden" iddiası tam fine-tuning'e göre; düz LoRA'ya göre değil.**
@@ -932,6 +942,17 @@ sığdığı bir kartta adım süresini iki yöntemle aynı donanım ve batch ü
 ölçün.
 :::
 
+::: {.callout-note collapse="true"}
+## Bu kısmın sınırları
+
+- Paged optimizer'ların kazancı ve hız bedeli uygulamaya göre ölçülmelidir.
+- QLoRA'nın "düşürmeden" sonucu, makalenin kendi görev karşılaştırmaları için
+  bildirilmiş bir sonuç.
+- Guanaco'nun ChatGPT skorunun %99,3'üne ulaşması genel bir doğruluk ya da
+  insan tercihi ölçüsü değil; LLM hakemliğinin sınırları için
+  bkz. @sec-llm-degerlendirme-hakem.
+:::
+
 ### Nöbet tutmaya başlayınca fark edilen avantaj
 
 LoRA'nın, bir şirket içinde eğitim tasarrufundan çok daha önemli olan
@@ -939,8 +960,7 @@ operasyonel bir özelliği var: adaptör **taban ağırlıklara geri kaynaştır
 $h = W_0x + \frac{\alpha}{r}BAx = (W_0 + \frac{\alpha}{r}BA)x$ olduğuna göre bu
 toplamı uygun bir doğrusal katmanda bir kez hesaplayıp sıradan bir model
 yayına alabilirsiniz; ayrı adaptör çarpımının yükü ortadan kalkar — makalenin
-deyişiyle "ek çıkarım gecikmesi yok" [@hu2022lora]. Gerçek gecikme yine de
-sunum yığınına, hassasiyete ve nicemlemeye bağlıdır; ölçün. Fazladan katman
+deyişiyle "ek çıkarım gecikmesi yok" [@hu2022lora]. Fazladan katman
 ekleyen darboğaz (bottleneck) adaptörlerine [@houlsby2019parameter] göre
 önemli bir avantaj bu.
 
@@ -962,14 +982,21 @@ söylerken hedef modülleri ve dtype'ı da mutlaka söyleyin]{.hl}; rank tek ba�
 neredeyse hiçbir şey anlatmaz.
 
 Cömert uçta bile, bin müşterinin kendi fine-tune edilmiş modelinin ağırlıkları
-— bir bf16 taban ve bin adaptör — 93,1 GiB'a sığıyor. Bu bir *ağırlık
-depolama* hesabı; bin kiracıya tek düğümde istenen eşzamanlılık ve gecikmeyle
-hizmet verilebileceğini göstermez: KV önbelleği, adaptör yükleme, çalışma
-alanı ve trafik ayrıca hesaplanmalı. Yine de fine-tuning'in bir araştırma
-tekniği olmanın ötesinde bir ürün olabilmesinin sebeplerinden biri bu — ve
-makalenin 2021'de GPT-3 için aynı noktaya işaret
+— bir bf16 taban ve bin adaptör — 93,1 GiB'lık *ağırlık depolamaya* sığıyor.
+Fine-tuning'in bir araştırma tekniği olmanın ötesinde bir ürün olabilmesinin
+sebeplerinden biri bu — ve makalenin 2021'de GPT-3 için aynı noktaya işaret
 ettiğini görmek de ilginç: 100 ayrı kopya 35 TB tutarken 100 uyarlanmış model
 350 GB + 35 MB × 100 ≈ 354 GB tutuyor [@hu2022lora].
+
+::: {.callout-note collapse="true"}
+## Bu kısmın sınırları
+
+- Kaynaştırma ayrı adaptör çarpımını kaldırır, ama gerçek gecikme yine de sunum
+  yığınına, hassasiyete ve nicemlemeye bağlıdır; ölçün.
+- 93,1 GiB bir ağırlık depolama hesabı; bin kiracıya tek düğümde istenen
+  eşzamanlılık ve gecikmeyle hizmet verilebileceğini göstermez. KV önbelleği,
+  adaptör yükleme, çalışma alanı ve trafik ayrıca hesaplanmalı.
+:::
 
 ## Tercih ve ödül optimizasyonu {#sec-tercih-optimizasyonu}
 
@@ -1732,20 +1759,14 @@ değeriyle doğrudan karşılaştırılamaz.
 
 Sayıların bir anlam taşıyıp taşımadığını tek bir yöntem kararı belirliyor. LoRA
 satırında adaptör *etkin*: bu çalışmada **taban ağırlıklara kaynaştırılarak**
-yoklandı. (Kaynaştırma şart değil; yeniden koşuda kaynaştırılmış model ile
-adaptörü etkin model arasındaki logit farkı fp32'de en fazla $4{,}8\times10^{-6}$
-çıktı.) Adaptörü silmek ise başlangıç modelini geri getirirdi ve ölçüm bir
+yoklandı. Adaptörü silmek ise başlangıç modelini geri getirirdi ve ölçüm bir
 totoloji olurdu. Sorulan şey şu: *LoRA ile uyarlanmış modeli dağıttığınızda, o
 modelin Türkçeye hâkimiyeti zayıflamış mıdır?*
 
 Probe'un bir sınırını sayılardan sonra değil önce söyleyelim. Masked-language
 head'i ön eğitimden gelen ağırlıklarında dondurulmuşken altındaki encoder
 hareket ediyor. Dolayısıyla yükselen kayıp, *encoder'ın o head'den
-uzaklaşmasını* ölçüyor. Bu ölçüm iki şeyi birbirine karıştırır: gerçek dilsel
-bilgi kaybını ve eski head'in artık okuyamadığı bir temsili. İkisi aynı şey
-değil ve bu tasarım onları ayıramaz. Ayıracak olan şey, her encoder'ın üstüne
-yeniden eğitilmiş bir probe ya da encoder'ın üzerinde ayarlanmadığı bir Türkçe
-alt görev olurdu. Tabloyu, mevcut donmuş head ile görülen bir uyum değişimi
+uzaklaşmasını* ölçüyor. Tabloyu, mevcut donmuş head ile görülen bir uyum değişimi
 olarak okuyun; Türkçe bilgisinin ne kadarının kaybolduğunun ölçümü olarak
 değil.
 
@@ -1755,8 +1776,7 @@ Türkçe**, paralel bir derlemden alınmış 1.826 cümlelik sıradan düzyazı
 yorumlar** ise aşağıdaki labın (@sec-lora-lab) test bölümü: fine-tuning ile aynı alan; sonucun
 bir alan kayması yan etkisi diye geçiştirilememesi için dâhil edildi. Maskeli
 tensörler bir kez üretilip üç encoder için de yeniden kullanılıyor; böylece
-örnekleme farkı ortadan kalkıyor. Değerlendirme modu, MLM head ve sayısal
-hassasiyet de üçünde aynı tutulmalı.
+örnekleme farkı ortadan kalkıyor.
 
 | encoder | genel TR kaybı | top-1 | yorumlarda kayıp | top-1 |
 |:--|--:|--:|--:|--:|
@@ -1771,19 +1791,6 @@ tahmininin gerçekten orada olan token'a ne sıklıkta denk geldiği. Düşük k
 yüksek top-1 de iyidir; ilk satır ise modelin Hub'dan geldiği hâli.
 :::
 
-Yoklamanın kodu kaydedilmemişti; onu metinden yeniden yazıp çalıştırdık
-(yeniden koşu, Ekim 2026). Genel Türkçe kümesi olarak OPUS-100 `en-tr` test
-bölümünün Türkçe tarafını (tekilleştirilmiş 1.976 cümle, 2.860 maskeli konum),
-yorumlar için test bölümünün ilk 2.000 yorumunu (9.753 konum) kullandık; tam
-fine-tuning satırı bizim 2e-5'lik koşumuz (85,34 macro-F1), LoRA $r=8$ ise
-kitabın lab satırını birebir yeniden üreten koşu. Ön eğitimli model genel
-Türkçede 2,897 kayıp ve %47,0 top-1, yorumlarda 2,602 ve %49,1 aldı. Tam
-fine-tuning sonrası kayıp genel Türkçede **+%9,7** (top-1 %44,1), yorumlarda
-**+%55,5** (%35,0) arttı; kaynaştırılmış LoRA'da artışlar **+%1,7** (%46,2) ve
-**+%25,9** (%42,2). Metin ve tam fine-tuning ayarı farklı olduğu için
-büyüklükler kitabın tablosundan ayrılıyor; sıralama ve alan içi örüntü
-aynı.
-
 Tablodan üç ders çıkıyor ve üçü de tabloyu tanıtan paragraftan daha önemli.
 
 **Donmuş eski head üzerinden bakıldığında iki uyarlama da kaybı artırıyor;
@@ -1793,9 +1800,7 @@ söyleyelim: %12,5'e karşı %2,7 — yaklaşık 4,6 kat — donmuş bir head
 daha fazla Türkçe unuttuğunun ölçümü değil. Görevle hiç ilgisi olmayan metinde
 tam fine-tuning, donmuş head ile ölçülen masked-language kaybını %12,5
 artırıyor, top-1 doğruluğunu da dört puan düşürüyor. Bu, dramatik anlamda
-yıkıcı değil ama bu yoklama düzeninde anlamlı bir gerileme; modelin genel
-Türkçe yeteneğinin aynı oranda kaybolduğunu göstermez. Korumak istediğiniz
-ürün becerilerini ayrıca test edin.
+yıkıcı değil ama bu yoklama düzeninde anlamlı bir gerileme.
 
 **Bu deneyde LoRA'nın kayıp artışı tam fine-tuning'den küçük, ama sıfır
 değil.** +%2,7 küçük bir sayı ama sıfır değil. Kaynaştırılmış model, başlangıçtaki head üzerinden okunduğunda
@@ -1805,13 +1810,11 @@ ona unutma argümanı adını veriyordur.
 
 **Alan içi yoklamada gerileme daha büyük.** İnsanları şaşırtan satır bu: tam
 fine-tuning'in kaybı genel Türkçede %12,5, ayrılmış yorumlarda ise **%71,6**
-artıyor — üzerinde eğitildiği alanda neredeyse altı katı (yeniden koşuda
-%9,7'ye karşı %55,5). Olası bir okuma şu: model, verinizin en çok dokunduğu
-temsilleri görev için yeniden düzenliyor — yorum metninin temsili *"bir
-cümlenin anlatabileceği her şey"*den *"iki düğmeden hangisine basılacağı"*na
-kayıyor — ve masked-language head'i bunu eskisi kadar okuyamıyor. Ama bunun ne
-kadarının temsil değişimi, ne kadarının eski head ile uyumsuzluk olduğu bu
-düzenle ayrılamaz. Pratik sonuç yine de önemli: bu deneyde gerilemeye en
+artıyor — üzerinde eğitildiği alanda neredeyse altı katı. Olası bir okuma şu:
+model, verinizin en çok dokunduğu temsilleri görev için yeniden düzenliyor —
+yorum metninin temsili *"bir cümlenin anlatabileceği her şey"*den *"iki
+düğmeden hangisine basılacağı"*na kayıyor — ve masked-language head'i bunu
+eskisi kadar okuyamıyor. Pratik sonuç önemli: bu deneyde gerilemeye en
 duyarlı yoklama alan içi olandı ve bu, görevin kendi test kümesi dururken
 gereksiz görünüp kurulmayan türden bir yoklama.
 
@@ -1844,6 +1847,34 @@ projeksiyonun rank-$r$ alt uzayına hapsedilmiş olması; yani tam fine-tuning'e
 kıyasla oynayacak çok daha az yer var. Bu makul bir mekanizma, kanıt değil —
 yukarıdaki satırın iddia edilmek yerine ölçülmüş olmasının sebebi de
 bu.
+:::
+
+::: {.callout-note collapse="true"}
+## Bu kısmın sınırları
+
+- Yoklama için kaynaştırma şart değil: yeniden koşuda kaynaştırılmış model ile
+  adaptörü etkin model arasındaki logit farkı fp32'de en fazla
+  $4{,}8\times10^{-6}$ çıktı.
+- Donmuş head üzerinden yükselen kayıp, gerçek dilsel bilgi kaybını ve eski
+  head'in artık okuyamadığı bir temsili birbirine karıştırır; bu tasarım iki
+  probe kümesinde de onları ayıramaz. Her encoder'ın üstüne yeniden eğitilmiş
+  bir probe ya da encoder'ın üzerinde ayarlanmadığı bir Türkçe alt görev
+  ayırabilirdi.
+- Maskeli tensörler üç encoder'da ortak; değerlendirme modu, MLM head ve
+  sayısal hassasiyet de üçünde aynı tutulmalı.
+- %12,5'lik artış, modelin genel Türkçe yeteneğinin aynı oranda kaybolduğunu
+  göstermez; korumak istediğiniz ürün becerilerini ayrıca test edin.
+- Yoklamanın kodu kaydedilmemişti; onu metinden yeniden yazıp çalıştırdık
+  (yeniden koşu, Ekim 2026): genel Türkçe için OPUS-100 `en-tr` test
+  bölümünün Türkçe tarafı (tekilleştirilmiş 1.976 cümle, 2.860 maskeli konum),
+  test bölümünün ilk 2.000 yorumu (9.753 konum), bizim 2e-5'lik tam
+  fine-tuning koşumuz (85,34 macro-F1) ve lab satırını birebir yeniden üreten
+  LoRA $r=8$ koşusu.
+- Yeniden koşuda ön eğitimli model genel Türkçede 2,897 kayıp ve %47,0 top-1,
+  yorumlarda 2,602 ve %49,1 aldı. Tam fine-tuning kaybı **+%9,7** (top-1
+  %44,1) ve **+%55,5** (%35,0), kaynaştırılmış LoRA **+%1,7** (%46,2) ve
+  **+%25,9** (%42,2) artırdı. Metin ve ayarlar farklı olduğu için büyüklükler
+  tablodan ayrılıyor; sıralama ve alan içi örüntü aynı.
 :::
 
 ### Bu konuda ne yapmalı
