@@ -34,8 +34,7 @@ The good news first, because it saves a lot of reinvention. An agent run is a
 tree of nested operations with parents, children, timings and errors — which is
 exactly what distributed tracing was built for. You can reuse spans, trace
 context propagation, sampling and exporters, and the backend you already run
-mostly works too; but GenAI content can strain attribute-size, sampling,
-storage and privacy settings, so check those separately.
+mostly works too.
 
 ::: {#gloss-span .column-margin .term-gloss}
 **span** — one timed unit of work in a trace: a name, a start and end time, a
@@ -46,9 +45,7 @@ parent, key–value attributes and a status.
 If those words are new, here is the whole vocabulary in one paragraph. A
 **trace** is the record of one request as it moves through a system. In this
 chapter one user request's trace is a tree of
-[**spans**](#gloss-span){#term-span .term-ref} (asynchronous queues and fan-out
-can also need span links; a conversation id relates different runs rather than
-making them one trace): each span is one timed
+[**spans**](#gloss-span){#term-span .term-ref}: each span is one timed
 operation (a model call, a tool call) with a name, start and end times, a
 parent, a status and a set of key–value **attributes**. **Instrumentation** is
 the code that creates those spans; to *instrument* a program is to add such
@@ -84,6 +81,17 @@ its step ceiling and stopped. @sec-deployment made hitting a ceiling a
 first-class outcome for exactly this reason: nothing in the transport layer
 knows the run failed.
 
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The backend you already run mostly works, but GenAI content can strain
+  attribute-size, sampling, storage and privacy settings; check those
+  separately.
+- Asynchronous queues and fan-out can need span links in addition to the span
+  tree; a conversation id relates different runs rather than making them one
+  trace.
+:::
+
 ## The conventions, and how much of them is settled {#sec-observability-semconv}
 
 Instrumenting with your own attribute names works until you want a vendor's UI,
@@ -104,10 +112,9 @@ stability badge. `Development` means an item can still change; `Stable` carries
 a stronger compatibility commitment but does not mean unchanging forever — stable
 attributes can be deprecated too. Pin the document revision you use to a commit
 or release. For this chapter we counted the badges in the span, agent-span
-and metric documents of a 2026 snapshot of the repository. (We count marked
-items, not distinct attributes, because one attribute can be marked in more
-than one document; and the commit was not recorded, so expect later versions to
-differ.) In that dated snapshot, which cannot be reproduced, **286 of the 308 marked
+and metric documents of a 2026 snapshot of the repository (marked items, not
+distinct attributes, because one attribute can be marked in more than one
+document). In that dated snapshot **286 of the 308 marked
 items in the span conventions were `Development` and only 22 were `Stable`**,
 with much the same ratio in the agent and metric documents. The 22 are also not what you might hope for: in the current
 repository, every `Stable` badge in the span document belongs to a general
@@ -128,8 +135,7 @@ migration rather than to be surprised by one.
 
 With that stated, the shape is stable enough to teach. Span names are formulaic
 rather than free text; the table shows the names recommended in the convention
-revision examined. Take operation names and name patterns from the revision you
-implement, and check for version changes when new operation types appear:
+revision examined:
 
 | operation | span name | example |
 |:--|:--|:--|
@@ -149,8 +155,7 @@ list tells you what the working group thinks an agent *is*: `chat`,
 `fetch_response`, plus a family of memory operations (create, search, update,
 delete). A planning phase, a retrieval operation separate from embedding, and
 memory operations have all arrived in a tracing specification — a fair summary
-of where @sec-agent-anatomy, @sec-rag and @sec-memory ended up. The list grows;
-check it rather than copying this one.
+of where @sec-agent-anatomy, @sec-rag and @sec-memory ended up.
 
 Out of 65 attributes in the span document alone, only a few are worth knowing
 by heart:
@@ -172,18 +177,14 @@ gen_ai.output.messages       the completion
 Two of those deserve a closer look. Call through an alias (an unversioned name
 such as "latest") and `gen_ai.request.model` records the alias while
 `gen_ai.response.model` records the name the provider reports for the model
-that answered — often a dated version, but depending on the provider it may be
-missing, still an alias, or the same as requested; check in the provider's API
-documentation whether it gives a dated, immutable version, and store a
-deployment or digest id separately if needed. The signal is `gen_ai.response.model` changing
+that answered — often a dated version. The signal is `gen_ai.response.model` changing
 while `gen_ai.request.model` stays put, which is what happens when the provider
 moves the alias to a new version — @sec-gateway's pinning problem, visible in
 your traces if you record both and invisible if you record only the request. And `gen_ai.conversation.id` is what turns a pile
 of spans into a session you can navigate.
 
 The metrics are similarly formulaic, and one of them should look familiar. The
-list below gives the names in this chapter's snapshot; tie dashboards to the
-names your SDK actually emits:
+list below gives the names in this chapter's snapshot:
 
 ```text
 gen_ai.client.token.usage             tokens, by type
@@ -200,7 +201,7 @@ After this chapter's snapshot, the specification's main branch replaced
 `gen_ai.client.token.usage` — one histogram that mixed input and output tokens —
 with separate counters such as `gen_ai.client.inference.usage.input_tokens` and
 `gen_ai.client.inference.usage.output_tokens`, plus subsets for cached input and
-reasoning output. Check the current names before you build a dashboard on them.
+reasoning output.
 
 The duration metrics are histograms, so a dashboard shows them as percentiles:
 the median (p50) for the typical request, and p95 or p99 for the slow tail that
@@ -212,7 +213,9 @@ of the standard metrics.]{.hl} `gen_ai.server.time_to_first_token` and
 `time_per_output_token` give the two faces of latency as a dashboard; but TTFT
 includes queueing and the first decode, and time per token is an average, so
 on their own they do not give the prefill/decode split. Seeing prefill, queue
-and decode separately needs extra measurement inside the server. Two caveats. First, the `gen_ai.server.*` metrics are
+and decode separately needs extra measurement inside the server.
+
+Two caveats. First, the `gen_ai.server.*` metrics are
 reported by the model server itself, so you get them only from a server you run
 that implements the convention; calling a hosted API, you see only the client
 side — report the usage data and client timings you are given; the current
@@ -222,6 +225,24 @@ is not the same as prefill time: by the specification's own description, TTFT in
 spent waiting in the server's queue as well as prefill, and measured from the
 client it adds the network too. A rising TTFT can therefore mean a longer prompt
 or a busier server, and only a server-side breakdown separates them.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The commit behind the badge count was not recorded; that snapshot cannot be
+  reproduced, so expect later versions to differ.
+- The span-name table and the operation-name list belong to the revision
+  examined, and the list grows: take operation names and name patterns from
+  the revision you implement, and check for version changes when new
+  operation types appear.
+- Depending on the provider, `gen_ai.response.model` may be missing, still an
+  alias, or the same as requested; check in the provider's API documentation
+  whether it gives a dated, immutable version, and store a deployment or
+  digest id separately if needed.
+- The metric names belong to this chapter's snapshot: tie dashboards to the
+  names your SDK actually emits, and check the current names before you build
+  one.
+:::
 
 ## The hierarchy, and where to hang each id {#sec-observability-hierarchy}
 
@@ -300,13 +321,20 @@ trace only if the trace context travels with the call. That does not happen by
 itself: inject and extract the context explicitly at both ends. On HTTP calls
 W3C Trace Context's `traceparent` header is used only when a propagator or
 instrumentation is active; the MCP convention in the GenAI repository proposes
-carrying the context in each MCP request's `params._meta` field — check that
-the MCP version you use implements it and that propagation works at both ends.
+carrying the context in each MCP request's `params._meta` field.
 
 The conversation id finds the runs and the trace id makes the
-steps navigable; neither is enough to re-execute a run — for that you also need
-to store the inputs, model, tool and data versions, tool responses and safe
-replay conditions.
+steps navigable.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The conversation and trace ids are not enough to re-execute a run; for that
+  you also need to store the inputs, model, tool and data versions, tool
+  responses and safe replay conditions.
+- Check that the MCP version you use implements carrying the context in
+  `params._meta`, and that propagation works at both ends.
+:::
 
 ## What a trace costs {#sec-observability-cost}
 
@@ -348,16 +376,8 @@ was measured; the others are scenarios that assume the same structure and
 content bytes, output included, proportional to the prompt
 {tbl-colwidths="[34,22,22,22]"}
 
-Five small runs do not represent a production prompt and output distribution,
-compression, storage indexing or service pricing. Read the projection as an
-order of magnitude, not a forecast; for a real telemetry bill, measure
-serialization, indexing and retention cost on your own workload. It scales the
-completions along with the prompts, although answers do not grow with context
-(so it overstates content a little); and it ignores that an agent re-sends its
-growing history at every step (so it understates it). At long context, real
-output length and history re-sending need measuring separately.
-
-At a million runs a month that is 4.8M spans and **1.6 GB of structure against
+Read the projection as an order of magnitude, not a forecast: at a million
+runs a month that is 4.8M spans and **1.6 GB of structure against
 6.2 GB with realistic prompts recorded** — a near-fourfold difference that is
 entirely the decision to log content, and a fourteen-fold one at long context.
 
@@ -402,9 +422,24 @@ on traces, sampling that keeps only some traces shows only some of the spend.
 If you compute cost from traces, keep every trace (as the content-free path
 does), or compute it from token metrics that sampling does not touch
 (`gen_ai.client.token.usage` or the counters replacing it), or from the
-provider's billing records. A figure derived from traces is not an exact bill:
-it may miss paid tools, cache writes and the price version; reconcile it with
-the provider's records.
+provider's billing records.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Five small runs do not represent a production prompt and output
+  distribution, compression, storage indexing or service pricing; for a real
+  telemetry bill, measure serialization, indexing and retention cost on your
+  own workload.
+- The trace-volume projection scales the completions along with the prompts,
+  although answers do not grow with context (so it overstates content a
+  little), and it ignores that an agent re-sends its growing history at every
+  step (so it understates it). At long context, real output length and
+  history re-sending need measuring separately.
+- A cost figure derived from traces is not an exact bill: it may miss paid
+  tools, cache writes and the price version; reconcile it with the provider's
+  records.
+:::
 
 ## Attributing cost {#sec-observability-attribution}
 
@@ -416,10 +451,7 @@ Note that the conventions record tokens, not money. Cost is tokens multiplied by
 a price per token, and the price differs for input, output and cached input:
 the specification's `gen_ai.usage.cache_read.input_tokens` counts the part of
 the input served from cache, which is included in `gen_ai.usage.input_tokens`
-and which hosted providers bill at a discount (@sec-serving). The three token
-prices are not everything: depending on the provider, reasoning tokens, cache
-writes, tool calls, image and audio inputs and per-request fees can be separate
-items; add the ones your provider charges. The price table lives outside the
+and which hosted providers bill at a discount (@sec-serving). The price table lives outside the
 trace, in your code or your backend. Keep it dated and versioned — prices change
 and last month's spend must be computed at last month's prices — and reconcile
 it with the actual bill.
@@ -433,15 +465,13 @@ work.** Span attributes are *not* inherited in OpenTelemetry: writing `user.id`
 on the root span does not put it on any child, and nothing in the SDK or the
 protocol propagates it. What propagates with the context is **Baggage**. So set
 low-sensitivity keys that are approved to travel on outgoing calls in baggage
-at the root — even team and feature names can be confidential — and install
+at the root, and install
 a span processor that copies those baggage keys onto every span it sees —
 `BaggageSpanProcessor` in the `opentelemetry-python` contrib packages does
 exactly this. Keep the user id out of baggage, because baggage also travels
 *out* of your process on every outgoing call; attach it with your own span
 processor that reads it from in-process state (in Python, a `contextvars`
-variable set at the root). `contextvars` propagates on its own only within the
-process and across async tasks; define separately how the id crosses threads,
-asynchronous workers and process boundaries. Step 3 of the lab builds both. Environment is the
+variable set at the root). Step 3 of the lab builds both. Environment is the
 exception: it belongs on the **Resource** — the set of attributes that
 describes the service producing the telemetry — which *is* attached to every
 span the SDK emits. Some backends roll attributes up to the trace level and give
@@ -451,10 +481,7 @@ specification.
 When you carry these dimensions into metrics, keep one distinction in mind:
 span attributes tolerate high cardinality (many distinct values) far better
 than metric labels. Do not make the user id a metric label: every user opens a
-separate time series and the metrics backend's bill explodes. It is not free on
-spans either — it can affect the trace backend's indexing and retention cost,
-and it is a personal-data risk; if you need it, keep a pseudonym or a separate
-mapping table with restricted access, and measure the cost. Put only
+separate time series and the metrics backend's bill explodes. Put only
 low-cardinality dimensions such as team, feature and environment on metrics.
 
 [The number worth reporting is not spend, it is spend per unit of value.]{.hl}
@@ -466,6 +493,22 @@ budget review, but not on their own: cost per unit of value can hide volume and
 total spend. Report total spend, cost per request, success rate and cost per
 resolved task together, and say how the "resolved" label was verified.
 Computing them needs the outcome on the trace too.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The three token prices are not everything: depending on the provider,
+  reasoning tokens, cache writes, tool calls, image and audio inputs and
+  per-request fees can be separate items; add the ones your provider charges.
+- Even team and feature names put in baggage can be confidential.
+- `contextvars` propagates on its own only within the process and across async
+  tasks; define separately how the user id crosses threads, asynchronous
+  workers and process boundaries.
+- The user id is not free on spans either: it can affect the trace backend's
+  indexing and retention cost, and it is a personal-data risk; if you need it,
+  keep a pseudonym or a separate mapping table with restricted access, and
+  measure the cost.
+:::
 
 ## From a complaint to the failing span {#sec-observability-rootcause}
 
