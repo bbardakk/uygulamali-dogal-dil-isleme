@@ -210,10 +210,7 @@ the only component that sees the whole population:
   tracks the share of its requests that are retries and stops retrying once that
   ratio passes 10%. The per-request cap alone still lets the load approach 3×
   when nearly everything fails, which is exactly when the provider can least
-  absorb it; the fraction brings the worst case down to about 1.1×. That is
-  approximate: counted against original requests the 10% gives 1.1×, counted
-  against all attempts 1/0.9 ≈ 1.11×; the exact bound depends on the ratio's
-  window and how attempts are counted.
+  absorb it; the fraction brings the worst case down to about 1.1×.
 
 Two practical rules sit underneath all three. **Retry only errors you have
 confirmed are transient**: 429s, 5xx server errors and timeouts, honouring any
@@ -225,8 +222,7 @@ Do not retry a 400 for a malformed request or a prompt longer than the context
 window, which will fail identically every time. And **retry at one layer
 only** — this does not happen by itself; bound the total attempts across SDK,
 gateway and application together. Provider SDKs often retry by default (at the time of writing the OpenAI and
-Anthropic Python clients make two retries; defaults can change with version
-and error type, so check the version you use and how to disable them). In a
+Anthropic Python clients make two retries). In a
 setup where each layer allows three attempts, for example, an SDK, a gateway
 and an application can turn one request into up to $3^3 = 27$ provider
 attempts; the SRE book calls this a combinatorial explosion [@beyer2016sre]. Timeouts need the same care: an
@@ -256,6 +252,16 @@ or to fail *closed* with a clear error rather than silently serving output from
 a model nobody tested. Do not hand critical operations to an untested fallback
 automatically; for risky operations failing closed is frequently right and
 rarely the default — for simple reads it is not always needed.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The retry budget's 1.1× worst case is approximate: counted against original
+  requests the 10% gives 1.1×, counted against all attempts 1/0.9 ≈ 1.11×; the
+  exact bound depends on the ratio's window and how attempts are counted.
+- SDK retry defaults can change with version and error type; check the number
+  and how to disable it in the version you use.
+:::
 
 ## Routing by cost, and the signal it depends on {#sec-gateway-routing}
 
@@ -297,10 +303,6 @@ scored **AUROC 0.667, against 0.843 for a fine-tuned classifier's own score**
 (the label probability — a classifier score, not a calibrated probability). It
 is better than nothing — the mean confidence really is higher on correct
 answers — and it is a long way from the instrument a routing policy needs.
-These numbers are cautionary examples from another task and classification
-setup; they do not give the false-escalation or false-acceptance rate at any
-particular threshold. The error cost, threshold, selective accuracy and cost
-curve of the signal you will use have to be measured on your own task.
 
 A cascade built on it escalates many easy requests and misses many hard ones,
 and both mistakes are invisible in an aggregate accuracy number.
@@ -330,10 +332,7 @@ both; the arithmetic below is only the money side. It costs small-model tokens
 costs $C_{\text{small}} + e \cdot C_{\text{large}}$ against $C_{\text{large}}$
 for sending everything to the big model. At $e = 0.5$ and a 10× price ratio that
 is $0.1 + 0.5 = 0.6$ of the large model's bill — a real saving, and nothing like
-half. The formula assumes constant average per-request costs for both models,
-the same for escalated requests; if escalated requests differ in prompt or
-output length or cache share, use conditional averages and add the router's
-own cost. Compute the break-even rate before building it, with your price ratio
+half. Compute the break-even rate before building it, with your price ratio
 rather than the benchmark's and with real traffic: the cascade saves money only while
 $e < 1 - C_{\text{small}}/C_{\text{large}}$, which is $0.9$ at a 10× ratio and
 $0.5$ at a 2× ratio.
@@ -346,11 +345,26 @@ thing failover does by accident.
 **Capability routing is easier than quality routing.** "This request needs
 vision", "this one needs a 200k-token context window", "this one must stay in the EU" are
 explicit requirements that can usually be read off the request and make good
-first routing rules. The context a request needs, though, may only settle
-after tokenization and tool additions; confirm it with the chosen model's
-token counter. These are also the routing rules most likely to survive contact
-with production, because they do not depend on a signal that might be AUROC
-0.667 — still, test rule-based routes on production requests too.
+first routing rules. These are also the routing rules most likely to survive
+contact with production, because they do not depend on a signal that might be
+AUROC 0.667.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- AUROC 0.667 and 0.843 are cautionary examples from another task and
+  classification setup; they do not give the false-escalation or
+  false-acceptance rate at any particular threshold. The error cost, threshold,
+  selective accuracy and cost curve of the signal you will use have to be
+  measured on your own task.
+- The cascade cost formula assumes constant average per-request costs for both
+  models, the same for escalated requests; if escalated requests differ in
+  prompt or output length or cache share, use conditional averages and add the
+  router's own cost.
+- In capability routing the context a request needs may only settle after
+  tokenization and tool additions; confirm it with the chosen model's token
+  counter, and test rule-based routes on production requests too.
+:::
 
 ## Exact-match and semantic response caches: different risks {#sec-gateway-cache}
 
@@ -417,10 +431,7 @@ bottom on 0.609.
 
 The consequence is arithmetic rather than opinion. The lowest true pair is
 0.609 and the highest false pair is 0.982, so the two classes' ranges interleave
-and **no single threshold separates them on this set**. The result belongs to
-this model, this preprocessing and these fifteen pairs, which are far too few
-to choose a general threshold; a production threshold needs a larger,
-representative set drawn from real hits.
+and **no single threshold separates them on this set**.
 
 The two error types are not interchangeable, so sweep the thresholds with that
 in mind. A *miss* costs a model call and the user never knows. A *false hit*
@@ -436,8 +447,7 @@ earned you was wrong, and any cut loose enough to catch a genuine
 paraphrase also served at least three wrong answers.**
 
 Read as a detector, cosine similarity scores an **AUROC of 0.44** here — below
-the 0.5 a coin flip would give. Five positives against ten negatives puts an
-enormous interval on that, so the honest reading is not "similarity is
+the 0.5 a coin flip would give. The honest reading is not "similarity is
 anti-correlated with sameness". It is that fifteen pairs cannot find you a
 threshold, and they can tell you the search will not be easy.
 
@@ -445,10 +455,8 @@ This is the sentence-level cousin of @sec-embeddings' antonym result, where
 `increase`/`decrease` scored **0.881** — level with `cat`/`dog` at 0.880. At
 the sentence level it gets worse rather than better, and *is covered* and *is
 not covered* land nearly on top of one another. Negations and changed numbers
-needed different answers here despite high similarity. Whether that comes from
-tokenization, the training objective or pooling (reducing the token vectors to
-one sentence vector) was not separated here; test the cause against the
-model's actual preprocessing and vector production. They are related, which is what
+needed different answers here despite high similarity. They are related,
+which is what
 the model was trained to capture. They are also opposite, and a cache cannot
 tell.
 
@@ -555,9 +563,25 @@ only looks like evidence. There are ways to cut false hits too: every false hit
 in the table above differs by a number, date, negation or entity. A simple check
 that numbers and names match across the two queries before returning a hit, or
 re-scoring the candidate with a cross-encoder (@sec-retrieval-reranking), may
-catch some of them; that was not tested in this chapter and does not replace
-measurement. And before any of that, embed two inputs you know must differ and confirm the
-embedder can tell them apart.
+catch some of them. And before any of that, embed two inputs you know must
+differ and confirm the embedder can tell them apart.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The fifteen-pair threshold result belongs to this model, this preprocessing
+  and this sample; fifteen pairs are far too few to choose a general
+  threshold, and a production threshold needs a larger, representative set
+  drawn from real hits.
+- The 0.44 AUROC comes from five positives against ten negatives, which puts an
+  enormous interval on it.
+- Whether the high similarity of negations and changed numbers comes from
+  tokenization, the training objective or pooling (reducing the token vectors
+  to one sentence vector) was not separated here; test the cause against the
+  model's actual preprocessing and vector production.
+- The number-and-name match check and cross-encoder re-scoring were not tested
+  in this chapter and do not replace measurement.
+:::
 
 ## Pinning versions, and surviving a deprecation {#sec-gateway-versions}
 
