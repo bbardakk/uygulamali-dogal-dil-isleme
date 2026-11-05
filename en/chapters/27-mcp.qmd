@@ -160,8 +160,7 @@ for example as a slash-command).
 parameter can ask for it, through the host, rather than failing. (Roots and
 Sampling were client features too; as the warning box below says, they are
 still in the specification but deprecated, and the current overview lists only
-Elicitation. That holds for the core revision; older protocol versions and
-optional extensions can carry different capabilities.)
+Elicitation.)
 
 *How* it asks is the part a 2025 tutorial will get wrong. In revision
 2026-07-28 there is no longer any such thing as a server-initiated JSON-RPC
@@ -222,8 +221,7 @@ that speaks only 2026-07-28 cannot talk to a server that speaks only the older,
 handshake-based pattern, and the reverse fails too. The backward-compatibility
 rules in the next section are what let an implementation that supports *both*
 eras detect which one it is talking to and fall back. Do not expect automatic
-fallback between endpoints that support only one era; test both sides'
-version support together when you deploy.
+fallback between endpoints that support only one era.
 
 ::: {.callout-warning appearance="simple"}
 **What a 2025 tutorial will still teach you that is now deprecated.**
@@ -244,6 +242,15 @@ back into the host's world, and both are now scheduled for removal — still
 working, but not to be adopted in new code — in favour of passing what the
 server needs as ordinary parameters. The protocol is getting
 narrower, and narrower is easier to secure.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- That clients offer only Elicitation holds for the core revision; older
+  protocol versions and optional extensions can carry different capabilities.
+- When you deploy, test which revisions the client and the server support
+  together.
+:::
 
 ## The wire: stateless requests, and why that changed {#sec-mcp-transport}
 
@@ -320,9 +327,7 @@ The reason is operational, and it is the same reason stateless HTTP won
 generally: **a server with no protocol-level session makes horizontal scaling
 easier**. Any replica can serve any request, so a remote MCP server becomes an
 ordinary web service behind a load balancer rather than a thing that has to
-keep a session pinned to a process. Application state across calls, files or
-side effects still need a shared store or a verifiable handle, and horizontal
-scaling depends on those too.
+keep a session pinned to a process.
 
 Backward compatibility with the handshake-based revisions (`2025-11-25` and
 earlier) is specified rather than assumed, which is what you would want from a
@@ -336,7 +341,7 @@ it is empty or not a recognised modern JSON-RPC error, the server is old and
 the client falls back to the `initialize` handshake. Authorization or policy
 errors (`401`, `403`) are not version mismatches; treating them as a fallback
 signal could let a request dodge a security check by dropping to an older
-protocol version. Verify the fallback decision with tests. A client or server that implements only one era has no such
+protocol version. A client or server that implements only one era has no such
 fallback.
 
 Three consequences land on whoever writes the server, and they are the ones
@@ -372,10 +377,18 @@ handles, which is also why the shorthand "MCP is synchronous" is wrong.
 renders interactive UI inline in the conversation. The Tasks extension is the one to know about
 if anything you expose takes longer than a request should.
 
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- A stateless server still needs a shared store or a verifiable handle for
+  application state across calls, files or side effects, and horizontal
+  scaling depends on those too.
+- Verify the decision to fall back to the old handshake with tests.
+:::
+
 ## Building one {#sec-mcp-building}
 
-The SDK takes over much of the basic messaging and transport work, though
-compatibility across revisions and transports is still yours to test. Schema
+The SDK takes over much of the basic messaging and transport work. Schema
 validation, timeouts, error separation and result shape stay in your
 application's design. What makes a server good is
 everything @sec-tool-design already established, plus four things that
@@ -404,7 +417,7 @@ is a failure of the call itself and the model may never see it. The
 specification puts input-validation errors explicitly in the first group. Sending a bad argument back as a JSON-RPC error is
 how you get a model that cannot recover because it was never told.
 Communication errors such as an unknown method or a malformed message stay
-JSON-RPC errors. Test how your SDK applies the distinction.
+JSON-RPC errors.
 
 **Publish an `outputSchema` if your result has a shape.** A tool may declare
 one and return `structuredContent` alongside its text, so the host gets a value
@@ -424,9 +437,7 @@ Two more that are specific to being a server:
 
 Here is what those rules look like in a small server, written for `fastmcp`
 4.0.9 (see @sec-mcp-tools). It is a skeleton: it assumes a
-`search_tickets(status, limit)` function defined elsewhere in your application
-and does not run without it. For a runnable example, add an implementation of
-that function over test data, with its error and cancellation behaviour:
+`search_tickets(status, limit)` function defined elsewhere in your application:
 
 ```python
 import asyncio
@@ -460,11 +471,22 @@ model as an enum rather than a free string and `limit` arrives with
 `minimum: 1` and `maximum: 100` — the model sees the bound before it calls, not
 after an error. In `fastmcp` 4.0.9 an out-of-range value is rejected by the
 library before your code runs, as a result with `isError: true` whose message
-names both the value sent and the bound. The error body and `raise_on_error`
-behaviour can change between versions; check them on the version and host you
-use. The docstring becomes the description, including what the
-tool does *not* do. The timeout error, too, tells the model its next step:
-retry once, then tell the user.
+names both the value sent and the bound. The docstring becomes the
+description, including what the tool does *not* do. The timeout error, too,
+tells the model its next step: retry once, then tell the user.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Even with an SDK, compatibility across revisions and transports is still
+  yours to test; test, too, how your SDK applies the distinction between a
+  tool error and a protocol error.
+- The `find_tickets` example does not run without `search_tickets`; for a
+  runnable example, add an implementation of that function over test data,
+  with its error and cancellation behaviour.
+- In `fastmcp`, the error body and `raise_on_error` behaviour can change
+  between versions; check them on the version and host you use.
+:::
 
 ::: {.callout-tip appearance="simple"}
 **Try the server.** Before connecting it to a host you can test the server two
@@ -590,13 +612,11 @@ criticism of MCP — it is true of any tool-calling system — but MCP makes it
 easy to install a lot of tools without noticing, so the arithmetic is worth
 doing.
 
-The official filesystem server published 14 tools when this was measured — a
-number that moves between releases, so pin the version before you reuse the
-figure. Serialised as tool definitions and tokenised, it comes to the figures
-below. The rows with more than one server assume every added server is the same
-size as this one; the last column is a raw sum assuming the definitions are
-re-added to every model call. Caching, progressive loading and which fields the
-host sends change the real cost:
+The official filesystem server published 14 tools when this was measured.
+Serialised as tool definitions and tokenised, it comes to the figures below.
+The rows with more than one server assume every added server is the same size
+as this one; the last column is a raw sum assuming the definitions are re-added
+to every model call:
 
 ```text
 official MCP filesystem server, 14 tools
@@ -618,22 +638,11 @@ every call.]{.hl} With three servers of that size installed, a twenty-step
 session sends about **75,000 raw tokens of tool definitions alone**, before
 anybody says anything.
 
-Three honest caveats before that number is used as an argument.
-
 The 89 is **this server's** average, and the filesystem server has terse
-definitions: short names, few parameters, descriptions of a few sentences. A
-server whose tools take a dozen optional filters will be several times that.
-The count also depends on *what the host serialises*. A host that forwards only
-name, description and input schema pays less than one that also forwards the
-optional `title`, `outputSchema` and annotations fields, which recent releases
-of this same server now publish. The count depends on the tokenizer as well:
-these definitions were counted with `qwen3.5:9b`'s, and another model's
-tokenizer can give a noticeably different number for the same text. Treat 89
-not as a floor or a general "low end" but as one measurement of this server,
-and measure the definitions your host actually sends to the model; @sec-tool-design cites a published catalogue
-costing about 72,000 tokens of definitions (some 77,000 with the rest of the
-starting context) before a single call, which is what the
-other end of the range looks like.
+definitions: short names, few parameters, descriptions of a few sentences.
+@sec-tool-design cites a published catalogue costing about 72,000 tokens of
+definitions (some 77,000 with the rest of the starting context) before a
+single call, which is what the other end of the range looks like.
 
 There are two separate caches here. In revision 2026-07-28 list results
 carry required `ttlMs` and `cacheScope` fields, which cut how often a client
@@ -644,14 +653,34 @@ most cacheable things in the context. Servers **should** return tools from
 `tools/list` in a deterministic order specifically to improve prompt-cache hit
 rates. If the host writes definitions into the prompt in that order, an
 unstable ordering can cause cache misses — a defect with no error message.
-Measure real hits and charges on your host and provider.
 
 And 89 tokens is small next to what a good tool *saves*.
 
 The point is not that the overhead is ruinous; it is that it is **invisible and
 multiplicative**. Definition cost grows with the number of tools and the number
-of model calls; for every server you install, measure the raw tokens, the cache
-hit rate and its contribution to task success together.
+of model calls.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The official filesystem server's tool count moves between releases; pin the
+  version before you reuse the figures here.
+- Caching, progressive loading and which fields the host sends change the real
+  cost; the table's last column is a raw sum without them.
+- For a server whose tools take a dozen optional filters, the 89 tokens per
+  tool will be several times that.
+- The 89 tokens also depend on *what the host serialises*: a host that
+  forwards only name, description and input schema pays less than one that
+  also forwards the optional `title`, `outputSchema` and annotations fields,
+  which recent releases of this same server now publish.
+- The definitions were counted with `qwen3.5:9b`'s tokenizer; another model's
+  tokenizer can give a noticeably different number for the same text.
+- Treat 89 not as a floor or a general "low end" but as one measurement of
+  this server. Measure the definitions your host actually sends to the model;
+  for every server you install, measure the raw tokens, its contribution to
+  task success, and the real cache hits and charges on your host and provider
+  together.
+:::
 
 ### When something else is better
 
