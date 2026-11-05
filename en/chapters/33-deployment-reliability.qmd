@@ -64,22 +64,19 @@ places, in increasing order of what they let you do:
 **In the process.** Simple, fast, and it means one instance owns a session. A
 restart, deploy or scale-in can lose conversations, and in a multi-instance
 deployment load balancing has to pin a user to an instance (a sticky session)
-— which is usually the constraint that eventually forces the change. For a
-single instance or throwaway conversations it may not be needed.
+— which is usually the constraint that eventually forces the change.
 
 **In a session store.** The loop reads the history at the start of a turn and
 writes it back at the end. Any instance can serve any turn, restarts are
 survivable, and the store's latency is now on every turn. This is the default
-that fits most cases, but the store alone does not make it durable: concurrent
-updates, retention and data protection need designing separately.
+that fits most cases.
 
 **In the client.** The caller sends the whole history each turn. The server is
 genuinely stateless and trivially scalable. The price is a request that grows
 on the wire every turn, and a client that can edit the history, which
 @sec-agent-security has opinions about. If the history reaches the model as the
 same token sequence from all three places, the input-token bill is the same
-(see the margin note); summarisation, truncation, caching and provider pricing
-change that. Weigh where state lives against data trust and latency.
+(see the margin note). Weigh where state lives against data trust and latency.
 
 ::: {.column-margin}
 The token cost of carrying a history is easy to underestimate, and it is not
@@ -96,6 +93,17 @@ not what it costs — and @sec-serving's
 measurements show prefill dominating latency well before that becomes a bill
 problem. Prompt caching helps exactly here, provided the history is append-only
 and nothing volatile sits at the top.
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- In-process state and sticky sessions may not be needed for a single
+  instance or throwaway conversations.
+- A session store alone does not make state durable: concurrent updates,
+  retention and data protection need designing separately.
+- The same input-token bill from all three places changes with summarisation,
+  truncation, caching and provider pricing.
 :::
 
 ## Agents that outlive a request {#sec-deployment-long}
@@ -153,9 +161,7 @@ imposes on your code:
 
 [In replay-based engines such as Temporal, replay means your workflow function
 runs again from the top, and every completed step returns its recorded result
-instead of executing.]{.hl} Other durable engines can use different step and
-record semantics; when you choose one, check its own execution and replay
-contract in its documentation. In a replay-based engine, for that
+instead of executing.]{.hl} In a replay-based engine, for that
 to be sound, the function has to be *deterministic*: same history, same
 sequence of decisions. Reading the clock, generating a random id or calling an
 API directly from workflow code all break it, because the replay would take a
@@ -193,15 +199,24 @@ class FailureNotice:
 ```
 
 `llm_call` and `send_email` are ordinary functions defined outside the workflow
-with `@activity.defn`. This is pseudo-code, not production-ready: `send_email`
-must pass a stable idempotency key, built from the workflow id and the logical
-action id, to the receiving system; decide separately whether that system
-supports the key and what the activity's retry policy is.
+with `@activity.defn`.
 
 That is a real constraint on tool design (@sec-tool-design). Adopting a durable
 engine after the fact can require splitting LLM and tool calls into recorded
 steps; how much changes depends on where the existing loop's step boundaries
 are — sometimes wrapping is enough, sometimes the loop has to be rewritten.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The "run again from the top" contract is for replay-based engines such as
+  Temporal; other durable engines can use different step and record
+  semantics, so check the one you pick in its documentation.
+- The code above is not production-ready: `send_email` must pass a stable
+  idempotency key, built from the workflow id and the logical action id, to
+  the receiving system; decide separately whether that system supports the key
+  and what the activity's retry policy is.
+:::
 
 ## Retrying a step is not retrying a request {#sec-deployment-retry}
 
@@ -220,9 +235,7 @@ The interesting question underneath is one people assume rather than measure:
 a model was asked to emit one `send_email` call, eight times independently, for
 each of three tasks under three sampling conditions. The table shows whether
 the tool-call payload changes across eight separate generations of the same
-task; testing a real retry's safety needs a separate test that stops the
-worker between the effect and the durable record. Below, "retry" means these
-regenerations. The three tasks leave the model
+task. Below, "retry" means these regenerations. The three tasks leave the model
 progressively more to decide: `clear` names the recipient, `vague` is loosely
 worded, and `choice` (quoted below) leaves the recipient to the model. In the
 `seed` column, `0` is a fixed seed and `None` means no seed was set.
@@ -266,18 +279,15 @@ counting species, and their Chao1 estimator uses the values seen exactly once
 this distribution — one address three times, one twice, three once each, so
 $f_1 = 3$ and $f_2 = 1$ — the classic form $5 + f_1^2/(2f_2)$ gives **9.5**, and
 the small-sample bias-corrected form
-$5 + \frac{n-1}{n}\cdot\frac{f_1(f_1-1)}{2(f_2+1)}$ gives about 6.3 with $n = 8$ draws.
-Eight draws are far too few to choose between them, and in so small and
-model-dependent a sample Chao1's assumptions may not hold; the numbers are
-exploratory only — 6.3 and 9.5 are neither a confidence interval nor an
-estimate of the diversity on a real endpoint. What can be said for certain is
+$5 + \frac{n-1}{n}\cdot\frac{f_1(f_1-1)}{2(f_2+1)}$ gives about 6.3 with $n = 8$ draws;
+both numbers are exploratory only. What can be said for certain is
 that there are at least five possible recipients; three singletons in eight
-draws hint at a tail you have not sampled. In the other direction,
+draws hint at a tail you have not sampled.
+
+In the other direction,
 eight identical outputs at temperature 0 give a Wilson 95% interval of about
 **[68%, 100%]** on the repeat rate, so "byte-identical eight times" is
-compatible with a true repeat rate near two thirds. The interval assumes the
-eight runs are independent draws from the same distribution; with a fixed seed
-or the same server state that assumption needs its own justification. Neither correction changes
+compatible with a true repeat rate near two thirds. Neither correction changes
 the design conclusion. Both change what may be claimed: this establishes that
 the failure exists and reproduces easily, not how often it happens on your
 endpoint.
@@ -292,10 +302,9 @@ decision correct.
 
 **A condition this table is missing — a fixed seed at temperature 0.7 — was
 not measured here.** @sec-prompting found, on another task and at larger scale,
-that it produced identical output on all 30 documents across ten repeats; that
-result does not transfer here directly. A plausible reading is that the axis is
-less temperature than whether the sampler is pinned, but check it on your own
-task by testing temperature and seed as separate conditions. They produce
+that it produced identical output on all 30 documents across ten repeats. A
+plausible reading is that the axis is less temperature than whether the
+sampler is pinned. They produce
 different distributions, and neither guarantees that a side effect is
 de-duplicated. Temperature 0 costs you diversity you may want; a seed can give
 similar repeatability more cheaply — on a server that supports a seed and
@@ -327,6 +336,24 @@ only from the recipient: which field moves depends on the task. Storing a
 digest (fingerprint) of the payload next to the key is still necessary, though:
 it is what catches a conflict when the same key arrives with different
 arguments.
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The measurement is independent regenerations of the same step; testing a
+  real retry's safety needs a separate test that stops the worker between the
+  effect and the durable record.
+- Chao1's 6.3 and 9.5 are neither a confidence interval nor an estimate of the
+  diversity on a real endpoint: eight draws are far too few to choose between
+  the two forms, and in so small and model-dependent a sample Chao1's
+  assumptions may not hold.
+- The Wilson 95% interval ([68%, 100%]) assumes the eight runs are independent
+  draws from the same distribution; with a fixed seed or the same server state
+  that assumption needs its own justification.
+- @sec-prompting's fixed-seed finding comes from another task and does not
+  transfer here directly. Check whether the axis is temperature or seed on
+  your own task, by testing the two as separate conditions.
 :::
 
 ## Idempotency keys, and where the key comes from {#sec-deployment-idempotency}
@@ -362,8 +389,7 @@ the key changes with it.
 
 Scope the key to the tenant as well, so two customers cannot collide on the same
 logical operation id. In short: build the key from the tenant, a durable
-workflow or request id and a logical action id, and test that those ids do not
-change on replay.
+workflow or request id and a logical action id.
 
 Three implementation notes decide whether it works in practice.
 
@@ -371,12 +397,8 @@ Three implementation notes decide whether it works in practice.
 tempting behaviour — return the stored result — is wrong: it silently answers a
 *different* request with an old answer. Stripe's API compares incoming
 parameters with the original request's and rejects a reuse that does not match,
-and that is the behaviour to copy. The details depend on the API version:
-Stripe's v1 API saves the status code and body of the first request once
-endpoint execution begins — 500 errors included — and returns it on retries,
-while v2 tries to complete failed or partially failed work. Define explicitly
-which result and which conflict your own interface records. Store the arguments with the record, compare on
-replay, and fail loudly on a mismatch.
+and that is the behaviour to copy. Store the arguments with the record, compare
+on replay, and fail loudly on a mismatch.
 
 **The record and the effect must commit together.** When the effect is a row in
 your own database that is one transaction and the problem is solved. When the
@@ -387,9 +409,7 @@ the standard answer is the **transactional outbox**: in one transaction, write
 the idempotency record *and* a row describing the intended call, so the local
 state change and the intent to send are recorded atomically. A separate
 publisher reads the outbox and, by retrying, aims to perform the call *at least
-once* — it may repeat the call after a crash. Publisher failures, permanent
-errors and retention limit that too; permanent errors need a monitoring and
-dead-letter policy. The call carries the key so a receiver that supports it
+once* — it may repeat the call after a crash. The call carries the key so a receiver that supports it
 dedupes it. You have not removed the duplicate. You have moved it somewhere a
 key can absorb it. Know the pattern by name, because interviews ask about it:
 *exactly-once* delivery to a remote receiver cannot be guaranteed in general —
@@ -410,6 +430,21 @@ went exactly once.
 **The retention window must outlast your longest retry.** Easy to set to five
 minutes and then discover was needed for six hours, because the queue was
 backed up and the job was redelivered the next morning.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Test that the tenant, workflow or request, and action ids that make up the
+  key do not change on replay.
+- Stripe's behaviour depends on the API version: v1 saves the status code and
+  body of the first request once endpoint execution begins — 500 errors
+  included — and returns it on retries, while v2 tries to complete failed or
+  partially failed work. Define explicitly which result and which conflict
+  your own interface records.
+- The outbox publisher's at-least-once aim is also limited by publisher
+  failures, permanent errors and retention; permanent errors need a monitoring
+  and dead-letter policy.
+:::
 
 ## Compensation: there is no rollback for a sent email {#sec-deployment-compensation}
 
@@ -490,10 +525,7 @@ survivable.
 its code, its prompts, the pinned model version (@sec-gateway-versions), the tool
 definitions, and settings such as temperature and the three ceilings. Release
 them together, under one release id, and record that id on every trace
-(@sec-observability). The release id alone does not guarantee reproducibility:
-the provider's alias, external data and tool backends can change, so also log
-the actual provider model version, data and tool versions and the deployment
-environment on every trace. A prompt edited in a dashboard without a new release id is
+(@sec-observability). A prompt edited in a dashboard without a new release id is
 a deploy that nobody can attribute or roll back — and the "step change that
 lines up with a release" that @sec-production-eval diagnoses is visible only if
 the release was recorded.
@@ -504,8 +536,7 @@ the same traffic: error rate, latency, cost per run, the share of runs that hit
 a ceiling, and whatever quality signal you have. The share grows in stages
 (5% → 25% → 100%) only while the canary is not worse, and traffic moves back
 automatically when a threshold is crossed. Fix the metrics, the sampling period
-and the rollback threshold in advance: a 5% slice may be too small to compare
-rare failures or quality labels that arrive late. A **shadow** deployment — the new
+and the rollback threshold in advance. A **shadow** deployment — the new
 release runs on a copy of live inputs, but nobody is shown its output — is safe
 for a chatbot and dangerous for an agent, because a shadow agent with real
 tools sends real emails. Its side-effecting tools must run in dry-run mode
@@ -542,6 +573,17 @@ Define a versioning and migration policy for in-flight runs: by default each run
 can finish on the version it started with, but an urgent security fix or the
 removal of the old version can make that impossible, so prepare a safe stop,
 migration or compensation path in advance.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The release id alone does not guarantee reproducibility: the provider's
+  alias, external data and tool backends can change, so also log the actual
+  provider model version, data and tool versions and the deployment
+  environment on every trace.
+- A 5% canary slice may be too small to compare rare failures or quality
+  labels that arrive late.
+:::
 
 ## Intuition checks {#sec-deployment-intuition}
 
