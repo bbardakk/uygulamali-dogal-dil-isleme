@@ -19,8 +19,10 @@ syntax, so the reference vanished and the sentence broke).
 Two positions are dangerous, and only two:
 
   1. An indented continuation line inside a list item. Any marker shape
-     starts a nested list there — digits, letters, Roman numerals, or
-     `(@label)`.
+     starts a nested list there — digits, letters, Roman numerals,
+     `(@label)`, or a bare `@label.` / `@label)` (a cross-reference that
+     ends a sentence, `... the subject of` / `@sec-decoding.`, vanished
+     into an example list this way).
   2. The first line of a paragraph, when the marker is a letter or a
      Roman numeral. The book never writes lists that way, so a match is
      always prose; digits are excluded here because a digit at the start
@@ -53,7 +55,7 @@ FENCE_RE = re.compile(r"\s*(`{3,}|~{3,})")
 
 # Inside a list item, every marker shape opens a nested list.
 CONTINUATION_RE = re.compile(
-    r"^\s{1,3}(?:\(@[^)\s]*\)|(?:\d{1,9}|[IVXLCivxlc]{1,7}|[A-Za-z])[.)])(\s|$)"
+    r"^\s{1,3}(?:\(@[^)\s]*\)|(?:\d{1,9}|[IVXLCivxlc]{1,7}|[A-Za-z]|@[\w-]*)[.)])(\s|$)"
 )
 
 # At the start of a paragraph, only the shapes the book never uses as real
