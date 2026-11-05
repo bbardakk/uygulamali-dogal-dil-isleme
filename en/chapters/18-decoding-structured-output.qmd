@@ -54,11 +54,8 @@ In `transformers` (5.x), one decoding step applies the repetition penalty
 then top-k, then top-p, then min-p, and then samples. vLLM also applies the
 penalties (repetition, frequency and presence) and then temperature first, but runs min-p *before* top-k and top-p;
 llama.cpp's default chain applies temperature *last*, after all the cutoffs.
-So the order is fixed inside one library, not across libraries — check the one
-you use, its version and its configuration: the orders here are the *default*
-chains of the versions named, and llama.cpp's sampler chain can be changed.
-Record the actual chain of your run. Two consequences follow for the
-temperature-first order.
+So the order is fixed inside one library, not across libraries. Two
+consequences follow for the temperature-first order.
 Because temperature runs *before* top-p, raising the temperature changes which
 tokens fall inside the nucleus — so the common claim that temperature "only
 changes the contrast, never the ranking" is true of a positive temperature
@@ -70,6 +67,15 @@ temperature (in the default chains of all three libraries), the same penalty
 value bites far harder at $\tau = 0.2$ than at $\tau = 1.5$: a penalty $\alpha$
 added to the raw logit becomes $\alpha/\tau$ after temperature scaling. If you are tuning both, tune the
 temperature first.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The orders here are the *default* chains of the versions named, and
+  llama.cpp's sampler chain can be changed. Check the library you use, its
+  version and its configuration.
+- Record the actual sampler chain of your run.
+:::
 
 ### Explore: temperature, top-k, and top-p
 
@@ -198,8 +204,7 @@ Three more policies complete the picture.
 **Greedy** takes the argmax at every step. It is temperature 0 in the limit. It
 is a useful starting point for tasks that want one short label or a strict
 format, but it does not guarantee that the most probable continuation is
-correct; compare its accuracy with other policies on the same evaluation
-set. (APIs treat
+correct. (APIs treat
 "temperature 0" as a request for greedy decoding, since dividing by zero is
 undefined. Even then a hosted API may not return the same string every time:
 batching and floating-point rounding on the GPU can change a near-tie between
@@ -217,8 +222,7 @@ findings are worth carrying here. The gains die quickly — beam 1 to 2 bought
 +0.61 BLEU, and beam 2 to 64 bought +0.57 more for seven times the compute.
 And the widely repeated warning that wider beams make the output *worse* (the
 "curse of beam search") did not appear in this run; the decoder normalising by
-length during the search is one possible reason, but that was not checked
-separately. A wider search can raise the chance of finding the most probable
+length during the search is one possible reason. A wider search can raise the chance of finding the most probable
 sequence without necessarily improving the task metric. In its simplest form,
 length normalisation divides a beam's log-probability by its length
 (implementations use other penalties too); without it, every extra token adds another
@@ -254,6 +258,14 @@ temperature of 1.0 took BLEU from 30.17 to 14.34; that result is limited to
 that model and dataset.
 :::
 
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Compare greedy's accuracy with other policies on the same evaluation set.
+- The effect of length normalisation, the possible reason the curse of beam
+  search did not appear, was not checked separately.
+:::
+
 **What we will look at.** First why greedy decoding walks into repetition
 loops, and why the usual penalties are the wrong tool once you are generating
 structure. Then constrained decoding, where a grammar makes invalid output
@@ -279,8 +291,7 @@ in the context the model may rate repeating it as highly probable.
 they studied the loop was not a low-probability accident. **The repeated
 continuation was often among the highest-probability sequences available**,
 which is why greedy decoding can walk into it. Sampling can reduce loops but
-does not rule them out; how often they happen depends on the model, the context
-and the decoding settings.
+does not rule them out.
 
 The usual controls, and what each costs:
 
@@ -305,10 +316,10 @@ Dividing a *negative* logit by $\theta > 1$ raises it towards zero — that is a
 reward, not a penalty — which is why the two branches are not cosmetic. The
 penalty comes from CTRL [@keskar2019ctrl], whose formula simply divides; the
 sign case was added by later implementations such as `transformers`. In
-decoder-only models "previously seen tokens" may include the prompt by default,
-so name the implementation and setting you use. The OpenAI-style presence and
+decoder-only models "previously seen tokens" may include the prompt by default.
+The OpenAI-style presence and
 frequency penalties avoid the sign problem by being additive and acting on
-counts (a provider's exact behaviour may differ from this formula):
+counts:
 $z_i' = z_i - \alpha_{\text{presence}}\,\mathbb{1}[c_i > 0] - \alpha_{\text{freq}}\,c_i$,
 where $c_i$ is how many times token $i$ has already appeared. Presence fires
 once; frequency keeps scaling.
@@ -320,6 +331,17 @@ no-repeat n-gram ban can, depending on tokenization and $n$, block valid
 continuations such as writing a key the second time. For structural validity
 use the schema-based constrained generation of @sec-decoding-constrained rather
 than a penalty, and judge meaningless content repetition separately.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- How often repetition loops happen depends on the model, the context and the
+  decoding settings.
+- For the repetition penalty, name the implementation and setting you use
+  (including whether the prompt counts).
+- For presence and frequency penalties, a provider's exact behaviour may
+  differ from the formula above.
+:::
 
 ## Constrained decoding {#sec-decoding-constrained}
 
@@ -352,10 +374,7 @@ masking has no way to renormalise for that — so what you get is a distribution
 over grammatical strings whose likelihoods are no longer proportional to the
 model's own [@park2024grammar]. In practice it shows up as grammatical output
 the unconstrained model would have ranked lower. Grammar-aligned decoding fixes
-it at extra cost. Check which algorithm your constrained-generation
-implementation follows and what the difference does on your task; it was not
-verified here that every library in @sec-decoding-tools makes the same
-choice.
+it at extra cost.
 
 :::: {.anlp-fig}
 ```{=html}
@@ -441,27 +460,30 @@ structured NLP tasks.
 :::
 ::::
 
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Check which algorithm your constrained-generation implementation follows and
+  what the gap between local masking and conditional sampling does on your
+  task.
+- It was not verified here that every library in @sec-decoding-tools makes
+  the same choice.
+:::
+
 ### What it actually buys
 
 The interesting question is not whether a grammar can enforce a schema — it
 can — but **where an unenforced model stops complying on its own**, and what
 enforcement costs when it takes over. Four schemas, 150 balanced reviews, two
 models; schema compliance measured once merely asked (`asked`) and once
-enforced (`forced`). The four schemas' full JSON Schema texts (required fields,
-enum values, array and `null` rules) are not published in this chapter; the
-L1–L4 labels below are short names only and should not be read as a strict
-difficulty order. The four levels are L1 a flat object with a naturally
+enforced (`forced`). The four levels are L1 a flat object with a naturally
 labelled enum (`flat, natural enum`), L2 an enum with unnatural labels
 (`unnatural enum`), L3 a nested object and array (`nested + array`), and L4 a
 nested object with a nullable field (`nested + nullable`). The columns are the
 share of outputs that parse (`parses`), the share that match the schema
 (`schema-ok`), accuracy (`accuracy`) and seconds per item (`s/item`).
 `accuracy` is computed over all 150 reviews, with invalid or unparseable
-outputs counted as wrong. To separate task success from format success,
-accuracy on schema-valid items alone should also have been reported; and since
-`asked` and `forced` ran on the same 150 reviews, the item-level paired results
-(both right, only one right, both wrong) and the uncertainty of the difference
-are also missing from this table:
+outputs counted as wrong:
 
 ```text
 qwen3.5:9b                        parses  schema-ok  accuracy  s/item
@@ -491,52 +513,39 @@ Three findings, and the first is the one that reframes the technique.
 with the schema 98–99.3% of the time when merely *asked*, at every difficulty
 level including nested objects with a nullable field. Enforcement took that to
 100%; the observed accuracy differences were about ±0.7 points on L1 and L2
-and zero on L3 and L4. A 150-item experiment cannot rule out small task
-effects. [Modern instruction-tuned models mostly
+and zero on L3 and L4. [Modern instruction-tuned models mostly
 produce the JSON you describe; the grammar is insurance on the last one or two
 percent.]{.hl}
 
-**Two qualifications on that null result (no difference found), and they
-matter more than the result itself.**
-First, it is a null on 150 items: the 95% interval around an 88% accuracy is
-roughly ±5 points, so this experiment could not have detected a two- to
-five-point degradation even if one were there. Second, the task here is
-*classification*. @tam2024format reported, for the models and tasks they
+**Read that null result (no difference found) knowing that the task here is
+*classification*.** @tam2024format reported, for the models and tasks they
 studied, that format restriction **can help** classification and **can hurt**
 multi-step reasoning — GSM8K-style tasks lost
 several points under JSON mode with near-zero parsing failures, which locates
 the loss in the reasoning rather than in the parsing. So this chapter's result
-is a narrow subset of theirs rather than a contradiction of it, and it does not
-license the general claim. Only sentiment classification was measured here, so
-do not carry "enforcement is free" into a chain-of-thought task. Letting the
+does not contradict theirs. Do not carry "enforcement is free" into a
+chain-of-thought task; letting the
 intermediate steps run free and constraining only the final answer field is a
-reasonable design option; its effect needs testing on the same task.
+reasonable design option.
 
 **On a weak model, it is the difference between working and not.**
 `llama3.2:3b` fell to **79.3% schema-valid** on the nested-plus-array schema —
 one output in five unusable. Enforcement took it to 100%, and **accuracy rose
 from 70.7% to 88.0%** over all 150 reviews, a 17.3-point gain (a net 26 correct
 answers; 31 `asked` outputs were off-schema). Scoring invalid outputs as wrong
-is one possible cause and the numbers are consistent with it; but how much of
-the gain came from format and how much from class decisions that enforcement
-changed on valid outputs needs item-level paired results.
+is one possible cause and the numbers are consistent with it.
 
 **The cost is latency, and it may not be where you would guess.** On this single
 laptop run, overhead ranged from **1.01× to 17.5×**; the top of that range is the weak model at L4, where
 0.53 s per item became 9.26 s. The overhead was not monotone in schema complexity — on `llama3.2:3b` L1 and L3 were cheap, L2 and L4 expensive; on `qwen3.5:9b` L3 was the most expensive.
 The two ends sit on different models, which is itself the finding: on
 `qwen3.5:9b` the grammar costs between 1.006× and 1.13× — **essentially
-free** — and on `llama3.2:3b` between 1.5× and 17.5×. Without repeated timing,
-how stable these ratios are and what causes the high latency are unknown; base
-deployment decisions on repeated measurements for your own model–schema
-pair.
+free** — and on `llama3.2:3b` between 1.5× and 17.5×.
 
 For the two conditions that came out expensive on `llama3.2:3b` — an unnatural
 enum in one case and a nullable field in the other — possible explanations
 include a long or difficult constrained search against the model's
-distribution, different token counts and implementation overhead. This
-experiment does not separate them; explaining the latency needs token counts
-and constrainer timings measured separately.
+distribution, different token counts and implementation overhead.
 
 ::: {.column-margin}
 Which is a reason to measure rather than reason about it. If the grammar's
@@ -544,6 +553,33 @@ cost depended only on schema complexity you could budget for it from the
 schema; in this run it was not monotone in schema complexity, and what it does
 depend on cannot be known without running both together and timing them
 repeatedly.
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The four schemas' full JSON Schema texts (required fields, enum values,
+  array and `null` rules) are not published in this chapter; the L1–L4 labels
+  are short names only and should not be read as a strict difficulty order.
+- To separate task success from format success, accuracy on schema-valid items
+  alone should also have been reported. Since `asked` and `forced` ran on the
+  same 150 reviews, the item-level paired results (both right, only one right,
+  both wrong) and the uncertainty of the difference are also missing from the
+  table.
+- The strong model's null result rests on 150 items: the 95% interval around
+  an 88% accuracy is roughly ±5 points, so this experiment could not have
+  detected a real two- to five-point degradation.
+- Only sentiment classification was measured here; the result is a narrow
+  subset of Tam et al.'s and does not license the general claim. The effect of
+  constraining only the final answer field needs testing on the same task.
+- How much of the weak model's gain came from format and how much from class
+  decisions that enforcement changed on valid outputs needs item-level paired
+  results.
+- The latency ratios had no repeated timing; how stable they are and what
+  causes the high latency are unknown. This experiment does not separate the
+  possible causes; that needs token counts and constrainer timings measured
+  separately. Base deployment decisions on repeated measurements for your own
+  model–schema pair.
 :::
 
 ### What it cannot fix
@@ -598,9 +634,7 @@ name and an argument object. Whether those arguments are *enforced* depends on
 a setting. Hosted APIs usually offer two strengths. A "JSON mode" aims only at
 syntactically valid JSON, not at matching your schema; a strict-schema mode
 (OpenAI's API, for example, calls it `strict`) compiles the supported subset of
-your schema into the kind of grammar described above. Check in the provider's
-documentation which one you have switched on, which fields an option like
-`strict` applies to, and what happens on refusal or truncation.
+your schema into the kind of grammar described above.
 
 Three rules follow from the measurements above.
 
@@ -609,8 +643,7 @@ strong-model result does not let you off. 98% schema compliance, if that rate
 held in production, means about twenty invalid arguments per thousand calls.
 Invalid calls should be rejected before execution or retried safely.
 Constrained generation with a supported schema prevents format errors in calls
-that finish; runtime validation and action authorisation are still needed. Its latency cost is real and varies
-by schema, but you can measure it before you ship.
+that finish; runtime validation and action authorisation are still needed.
 
 **Type the arguments as narrowly as the tool allows.** An enum of four
 operations cannot be called with a fifth. A date typed as a string can be
@@ -626,19 +659,25 @@ resource id, the permission and any required confirmation at runtime before
 the operation; @sec-tool-design is where that problem — and the
 confirmation and authorisation machinery around it — belongs.
 
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Check in the provider's documentation which mode you have switched on, which
+  fields an option like `strict` applies to, and what happens on refusal or
+  truncation.
+- The grammar's latency cost is real and varies by schema; measure it on your
+  own schema before you ship.
+:::
+
 ## Logprobs, confidence, and abstention {#sec-decoding-logprobs}
 
 Alongside each token, the model reports the log probability it assigned — its
 [logprob](#gloss-logprob){#term-logprob .term-ref}. This is the cheapest
 signals available about how sure the model is, and most pipelines throw it
-away. Where the API exposes it, first check which token positions and
-candidates are returned and what it does to billing and payload size. Not every
+away. Not every
 hosted API or model returns logprobs, and those that do often return only the
-top few candidates (`top_logprobs`): check both before relying on it, because
-renormalising over `A` and `B` below needs both tokens in the list. Also check
-that `A` and `B` really are single tokens in your tokenizer (including
-differences such as a leading space) and that the answer arrives at the first
-token position.
+top few candidates (`top_logprobs`); renormalising over `A` and `B` below
+needs both tokens in the list.
 
 The question is whether it is *usable*. Measured with `qwen3.5:9b` on 400
 balanced reviews, with
@@ -654,6 +693,16 @@ With single-token labels it makes a between-class score easy to compute, but it
 is not a probability of being right on its own; for a long answer, do not read
 token probabilities directly as "probability of being correct".
 [↩](#term-logprob){.term-back}
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Where the API exposes logprobs, first check which token positions and how
+  many candidates are returned and what it does to billing and payload size.
+- Check that `A` and `B` really are single tokens in your tokenizer
+  (including differences such as a leading space) and that the answer arrives
+  at the first token position.
 :::
 
 ### It discriminates
@@ -711,13 +760,11 @@ ECE = 7.04%
 ```
 
 The table uses ten equal-width bins over $[0.50, 1.00)$, giving an ECE of
-7.04%. Always say which bins you used, because ECE is sensitive to the number
-of bins and to sampling (no interval was computed here) and does not on its own
-settle the model's calibration on other distributions, and this binning is
+7.04%. This binning is
 not flattering anyone: 284 of the 400 items
-land in the top bin, which alone contributes about 44% of the 7.04%. An
-equal-mass binning (the same number of items per bin) helps show how sensitive
-ECE is to the bin choice. A Brier score — the mean squared gap between the
+land in the top bin, which alone contributes about 44% of the 7.04%.
+
+A Brier score — the mean squared gap between the
 stated probability and the 0/1 outcome, which needs no bins at all —
 summarises overall probabilistic quality, discrimination included, not
 calibration alone; report it alongside ECE rather than in its place.
@@ -725,16 +772,14 @@ calibration alone; report it alongside ECE rather than in its place.
 Two observations here, and they are not equally strong. In the 0.90–0.95 bin,
 17 of 25 answers were right (68.0%), a rate whose 95% Wilson interval runs
 about $[48, 83]$ — entirely below the 92.6% confidence stated. That is
-consistent with overconfidence in the high-confidence region; but the bin is
-small and several bins were inspected, so base any overall calibration
-judgement on the whole curve and on independent data, not on one bin.
+consistent with overconfidence in the high-confidence region.
 
 The one people quote is the bottom bin, and it deserves more caution than it
 usually gets: 5 correct out of 15, a 33.3% point estimate with an interval of
 $[15, 58]$. That interval contains 50%, so this does not establish "below
 chance" — and a wide interval is not evidence of uselessness either. What this
 bin does establish is narrower: **a label probability near 0.5 is not a
-calibrated estimate of being right**, on fifteen items. (The model reports a
+calibrated estimate of being right**. (The model reports a
 log-probability; 0.5 is the probability, which is about $-0.69$ in logs. Convert
 before you threshold.)
 
@@ -750,8 +795,7 @@ same $\exp(z/\tau)$ from @sec-decoding-sampling, used after the fact instead of
 during generation. Because it is monotone it leaves the binary label order,
 the argmax, the AUC and the abstention curve of the next section *exactly*
 unchanged and only changes how large the confidences are, so there is no
-reason not to try it first. How much it would cut ECE on this data was not
-measured; do not assume the gain in advance. What one
+reason not to try it first. What one
 scalar can fix is a *systematic* overconfidence, like the top bins here; it
 cannot remove the bin-to-bin zigzag in the middle of the table. If one scalar
 is not enough, @sec-classification's isotonic or Platt map is the next step.
@@ -759,13 +803,25 @@ Fit all of them on a separate calibration slice and report ECE, Brier score
 and task metrics for each on an untouched test set; fitting and reporting on
 the same 400 items gives optimistic results.
 
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Always say which bins you used: ECE is sensitive to the number of bins and
+  to sampling, and no interval was computed for 7.04%; it does not on its own
+  settle the model's calibration on other distributions. An equal-mass binning (the same number of items per
+  bin) helps show how sensitive ECE is to the bin choice.
+- The 0.90–0.95 bin is small and several bins were inspected; base any
+  overall calibration judgement on the whole curve and on independent data,
+  not on one bin.
+- The bottom-bin result rests on fifteen items.
+- How much temperature scaling would cut ECE on this data was not measured;
+  do not assume the gain in advance.
+:::
+
 ### It is immediately useful for abstention
 
 Even uncalibrated, the ranking can be used to route. The accuracy–coverage
-curve below is an exploratory result on these 400 reviews; set the production
-threshold on a separate development set, then measure the chosen threshold's
-coverage, kept accuracy and the outcome of the deferred items on untouched
-data. The first column is the share of least-confident items abstained on, the
+curve below is an exploratory result on these 400 reviews. The first column is the share of least-confident items abstained on, the
 second the number kept, the third the accuracy on the kept items only:
 
 ```text
@@ -781,9 +837,7 @@ abstain on the least-confident    kept    accuracy on what is kept
 **On these 400 reviews, setting aside the least-confident fifth left 92.50%
 accuracy on the 320 kept, against 86.75% on all 400.** Read the
 denominator: 92.50% is the model's accuracy on the 320
-it kept, not the accuracy of the whole pipeline. What the other 80 cost — a
-human's error rate, or a bigger model's — is not measured here, and the
-end-to-end number is the coverage-weighted combination of the two. Report
+it kept, not the accuracy of the whole pipeline. Report
 accuracy *and* coverage together, always. And the cost is not just one
 threshold: handling the deferred items and the errors that slip through count
 too.
@@ -795,6 +849,17 @@ bigger model, and report coverage alongside accuracy. Note that the
 threshold is a *fitted quantity* and belongs on a held-out slice — the same
 discipline @sec-classification applied to its decision threshold. Choosing it
 on the data you report is the same mistake in new clothes.
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Set the production threshold on a separate development set, then measure the
+  chosen threshold's coverage, kept accuracy and the outcome of the deferred
+  items on untouched data.
+- What the 80 deferred items cost — a human's error rate, or a bigger
+  model's — is not measured here; the end-to-end number is the
+  coverage-weighted combination of the two.
 :::
 
 Those last two tables describe the same 400 reviews. Side by side, they show
