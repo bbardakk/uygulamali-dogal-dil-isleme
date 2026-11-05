@@ -76,10 +76,8 @@ cache the **prefix** of a prompt: an unchanged system prompt and tool block,
 re-sent on the next call, may be billed at a lower price and skip most of the
 *prefill* (the pass that reads the prompt before the first output token) —
 @sec-serving measured warm prefill flat at 12–16 ms whatever the prompt length,
-on its own serving setup. The discount, minimum prefix, lifetime and cache
-breakpoint depend on the provider; log the cache tokens read and written and
-the time to first token on your own requests. So "every token is re-sent on every call" is exactly true of the
-*tokens* and only partly true of the bill.
+on its own serving setup. So "every token is re-sent on every call" is exactly
+true of the *tokens* and only partly true of the bill.
 
 Why only a *prefix*? Because attention is causal: the keys and values stored
 for token *i* (the KV cache of @sec-attention-cost) depend on every token
@@ -93,23 +91,20 @@ premium to write it.
 
 A worked example makes the size of the effect concrete. Take a 10-call agent
 run whose system prompt and tool definitions total 5,000 tokens, and use
-hypothetical multipliers (real ones vary by provider and model): a cache write
-costs 1.25× the normal input price, a cache read 0.1×. Uncached, the fixed part
-costs what 10 × 5,000 = 50,000 input tokens cost. Cached, it costs what
-1.25 × 5,000 + 9 × 0.1 × 5,000 = 10,750 fresh-input-equivalent tokens cost —
-about 4.65 times less. That is not a price but an example built with
-provider-specific multipliers.
+hypothetical multipliers: a cache write costs 1.25× the normal input price, a
+cache read 0.1×. Uncached, the fixed part costs what 10 × 5,000 = 50,000 input
+tokens cost. Cached, it costs what 1.25 × 5,000 + 9 × 0.1 × 5,000 = 10,750
+fresh-input-equivalent tokens cost — about 4.65 times less.
 
 Two consequences follow, and both make cutting tokens worth less than the raw
 count suggests. Fixed costs are cheaper than they look, so pruning the system
-prompt can return less than multiplying it by the step count suggests. And
-**compaction can reduce cache hits**: rewriting the middle of a context
+prompt can return less than multiplying it by the step count suggests.
+
+And **compaction can reduce cache hits**: rewriting the middle of a context
 invalidates the cached prefix from that point on, so the first call after you
 compact pays full price — plus any write premium — for everything after the
 rewritten point. Keeping a stable prefix (stable prefix, growing suffix) can
-help; but choose the interval and size of compaction on real tasks by weighing
-cache hits, the context limit and fact loss for the accuracy/cost balance — a
-rare, large summary can lose more facts.
+help.
 
 **What we will look at.** First whether long contexts really do degrade, where
 this chapter's own measurement finds nothing and the published benchmarks find
@@ -120,6 +115,19 @@ usually the largest single lever; just-in-time retrieval
 instead of loading everything up front; and the filesystem as somewhere to put
 what the transcript cannot hold. And finally the case where all of it still
 fails, because the data was never text.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The cache discount, minimum prefix, lifetime and cache breakpoint depend on
+  the provider; log the cache tokens read and written and the time to first
+  token on your own requests.
+- The 4.65× gap is not a price but an example built with hypothetical
+  multipliers; real ones vary by provider and model.
+- Choose the interval and size of compaction on real tasks by weighing cache
+  hits, the context limit and fact loss for the accuracy/cost balance; a rare,
+  large summary can lose more facts.
+:::
 
 ## Does a long context actually degrade? {#sec-context-engineering-rot}
 
@@ -143,10 +151,7 @@ qwen3.5:9b, 60 tasks, two invented figures to find and sum
               60     96.7%   [88.6,  99.1]          11,048
 ```
 
-Sixty distractors scored *higher* than twelve. That non-monotone shape is
-consistent with noise, but it does not establish it — a real effect of content
-or position need not be monotone either. The intervals
-overlap heavily — but overlapping intervals are not a test, so here is one.
+Sixty distractors scored *higher* than twelve. The intervals overlap heavily — but overlapping intervals are not a test, so here is one.
 The largest gap, 0 against 12 distractors (60/60 versus 53/60), sits on the
 same 60 tasks, so the right instrument is the paired one: all seven
 disagreements run the same way, and exact McNemar gives a two-sided
@@ -162,12 +167,21 @@ not published; these p-values are computed from the counts above and the
 disagreements stated in the text.
 
 So: on this model's 60 tasks, no monotone decline appeared between 142 and
-11,048 prompt tokens. Making the prompt 78× longer (a raw input-token ratio)
-made no difference this sample can detect — but 60 tasks give limited power
-to detect one, and "no difference detected" is not equivalence; an
-equivalence claim needs a pre-specified margin and a test built for it. The
-dip in the middle sits right at the edge of what 60 tasks can resolve either
-way.
+11,048 prompt tokens. Making the prompt 78× longer in raw input tokens made no
+difference this sample can detect.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The non-monotone shape, with sixty distractors scoring higher than twelve,
+  is consistent with noise but does not establish it; a real effect of content
+  or position need not be monotone either.
+- 60 tasks give limited power to detect a difference, and "no difference
+  detected" is not equivalence; an equivalence claim needs a pre-specified
+  margin and a test built for it.
+- The dip in the middle, at 12 and 28 distractors, sits right at the edge of
+  what 60 tasks can resolve either way.
+:::
 
 ### Why the easy test finds nothing
 
@@ -177,17 +191,13 @@ comfortable to conclude that context rot is folklore. It is not.
 @hong2025contextrot, the report that popularised the name, ran 18 frontier
 models on deliberately simple tasks at lengths inside their advertised windows,
 and found performance degrading as the input grew in every one of its
-experiments. I cannot say for certain why my two experiments did not show it;
-there are two plausible explanations.
+experiments. There are two plausible explanations for why my two experiments
+did not show it.
 
 The simpler one first: the local task went up to 11,048 tokens, about a third
-of the 32K at which the published benchmarks report their headline drops, and
-it cannot be compared directly with NoLiMa's longer, lower-overlap conditions
-where the large losses appear. Length, task and model all change together
-here, so this experiment cannot separate which of them accounts for the
-difference. The second explanation is the interesting one, because it is the
-same reason most in-house evaluations can miss the effect even when they *do*
-reach the length.
+of the 32K at which the published benchmarks report their headline drops. The
+second explanation is the interesting one, because it is the same reason most
+in-house evaluations can miss the effect even when they *do* reach the length.
 
 **Both of my tests allowed literal matching.** Both were
 *needle-in-a-haystack* (NIAH) tests: one fact — the *needle* — is hidden in a
@@ -207,10 +217,8 @@ to multi-hop tracing and aggregation — **almost all of them show large drops a
 the context grows**. Across 17 models claiming 32K or more,
 only half maintain satisfactory performance at 32K by RULER's own threshold.
 
-Together these show how narrow the literal needle test is. They used
-different models, tasks and success thresholds, so they are not a quantitative
-forecast for the local Qwen curve. The synthesis is still more useful than
-either result alone:
+Together these show how narrow the literal needle test is. The synthesis is
+more useful than either result alone:
 
 | what you measure | what the published results show |
 |:--|:--|
@@ -223,8 +231,7 @@ either result alone:
 [A model's advertised context length is a capacity, not a competence]{.hl} —
 its [**effective context length**](#gloss-effective-context-length){#term-effective-context-length .term-ref}
 is an empirical quantity, measured for a given task and success threshold,
-and it can be shorter than the advertised window. Measure the gap on your own
-retrieval and multi-fact tasks.
+and it can be shorter than the advertised window.
 
 ::: {#gloss-effective-context-length .column-margin .term-gloss}
 **Effective context length** — the longest tested input at which a model
@@ -234,8 +241,7 @@ and can be shorter than the advertised window. [↩](#term-effective-context-len
 :::
 
 **Why this might happen, mechanically.** Two mechanisms are usually offered,
-and they are plausible rather than established — nothing below is measured in
-this chapter. Attention weights are a softmax over every key in the context, so
+and they are plausible rather than established. Attention weights are a softmax over every key in the context, so
 adding keys gives the mass somewhere else to go — *dilution*. Note this is a
 tendency and not an identity: the scores are not fixed while the denominator
 grows, and a model that learns to score the relevant token higher in a longer
@@ -244,8 +250,7 @@ literal string match plausibly holds up better because it produces one large
 score where a semantic association produces several medium ones — but even a
 large score is diluted: with a target logit $a$ and $N$ equal distractor logits
 $b$, the target's weight is $e^{a}/(e^{a} + N e^{b})$, which still falls as $N$
-grows for any finite gap. Treat this as a possible mechanism, unmeasured
-here.
+grows for any finite gap.
 Separately, many advertised windows are only partly *trained* windows. A model
 pretrained at 8K is typically extended to 128K by rescaling its RoPE positions
 (Position Interpolation, YaRN — @sec-position) plus a comparatively short
@@ -278,6 +283,21 @@ those need their own evaluation. My local experiment is small — one
 result *about the easy case*, which is the most it can establish. The
 published benchmarks are the evidence for the hard case, and they were run at
 a scale this laptop experiment did not reach.
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The local experiment cannot be compared directly with NoLiMa's longer,
+  lower-overlap conditions where the large losses appear; length, task and
+  model all change together, so it cannot separate which of them accounts for
+  the difference.
+- NoLiMa and RULER used different models, tasks and success thresholds; they
+  are not a quantitative forecast for the local Qwen curve.
+- Measure the gap between the advertised window and the effective context
+  length on your own retrieval and multi-fact tasks.
+- Neither the dilution nor the RoPE-rescaling explanation is measured in this
+  chapter; treat them as possible mechanisms.
 :::
 
 :::: {.anlp-fig}
@@ -407,17 +427,25 @@ needle test did *not* reproduce this — 100% at every position — probably for
 the same reason it found nothing else: a literal string match is likely less
 sensitive to where it sits. Re-stating the objective at the end of the context
 is cheap — the task is short, and appending it leaves the cached prefix intact
-— and it may help keep the task from getting lost in the middle. But this
-chapter did not measure whether it improves accuracy; test that on your own
-tasks, together with the extra tokens it costs. Nor does it, on its own, fix
-*evidence* that sits in the middle; the remedy for that is the selecting and
-cutting the rest of this chapter is about.
+— and it may help keep the task from getting lost in the middle. It does not,
+on its own, fix *evidence* that sits in the middle; the remedy for that is the
+selecting and cutting the rest of this chapter is about.
 
 **Compaction that is not idempotent.** Summarising a summary usually loses a
-little more each round, and long-running agents do this repeatedly. Measure
-fact loss and drift across successive summaries. Where needed, produce the new
-summary from the *original* record — but that means keeping the raw history,
-so keep access to it authorised and time-limited, not indefinite.
+little more each round, and long-running agents do this repeatedly. Where
+needed, produce the new summary from the *original* record — but that means
+keeping the raw history, so keep access to it authorised and time-limited, not
+indefinite.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- This chapter did not measure whether re-stating the task at the end of the
+  context improves accuracy; test that on your own tasks, together with the
+  extra tokens it costs.
+- With repeated compaction, measure fact loss and drift across successive
+  summaries.
+:::
 
 ### Rolling history, concretely
 
@@ -456,9 +484,7 @@ The idea is simple and it may be one of the strongest levers in this chapter: a
 sub-task that needs to read a great deal — search fifty documents, scan a log,
 try six queries — runs in **its own context**, and returns only its
 conclusion. The parent does not see the fifty documents (unless it read them
-earlier); it sees a short result and source pointers. This chapter did not
-measure isolation: measure the sub-run's own turns and tokens, and whether the
-answer it returns agrees with the evidence, separately.
+earlier); it sees a short result and source pointers.
 
 ```text
   without isolation           with isolation
@@ -469,14 +495,11 @@ answer it returns agrees with the evidence, separately.
 ```
 
 The saving is not the 40k. On the parent's side it is roughly
-$(40{,}000 - 200) \times M$ **over the $M$ model calls left in its loop**. That
-is a gross figure. The sub-agent's own 40k of reading, its fixed prompt and
-output, and any cache pricing still have to be subtracted. For example, if 10
-calls remain in the parent's loop *after* the reading, and the 40,000 tokens of
-documents would stay in context on each of them, a 200-token summary changes
-the gross tokens sent by $(40{,}000 - 200) \times 10 = 398{,}000$. The net
-difference on the bill subtracts the sub-run's input and output, cache hits and
-any extra calls, so treat the sketch as illustrative rather than as a bill. How large $M$ is depends on
+$(40{,}000 - 200) \times M$ **over the $M$ model calls left in its loop** (a
+gross figure). For example, if 10 calls remain in the parent's loop *after*
+the reading, and the 40,000 tokens of documents would stay in context on each
+of them, a 200-token summary changes the gross tokens sent by
+$(40{,}000 - 200) \times 10 = 398{,}000$. How large $M$ is depends on
 something @sec-agent-anatomy measured rather than assumed. When the steps are
 independent the model batches its tool calls: five lookups collapsed into 2.0
 model calls there, and the growth was nowhere near quadratic. When the steps
@@ -504,9 +527,21 @@ isolate when the parent will need the detail — you will only pay the round
 trip and then ask for it again. @sec-multi-agent shows with a cost model where
 the rule can flip: six steps with 200-token results cost **1.20×** in raw
 prompt tokens with three specialists and a coordinator, because the per-agent fixed cost is paid extra, while twenty-four
-steps with 3,000-token results save two thirds. Those are model calculations,
-and this chapter's 40k/200 example is hypothetical; measure isolation's net
-benefit on your own tasks in accuracy, latency and total cost.
+steps with 3,000-token results save two thirds.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The parent-side saving is a gross figure: the net difference on the bill
+  subtracts the sub-agent's own 40k of reading, its fixed prompt and output,
+  cache hits and any extra calls. Treat the 398,000-token sketch as
+  illustrative rather than as a bill.
+- This chapter did not measure isolation: the 40k/200 example is hypothetical,
+  and the 1.20× and two-thirds figures are cost-model calculations. Measure
+  isolation's net benefit on your own tasks in accuracy, latency and total
+  cost, and separately the sub-run's own turns and tokens and whether its
+  answer agrees with the evidence.
+:::
 
 ## Just-in-time retrieval or eager loading? {#sec-context-engineering-jit}
 
@@ -519,9 +554,7 @@ alternative — give the agent the *ability* to fetch and let it fetch what it
 needs — can cut input tokens when the information is needed on only some
 requests. @sec-rag's easy needle test shows the scale: there, eighty documents
 instead of one meant 148× the input tokens for accuracy that was 100% in both
-conditions. But that figure leaves out retrieval misses, extra model and tool
-calls, latency and caching, and no general advantage can be claimed without
-them. Eager loading is that trade, made silently, on every request.
+conditions. Eager loading is that trade, made silently, on every request.
 
 Two things make just-in-time work, and both are @sec-tool-design's subject:
 
@@ -530,16 +563,25 @@ Two things make just-in-time work, and both are @sec-tool-design's subject:
   possible at all. This is why the two chapters are adjacent.
 - **Identifiers beat payloads.** Pass around order IDs, file paths and URLs;
   fetch the contents when needed. A pointer might be around ten tokens and a
-  document a few thousand — count both with your own tokenizer — and many
-  pointers may never be dereferenced.
+  document a few thousand, and many pointers may never be dereferenced.
 
 What it costs is **latency**: a round trip you would not have paid, on the
 steps that need the data. That is a real trade and it has an obvious middle
 ground — eagerly load the one or two things needed on nearly every request,
 fetch everything else on demand. What makes it a decision rather than a habit
 is measuring the hit rate: if you eagerly load something that is used 15% of
-the time, you may be sending it needlessly the other 85% of the time. Measure
-the real cost together with caching, the extra fetch call and latency.
+the time, you may be sending it needlessly the other 85% of the time.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The 148× ratio leaves out retrieval misses, extra model and tool calls,
+  latency and caching; no general advantage for just-in-time retrieval can be
+  claimed without them. Measure the real cost together with caching, the extra
+  fetch call and latency.
+- Ten tokens for a pointer and a few thousand for a document are only an
+  example; count both with your own tokenizer.
+:::
 
 ## The filesystem as external memory {#sec-context-engineering-filesystem}
 
