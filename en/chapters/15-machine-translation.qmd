@@ -376,12 +376,20 @@ BLEU too for comparability; do not rank systems on BLEU alone.**
 @kocmi2024navigating is the current guidance on how large a difference in each
 metric has to be before it means anything.
 
-This chapter follows only part of that rule and you should hold the missing
-third against it. Every table below reports BLEU and chrF2 and no neural
-metric, because everything here ran on one laptop with no CUDA GPU — the MT model uses Apple's MPS backend. COMET would still run there, only slowly;
-that slowness is itself the honest cost of the neural metrics rather than an
-argument against them. Read the rankings below as provisional, and add a COMET column before
-you ship a decision based on one.
+This chapter follows only part of that rule: every table below reports BLEU
+and chrF2 and no neural metric.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The missing neural metric is a weakness you should hold against this
+  chapter. The reason is that everything here ran on one laptop with no CUDA
+  GPU — the MT model uses Apple's MPS backend. COMET would still run there,
+  only slowly; that slowness is itself the honest cost of the neural metrics
+  rather than an argument against them.
+- Read the rankings below as provisional, and add a COMET column before you
+  ship a decision based on one.
+:::
 
 ## Decoding for translation {#sec-machine-translation-decoding}
 
@@ -470,17 +478,12 @@ What the data does show is severe diminishing returns:
   beam 2 -> 64     +0.57 BLEU     for  7.0x the time
 ```
 
-One extra beam buys as much as the following sixty-two — but before you carry
-that anywhere, notice what has not been done to it. These are 0.6-point BLEU
-differences on 500 sentences, and neither has been tested; without a paired
-bootstrap their reliability is unknown. @kocmi2024navigating, cited two
-sections ago, also advises against trusting BLEU differences of this size on
-their own, though it gives no ready-made p-value for this data set. **The
+One extra beam buys as much as the following sixty-two — but these are
+0.6-point differences that have not been significance-tested. **The
 defensible reading of this table is that no beam width was shown to be
 measurably better than its neighbours** — a more cautious claim than the raw
 numbers invite, and the one to write down. Beam 2 or 4 are reasonable choices
-depending on the speed-quality trade-off; confirm the choice on a separate
-development set against a real latency target.
+depending on the speed-quality trade-off.
 
 Running the test yourself is one line. `sacrebleu` compares two systems'
 output against the same reference with a paired bootstrap; the first system
@@ -492,20 +495,34 @@ sacrebleu ref.en -i beam2.en beam64.en -m bleu chrf --paired-bs -f text
 ```
 
 One likely explanation for the missing curse is the *decoder*, not the model.
-(The curse being missing only means BLEU and the overall length ratio did not
-worsen in this sweep; adequacy and human quality were not tested.)
 `generate()` scores a beam by its log-probability divided by its length raised
-to `length_penalty`, and `generate()` defaults that argument to `1.0` — though
-the model's `generation_config` file can set another value; record the
-effective value and that file for the run. Full length normalisation is one of the standard corrections for the length bias that
-produces the curse; @murray2018correcting analyse that bias and propose a
-tuned per-word reward as an alternative. This is a hypothesis, not a result:
-nothing here ran the beam sweep with normalisation switched off. What the next
-subsection does show is that the knob is a `generate()` argument, not a
-property of the Marian weights. To actually go looking for the curse, set
-`length_penalty=0.0` and sweep the beam again; @koehn2017six documented the
-degradation, and @meister2020beam argue that beam search works well precisely
-because it does *not* find the exact highest-probability sequence.
+to `length_penalty`, and `generate()` defaults that argument to `1.0`. Full
+length normalisation is one of the standard corrections for the length bias
+that produces the curse; @murray2018correcting analyse that bias and propose a
+tuned per-word reward as an alternative. What the next subsection does show is
+that the knob is a `generate()` argument, not a property of the Marian weights.
+@koehn2017six documented the degradation, and @meister2020beam argue that beam
+search works well precisely because it does *not* find the exact
+highest-probability sequence.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The beam differences were measured on 500 sentences and not
+  significance-tested; without a paired bootstrap their reliability is
+  unknown. @kocmi2024navigating, cited two sections ago, also advises against
+  trusting BLEU differences of this size on their own, though it gives no
+  ready-made p-value for this data set.
+- Confirm a choice of beam 2 or 4 on a separate development set against a
+  real latency target.
+- The curse being missing only means BLEU and the overall length ratio did
+  not worsen in this sweep; adequacy and human quality were not tested.
+- The model's `generation_config` file can set another value for
+  `length_penalty`; record the effective value and that file for the run.
+- The length-normalisation explanation is a hypothesis, not a result: nothing
+  here ran the beam sweep with normalisation switched off. To actually go
+  looking for the curse, set `length_penalty=0.0` and sweep the beam again.
+:::
 
 ### Length penalty moves BLEU without moving quality
 
@@ -589,8 +606,7 @@ Predictions are cheap; this one can be roughly tested. Take a *correct*
 translation — the reference itself, which scores 100 — and apply a separate
 perturbation in each language: turn the locative suffix after an apostrophe
 into the ablative in the Turkish references, and *in* into *from* in the
-English ones. The two were designed as parallel semantic errors; that they
-produce the same change of meaning in every sentence was not checked.
+English ones. The two were designed as parallel semantic errors.
 
 In Turkish that is a suffix: `İstanbul'da` → `İstanbul'dan`. To be certain the
 edit is a suffix and not a corrupted stem, only words with an explicit
@@ -614,9 +630,7 @@ Both effects probably make the *English* perturbation the harsher of the two.
 But the subsets differ — in sentence length and content too — and the effect of
 several edits on BLEU and chrF is not linear, so we cannot say with confidence
 in which direction the 1.18 and 0.57 ratios below are biased. Treat the whole
-comparison as exploratory. The version to trust selects the same 264 parallel
-pairs, makes one hand-checked, meaning-matched change on each side, and gives a
-paired uncertainty interval; it is the first thing to fix here.
+comparison as exploratory.
 
 | effect | on the BLEU ratio (1.18) | on the chrF ratio (0.57) |
 |:--|:--|:--|
@@ -645,14 +659,11 @@ of the token count.
 `'dan` adds one character to an eleven-character word; changing `in` to
 `from` replaces a two-character word with a four-character one. At the
 character level the Turkish change is smaller, and that may contribute to the
-chrF result; since chrF also depends on 1- to 6-grams, precision and recall, and
-corpus totals, separating the contribution would need character n-gram
-components reported on matched, single-edit sentences.
+chrF result.
 
 **The ratio between the two metrics' score changes is larger in Turkish** —
-4.89 against 2.37. Those ratios divide changes on two metrics with different
-scales, and the subsets were not matched; still, they hint that the two metrics
-could rank Turkish systems differently. Saying [whether the metric choice
+4.89 against 2.37: a hint that the two metrics could rank Turkish systems
+differently. Saying [whether the metric choice
 changes which system you ship]{.hl} would take measuring the ranking of several
 real translation systems, which we did not do.
 
@@ -756,6 +767,22 @@ those differences. Comparing across languages needs calibration against a shared
 human quality judgement.
 :::
 
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- That the two perturbations produce the same change of meaning in every
+  sentence was not checked.
+- The version to trust selects the same 264 parallel pairs, makes one
+  hand-checked, meaning-matched change on each side, and gives a paired
+  uncertainty interval; it is the first thing to fix here.
+- Since chrF also depends on 1- to 6-grams, precision and recall, and corpus
+  totals, separating how much the smaller character change contributes to the
+  chrF gap would need character n-gram components reported on matched,
+  single-edit sentences.
+- The 4.89 and 2.37 ratios divide changes on two metrics with different
+  scales, and the subsets were not matched.
+:::
+
 ### The second problem: word order
 
 Turkish word order is freer than English. The unmarked order is
@@ -797,26 +824,16 @@ own settings, and the `qwen3.5:9b` entry lists temperature 1.0, top-$k$ 20,
 top-$p$ 0.95 and a presence penalty of 1.5 at the time of writing. Unless the
 request overrode them, the LLM row was sampled at temperature 1.0 (with
 top-$k$ and top-$p$ restricting the draw to the most likely tokens;
-@sec-decoding covers them). The Marian sampling sweep does not tell you what
-that cost Qwen: a temperature's effect can differ between models in size, even
-in direction. Benchmarking an LLM at a chat default and
+@sec-decoding covers them). Benchmarking an LLM at a chat default and
 concluding that LLMs translate badly is the most common way to get this
-comparison wrong, and the LLM row below is only interpretable if its decoding
-settings are published beside it. They are not, and neither are the prompt
-text or whether the thinking mode of `qwen3.5:9b`, a reasoning model, was on;
-that is a gap this chapter owes you: treat the LLM row as *a* measurement of this model rather than as its
-ceiling until it has been re-run with the decoder pinned.
+comparison wrong; treat the LLM row below as *a* measurement of this model
+rather than as its ceiling.
 
 **And state the precision.** `ollama` serves an untagged model 4-bit quantised
 by default, while `opus-mt-tc-big` runs unquantised through `transformers`. So
 the headline is not 237M against 9B but 237M unquantised against a 4-bit 9B.
-Quantisation plausibly hurts more when the model must *generate* a
-morphologically rich language, which would put its cost in the en-tr column
-where the gap is largest — but that has not been measured here. Sampling and
-quantisation can push the LLM's score down, so the 6-BLEU figure may overstate
-the gap between the models themselves — but we tested neither with a
-controlled ablation on the same Qwen model;
-contamination, discussed below, pulls the other way.
+Sampling and quantisation can push the LLM's score down; contamination,
+discussed below, pulls the other way.
 
 ```text
 wmt16 tr-en                          BLEU    chrF   s/sentence
@@ -834,22 +851,14 @@ wmt16 en-tr                          BLEU    chrF   s/sentence
 
 The control row is there because a metric you have not sanity-checked is a
 metric you do not understand: leaving the source untranslated scores 2.09, so
-the numbers above measure more than incidental overlap. It is a rough check of
-the metric and direction; model quality needs reading examples, critical-error
-analysis and a check of data exposure.
+the numbers above measure more than incidental overlap.
 
 **One control the table cannot run, and one warning about its last column.**
 newstest2016 has been public since 2016 — in `sacrebleu`, on GitHub, in
 HuggingFace datasets, with its reference translations. Any LLM trained on a
 2020s web crawl has plausibly seen it, and that contamination *inflates* the
-LLM's score if it happened — a possibility, not evidence. The dedicated side is
-probably cleaner, since Helsinki-NLP's policy excludes WMT test sets from
-OPUS-MT training, but a general policy does not prove that the checkpoint used
-has no leak; verify its actual training sources. "Zero-shot" here means *no
-examples in the prompt* and not *never seen this data*. If you need an
-uncontaminated number, use a test set published after your model's cutoff and
-record the publication date, the model version and all fine-tuning data — a
-later test set does not automatically rule out exposure in later versions.
+LLM's score if it happened — a possibility, not evidence. "Zero-shot" here
+means *no examples in the prompt* and not *never seen this data*.
 
 As for the seconds: they are not measured the same way as the `ms/sent` column
 in @sec-machine-translation-decoding, which is why the same model at the same
@@ -866,10 +875,8 @@ the first 400 sentences, 237M parameters lead the 9B on BLEU and chrF — by 3
 BLEU into English and 6 into Turkish — at **41× to 164× the measured
 per-sentence speed**: 41× for beam-4 into Turkish, 164× for greedy into
 Turkish, 45× for beam-4 into English. Those ratios belong to this
-single-request measurement and change with batching, concurrency and hardware;
-for deployment, measure QPS, p95 latency and cost on the same hardware. A model
-trained on nothing but this language pair is hard to beat on this language
-pair.
+single-request measurement. A model trained on nothing but this language pair
+is hard to beat on this language pair.
 
 **The gap is twice as large translating *into* Turkish.** That is the
 asymmetry to expect and to check for: a general multilingual model has seen
@@ -882,18 +889,47 @@ changes, opus-mt's BLEU drops from 32.33 to 23.13 and its chrF far less, from
 60.08 to 57.41. Because the target language and references change, these
 numbers are not direct evidence that "translating into Turkish is harder"; the
 token asymmetry of @sec-machine-translation-turkish may explain part of the
-gap, but not how much. Investigate the direction gap with independent human
-evaluation and error-type analysis in both directions. The same check applies to the
-previous point: in chrF the LLM's deficit is 1.76 into English and 3.74 into
-Turkish, so the doubling is not only BLEU's harshness on Turkish.
+gap, but not how much. The same check applies to the previous point: in chrF
+the LLM's deficit is 1.76 into English and 3.74 into Turkish, so the doubling
+is not only BLEU's harshness on Turkish.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The Marian sampling sweep does not tell you what temperature cost Qwen: a
+  temperature's effect can differ between models in size, even in direction.
+- The LLM row is only interpretable if its decoding settings are published
+  beside it. They are not, and neither are the prompt text or whether the
+  thinking mode of `qwen3.5:9b`, a reasoning model, was on. Re-running it with
+  the decoder pinned is a gap this chapter owes you.
+- Quantisation plausibly hurts more when the model must *generate* a
+  morphologically rich language, which would put its cost in the en-tr column
+  where the gap is largest — but that has not been measured here.
+- Because of sampling and quantisation, the 6-BLEU figure may overstate the
+  gap between the models themselves; we tested neither with a controlled
+  ablation on the same Qwen model.
+- Copying the source is a rough check of the metric and direction; model
+  quality needs reading examples, critical-error analysis and a check of data
+  exposure.
+- The dedicated side is probably cleaner, since Helsinki-NLP's policy excludes
+  WMT test sets from OPUS-MT training, but a general policy does not prove
+  that the checkpoint used has no leak; verify its actual training sources.
+  For an uncontaminated number, use a test set published after your model's
+  cutoff and record the publication date, the model version and all
+  fine-tuning data — a later test set does not automatically rule out
+  exposure in later versions.
+- The 41× to 164× speed ratios change with batching, concurrency and
+  hardware; for deployment, measure QPS, p95 latency and cost on the same
+  hardware.
+- Investigate the direction gap with independent human evaluation and
+  error-type analysis in both directions.
+:::
 
 ### What an LLM buys that the dedicated model cannot
 
 In this measurement the table shows the LLM behind on every metric. The
 possible reasons to reach for one anyway are things this benchmark does not
-test, because WMT is a list of isolated sentences. For the needs below, test a
-context-aware LLM, document-level MT and terminology-constrained dedicated MT
-on the same documents:
+test, because WMT is a list of isolated sentences:
 
 - **Document context.** A dedicated sentence-level model translates each
   sentence independently and so cannot resolve a pronoun whose antecedent was
@@ -916,9 +952,8 @@ on the same documents:
   worth checking first: *massively multilingual* dedicated models such as
   M2M-100 ([Fan et al., 2021](https://jmlr.org/papers/v22/20-1307.html)) and
   NLLB-200 ([NLLB Team, 2022](https://arxiv.org/abs/2207.04672)) can
-  translate directly between 100 and 200 languages from one model — though
-  coverage does not guarantee the same quality for every pair; measure quality,
-  speed and usage rights on your pair. They are still far smaller than an LLM;
+  translate directly between 100 and 200 languages from one model. They are
+  still far smaller than an LLM;
   read the licence on the model card of the weights you pick before shipping
   (the NLLB-200 weights, for example, were released under a non-commercial
   licence).
@@ -937,6 +972,16 @@ under the same traffic profile. The signal driving the router is often a
 reference-free quality-estimation (QE) score (CometKiwi, say): sentences whose
 dedicated-model output scores low go to the LLM or to a person. Calibrate the
 QE routing on human-labelled hard examples from the target domain.
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- For these needs, test a context-aware LLM, document-level MT and
+  terminology-constrained dedicated MT on the same documents.
+- The coverage of massively multilingual models does not guarantee the same
+  quality for every pair; measure quality, speed and usage rights on your
+  pair.
 :::
 
 ## Low-resource translation {#sec-machine-translation-lowresource}
@@ -1036,13 +1081,20 @@ Two more considerations that decide it in practice:
 
 @sec-turkish-nlp measures the third row for Turkish — a multilingual model
 against a monolingual Turkish one on the same task — and finds no general
-verdict, only a protocol. Translate-train and translate-test are not measured
-in this book; this chapter's contribution is the mechanics and the arithmetic,
-and the guidance above is not a measurement. Compare the three pipelines on the
-same independent Turkish test set, labelling translation errors and model errors
-separately; exercise 7 is where you measure translate-test for your own task (for
-translate-train, translate the same task's training data, train on it, and
-compare on the same Turkish test set).
+verdict, only a protocol.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Translate-train and translate-test are not measured in this book; this
+  chapter's contribution is the mechanics and the arithmetic, and the
+  guidance above is not a measurement.
+- Compare the three pipelines on the same independent Turkish test set,
+  labelling translation errors and model errors separately; exercise 7 is
+  where you measure translate-test for your own task (for translate-train,
+  translate the same task's training data, train on it, and compare on the
+  same Turkish test set).
+:::
 
 ## Intuition checks {#sec-machine-translation-intuition}
 
