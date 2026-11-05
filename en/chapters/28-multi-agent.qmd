@@ -182,20 +182,13 @@ Five assumptions, and all five flatter the split:
 ```
 
 The three observation sizes below are example scenarios for tool outputs of
-different lengths, not measured in this chapter: ~200 tokens is a list of
-search hits, ~800 a function body or a small API response, ~3,000 a file read
-or a fetched page. Measure the distribution in your own workload.
+different lengths: ~200 tokens is a list of search hits, ~800 a function body
+or a small API response, ~3,000 a file read or a fetched page.
 
 Read the two formulas through one cell: 6 steps with 200-token observations.
 The single agent pays 6 × 1,450 + 200 × 15 = 11,700 tokens (15 = 6·5/2). Each of
 the three specialists takes 2 steps and pays 2 × 1,450 + 200 = 3,100, 9,300 for
 the three; add the coordinator's constant 4,710 and the total is 14,010.
-
-Carry those five assumptions with every ratio you quote from the table. In
-particular, the coordinator never runs a final synthesis and output tokens are
-free — a real system pays for both, and the synthesis reads three reports, so
-the split's true cost is above what is printed. These are modelled numbers, not
-a measured end-to-end saving.
 
 One more assumption hides in the word *step*: each step is its own model call.
 @sec-agent-anatomy measured a model batching five independent lookups into 2.0
@@ -229,6 +222,20 @@ formula, F = 1,450, R = 120 and an even split:
    12 steps  ->     98 tokens per observation
    24 steps  ->     25 tokens per observation
 ```
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The three observation sizes (~200, ~800 and ~3,000 tokens) were not
+  measured in this chapter; measure the distribution in your own workload.
+- The ratios in the table are modelled numbers, not a measured end-to-end
+  saving; carry the five assumptions with every ratio you quote.
+- In the model the coordinator never runs a final synthesis and output tokens
+  are free. A real system pays for both, and the synthesis reads three
+  reports, so the split's true cost is above what is printed. For real cost
+  and accuracy, measure output tokens, duplicated work, the coordinator's
+  synthesis and the provider's cache.
+:::
 
 :::: {.anlp-fig}
 
@@ -315,9 +322,7 @@ case where the diagram does the arguing.
 in this model.** Twenty-four steps returning 3,000 tokens each is **862,800
 tokens as one agent and 291,510 as the four-agent setup** — 0.34×, a two-thirds
 saving. The mechanism is the quadratic: the single agent carries every
-observation through every subsequent call, and the specialists do not. For
-real cost and accuracy, measure output tokens, duplicated work, the
-coordinator's synthesis and the provider's cache.
+observation through every subsequent call, and the specialists do not.
 
 [The dial is not how complex your task is. It is how much material it
 produces.]{.hl} More exactly, it is material multiplied by how many later calls
@@ -342,21 +347,17 @@ cell moves like this:
 
 At *d* = 2 — each specialist doing twice its fair share — there is, in this
 even-split model, **no observation size at any of the step counts examined**
-that makes splitting cheaper. Do not use that threshold as an architectural
-rule without measuring real duplication and uneven work. Even
-*d* = 1.5 puts four of the nine cells against the split, three more than the
-printed table. Measure your duplication before you trust the ratio; it is
-the parameter the conclusion actually hangs on, and it is not in the table.
+that makes splitting cheaper. Even *d* = 1.5 puts four of the nine cells
+against the split, three more than the printed table. Duplication is the
+parameter the conclusion actually hangs on, and it is not in the table.
 
 **The second is prompt caching, and it is not a footnote.** Every turn of an
 agent loop re-sends the previous turn's prompt as an exact prefix and adds a
 little at the end, which is the pattern caching is built for — and the single
 agent, with the longest repeated prefix, is the biggest beneficiary. In the
 model below, each call reads everything the previous call sent from the cache
-and writes only its new tokens — a full prefix-hit assumption. Charging cached
-reads at 0.1× and cache writes at 1.25× of the base rate (a hypothetical
-schedule; real multipliers, prefix hits and cache lifetimes vary by provider
-and plan, so recompute with your own provider's values):
+and writes only its new tokens. Charging cached reads at 0.1× and cache writes
+at 1.25× of the base rate (a hypothetical schedule):
 
 ```text
   steps / obs      raw ratio    with caching
@@ -381,6 +382,17 @@ the single agent is a much stronger baseline than the first table admits —
 provided its calls come quickly enough, since cached prefixes typically expire
 after a few idle minutes.
 
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Do not use the *d* = 2 threshold as an architectural rule without measuring
+  real duplication and uneven work; measure your duplication before you trust
+  the ratio.
+- The cached table assumes a full prefix hit. Real multipliers, prefix hits
+  and cache lifetimes vary by provider and plan; recompute with your own
+  provider's values.
+:::
+
 ## The saving is paid for in information {#sec-multi-agent-honest}
 
 That table answers a token question. It says nothing about whether the answer
@@ -391,7 +403,7 @@ mechanism of the saving — and it means the coordinator is reasoning about a
 lossy compression of what the specialist saw. Anything the specialist did not
 think worth reporting is missing when the coordinator decides; unless you
 designed a way back to the specialist's transcript or evidence pointers,
-nothing downstream can recover it. That way back has a cost too; measure it.
+nothing downstream can recover it.
 @sec-summarization measured what summarisation does to faithfulness; the same
 applies when the summariser is your own subagent and the reader is your own
 coordinator.
@@ -406,10 +418,8 @@ never coincide pull it the other way, down to 1 − 3 × 10% = 70%, which is the
 floor under any dependence. So the honest figure is not a point but the band
 **[70%, 90%]**, with independence at 72.9% inside it. Where your system sits in
 that band you have to measure rather than compute — and the band is wide enough
-to be the whole decision. Either way it is before the coordinator's own
-synthesis, which can fix errors or add new ones and is not in this
-calculation — the kind of step where @sec-agent-anatomy's single agent most
-likely broke: call counts and formats held at every step count while accuracy
+to be the whole decision. @sec-agent-anatomy's single agent most likely broke
+at a synthesis step too: call counts and formats held at every step count while accuracy
 fell from 100% to 40%, so the failure was most likely in combining what came
 back, not in the calls.
 
@@ -419,16 +429,13 @@ reports its research system beating single-agent Claude Opus 4 by 90.2% on an
 internal research eval while spending about **15× the tokens of a chat**, with
 token usage alone explaining roughly 80% of the performance variance on
 BrowseComp, a web-browsing benchmark — a measure of association, which does not
-show that adding tokens would raise quality by itself. These are Anthropic's
-own internal evaluations; the raw task and score data are not published. The same post puts a single agent at
+show that adding tokens would raise quality by itself. The same post puts a single agent at
 about 4× a chat, so the multi-agent system spends roughly four times what one
 agent does. Read that together with the arithmetic above and the two
 results do not conflict: the split can save context tokens *per unit of work
 done* and still cost far more in total, because the agents you added do more
 work rather than the same work in thirds. @sec-multi-agent-cost is a saving on
-the transcript. It is not a saving on the bill — and its table is hypothetical
-raw prompt tokens, not to be equated directly with that post's comparisons on
-different workloads.
+the transcript. It is not a saving on the bill.
 
 There is a second lever there that this chapter's token arithmetic cannot see,
 and it is probably the bigger one: that system runs an expensive coordinator
@@ -466,6 +473,20 @@ So the honest test before splitting is two-sided:
 
 If you cannot answer the second, you have not evaluated an architecture; you
 have chosen a diagram.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- A way back to the specialist's transcript or evidence pointers has a cost
+  too; measure it.
+- The [70%, 90%] band is before the coordinator's own synthesis, which can fix
+  errors or add new ones and is not in this calculation.
+- Anthropic's figures are its own internal evaluations; the raw task and score
+  data are not published.
+- The cost model's table (@sec-multi-agent-cost) is hypothetical raw prompt
+  tokens, not to be equated directly with the Anthropic post's comparisons on
+  different workloads.
+:::
 
 ## Shared state is the hardest part {#sec-multi-agent-state}
 
@@ -587,10 +608,9 @@ retrying forever or vanishing.
 ## Frameworks, as of 2026 {#sec-multi-agent-frameworks}
 
 Every framework here opts you into a model of control flow, and that choice
-matters more than the API. This section will date; check versions. Compare
-frameworks on visibility of state and flow, typed boundaries, handoff and
-delegation support, human approval, observability and maintenance status; the
-characterisations below are not a ranking, so measure on your own workload.
+matters more than the API. This section will date. Compare frameworks on
+visibility of state and flow, typed boundaries, handoff and delegation support,
+human approval, observability and maintenance status.
 
 | framework | what it opts you into |
 |:--|:--|
@@ -609,6 +629,15 @@ cost of monitoring, permissions and maintenance — a framework your
 organisation already runs may cover some of those — but do not commit to a
 topology before the requirement is clear. You will then be choosing between
 these on the basis of what you know your control flow needs.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Frameworks change quickly; check versions before you rely on the
+  characterisations in the table.
+- The characterisations in the table are not a ranking; measure the frameworks
+  on your own workload.
+:::
 
 ## Intuition checks {#sec-multi-agent-intuition}
 
