@@ -47,11 +47,9 @@ counterpart in the indexed documents cannot produce a match on its own.
 space, so documents can be encoded once and searched by vector similarity
 (usually the cosine similarity of @sec-embeddings). A suitably trained model can
 bring paraphrases, synonyms and — as one condition in this chapter shows —
-related texts in different languages close together; how well it does has to be
-measured for the model and the query distribution.
-
-It needs a trained model, it cannot guarantee an exact match on a part number,
-and its failures are hard to explain.
+related texts in different languages close together. In exchange it needs a
+trained model, it cannot guarantee an exact match on a part number, and its
+failures are hard to explain.
 
 The names come from the shape of the representations. A lexical index works in
 a vocabulary-sized space (tens of thousands of terms) and relies on the few
@@ -81,16 +79,23 @@ to 46.8 points behind the better of its two parents (while beating the weaker
 one by 26–27 points in both). Then how a dense retriever is trained, where hard
 negatives play a large part. Then reranking, the approximate index, and the four
 metrics, one of which bounds what comes downstream under certain conditions.
-And finally where to put the vectors. Before carrying the results to real user
-queries, the model prefixes and the relevance judgements need checking.
+And finally where to put the vectors.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- How well dense retrieval does has to be measured for the model and the query
+  distribution.
+- Before carrying the results to real user queries, the model prefixes and the
+  relevance judgements need checking.
+:::
 
 ## The experiment, and why it has two conditions {#sec-retrieval-conditions}
 
 @sec-turkish-nlp measured the sparse side on 7,165 Turkish documents: with
 three-term queries derived from the target sentence, their terms deliberately
 inflected differently from the document, surface-form BM25 reaches 28.0%
-recall@1 and stemming takes it to 95.3%. Those queries do not come from a user
-log; do not assume the same gain on real queries. Condition A below is built
+recall@1 and stemming takes it to 95.3%. Condition A below is built
 the same way, a design that tests lexical matching and stemming in
 particular.
 
@@ -100,8 +105,7 @@ because the same trap is available in any retrieval evaluation you build.
 
 Those queries are *three disconnected content words*. That is unlike a
 natural-language question and favourable to a lexical matcher; for a
-bi-encoder trained on full sentences it may be out of distribution (without
-knowing the training mix that cannot be stated for sure). Running only that condition and reporting "dense
+bi-encoder trained on full sentences it may be out of distribution. Running only that condition and reporting "dense
 retrieval is weak in Turkish" would have been measuring the query format and
 blaming the model.
 
@@ -120,8 +124,7 @@ sentence instead of three words), so do not put the difference between the
 conditions down to language alone.
 
 And **two dense models**, for the same reason:
-`paraphrase-multilingual-MiniLM` (its full model id and revision were not
-recorded for this run) produces multilingual sentence representations and,
+`paraphrase-multilingual-MiniLM` produces multilingual sentence representations and,
 per its model card, can be used for clustering and semantic search too;
 `multilingual-e5-base` [@wang2024e5] is a *retrieval* model with explicit usage
 instructions for asymmetric query–passage retrieval, trained on query-document
@@ -130,27 +133,23 @@ data and prefix use, so the gap between them cannot be read as the effect of
 the training objective alone. Running only one would have given an incomplete
 picture of dense retrieval.
 
-**One instruction from E5's model card that this chapter should have recorded
-and did not.** `multilingual-e5-base` is an *asymmetric* retrieval model: it is
+**One instruction from E5's model card that should not be skipped.**
+`multilingual-e5-base` is an *asymmetric* retrieval model: it is
 trained with a `query: ` prefix on queries and a `passage: ` prefix on
 documents, and the card says explicitly that you will see a performance drop
 without them. This is exactly the setting where
 the prefixes matter most — an asymmetric query-document task is what they exist
 for — and skipping them is one of the common silent errors in an embedding
 pipeline; @sec-clustering makes the same
-point for the symmetric case, where the card prescribes `query: ` on both sides. A second silent error close to
+point for the symmetric case, where the card prescribes `query: ` on both sides.
+Our runs do not state which convention they used; treat the E5 rows as pending
+that check.
+
+A second silent error close to
 the prefixes is normalisation: cosine similarity equals the inner product only
 for unit-length vectors, and E5's card passes its outputs through L2
 normalisation before comparing them. Searching unnormalised vectors by inner
 product (in an inner-product ANN index, say) favours documents with large norms.
-Our runs do not state which convention they used. If the prefixes were omitted,
-E5's numbers below are measured under a setting its own card advises against —
-which is a reason to re-run rather than a guarantee that the scores would rise
-or that both of this chapter's headline margins would shrink. Treat the E5 rows
-as pending that check, record the prefixes and the normalisation setting beside
-the model name when you run this, and do not read the gaps as a firm measure of
-one model's superiority until a run that follows the model card is
-reported.
 
 Two upstream decisions this experiment sidesteps, so that you do not miss
 them in your own system. First, what counts as a "document": here every
@@ -161,9 +160,27 @@ BM25, lowercase queries and documents with the same Turkish rule (`I → ı`,
 `İ → i`). Python's default `lower()` does not provide that mapping — it turns
 `I` into `i` instead of `ı` and `İ` into `i` plus a combining dot — so query and
 document forms can diverge before stemming runs
-(@sec-turkish-nlp-normalization). Which lowercasing rule this experiment used
-was not recorded; verify the normalisation with examples in your own
-pipeline.
+(@sec-turkish-nlp-normalization).
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Condition A's queries do not come from a user log; do not assume stemming
+  gives the same gain on real queries.
+- Whether three-word queries are out of distribution for a bi-encoder cannot
+  be stated for sure without knowing the model's training mix.
+- `paraphrase-multilingual-MiniLM`'s full model id and revision were not
+  recorded for this run.
+- If E5's prefixes were omitted, its numbers are measured under a setting its
+  own card advises against. That is a reason to re-run rather than a guarantee
+  that the scores would rise or that both of this chapter's headline margins
+  would shrink. Do not read the gaps as a firm measure of one model's
+  superiority until a run that follows the model card is reported.
+- When you run this yourself, record the prefixes and the normalisation
+  setting beside the model name.
+- Which lowercasing rule this experiment used was not recorded; verify the
+  normalisation with examples in your own pipeline.
+:::
 
 ## What the measurements say {#sec-retrieval-results}
 
@@ -179,12 +196,7 @@ That last assumption is not verified, and it is not symmetric. On 7,165
 sentences of news text, three content words will often describe more than one
 sentence, and the system that surfaces a near-paraphrase is precisely the dense
 one. So read the tables as **target-document hit@k** rather than as standard
-recall computed against complete relevance judgements. One might expect
-unlabelled relevant documents to affect the dense system more, but the
-direction and size of that effect can only be known from pooled judgements.
-The fix is the one this chapter's own interview section prescribes: pool the
-top-10 of every system on a subsample and label the union by hand. We did not
-do it.
+recall computed against complete relevance judgements.
 
 Two things to know before reading the tables. First, the columns. **R@1** and
 **R@10** are the share of queries whose assigned target document is in the top
@@ -198,10 +210,7 @@ BM25 ranking and a dense ranking with
 $\sum_s 1/(k + \text{rank}_s(d))$, summed over the systems $s$ that returned
 it, and the fused list is sorted by that score. A document a system did not
 return adds nothing from that system. $k$ is a smoothing constant; the original
-paper used $k = 60$, and it remains the common default. The $k$ used in this
-experiment, the number of candidates taken from each retriever, how missing
-ranks were scored and how ties were broken were not recorded; that the original
-paper used $k = 60$ does not show the same value was used here.
+paper used $k = 60$, and it remains the common default.
 
 ::: {#gloss-rrf .column-margin .term-gloss}
 **reciprocal rank fusion (RRF)** — merge several ranked lists by giving each
@@ -213,13 +222,25 @@ system's.
 [↩](#term-rrf){.term-back}
 :::
 
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- One might expect unlabelled relevant documents to affect the dense system
+  more, but the direction and size of that effect can only be known from
+  pooled judgements. The fix is the one this chapter's interview section
+  prescribes: pool the top-10 of every system on a subsample and label the
+  union by hand. We did not do it.
+- The RRF $k$ used in this experiment, the number of candidates taken from
+  each retriever, how missing ranks were scored and how ties were broken were
+  not recorded; that the original paper used $k = 60$ does not show the same
+  value was used here.
+:::
+
 ### Condition A — keyword queries, inflected
 
 This is the condition lexical matching should win, provided it can handle
 Turkish morphology. The table rests on 800 queries per condition, so one query
-is about 0.125 percentage points. Read close results within sampling
-uncertainty; paired confidence intervals would need item-level hits, which are
-not reported here:
+is about 0.125 percentage points:
 
 ```text
 system                                        R@1    R@10   MRR@10  nDCG@10
@@ -234,13 +255,21 @@ hybrid RRF (unweighted), stemmed + e5       63.2%   96.5%     73.7     79.2
 [In this synthetic keyword condition, stemmed BM25 is sixty points ahead.]{.hl}
 BM25 with the published Snowball Turkish stemmer (`snowballstemmer`, a rule set
 of a few hundred lines) beats the E5 row 96.0% to 35.9% and the MiniLM row
-96.0% to 10.6%. The observed gap needs separate testing on real user
-queries.
+96.0% to 10.6%.
 
 The surface-form and stemmed rows show a similar pattern to @sec-turkish-nlp's
 28.0% and 95.3% on a separate query sample (800 queries per condition rather
 than 1,481), at 27.5% and 96.0%. That is a consistency sign, not an exact
 reproduction on the same queries.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Read close results within sampling uncertainty; paired confidence intervals
+  would need item-level hits, which are not reported here.
+- Stemmed BM25's sixty-point lead needs separate testing on real user
+  queries.
+:::
 
 ### Condition B — cross-lingual queries
 
@@ -259,10 +288,8 @@ hybrid RRF (unweighted), stemmed + e5       48.1%   99.6%     70.9     78.2
 
 [In this condition the dense model is seventy-two points ahead.]{.hl} The
 English query and the Turkish document share little vocabulary, yet BM25 still
-scores 23.2–23.8%. Whether those matches come from proper nouns, numbers or
-shared spellings was not examined here. Names and numbers are a plausible
-explanation — and cases dense retrieval can struggle with — but do not credit
-them alone without looking at the terms.
+scores 23.2–23.8%. Names and numbers are a plausible
+explanation — and cases dense retrieval can struggle with.
 
 **But say what condition B is favourable to, the way we said it for condition
 A.** The query here is a *full professional translation of the document*, and
@@ -273,14 +300,8 @@ closer to bitext mining (finding the sentence that is the translation of a
 given sentence) than to search. Real cross-lingual queries are often short and
 question-shaped and do not cover the whole document. So read 96.2% as "dense
 retrieval does very well at translation matching" rather than "dense retrieval
-solves cross-lingual search", and do not carry the seventy-two-point margin to
-real, short cross-lingual queries — just as condition A's sixty-point margin
-should not be carried to real keyword queries. **Each condition hands its winner a query drawn from
-the target document itself.** The missing arm is condition B′: three content
-words from the *English translation*, which is condition A's cross-lingual
-twin. It would be a useful extra experiment on the effect of query form; no
-bound can be declared before its direction is measured. It is the run we would
-add first.
+solves cross-lingual search". **Each condition hands its winner a query drawn from
+the target document itself.**
 
 ::: {.column-margin}
 Stemming makes a difference of about **68.5 points** in condition A and **0.6
@@ -288,6 +309,22 @@ points** in condition B. Stemming fixes form mismatch *within* a language, and
 in condition B English–Turkish matching is limited to begin with, so there may
 be little left for it to fix. An error analysis would show which terms
 matter.
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Whether BM25's condition-B matches come from proper nouns, numbers or shared
+  spellings was not examined here; do not credit them alone without looking
+  at the terms.
+- Do not carry the seventy-two-point margin to real, short cross-lingual
+  queries — just as condition A's sixty-point margin should not be carried to
+  real keyword queries.
+- The missing arm is condition B′: three content words from the *English
+  translation*, which is condition A's cross-lingual twin. It would be a
+  useful extra experiment on the effect of query form; no bound can be
+  declared before its direction is measured. It is the run we would add
+  first.
 :::
 
 ### The finding that contradicts the received wisdom
@@ -315,17 +352,14 @@ which condition you are in — not a free gain. A plausible reason is visible in
 the mechanism.
 
 Be precise about what was measured, because the claim is narrower than "hybrid
-retrieval is oversold". These rows are *unweighted*, *rank-based* fusion at a
-constant $k$ this chapter does not report — and the widget below exists to show
-you that $k$ changes the answer, which makes not reporting it a real gap.
+retrieval is oversold". These rows are *unweighted*, *rank-based* fusion.
 
-Two standard repairs went untried. **Weighted RRF** — $\sum w_s/(k + \text{rank}_s)$
-with a per-system weight fitted on held-out queries — is the obvious one, and
-this chapter defers it to an exercise rather than running it. **Score-based
+There are two standard repairs. **Weighted RRF** — $\sum w_s/(k + \text{rank}_s)$
+with a per-system weight fitted on held-out queries — is the obvious one.
+**Score-based
 fusion** is the second: @bruch2024fusion report, on the datasets they studied,
 that a convex combination of normalised scores beats RRF both in and out of
-domain, with a single parameter that needs few examples to tune; whether it
-wins on this chapter's two query conditions has to be tested. So the finding to
+domain, with a single parameter that needs few examples to tune. So the finding to
 carry is this one: *unweighted rank fusion of unequal parents can be harmful —
 it was in both cases measured here — and one plausible reason is that rank
 fusion does not use the score-magnitude information that could tell it which
@@ -337,11 +371,23 @@ hit from a weak system like a rank-1 hit from a strong one.
 
 When one parent is at 96% and the other at 36%, the weak parent's top-ranked
 irrelevant documents arrive with full weight and can displace the strong
-parent's correct answer. Confirming that plausible mechanism means inspecting
-where the right document and the decoys sit in each component list; that
-breakdown is not reported here. Note that "confidence" is not the word: rank fusion never sees
+parent's correct answer. Note that "confidence" is not the word: rank fusion never sees
 a confidence score, which is exactly the information that would have told it
 which parent to trust.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- These rows were measured at a constant $k$ this chapter does not report.
+  The widget below exists to show you that $k$ changes the answer, which
+  makes not reporting it a real gap.
+- The two standard repairs went untried here: weighted RRF is deferred to an
+  exercise, and whether score-based fusion wins on this chapter's two query
+  conditions has to be tested.
+- Confirming the mechanism by which the weak parent displaces the strong
+  parent's correct answer means inspecting where the right document and the
+  decoys sit in each component list; that breakdown is not reported here.
+:::
 
 ::: {.anlp-widget}
 ```{=html}
@@ -563,12 +609,19 @@ On the easy condition (B, for a dense model) the two are 2.4 points apart, so
 a casual benchmark would conclude the model choice does not matter. On the hard
 condition (A) the E5 row is **more than three times higher** than the MiniLM
 row (35.9% against 10.6%). The training objective alone cannot explain the gap:
-the two models also differ in size, training data and prefix use, and the full
-model ids, E5's prefixes and the same evaluation procedure need checking.
+the two models also differ in size, training data and prefix use.
 
 [In this experiment the model gap shows up more clearly in condition A, the
 hard one]{.hl}, which is an argument for reporting easy and hard query slices
-separately. Do not infer a model's quality on other tasks from this table.
+separately.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Before interpreting the model gap, the full model ids, E5's prefixes and
+  the same evaluation procedure need checking.
+- Do not infer a model's quality on other tasks from this table.
+:::
 
 ## Training a dense retriever {#sec-retrieval-training}
 
