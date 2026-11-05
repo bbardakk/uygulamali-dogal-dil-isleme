@@ -100,9 +100,7 @@ really got worse. The experiment below compares the two.
 So measure it. The suite is 100 Turkish customer messages generated from five
 templates with randomised slots — order code, day, month, city, amount — which
 means the ground truth is known by construction rather than by hand labelling,
-removing the annotation workload. The generator, the code that derives the
-expected fields and the scoring rule can still share a systematic error, though;
-check randomly chosen items independently to rule it out. The task is extraction to JSON:
+removing the annotation workload. The task is extraction to JSON:
 five fields per message, 500 field decisions per run. Scoring is exact string
 match per field, plus a stricter all-five-correct **exact match** per item.
 
@@ -118,9 +116,18 @@ Three prompts, all extracting the same five fields:
   the edit that gets approved without comment.
 
 Each prompt ran the full 100-item suite five times at temperature 0.7, and A ran
-twice more at temperature 0. The results below hold for this setup — 100
-messages from five templates, `qwen2.5:7b`, and these two temperatures; measure
-the same prompt change again on other tasks.
+twice more at temperature 0. The results below hold for this setup: 100
+messages from five templates, `qwen2.5:7b`, and these two temperatures.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Although the ground truth is known by construction, the generator, the code
+  that derives the expected fields and the scoring rule can still share a
+  systematic error; check randomly chosen items independently to rule it out.
+- The results describe this setup only; measure the same prompt change again
+  on other tasks.
+:::
 
 ### The noise floor is smaller than folklore claims
 
@@ -206,16 +213,10 @@ rules.
 so the comparison should be paired. The right test is McNemar's, which looks
 only at the *discordant* items where the two prompts disagree (@sec-llm-eval).
 But in this experiment the pairing that links an item's result under A to the
-same item's result under C, and the run ids, were not stored; and 91 and 74 in
-the table are five-run means, not the totals of one paired run. So McNemar's p
-cannot be computed from these data (an earlier version of this chapter derived
-a p range from the margins; that calculation was not valid). What can be said
-is that the 17-decision gap on `day` and the 3.4-point total drop lie far
-outside the observed five-run range, while how robust the 9.2-point exact-match
-gap is cannot be known from these data. In the next experiment store each
-item's right/wrong result under both prompts with the same id and run the
-paired test on that; it costs nothing and is the difference between a claim and
-an anecdote.
+same item's result under C, and the run ids, were not stored, so McNemar's p
+cannot be computed from these data. What can be said is that the 17-decision
+gap on `day` and the 3.4-point total drop lie far outside the observed
+five-run range.
 
 ::: {.column-margin}
 This is why "prompt engineering" resists being called engineering: the artefact
@@ -239,18 +240,31 @@ ran them under each prompt, and inspected every wrong `day` value:
 **In that 40-item probe every single wrong `day`, under both prompts, is the
 leading digits of the amount.** That is a concrete hypothesis of field mixing:
 the model seems to bleed one field into another, and in this sample moving the
-`amount` rule above the `day` rule roughly tripled how often it did. Test its
-scope by checking every error in the main suite and on new templates. The bug was always
+`amount` rule above the `day` rule roughly tripled how often it did. The bug was always
 there — prompt A has it at 10% — and the reorder amplified it.
 
 That is a much more useful finding than "reordering is risky". The per-field
 breakdown showed the 3.4-point drop concentrated in `day`, and inspecting the
 wrong outputs revealed an error pattern in which the amount moves into the day
-field — the causal mechanism inside the model was not measured, but the pattern
-is concrete enough to turn into regression cases. A suite that reported only an
-aggregate score would have shown a
+field, and the pattern is concrete enough to turn into regression cases. A
+suite that reported only an aggregate score would have shown a
 3.4-point wobble with no way to tell whether it mattered. Report per-field
 or per-category numbers or you will not be able to act on the aggregate.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The 91 and 74 in the per-field table are five-run means, not the totals of
+  one paired run. An earlier version of this chapter derived a McNemar p range
+  from the margins; that calculation was not valid.
+- How robust the 9.2-point exact-match gap is cannot be known from these data.
+- In the next experiment store each item's right/wrong result under both
+  prompts with the same id and run the paired test on that; it costs nothing
+  and is the difference between a claim and an anecdote.
+- The amount bleeding into the day field is a hypothesis from the 40-item
+  probe; test its scope by checking every error in the main suite and on new
+  templates. The causal mechanism inside the model was not measured.
+:::
 
 ### Temperature 0 buys reproducibility, not correctness
 
@@ -262,16 +276,13 @@ Prompt A, twice at temperature 0:
 ```
 
 In this local setup the two runs were identical item by item: not merely the
-same score, but the same result on every one of the 100 items. Two repeats are
-an observation, not a guarantee of the same behaviour on another server,
-parallelism or version. It is still a useful sign for a gate, because it removes the
+same score, but the same result on every one of the 100 items. That is a
+useful sign for a gate, because it removes the
 run-to-run noise and makes a failing run reproducible on a laptop.
 
 Two caveats, both worth stating. Temperature 0 scored **95.20**; the five runs at
-temperature 0.7 fell in 95.40–96.00. The gap is tiny against a five-run spread
-and is not enough to show that greedy decoding gives lower accuracy; what can
-be said is that the greedy output is one particular sample, not automatically
-the best one. And it does not fix anything: the
+temperature 0.7 fell in 95.40–96.00; the greedy output is one particular
+sample, not automatically the best one. And it does not fix anything: the
 leading-digit bug survives greedy decoding, which scored `day` 90/100 with 8 of
 its 10 misses being the same amount-bleed. Determinism
 makes a gate reproducible; it does not make it right. Your users are
@@ -281,11 +292,22 @@ configuration you do not ship.
 Two further limits keep "no noise" from meaning "every delta is real". First,
 the byte-identical result is a property of this setup — one local server
 answering one request at a time. Hosted APIs and servers that batch many
-requests together often return slightly different text at temperature 0, so
-check it on yours, as @sec-decoding also recommends. Second, any
-prompt edit, even one that changes no meaning, flips the greedy output on a few
-items. A small delta between two temperature-0 runs of *different* prompts can
-therefore still be chance, and it still needs the paired test above.
+requests together often return slightly different text at temperature 0.
+Second, any prompt edit, even one that changes no meaning, flips the greedy
+output on a few items. A small delta between two temperature-0 runs of
+*different* prompts can therefore still be chance, and it still needs the
+paired test above.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- Two identical repeats at temperature 0 are an observation, not a guarantee
+  of the same behaviour on another server, parallelism or version. Check it on
+  yours, as @sec-decoding also recommends.
+- The gap between 95.20 at temperature 0 and the 95.40–96.00 range of the five
+  runs at 0.7 is tiny against a five-run spread, and is not enough to show
+  that greedy decoding gives lower accuracy.
+:::
 
 ## Designing the gate so it fires on the right things {#sec-production-eval-gate}
 
@@ -293,13 +315,9 @@ Given a noise floor, a gate is a threshold decision, and the obvious threshold i
 wrong in an instructive way. To see how a threshold behaves, the measured
 per-item results were resampled 2,000 times per cell of the tables below. Each
 draw compares one baseline run against one new run, as a real gate does, and
-the tables report how often the gate fired. One caveat on provenance: the per-item pairing across variants was not
-stored (see above), so this resampling cannot have been item-matched across A
-and C. Read the rates below as an illustration of how a threshold behaves, not
-as measured operating characteristics of a paired gate. The 2,000 draws show
-*sampling* variability from the recorded item results; measuring how often two
-fresh model runs on the same fixed suite are falsely blocked needs the runs to
-be reproduced and compared — two different sources of uncertainty.
+the tables report how often the gate fired. Read the rates below as an
+illustration of how a threshold behaves, not as measured operating
+characteristics.
 
 | suite size | naive gate: A vs A **(false block)** | A vs B (caught) | A vs C (caught) |
 |--:|--:|--:|--:|
@@ -313,10 +331,8 @@ The naive gate — block if the new run scores lower than the baseline — catch
 almost every regression, and [blocks 42.5% of changes that changed nothing]{.hl}. Worse, in
 this independent-resampling setup it gets *worse as the suite grows*: at 20
 items two draws often tie exactly, and ties pass; at 100 items exact ties are
-rare, so the comparison converges on a coin flip. That rests on an assumption of
-independent, symmetric score differences; on a paired fixed suite or with
-deterministic runs it may not work the same way, so measure the real rate with
-separate A/A runs. The lesson holds anyway: adding more test cases to a flaky
+rare, so the comparison converges on a coin flip. The lesson: adding more test
+cases to a flaky
 gate without rethinking the threshold does not make it stable.
 
 In this resampling experiment, a one-point threshold reduced the false-block
@@ -384,13 +400,29 @@ about $\Phi(-k/\sqrt{2})$ of no-op changes ($\Phi$ is the standard normal
 cumulative distribution): roughly 8% at 2 × `sd`, 2% at 3 × `sd` and 0.2% at
 4 × `sd`. The resampling above found 4.3% at 1.0 point. The two numbers do not
 measure the same thing: the 0.2% belongs to run-to-run model noise, the 4.3% to
-the sampling variability of item resampling, so solving the 4.3% back for a
-true run-to-run `sd` (say, 0.45) would mix the two uncertainties. What can be
+the sampling variability of item resampling. What can be
 said is that the five-run estimate of `sd` has a wide interval (0.16 to 0.75)
 and the threshold needs headroom against it. That is a twenty-minute experiment that turns a gate
 people learn to ignore into one they trust. A gate that is overridden by habit
 is worse than no gate, because the record then shows a green check where a
 human actually skipped the test.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The per-item pairing across variants was not stored, so this resampling
+  cannot have been item-matched across A and C; the rates in the tables are
+  not measured operating characteristics of a paired gate.
+- The 2,000 draws show *sampling* variability from the recorded item results;
+  measuring how often two fresh model runs on the same fixed suite are falsely
+  blocked needs the runs to be reproduced and compared. These are two
+  different sources of uncertainty: solving the 4.3% back for a true
+  run-to-run `sd` (say, 0.45) would mix them.
+- The naive gate getting worse as the suite grows rests on an assumption of
+  independent, symmetric score differences; on a paired fixed suite or with
+  deterministic runs it may not work the same way. Measure the real rate with
+  separate A/A runs.
+:::
 
 ## The golden set has a lifecycle {#sec-production-eval-golden}
 
@@ -436,19 +468,14 @@ entered as real failures are regression tests, and they stay.
 **Its size is set by @sec-llm-eval's arithmetic, not by taste.** That chapter
 measured it: at 80% power on a system that is right 80% of the time, 30 items
 detect nothing at all, 100 items detect 13.4 points, and 1,000 detect 4.8.
-Those figures belong to an 80% baseline, so redo the arithmetic for your own
-metric rather than borrowing them. Exact match here sits at 81%, close to that
+Exact match here sits at 81%, close to that
 baseline, and the reordered prompt cost it 9.2 points — *less* than the 13.4
 points that 100 items per system can resolve without pairing. Field accuracy is
 a different case: near 96% the binomial variance $p(1-p)$ is about a quarter of
 its value at 80%. This suite has 500 field decisions per run, and the same
 calculation says 500 unpaired *independent* decisions per system resolve a drop
 from 95.6% of only about 4.4 points (1,000 would bring that down to about 2.9).
-But the five fields of one message can depend on each other — the `day` error
-arrives with the amount — so counting the 500 as independent makes this
-optimistic; size field accuracy with the message as the cluster unit, using
-variance from pilot data. The reorder's
-3.4-point drop sits *below* that. Yet the gate on these same 100
+The reorder's 3.4-point drop sits *below* that 4.4-point line. Yet the gate on these same 100
 items, in the resampling setup above, fires on the reordered prompt in 99.4% of
 draws.
 
@@ -457,13 +484,26 @@ apart. The 13.4 and 4.8 are **minimum detectable effects**: they carry the
 uncertainty of estimating an unknown effect from a fresh sample. The 99.4% is
 an **operating characteristic of a decision rule**: given these fixed 100 items
 and this measured difference in means, how often does the threshold trip? It
-conditions on the observed 3.40 being the true effect, so it is not power, not
-evidence for a paired gate, and does not generalise past this suite. Both are
+conditions on the observed 3.40 being the true effect, so it is not power. Both are
 worth reporting — the gate's false-block and catch rates for operations, and a
 paired test on stored per-item results for the claim that the regression is
 real. Pairing is what makes the second possible at this
 sample size, which is why a gate compares runs on identical items rather than
 on fresh samples.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The 13.4 and 4.8 points belong to an 80% baseline; redo the arithmetic for
+  your own metric rather than borrowing them.
+- The five fields of one message can depend on each other (the `day` error
+  arrives with the amount), so counting the 500 field decisions as
+  independent makes the 4.4- and 2.9-point figures optimistic. Size field
+  accuracy with the message as the cluster unit, using variance from pilot
+  data.
+- The gate's 99.4% firing rate is not evidence for a paired gate and does not
+  generalise past this suite.
+:::
 
 ## Scoring live traffic without scoring all of it {#sec-production-eval-online}
 
