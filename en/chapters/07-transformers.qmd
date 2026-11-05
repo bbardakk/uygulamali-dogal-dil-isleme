@@ -1869,11 +1869,8 @@ costs only $2.5d^2$ — grouped-query attention shrinks $W^K$ and $W^V$ from
 $d \times d$ to $d \times 1024$ (@sec-attention-cost), so that pair costs
 $0.5d^2$ instead of $2d^2$. The feed-forward share is therefore
 $10.5/13 = \mathbf{81\%}$, not the 72% you get by assuming full-width
-attention. That is this configuration's in-block share; in the Llama family two
-changes of recent years (GQA and SwiGLU) moved weight from attention into the
-feed-forward layer, but other families may choose different intermediate
-widths, shared experts or other attention types. Before carrying a ratio over to
-a model, compute it from that model's config.
+attention. In the Llama family two changes of recent years (GQA and SwiGLU)
+moved weight from attention into the feed-forward layer.
 
 A rule of thumb is only worth having if it reproduces a number you can look
 up. GPT-2 small is public: vocabulary 50,257, $d = 768$, 12 layers, context
@@ -1898,10 +1895,7 @@ away. Restore them and the count closes completely:
 | **exact total** | 124,318,464 + 121,344 | **124,439,808** |
 
 So the rule is not an approximation with unexplained slop; it is an exact
-count with three named terms deleted. (The exact count belongs to this
-configuration: 12 layers, $d = 768$, a 50,257-token vocabulary, 1,024 learned
-positions, tied input and output weights; another checkpoint will not show the
-same gap.) Trust it for capacity planning, and
+count with three named terms deleted. Trust it for capacity planning, and
 remember which terms you dropped when someone asks why your number and the
 model card differ in the last six digits.
 
@@ -1909,6 +1903,18 @@ model card differ in the last six digits.
 Notice what the table does *not* contain: an output projection back to the
 vocabulary. GPT-2 ties the output weights to the input embedding matrix, so
 those 38.6M parameters are counted once and used twice.
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The 81% is the Llama-3 configuration's in-block share; other families may
+  choose different intermediate widths, shared experts or other attention
+  types. Before carrying a ratio over to a model, compute it from that
+  model's config.
+- The exact count for GPT-2 small belongs to that configuration: 12 layers,
+  $d = 768$, a 50,257-token vocabulary, 1,024 learned positions, tied input
+  and output weights; another checkpoint will not show the same gap.
 :::
 
 ## Positional information: absolute, learned, RoPE, ALiBi {#sec-position}
@@ -2175,17 +2181,24 @@ give.
 tokens back" means something different at position 0 than at position 5,000,
 and the model has to learn to cope with that. With rotation it means the same
 thing everywhere, for free. That shows relative position entering the score
-geometry directly; long-context quality still has to be measured separately.
-RoPE also preserves vector norms exactly — a
+geometry directly. RoPE also preserves vector norms exactly — a
 rotation is a rotation — so it cannot distort the magnitude of a query the way
 addition can.
 
 This is why RoPE is in Llama, Qwen, Mistral, Gemma and most open-weight models
-released since 2023 (ALiBi, learned and hybrid schemes are in use too; check a
-model's position scheme in its config), and why the main context-extension
+released since 2023, and why the main context-extension
 methods for those models (position interpolation, NTK-aware scaling, YaRN) are
 rescalings of $\theta_i$ or of the position index rather than new tables, often
 followed by extra long-context training.
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The measurement shows relative position entering the score geometry
+  directly; long-context quality still has to be measured separately.
+- ALiBi, learned and hybrid schemes are in use too; check a model's
+  position scheme in its config.
+:::
 
 ### ALiBi: skip the encoding, penalise distance
 
@@ -2739,8 +2752,7 @@ tokens, linearly, and **per concurrent request**.
 
 The table gives the raw bytes of the K/V tensors with 16-bit values, every layer
 full-attention and each request's cache separate (GB decimal; 52.4 GB is about
-48.8 GiB). Quantisation, GQA, sliding windows, paging and working space change
-what is actually allocated. A 7B model in fp16 is 14 GB of weights. At 100,000
+48.8 GiB). A 7B model in fp16 is 14 GB of weights. At 100,000
 tokens of context its KV cache is 52 GB — [nearly four times the model itself, for one
 conversation.]{.hl} This is the arithmetic behind every "why is long context
 so expensive?" question, and it is why serving systems care so much about how
@@ -2755,9 +2767,8 @@ one substitution is the difference between a single 32k-context request whose
 cache is larger than an entire 80 GB card (85.9 GB) and one that fits in an
 eighth of it (10.7 GB). The weights still need a node — 140 GB in fp16 — but on
 the four-card node of exercise 9 the 180 GB left over holds, counting only those
-two items, 16 requests at the same context instead of 2 — eight times as many. In
-a real service, working space and the deployment layout lower that ceiling. It is the single most consequential
-number in this chapter.
+two items, 16 requests at the same context instead of 2 — eight times as many.
+It is the single most consequential number in this chapter.
 
 ::: {.anlp-widget}
 ```{=html}
@@ -2829,6 +2840,16 @@ html`<div style="font-size:0.9rem;line-height:1.7;">
   </div>
 </div>`
 ```
+:::
+
+::: {.callout-note collapse="true"}
+## Limits of this section
+
+- The KV-cache table gives the raw bytes of the K/V tensors; quantisation,
+  GQA, sliding windows, paging and working space change what is actually
+  allocated.
+- The 16 requests that fit on the four-card node are a ceiling; in a real
+  service, working space and the deployment layout lower it.
 :::
 
 ### GQA and MQA: fewer keys, same queries
